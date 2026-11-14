@@ -33,6 +33,7 @@ panel/frontend/public/install-agent.sh
 *.vhd
 *.avhdx
 lab/secrets/
+lab/out/
 
 # --- Divers ---
 *.log
