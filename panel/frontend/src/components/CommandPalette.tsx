@@ -55,6 +55,7 @@ export default function CommandPalette() {
     // Admin
     { id: "servers", label: "Servers", icon, path: "/servers", category: "Admin", keywords: "multi-server agent fleet remote" },
     { id: "ips", label: "IP Addresses", icon, path: "/ips", category: "Admin", keywords: "ip ipv4 address interface netplan ptr reverse dns sending ip helo" },
+    { id: "php", label: "PHP", icon, path: "/php", category: "Admin", keywords: "php ini php.ini fpm memory_limit upload_max_filesize timezone global version" },
     { id: "users", label: "Users", icon, path: "/users", category: "Admin", keywords: "accounts roles permissions suspend reset password" },
     { id: "container-policies", label: "Container Policies", icon, path: "/container-policies", category: "Admin", keywords: "isolation limits quotas docker user policy network" },
     { id: "integrations", label: "Integrations", icon, path: "/integrations", category: "Admin", keywords: "webhooks extensions whmcs terraform billing api" },

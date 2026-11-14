@@ -326,6 +326,10 @@ pub async fn create(
     // primary address (its row's `ip_id` is NULL). Sent explicitly — the backend
     // never leaves the agent to guess.
     agent_body["bind_ip"] = serde_json::json!(crate::services::server_ips::PRIMARY);
+    // The staging row is a new site: its own PHP columns (defaults) drive its pool.
+    if let Some(pool) = crate::routes::php_settings::php_pool_for_site(&staging) {
+        agent_body["php_pool"] = pool;
+    }
 
     let agent_path = format!("/nginx/sites/{}", staging_domain);
     if let Err(e) = agent.put(&agent_path, agent_body).await {

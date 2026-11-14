@@ -630,6 +630,171 @@ async fn uninstall_version(
     }))
 }
 
+// ──────────────────────────────────────────────────────────────
+// Global php.ini editor (FPM, per version) — contract §A2/§A3
+// ──────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct IniUpdate {
+    #[serde(default)]
+    content: Option<String>,
+    #[serde(default)]
+    values: Option<std::collections::BTreeMap<String, String>>,
+}
+
+/// Validate the version and return the FPM php.ini path (404 if absent).
+fn ini_path_for(version: &str) -> Result<String, PhpApiErr> {
+    if !ALLOWED_VERSIONS.contains(&version) {
+        return Err(php_api_err(
+            StatusCode::BAD_REQUEST,
+            &format!("Invalid PHP version. Allowed: {}", ALLOWED_VERSIONS.join(", ")),
+        ));
+    }
+    let path = crate::services::php_ini::ini_path(version);
+    if !std::path::Path::new(&path).exists() {
+        return Err(php_api_err(
+            StatusCode::NOT_FOUND,
+            &format!("PHP {version} (FPM) is not installed: {path} not found"),
+        ));
+    }
+    Ok(path)
+}
+
+fn ini_response(version: &str, path: &str, content: String) -> serde_json::Value {
+    let values = crate::services::php_ini::read_ini_values(&content);
+    serde_json::json!({ "version": version, "path": path, "content": content, "values": values })
+}
+
+/// GET /php/ini/{version} — the FPM php.ini of a version and its main values.
+async fn get_ini(Path(version): Path<String>) -> Result<Json<serde_json::Value>, PhpApiErr> {
+    let path = ini_path_for(&version)?;
+    let content = std::fs::read_to_string(&path).map_err(|e| {
+        php_api_err(StatusCode::INTERNAL_SERVER_ERROR, &format!("Cannot read {path}: {e}"))
+    })?;
+    Ok(Json(ini_response(&version, &path, content)))
+}
+
+/// Write `content` to `path` through tmp + rename, keeping the file's mode.
+fn write_atomic(path: &str, content: &str) -> std::io::Result<()> {
+    let tmp = format!("{path}.dockpanel.tmp");
+    let perms = std::fs::metadata(path).map(|m| m.permissions()).ok();
+    let res = std::fs::write(&tmp, content)
+        .and_then(|_| match perms {
+            Some(p) => std::fs::set_permissions(&tmp, p),
+            None => Ok(()),
+        })
+        .and_then(|_| std::fs::rename(&tmp, path));
+    if res.is_err() {
+        std::fs::remove_file(&tmp).ok();
+    }
+    res
+}
+
+/// `systemctl is-active` with a short grace period for `activating`.
+async fn fpm_is_active(version: &str) -> bool {
+    for _ in 0..10 {
+        if is_fpm_running(version).await {
+            return true;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    }
+    false
+}
+
+/// PUT /php/ini/{version} — `{content}` (raw) or `{values}` (the 8 main keys).
+/// Backup → atomic write → `php-fpm<ver> -t` → restart → is-active; any
+/// failure puts the previous file back, restarts, and answers 400.
+async fn put_ini(
+    Path(version): Path<String>,
+    Json(body): Json<IniUpdate>,
+) -> Result<Json<serde_json::Value>, PhpApiErr> {
+    use crate::services::{php_ini, php_pool};
+    let path = ini_path_for(&version)?;
+    // Shared with pool writes: `php-fpm -t` reads both.
+    let _guard = php_pool::FPM_CONFIG_LOCK.lock().await;
+
+    let previous = std::fs::read_to_string(&path).map_err(|e| {
+        php_api_err(StatusCode::INTERNAL_SERVER_ERROR, &format!("Cannot read {path}: {e}"))
+    })?;
+
+    let new_content = match (body.content, body.values) {
+        (Some(content), None) => {
+            if content.len() > php_ini::MAX_INI_BYTES {
+                return Err(php_api_err(StatusCode::BAD_REQUEST, "php.ini content is larger than 512 KiB"));
+            }
+            if content.contains('\0') {
+                return Err(php_api_err(StatusCode::BAD_REQUEST, "php.ini content contains a NUL byte"));
+            }
+            content
+        }
+        (None, Some(values)) => {
+            if values.is_empty() {
+                return Err(php_api_err(StatusCode::BAD_REQUEST, "No values to set"));
+            }
+            for (k, v) in &values {
+                if !php_ini::INI_KEYS.contains(&k.as_str()) {
+                    return Err(php_api_err(
+                        StatusCode::BAD_REQUEST,
+                        &format!("{k} cannot be set here. Allowed: {}", php_ini::INI_KEYS.join(", ")),
+                    ));
+                }
+                php_pool::validate_value(k, v).map_err(|e| php_api_err(StatusCode::BAD_REQUEST, &e))?;
+            }
+            php_ini::set_ini_values(&previous, &values)
+        }
+        _ => {
+            return Err(php_api_err(StatusCode::BAD_REQUEST, "Send either \"content\" or \"values\""));
+        }
+    };
+
+    let backup = format!("{path}.dockpanel.bak");
+    std::fs::write(&backup, &previous).map_err(|e| {
+        php_api_err(StatusCode::INTERNAL_SERVER_ERROR, &format!("Cannot back up {path} to {backup}: {e}"))
+    })?;
+    write_atomic(&path, &new_content).map_err(|e| {
+        php_api_err(StatusCode::INTERNAL_SERVER_ERROR, &format!("Cannot write {path}: {e}"))
+    })?;
+
+    // Test, restart, check. The first failure wins and triggers the rollback.
+    let failure: Option<String> = match php_pool::test_fpm_config(&version).await {
+        Ok(out) if php_ini::ini_test_passed(true, &out) => {
+            match php_pool::fpm_systemctl(&version, "restart").await {
+                Err(e) => Some(e),
+                Ok(()) if !fpm_is_active(&version).await => {
+                    Some(format!("php{version}-fpm is not active after the restart"))
+                }
+                Ok(()) => None,
+            }
+        }
+        Ok(out) | Err(out) => Some(format!("php-fpm{version} -t failed: {out}")),
+    };
+
+    if let Some(err) = failure {
+        tracing::warn!("php.ini update for PHP {version} rejected: {err}");
+        let restored = write_atomic(&path, &previous).is_ok();
+        if !restored {
+            tracing::error!("Could not restore {path} — the backup is at {backup}");
+        }
+        if let Err(e) = php_pool::fpm_systemctl(&version, "restart").await {
+            tracing::error!("Restart after restoring {path} failed: {e}");
+        }
+        return Err(php_api_err(
+            StatusCode::BAD_REQUEST,
+            &format!(
+                "{err}{}",
+                if restored {
+                    " (the previous php.ini was restored)"
+                } else {
+                    " (restoring the previous php.ini FAILED — see php.ini.dockpanel.bak)"
+                }
+            ),
+        ));
+    }
+
+    tracing::info!("php.ini updated for PHP {version}: {path}");
+    Ok(Json(ini_response(&version, &path, new_content)))
+}
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/php/versions", get(list_versions))
@@ -638,4 +803,6 @@ pub fn router() -> Router<AppState> {
         // PHP Extensions
         .route("/php/extensions/{version}", get(list_extensions))
         .route("/php/extensions/install", post(install_extension))
+        // Global php.ini editor (FPM)
+        .route("/php/ini/{version}", get(get_ini).put(put_ini))
 }

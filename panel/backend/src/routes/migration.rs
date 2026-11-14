@@ -750,6 +750,11 @@ pub async fn import(
                             Some(ver) => {
                                 nginx_body["php_socket"] =
                                     serde_json::json!(format!("unix:/run/php/php{ver}-fpm.sock"));
+                                // The row is inserted after the vhost: send the pool
+                                // its column defaults will describe.
+                                nginx_body["php_pool"] = crate::routes::php_settings::php_pool_json(
+                                    &crate::routes::php_settings::new_row(),
+                                );
                             }
                             None => {
                                 needs_config = Some(

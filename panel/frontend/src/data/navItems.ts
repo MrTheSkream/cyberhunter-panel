@@ -127,6 +127,7 @@ export const navGroups: NavGroup[] = [
     items: [
       { to: "/servers", label: "Servers", iconName: "servers", adminOnly: true },
       { to: "/ips", label: "IP Addresses", iconName: "dns", adminOnly: true },
+      { to: "/php", label: "PHP", iconName: "servers", adminOnly: true },
       { to: "/users", label: "Users", iconName: "users", adminOnly: true },
       { to: "/container-policies", label: "Container Policies", iconName: "servers", adminOnly: true },
       { to: "/integrations", label: "Integrations", iconName: "extensions", adminOnly: true },

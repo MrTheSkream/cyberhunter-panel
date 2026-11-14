@@ -1015,6 +1015,7 @@ pub async fn enable_ssl_for_site(
         pool_user: site_config.pool_user.clone(),
         pool_group: site_config.pool_group.clone(),
         bind_ip: site_config.bind_ip.clone(),
+        php_pool: site_config.php_pool.clone(),
     };
 
     let rendered = nginx::render_site_config(templates, domain, &ssl_config)

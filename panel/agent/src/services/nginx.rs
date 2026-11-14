@@ -904,6 +904,16 @@ pub fn render_site_config(
                     .unwrap_or("unix:/run/php/php-fpm.sock"),
             );
             ctx.insert("php_preset", &config.php_preset.as_deref().unwrap_or("generic"));
+            // Per-site PHP settings: align nginx's FastCGI read timeout with
+            // the pool's request_terminate_timeout. 0 = no line (legacy, or
+            // FPM-side timeout disabled), so an absent php_pool renders
+            // byte-identically to before.
+            let read_timeout = config
+                .php_pool
+                .as_ref()
+                .map(|p| p.request_terminate_timeout_s)
+                .unwrap_or(0);
+            ctx.insert("fastcgi_read_timeout", &read_timeout);
             if ssl {
                 templates.render("https.conf", &ctx)
             } else {
@@ -952,7 +962,27 @@ pub fn write_php_pool_config(
     // case) keeps the original shared identity.
     let (user, group) = pool_owner.unwrap_or(("www-data", "www-data"));
 
-    let config = format!(
+    let config = legacy_php_pool_config(&pool_name, php_version, memory_mb, max_workers, user, group);
+
+    let pool_path = format!("{pool_dir}/{pool_name}.conf");
+    std::fs::write(&pool_path, &config)
+        .map_err(|e| format!("Failed to write FPM pool config: {e}"))?;
+
+    tracing::info!("PHP-FPM pool config written: {pool_path} (user={user}, workers={max_workers}, memory={memory_mb}M)");
+    Ok(())
+}
+
+/// The legacy pool body (no `php_pool` in the request). Pure, and pinned by a
+/// test, so the per-site PHP settings work cannot change it by accident.
+fn legacy_php_pool_config(
+    pool_name: &str,
+    php_version: &str,
+    memory_mb: u32,
+    max_workers: u32,
+    user: &str,
+    group: &str,
+) -> String {
+    format!(
         r#"[{pool_name}]
 user = {user}
 group = {group}
@@ -975,14 +1005,7 @@ php_admin_value[max_execution_time] = 300
 "#,
         start = std::cmp::min(2, max_workers),
         spare = std::cmp::min(3, max_workers),
-    );
-
-    let pool_path = format!("{pool_dir}/{pool_name}.conf");
-    std::fs::write(&pool_path, &config)
-        .map_err(|e| format!("Failed to write FPM pool config: {e}"))?;
-
-    tracing::info!("PHP-FPM pool config written: {pool_path} (user={user}, workers={max_workers}, memory={memory_mb}M)");
-    Ok(())
+    )
 }
 
 /// Reload PHP-FPM for a given version.
@@ -1396,5 +1419,113 @@ server {
         assert_eq!(resolve_bind_ip(None, Some(VHOST_WILDCARD), &[], "192.168.250.10"), "192.168.250.10");
         // Nothing detected → empty → template's wildcard listen.
         assert_eq!(resolve_bind_ip(None, None, &[], ""), "");
+    }
+}
+
+#[cfg(test)]
+mod php_settings_tests {
+    use super::*;
+
+    /// The legacy pool body, pinned byte for byte: a request without
+    /// `php_pool` must keep producing exactly this.
+    #[test]
+    fn legacy_pool_body_is_unchanged() {
+        let out = legacy_php_pool_config("example_com", "8.3", 256, 5, "www-data", "www-data");
+        assert_eq!(
+            out,
+            "[example_com]
+user = www-data
+group = www-data
+listen = /run/php/php8.3-fpm-example_com.sock
+listen.owner = www-data
+listen.group = www-data
+listen.mode = 0660
+
+pm = dynamic
+pm.max_children = 5
+pm.start_servers = 2
+pm.min_spare_servers = 1
+pm.max_spare_servers = 3
+pm.max_requests = 500
+
+php_admin_value[memory_limit] = 256M
+php_admin_value[upload_max_filesize] = 64M
+php_admin_value[post_max_size] = 64M
+php_admin_value[max_execution_time] = 300
+"
+        );
+    }
+
+    fn php_site(ssl: bool, pool: Option<u32>) -> SiteConfig {
+        let mut v = serde_json::json!({
+            "runtime": "php",
+            "root": "/var/www",
+            "php_socket": "unix:/run/php/php8.3-fpm-example_com.sock",
+            "ssl": ssl,
+            "ssl_cert": "/etc/dockpanel/ssl/example.com/fullchain.pem",
+            "ssl_key": "/etc/dockpanel/ssl/example.com/privkey.pem",
+            "bind_ip": "192.0.2.10",
+        });
+        if let Some(t) = pool {
+            v["php_pool"] = serde_json::json!({
+                "values": {}, "isolation": true, "disable_shell": true, "pm": "ondemand",
+                "max_children": 8, "max_requests": 4000, "idle_timeout_s": 10,
+                "request_terminate_timeout_s": t, "extra": []
+            });
+        }
+        serde_json::from_value(v).unwrap()
+    }
+
+    #[test]
+    fn read_timeout_follows_the_pool_in_both_templates() {
+        let t = init_templates();
+        for ssl in [false, true] {
+            let out = render_site_config(&t, "example.com", &php_site(ssl, Some(90))).unwrap();
+            assert!(
+                out.contains("        fastcgi_buffer_size 32k;\n        fastcgi_read_timeout 90s;\n"),
+                "ssl={ssl}"
+            );
+            assert_eq!(out.matches("fastcgi_read_timeout").count(), 1);
+        }
+    }
+
+    #[test]
+    fn no_pool_or_zero_timeout_renders_no_read_timeout_line() {
+        let t = init_templates();
+        for ssl in [false, true] {
+            for pool in [None, Some(0)] {
+                let out = render_site_config(&t, "example.com", &php_site(ssl, pool)).unwrap();
+                assert!(!out.contains("fastcgi_read_timeout"), "ssl={ssl} pool={pool:?}");
+                // The line after the buffer size is what it always was.
+                let after = out.split("fastcgi_buffer_size 32k;").nth(1).unwrap();
+                assert!(after.starts_with("\n        }") || after.starts_with("\n\n"), "{after:.40}");
+            }
+        }
+    }
+
+    /// The templates as they were before `fastcgi_read_timeout` was added.
+    fn templates_without_read_timeout() -> Tera {
+        let strip = |t: &str| {
+            let t = t.replace('\r', "");
+            let line = "{% if fastcgi_read_timeout > 0 %}        fastcgi_read_timeout {{ fastcgi_read_timeout }}s;\n{% endif %}";
+            assert!(t.contains(line));
+            t.replace(line, "")
+        };
+        let mut tera = Tera::default();
+        tera.add_raw_template("http.conf", &strip(include_str!("../templates/nginx/http.conf"))).unwrap();
+        tera.add_raw_template("https.conf", &strip(include_str!("../templates/nginx/https.conf"))).unwrap();
+        tera.add_raw_template("proxy.conf", include_str!("../templates/nginx/proxy.conf")).unwrap();
+        tera
+    }
+
+    #[test]
+    fn absent_pool_renders_byte_identically_to_the_old_templates() {
+        let new = init_templates();
+        let old = templates_without_read_timeout();
+        for ssl in [false, true] {
+            let a = render_site_config(&new, "example.com", &php_site(ssl, None)).unwrap();
+            let b = render_site_config(&old, "example.com", &php_site(ssl, None)).unwrap();
+            assert_eq!(a, b, "ssl={ssl}");
+        }
     }
 }

@@ -26,6 +26,8 @@ pub mod migration;
 pub mod nginx;
 pub mod ownership;
 pub mod phone_home;
+pub mod php_ini;
+pub mod php_pool;
 pub mod pkg;
 pub mod remote_backup;
 pub mod security;

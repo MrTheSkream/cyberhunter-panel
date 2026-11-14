@@ -80,12 +80,32 @@ pub struct SiteConfig {
     /// `services::nginx::resolve_bind_ip`.
     #[serde(default)]
     pub bind_ip: Option<String>,
+    /// Per-site PHP settings (contract §A1). Absent = the legacy pool
+    /// (`php_memory_mb` / `php_max_workers`, 64M, …) exactly as before;
+    /// present = those two fields are ignored and this drives the pool.
+    #[serde(default)]
+    pub php_pool: Option<services::php_pool::PhpPool>,
 }
 
-#[derive(Serialize)]
 struct NginxResponse {
     success: bool,
     message: String,
+}
+
+/// `{success, message}`, plus `error` (= message) on failure, so callers that
+/// read `{error}` (contract §A1's 400 on a rejected pool) and the older ones
+/// that read `message` both get the text.
+impl Serialize for NginxResponse {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let mut m = s.serialize_map(None)?;
+        m.serialize_entry("success", &self.success)?;
+        m.serialize_entry("message", &self.message)?;
+        if !self.success {
+            m.serialize_entry("error", &self.message)?;
+        }
+        m.end()
+    }
 }
 
 #[derive(Serialize)]
@@ -104,10 +124,38 @@ struct SiteStatusResponse {
 }
 
 /// PUT /nginx/sites/:domain — Create or update site nginx config.
+///
+/// The per-site PHP pool (`php_pool`) is applied before the vhost is written
+/// and tested. If anything after it fails, the pool is rolled back here (the
+/// previous file restored, or the new one removed, then FPM reloaded), so the
+/// pool, the vhost and the backend DB — which rolls back on any agent error —
+/// stay in step.
 async fn put_site(
+    state: State<AppState>,
+    domain: Path<String>,
+    config: Json<SiteConfig>,
+) -> Result<Json<NginxResponse>, (StatusCode, Json<NginxResponse>)> {
+    let mut pool_rollback: Option<services::php_pool::PoolRollback> = None;
+    let result = put_site_inner(state, domain, config, &mut pool_rollback).await;
+    match (result, pool_rollback) {
+        (Err((status, Json(mut resp))), Some(rollback)) => {
+            let restored = rollback.restore().await;
+            resp.message.push_str(if restored {
+                " (the previous PHP pool was restored)"
+            } else {
+                " (the new PHP pool was removed)"
+            });
+            Err((status, Json(resp)))
+        }
+        (result, _) => result,
+    }
+}
+
+async fn put_site_inner(
     State(state): State<AppState>,
     Path(domain): Path<String>,
     Json(mut config): Json<SiteConfig>,
+    pool_rollback: &mut Option<services::php_pool::PoolRollback>,
 ) -> Result<Json<NginxResponse>, (StatusCode, Json<NginxResponse>)> {
     // Validate domain format
     if !is_valid_domain(&domain) {
@@ -149,6 +197,16 @@ async fn put_site(
         }
     }
 
+    // PHP settings: refuse an invalid pool before any side effect.
+    if let Some(ref pool) = config.php_pool {
+        if let Err(e) = services::php_pool::validate_php_pool(pool) {
+            return Err((StatusCode::BAD_REQUEST, Json(NginxResponse {
+                success: false,
+                message: e,
+            })));
+        }
+    }
+
     // Create app service for node/python runtimes
     if config.runtime == "node" || config.runtime == "python" {
         if let (Some(cmd), Some(port)) = (&config.app_command, config.proxy_port) {
@@ -176,6 +234,10 @@ async fn put_site(
             })));
         }
     }
+
+    // Version whose per-site pool `php_pool` just wrote: once the vhost points
+    // at it, the same pool is removed from every other version.
+    let mut php_pool_version: Option<String> = None;
 
     // Check PHP-FPM socket exists before creating a PHP site
     if config.runtime == "php" {
@@ -230,12 +292,38 @@ async fn put_site(
                     (Some(u), Some(g)) => Some((u, g)),
                     _ => None,
                 };
-                if let Err(e) = services::nginx::write_php_pool_config(&domain, ver, memory, workers, pool_owner) {
+                // Per-site PHP settings: backup → atomic write → `php-fpm -t` →
+                // restore + 400 on failure (vhost untouched) → reload. The
+                // legacy branch below is kept exactly as it was.
+                let pool_written = if let Some(ref pool) = config.php_pool {
+                    let (user, group) = pool_owner.unwrap_or(("www-data", "www-data"));
+                    match services::php_pool::apply_php_pool(&domain, ver, pool, user, group).await {
+                        Ok(written) => {
+                            if let Some(rollback) = written {
+                                php_pool_version = Some(ver.to_string());
+                                *pool_rollback = Some(rollback);
+                            }
+                            Ok(())
+                        }
+                        Err(e) => {
+                            return Err((StatusCode::BAD_REQUEST, Json(NginxResponse {
+                                success: false,
+                                message: e,
+                            })));
+                        }
+                    }
+                } else {
+                    services::nginx::write_php_pool_config(&domain, ver, memory, workers, pool_owner)
+                };
+                if let Err(e) = pool_written {
                     tracing::warn!("Failed to write PHP pool config for {domain}: {e}");
                 } else {
                     // Reload PHP-FPM so the new per-site pool is actually picked up.
                     // Non-fatal: reload_php_fpm already swallows reload failures.
-                    let _ = services::nginx::reload_php_fpm(ver).await;
+                    // (The php_pool branch has already reloaded, after `-t`.)
+                    if config.php_pool.is_none() {
+                        let _ = services::nginx::reload_php_fpm(ver).await;
+                    }
 
                     // ...and then actually POINT the vhost at that pool. Writing the
                     // pool was never enough on its own: the rendered config kept the
@@ -381,6 +469,9 @@ async fn put_site(
     // would report success for a change the operator cannot see, on a site it
     // simultaneously displays as disabled.
     if !target.is_live() {
+        if let Some(ref ver) = php_pool_version {
+            services::php_pool::remove_pool_from_other_versions(&domain, ver).await;
+        }
         tracing::info!("Site {domain} is disabled: saved its configuration to {config_path} and left the maintenance response in service");
         return Ok(Json(NginxResponse {
             success: true,
@@ -438,6 +529,13 @@ async fn put_site(
                     .args(["reload", "fail2ban"])
                     .output();
                 tracing::info!("Auto-configured Fail2Ban jail for {domain}");
+            }
+
+            // The vhost now points at this version's pool: drop the same pool
+            // from the other versions (contract §A1). Not before — a failed
+            // `nginx -t` above restores a vhost that may still use them.
+            if let Some(ref ver) = php_pool_version {
+                services::php_pool::remove_pool_from_other_versions(&domain, ver).await;
             }
 
             Ok(Json(NginxResponse {
@@ -563,6 +661,7 @@ async fn delete_site(
             std::fs::remove_file(&pool_path).ok();
             tracing::info!("Removed PHP pool: {pool_path}");
         }
+        std::fs::remove_file(format!("{pool_path}.dockpanel.bak")).ok();
     }
 
     // Site files

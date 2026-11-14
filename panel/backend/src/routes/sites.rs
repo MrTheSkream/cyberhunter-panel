@@ -603,6 +603,9 @@ pub async fn create(
     agent_body["waf_enabled"] = serde_json::json!(false);
     agent_body["waf_mode"] = serde_json::json!("detection");
     agent_body["bind_ip"] = serde_json::json!(bind_ip);
+    if let Some(pool) = crate::routes::php_settings::php_pool_for_site(&site) {
+        agent_body["php_pool"] = pool;
+    }
 
     // Atomically reserve the reseller site-quota slot BEFORE the agent creates the
     // nginx vhost — closes the check-then-increment TOCTOU without orphaning an nginx
@@ -1506,7 +1509,7 @@ pub async fn get_one(
 /// frontend no longer carries a third and fourth copy: both pickers read the
 /// live list from `GET /api/php/versions`, which is the agent's answer for the
 /// server the site actually runs on.
-const PHP_VERSIONS: &[&str] = &["8.1", "8.2", "8.3", "8.4", "8.5"];
+pub(crate) const PHP_VERSIONS: &[&str] = &["8.1", "8.2", "8.3", "8.4", "8.5"];
 
 /// PUT /api/sites/{id}/php — Switch PHP version for a site.
 #[derive(serde::Deserialize)]
@@ -2922,8 +2925,8 @@ pub async fn clone_site(
 
     // Create new site record
     let new_site: Site = match sqlx::query_as::<_, Site>(
-        "INSERT INTO sites (user_id, server_id, domain, runtime, status, php_version, root_path, rate_limit, max_upload_mb, php_memory_mb, php_max_workers, php_preset, app_command, ip_id) \
-         VALUES ($1, $2, $3, $4, 'active', $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *"
+        "INSERT INTO sites (user_id, server_id, domain, runtime, status, php_version, root_path, rate_limit, max_upload_mb, php_memory_mb, php_max_workers, php_preset, app_command, ip_id, php_settings, php_isolation, php_disable_shell) \
+         VALUES ($1, $2, $3, $4, 'active', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING *"
     )
     .bind(claims.sub)
     .bind(server_id)
@@ -2938,6 +2941,9 @@ pub async fn clone_site(
     .bind(&source.php_preset)
     .bind(&source.app_command)
     .bind(clone_ip_id)
+    .bind(&source.php_settings)
+    .bind(source.php_isolation)
+    .bind(source.php_disable_shell)
     .fetch_one(&state.db).await
     {
         Ok(s) => s,
@@ -2981,6 +2987,9 @@ pub async fn clone_site(
     nginx_body["waf_enabled"] = serde_json::json!(source.waf_enabled);
     nginx_body["waf_mode"] = serde_json::json!(source.waf_mode);
     nginx_body["bind_ip"] = serde_json::json!(clone_bind_ip);
+    if let Some(pool) = crate::routes::php_settings::php_pool_for_site(&new_site) {
+        nginx_body["php_pool"] = pool;
+    }
 
     agent.put(&format!("/nginx/sites/{target_domain}"), nginx_body).await
         .map_err(|e| agent_error("Nginx config", e))?;
@@ -4279,6 +4288,11 @@ pub(crate) fn build_nginx_body(site: &crate::models::Site, bind_ip: Option<&str>
     if let Some(ip) = bind_ip {
         body["bind_ip"] = serde_json::json!(ip);
     }
+    // Per-site PHP pool (A1 of conception/02-php-contrats.md) — the single
+    // constructor, also used by the hand-built create/clone/staging/import bodies.
+    if let Some(pool) = crate::routes::php_settings::php_pool_for_site(site) {
+        body["php_pool"] = pool;
+    }
     body
 }
 
@@ -4978,6 +4992,40 @@ mod tests {
         assert_eq!(build_nginx_body(&site, Some("192.0.2.107"))["bind_ip"], "192.0.2.107");
         // A failed read omits the key so the agent keeps the vhost's own address.
         assert!(build_nginx_body(&site, None).get("bind_ip").is_none());
+
+        // Non-PHP site: no php_pool (agent keeps its legacy behaviour).
+        assert!(build_nginx_body(&site, None).get("php_pool").is_none());
+        // PHP site: the full effective pool is always sent.
+        let mut php = site.clone();
+        php.runtime = "php".into();
+        php.php_version = Some("8.3".into());
+        php.php_settings = serde_json::json!({});
+        php.php_isolation = true;
+        php.php_disable_shell = true;
+        let body = build_nginx_body(&php, Some("primary"));
+        assert_eq!(body["php_pool"], crate::routes::php_settings::php_pool_json(
+            &crate::routes::php_settings::PhpRow::of(&php)));
+        assert_eq!(body["php_pool"]["values"]["post_max_size"], "72M");
+        assert_eq!(body["php_pool"]["isolation"], true);
+        // Legacy (migrated) PHP site: only memory + overrides reach the agent,
+        // and the B1 response claims no code default for inherited keys.
+        let mut legacy = php.clone();
+        legacy.php_settings = serde_json::json!({ "legacy": true, "values": { "max_execution_time": "300" } });
+        let body = build_nginx_body(&legacy, Some("primary"));
+        assert_eq!(body["php_pool"]["values"], serde_json::json!({ "memory_limit": "256M", "max_execution_time": "300" }));
+        let r = crate::routes::php_settings::response_json(&legacy, true);
+        assert_eq!(r["legacy"], true);
+        assert_eq!(r["inherits_global"].as_array().unwrap().len(), 10);
+        assert!(r["defaults"].get("date.timezone").is_none());
+        assert!(r["effective"].get("date.timezone").is_none());
+        assert_eq!(r["defaults"]["memory_limit"], "256M");
+        let r = crate::routes::php_settings::response_json(&php, false);
+        assert_eq!(r["legacy"], false);
+        assert_eq!(r["inherits_global"], serde_json::json!([]));
+        assert_eq!(r["defaults"].as_object().unwrap().len(), 12);
+        // PHP runtime without a version: no socket, so no pool either.
+        php.php_version = None;
+        assert!(build_nginx_body(&php, None).get("php_pool").is_none());
     }
 
     // ── proxy_port validation — s241 H4 (SSRF + firewall-clobber DoS) ────

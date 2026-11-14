@@ -52,6 +52,7 @@ pub mod iac;
 pub mod image_scans;
 pub mod sboms;
 pub mod passkeys;
+pub mod php_settings;
 pub mod prometheus;
 pub mod webhook_gateway;
 pub mod telemetry;
@@ -1126,6 +1127,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/sites/{id}/php", put(sites::switch_php))
         .route("/api/sites/{id}/runtime", put(sites::switch_runtime))
         .route("/api/sites/{id}/limits", put(sites::update_limits))
+        .route("/api/sites/{id}/php-settings", get(php_settings::get_site_php_settings).put(php_settings::put_site_php_settings))
         .route("/api/sites/{id}/bandwidth-usage", get(sites::bandwidth_usage))
         .route("/api/sites/{id}/domain", put(sites::rename_domain))
         .route("/api/sites/{id}/ip", put(sites::set_ip))
@@ -1147,6 +1149,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/php/versions", get(sites::php_versions))
         .route("/api/php/install", post(sites::php_install))
         .route("/api/php/uninstall", post(sites::php_uninstall))
+        .route("/api/php/ini/{version}", get(php_settings::get_php_ini).put(php_settings::put_php_ini))
         // SSL
         .route("/api/sites/{id}/ssl", post(ssl::provision).get(ssl::status))
         .route("/api/sites/{id}/ssl/dns01", post(ssl::provision_dns01))

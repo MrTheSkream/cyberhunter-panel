@@ -116,6 +116,7 @@ const Integrations = lazyRetry(() => import("./pages/Integrations"));
 const Users = lazyRetry(() => import("./pages/Users"));
 const ContainerPolicies = lazyRetry(() => import("./pages/ContainerPolicies"));
 const ServerIps = lazyRetry(() => import("./pages/ServerIps"));
+const Php = lazyRetry(() => import("./pages/Php"));
 const System = lazyRetry(() => import("./pages/System"));
 const Telemetry = lazyRetry(() => import("./pages/Telemetry"));
 
@@ -162,6 +163,7 @@ createRoot(document.getElementById("root")!).render(
               <Route path="/mail" element={<Mail />} />
               <Route path="/servers" element={<Servers />} />
               <Route path="/ips" element={<ServerIps />} />
+              <Route path="/php" element={<Php />} />
               <Route path="/migration" element={<MigrationWizard />} />
               <Route path="/reseller" element={<ResellerDashboard />} />
               <Route path="/reseller/users" element={<ResellerUsers />} />

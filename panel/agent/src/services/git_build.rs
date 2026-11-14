@@ -377,6 +377,7 @@ async fn apply_tls(
                 pool_user: None,
                 pool_group: None,
                 bind_ip: None,
+                php_pool: None,
             };
             let rendered =
                 crate::services::nginx::render_site_config(templates, domain, &site_config)
@@ -469,6 +470,7 @@ async fn apply_tls(
                             pool_user: None,
                             pool_group: None,
                             bind_ip: None,
+                            php_pool: None,
                         };
                         if crate::services::ssl::enable_ssl_for_site(templates, domain, &ssl_config)
                             .await
@@ -1638,6 +1640,7 @@ async fn setup_nginx_proxy(
         pool_user: None,
         pool_group: None,
         bind_ip: None,
+        php_pool: None,
     };
 
     let rendered = crate::services::nginx::render_site_config(templates, domain, &site_config)

@@ -162,6 +162,18 @@ pub struct Site {
     /// bind address as an explicit argument so no rebuild path can forget it.
     #[sqlx(default)]
     pub bind_ip: Option<String>,
+    /// Per-site PHP overrides (`{values, pool, extra}`), see
+    /// `routes::php_settings`. `memory_limit` / `max_children` are NOT here:
+    /// they live in `php_memory_mb` / `php_max_workers`.
+    #[serde(default)]
+    pub php_settings: serde_json::Value,
+    /// open_basedir + per-site tmp/sessions + sendmail -f. True for new sites,
+    /// false for rows that predate the migration (decision D1).
+    #[serde(default)]
+    pub php_isolation: bool,
+    /// disable_functions for the shell family. Same defaults as isolation (D2).
+    #[serde(default)]
+    pub php_disable_shell: bool,
 }
 
 /// One IPv4 address declared on a server (`server_ips`). See

@@ -5,6 +5,7 @@ import { formatDate } from "../utils/format";
 import { statusColors, runtimeLabelsDetailed as runtimeLabels } from "../constants";
 import { PrereqCallout, useDnsPrereq, prereqBlocks } from "../components/Prerequisite";
 import PhpVersionPicker from "../components/PhpVersionPicker";
+import PhpSettingsCard from "../components/PhpSettingsCard";
 import { useAuth } from "../context/AuthContext";
 import { useServerIps, serverIpOptionLabel } from "../utils/serverIps";
 
@@ -1654,6 +1655,27 @@ export default function SiteDetail() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* PHP Settings — per-site php.ini values, isolation and pool. A save can
+          change php_memory_mb / php_max_workers, which Resource Limits above
+          also sends: re-read the site and resync ONLY those two inputs, so the
+          next "Apply Limits" cannot revert them (and unsaved limit edits stay). */}
+      {site.runtime === "php" && site.status === "active" && id && (
+        <PhpSettingsCard
+          siteId={id}
+          refreshKey={`${site.php_version}|${site.php_memory_mb}|${site.php_max_workers}|${site.max_upload_mb}`}
+          onSaved={() => {
+            api
+              .get<Site>(`/sites/${id}`)
+              .then((s) => {
+                setSite(s);
+                setPhpMemory(String(s.php_memory_mb));
+                setPhpWorkers(String(s.php_max_workers));
+              })
+              .catch(() => {});
+          }}
+        />
       )}
 
       {/* FastCGI Cache — PHP sites only */}

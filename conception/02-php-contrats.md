@@ -135,3 +135,27 @@ ALTER TABLE sites ALTER COLUMN php_disable_shell SET DEFAULT true;
 `php_settings` = `{ "values": {...}, "pool": {...}, "extra": [[k,v],...] }` (surcharges seulement).
 **Tout** envoi de `SiteConfig` pour un site PHP (création, changement de version, SSL, IP, limites…)
 passe `php_pool` construit depuis ces colonnes — un seul constructeur côté API.
+
+### C bis (ajouté à l'implémentation)
+La migration enregistre, pour chaque site PHP existant, les valeurs de l'ancien pool comme
+surcharges (`max_execution_time 300`, `upload/post 64M`, `pm dynamic`, `max_requests 500`,
+`request_terminate_timeout_s 0`) : D1 respecté, aucun changement de comportement à la mise à jour.
+`memory_limit` et `max_children` ne sont jamais stockés dans le JSONB (colonnes `php_memory_mb` /
+`php_max_workers` seules), pour que la carte « Resource Limits » et la carte PHP ne se contredisent pas.
+
+**Drapeau `legacy` (D1 strict).** La migration écrit aussi `"legacy": true` dans le JSONB de ces
+sites. Pour une ligne `legacy` :
+- **A1** : par exception à « toutes les valeurs effectives », `php_pool.values` ne contient que
+  `memory_limit` (depuis `php_memory_mb`, que l'ancien pool posait toujours) + les clés surchargées
+  dans `values` (+ `post_max_size` dérivé = upload + 8M si seul `upload_max_filesize` est surchargé).
+  Les autres clés sont **absentes** → héritées du php.ini global, comme avant la mise à jour.
+  L'agent écrit un `php_value` par clé présente (aucune clé obligatoire). Le `request_terminate_timeout`
+  dérivé (si non surchargé) prend `max_execution_time` = 0 → 3630 s quand celui-ci est hérité.
+- **B1** : la réponse gagne `legacy: boolean` et `inherits_global: string[]` (clés prises dans le
+  php.ini global ; `[]` hors legacy). Ces clés sont absentes de `effective` ; `defaults` ne contient
+  que `memory_limit` (remettre une autre clé « au défaut » = la ré-hériter du php.ini).
+- **B2** : le drapeau est conservé à chaque PUT (propriétaire comme admin) ; le propriétaire ne peut
+  pas le modifier (`legacy` présent → 403). Admin : `{ "legacy": false }` (« Utiliser les défauts du
+  panel ») retire le drapeau — les surcharges stockées restent, les autres clés prennent les défauts
+  B1. Toute autre valeur (`true`, non booléen) → 400 `field: "legacy"` ; le drapeau ne se pose jamais
+  par l'API. Contrôle post ≥ upload : ignoré si l'upload est hérité (inconnu).
