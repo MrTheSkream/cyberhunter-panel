@@ -36,6 +36,8 @@ export default function Users() {
   const [resettingPw, setResettingPw] = useState(false);
   const [reset2faTarget, setReset2faTarget] = useState<string | null>(null);
   const [resetting2fa, setResetting2fa] = useState(false);
+  const [impersonateTarget, setImpersonateTarget] = useState<string | null>(null);
+  const [impersonating, setImpersonating] = useState(false);
 
   const loadUsers = async () => {
     try {
@@ -165,7 +167,31 @@ export default function Users() {
     }
   };
 
+  // Log in as another account (admin only). The backend parks the admin's own
+  // cookie in `token_admin` and hands back a 1 h session for the target. The
+  // selected server is per-browser and the target may not own it, so it is
+  // dropped, and the full navigation reloads every context as the new identity.
+  const handleImpersonate = async (id: string) => {
+    setImpersonating(true);
+    setMessage({ text: "", type: "" });
+    try {
+      await api.post(`/users/${id}/impersonate`);
+      localStorage.removeItem("dp-active-server");
+      window.location.href = "/";
+    } catch (e) {
+      setImpersonateTarget(null);
+      setMessage({
+        text: e instanceof Error ? e.message : "Failed to log in as this user",
+        type: "error",
+      });
+      setImpersonating(false);
+    }
+  };
+
   const isSelf = (id: string) => authUser?.id === id;
+  // Mirrors the backend refusals: never yourself, another admin, or a suspended account.
+  const canImpersonate = (u: User) =>
+    !isSelf(u.id) && u.role !== "admin" && u.role !== "suspended" && !authUser?.impersonated_by;
 
   if (error) {
     return (
@@ -241,7 +267,7 @@ export default function Users() {
                 <th scope="col" className="text-left text-xs font-medium text-dark-200 uppercase font-mono tracking-widest px-5 py-3 w-28">Role</th>
                 <th scope="col" className="text-left text-xs font-medium text-dark-200 uppercase font-mono tracking-widest px-5 py-3 w-20">Sites</th>
                 <th scope="col" className="text-left text-xs font-medium text-dark-200 uppercase font-mono tracking-widest px-5 py-3 w-36">Created</th>
-                <th scope="col" className="text-right text-xs font-medium text-dark-200 uppercase font-mono tracking-widest px-5 py-3 w-44">Actions</th>
+                <th scope="col" className="text-right text-xs font-medium text-dark-200 uppercase font-mono tracking-widest px-5 py-3 w-56">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-dark-600">
@@ -289,7 +315,16 @@ export default function Users() {
                         <button onClick={() => setDeleteTarget(null)} className="px-2 py-1 bg-dark-600 text-dark-200 rounded text-xs">Cancel</button>
                       </div>
                     ) : (
-                      <div className="flex items-center justify-end gap-1">
+                      <div className="flex items-center justify-end gap-1 whitespace-nowrap">
+                        {canImpersonate(user) && (
+                          <button
+                            onClick={() => setImpersonateTarget(user.id)}
+                            className="px-2 py-1 text-xs whitespace-nowrap text-accent-400 bg-accent-500/10 hover:bg-accent-500/20 rounded transition-colors"
+                            title="Log in as this user"
+                          >
+                            Log in as
+                          </button>
+                        )}
                         {!isSelf(user.id) && (
                           <>
                             <button
@@ -344,6 +379,16 @@ export default function Users() {
                   </div>
                   <div className="flex items-center gap-2 shrink-0 ml-2">
                     <button onClick={() => { setEditTarget(user.id); setEditRole(user.role); }} className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${user.role === "admin" ? "bg-accent-600/15 text-accent-400" : user.role === "suspended" ? "bg-danger-500/15 text-danger-400" : "bg-accent-500/15 text-accent-400"}`}>{user.role}</button>
+                    {canImpersonate(user) && (
+                      <button
+                        onClick={() => setImpersonateTarget(user.id)}
+                        className="p-1.5 text-accent-400 hover:text-accent-300"
+                        title="Log in as this user"
+                        aria-label="Log in as this user"
+                      >
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0 0 13.5 3h-6a2.25 2.25 0 0 0-2.25 2.25v13.5A2.25 2.25 0 0 0 7.5 21h6a2.25 2.25 0 0 0 2.25-2.25V15M12 9l3 3m0 0-3 3m3-3H2.25" /></svg>
+                      </button>
+                    )}
                     {!isSelf(user.id) && (
                       <button
                         onClick={() => handleToggleSuspend(user)}
@@ -539,6 +584,50 @@ export default function Users() {
               >
                 {resettingPw && <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
                 {resettingPw ? "Resetting..." : "Reset Password"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Log in as dialog */}
+      {impersonateTarget && (
+        <div
+          className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 dp-modal-overlay"
+          role="dialog"
+          aria-labelledby="impersonate-title"
+          onKeyDown={(e) => {
+            if (e.key === "Escape" && !impersonating) setImpersonateTarget(null);
+          }}
+        >
+          <div className="bg-dark-800 rounded-lg shadow-xl p-6 w-[460px] dp-modal">
+            <h3 id="impersonate-title" className="text-xs font-medium text-dark-300 uppercase font-mono tracking-widest mb-4">
+              Log In As User
+            </h3>
+            <p className="text-sm text-dark-200 mb-3">
+              You are about to act as <span className="font-mono text-dark-50">{users.find(u => u.id === impersonateTarget)?.email}</span> for at most 1 hour. Everything is logged.
+            </p>
+            <p className="text-xs text-dark-300 mb-4">
+              You will see the panel exactly as this account does. Password, 2FA, passkeys, API keys,
+              session revocation and data exports are blocked during the session. Use "Return to my
+              account" in the banner (or Log out) to come back.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setImpersonateTarget(null)}
+                disabled={impersonating}
+                className="px-4 py-2 text-sm text-dark-300 border border-dark-600 rounded-lg hover:text-dark-100 hover:border-dark-400 transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleImpersonate(impersonateTarget)}
+                disabled={impersonating}
+                autoFocus
+                className="flex items-center gap-2 px-4 py-2 bg-rust-500 text-white rounded-lg text-sm font-medium hover:bg-rust-600 disabled:opacity-50"
+              >
+                {impersonating && <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
+                {impersonating ? "Switching..." : "Log in as"}
               </button>
             </div>
           </div>

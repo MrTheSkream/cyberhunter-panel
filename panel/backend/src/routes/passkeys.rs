@@ -363,6 +363,8 @@ pub async fn register_begin(
     AuthUser(claims): AuthUser,
     body: Option<Json<EnrolmentProof>>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    // "Login as user": would give the acting admin lasting control (D4).
+    crate::auth::deny_if_impersonating(&claims)?;
     purge_expired(&state.passkey_challenges);
 
     let user: User = sqlx::query_as("SELECT * FROM users WHERE id = $1")
@@ -475,6 +477,8 @@ pub async fn register_complete(
     AuthUser(claims): AuthUser,
     Json(body): Json<RegisterCompleteRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    // "Login as user": would give the acting admin lasting control (D4).
+    crate::auth::deny_if_impersonating(&claims)?;
     purge_expired(&state.passkey_challenges);
 
     let rp_id = get_rp_id_from_headers(&headers, &state)?;
@@ -1040,6 +1044,8 @@ pub async fn delete_passkey(
     AuthUser(claims): AuthUser,
     axum::extract::Path(id): axum::extract::Path<uuid::Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    // "Login as user": would give the acting admin lasting control (D4).
+    crate::auth::deny_if_impersonating(&claims)?;
     let result = sqlx::query("DELETE FROM passkeys WHERE id = $1 AND user_id = $2")
         .bind(id)
         .bind(claims.sub)
@@ -1072,6 +1078,8 @@ pub async fn rename_passkey(
     axum::extract::Path(id): axum::extract::Path<uuid::Uuid>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    // "Login as user": would give the acting admin lasting control (D4).
+    crate::auth::deny_if_impersonating(&claims)?;
     let name = body.get("name").and_then(|v| v.as_str()).unwrap_or("").trim();
     if name.is_empty() || name.len() > 255 {
         return Err(err(StatusCode::BAD_REQUEST, "Name must be 1-255 characters"));

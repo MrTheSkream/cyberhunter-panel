@@ -49,6 +49,8 @@ pub async fn create(
     headers: axum::http::HeaderMap,
     Json(body): Json<CreateKeyRequest>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
+    // "Login as user": would give the acting admin lasting control (D4).
+    crate::auth::deny_if_impersonating(&claims)?;
     let name = body.name.trim();
     if name.is_empty() || name.len() > 100 {
         return Err(err(StatusCode::BAD_REQUEST, "Name must be 1-100 characters"));
@@ -115,6 +117,8 @@ pub async fn revoke(
     headers: axum::http::HeaderMap,
     Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    // "Login as user": would give the acting admin lasting control (D4).
+    crate::auth::deny_if_impersonating(&claims)?;
     // Fetch key name before deleting for activity log
     let key_info: Option<(String,)> =
         sqlx::query_as("SELECT name FROM api_keys WHERE id = $1 AND user_id = $2")
@@ -160,6 +164,8 @@ pub async fn rotate(
     headers: axum::http::HeaderMap,
     Path(id): Path<Uuid>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
+    // "Login as user": would give the acting admin lasting control (D4).
+    crate::auth::deny_if_impersonating(&claims)?;
     // 1. Verify key exists and belongs to user, get name
     let key_info: Option<(String,)> =
         sqlx::query_as("SELECT name FROM api_keys WHERE id = $1 AND user_id = $2")

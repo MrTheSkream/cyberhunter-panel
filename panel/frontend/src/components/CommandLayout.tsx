@@ -1,4 +1,5 @@
 import { Navigate, Outlet, NavLink, Link, useNavigate } from "react-router-dom";
+import ImpersonationBanner from "./ImpersonationBanner";
 import { useLayoutState, badgeCount } from "../hooks/useLayoutState";
 import { useServer } from "../context/ServerContext";
 import { useBranding } from "../context/BrandingContext";
@@ -437,8 +438,10 @@ export default function CommandLayout() {
           </div>
         )}
 
-        {/* 2FA warning */}
-        {state.twoFaEnforced && !state.twoFaEnabled && (
+        <ImpersonationBanner />
+
+        {/* 2FA warning (not actionable while logged in as another user) */}
+        {state.twoFaEnforced && !state.twoFaEnabled && !state.impersonating && (
           <div className={`border-b px-4 py-3 flex items-center justify-between ${isLight ? "bg-warn-500/5 border-warn-500/20" : "bg-warn-500/10 border-warn-500/20"}`}>
             <div className="flex items-center gap-2">
               <svg className="w-5 h-5 text-warn-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>

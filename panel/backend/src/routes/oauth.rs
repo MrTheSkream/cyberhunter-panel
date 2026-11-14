@@ -584,6 +584,8 @@ pub async fn callback(
         exp: now + 7200, // 2 hours
         jti: Some(jti.clone()),
         key_id: None,
+        imp_by: None,
+        imp_email: None,
     };
 
     let token = jsonwebtoken::encode(

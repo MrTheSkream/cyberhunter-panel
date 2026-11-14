@@ -330,6 +330,10 @@ pub async fn list_secrets(
     // Read path: every key source, not just the one we would write with.
     let jwt = &state.config.jwt_secret;
     let reveal = params.reveal.unwrap_or(false);
+    if reveal {
+        // Plaintext secrets, same exposure as export_vault (D4).
+        crate::auth::deny_if_impersonating(&claims)?;
+    }
 
     let rows: Vec<SecretRow> = sqlx::query_as(
         "SELECT * FROM secrets WHERE vault_id = $1 ORDER BY key ASC"
@@ -633,6 +637,8 @@ pub async fn pull(
     AuthUser(claims): AuthUser,
     Path(vault_id): Path<Uuid>,
 ) -> Result<Json<Vec<serde_json::Value>>, ApiError> {
+    // Plaintext secrets, same exposure as export_vault (D4).
+    crate::auth::deny_if_impersonating(&claims)?;
     verify_vault(&state, vault_id, claims.sub).await?;
 
     let jwt = &state.config.jwt_secret;
@@ -660,6 +666,8 @@ pub async fn export_vault(
     AuthUser(claims): AuthUser,
     Path(vault_id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    // "Login as user": would give the acting admin lasting control (D4).
+    crate::auth::deny_if_impersonating(&claims)?;
     verify_vault(&state, vault_id, claims.sub).await?;
 
     let vault: SecretVault = sqlx::query_as("SELECT * FROM secret_vaults WHERE id = $1")

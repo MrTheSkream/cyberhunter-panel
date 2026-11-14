@@ -606,6 +606,7 @@ async fn main() {
 
     let app = Router::new()
         .merge(routes::router())
+        .layer(axum::middleware::from_fn_with_state(state.clone(), impersonation_context))
         .layer(cors)
         .layer(TimeoutLayer::with_status_code(axum::http::StatusCode::GATEWAY_TIMEOUT, Duration::from_secs(300)))
         .layer(TraceLayer::new_for_http())
@@ -642,6 +643,20 @@ async fn main() {
     tracing::info!("Database connection pool closed");
 
     tracing::info!("CyberHunter - Panel API shut down gracefully");
+}
+
+/// "Login as user" attribution: when the request's session JWT carries
+/// `imp_by`, run the whole request inside `activity::IMPERSONATOR` so every
+/// `log_activity*` / `audit_log` row it writes names the acting administrator,
+/// without any call site passing it. Signature and expiry are checked; the
+/// rest (blacklist, revocation) is left to the `AuthUser` extractor.
+async fn impersonation_context(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let who = routes::impersonation::impersonator_from_headers(&state.config.jwt_secret, req.headers());
+    services::activity::IMPERSONATOR.scope(who, next.run(req)).await
 }
 
 /// Hard bound on the drain phase after a shutdown signal fires: a 78% cut from

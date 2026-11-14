@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, type ReactNode } from "react";
 import { api, ApiError } from "../api";
+import { useAuth } from "../context/AuthContext";
 
 /**
  * The self-service half of an account: the things a person changes about
@@ -36,6 +37,8 @@ interface ApiKey {
 
 interface Session {
   id: string;
+  /// Set when this session was opened by an admin with "Log in as".
+  impersonator_email?: string | null;
   ip_address: string | null;
   user_agent: string | null;
   created_at: string;
@@ -56,7 +59,27 @@ type Msg = { text: string; type: string };
 
 const HEADING = "text-xs font-medium text-dark-300 uppercase font-mono tracking-widest";
 
-function Card({ title, hint, action, children }: { title: string; hint?: string; action?: ReactNode; children: ReactNode }) {
+const IMPERSONATION_LOCKED = "Not available while logged in as another user";
+
+/**
+ * True while an admin is logged in as this account. The backend refuses every
+ * change these cards make in that mode (403 `impersonation_forbidden`): each
+ * one would leave the admin a lasting door into the account, or touch its
+ * security. The cards say so up front instead of failing on click.
+ */
+function useImpersonating() {
+  return !!useAuth().user?.impersonated_by;
+}
+
+function LockedNotice() {
+  return (
+    <div className="px-5 py-2 border-b border-dark-600 bg-warn-500/10 text-xs text-warn-400">
+      {IMPERSONATION_LOCKED}
+    </div>
+  );
+}
+
+function Card({ title, hint, action, locked, children }: { title: string; hint?: string; action?: ReactNode; locked?: boolean; children: ReactNode }) {
   return (
     <div className="bg-dark-800 rounded-lg border border-dark-500 overflow-hidden">
       <div className={`px-5 py-3 border-b border-dark-600 ${action ? "flex justify-between items-center" : ""}`}>
@@ -64,9 +87,15 @@ function Card({ title, hint, action, children }: { title: string; hint?: string;
           <h3 className={HEADING}>{title}</h3>
           {hint && <p className="text-xs text-dark-200 mt-0.5">{hint}</p>}
         </div>
-        {action}
+        {action && (locked ? <fieldset disabled className="opacity-50 min-w-0">{action}</fieldset> : action)}
       </div>
-      {children}
+      {locked ? (
+        <>
+          <LockedNotice />
+          {/* A disabled fieldset disables every control inside it at once. */}
+          <fieldset disabled className="opacity-50 min-w-0">{children}</fieldset>
+        </>
+      ) : children}
     </div>
   );
 }
@@ -111,6 +140,7 @@ const codeReady = (v: string) => v.length === 6 || v.length === 8 || v.length ==
 // ── Two-Factor Authentication ────────────────────────────────────────────
 
 export function TwoFactorCard() {
+  const locked = useImpersonating();
   const [enabled, setEnabled] = useState(false);
   const [setup, setSetup] = useState<{ secret: string; qr_svg: string } | null>(null);
   const [code, setCode] = useState("");
@@ -150,7 +180,7 @@ export function TwoFactorCard() {
   }, [setup?.qr_svg]);
 
   return (
-    <Card title="Two-Factor Authentication" hint="Add an extra layer of security to your account">
+    <Card locked={locked} title="Two-Factor Authentication" hint="Add an extra layer of security to your account">
       <div className="p-5 space-y-3">
         <Banner msg={msg} />
         {enabled ? (
@@ -337,6 +367,7 @@ export function TwoFactorCard() {
 // ── Passkeys / WebAuthn ──────────────────────────────────────────────────
 
 export function PasskeysCard() {
+  const locked = useImpersonating();
   const [passkeys, setPasskeys] = useState<Passkey[]>([]);
   const [loading, setLoading] = useState(false);
   const [name, setName] = useState("My Passkey");
@@ -369,7 +400,7 @@ export function PasskeysCard() {
   };
 
   return (
-    <Card title="Passkeys" hint="Passwordless sign-in with biometrics or security keys">
+    <Card locked={locked} title="Passkeys" hint="Passwordless sign-in with biometrics or security keys">
       <div className="p-5 space-y-3">
         <Banner msg={msg} />
         {!supported ? (
@@ -614,13 +645,14 @@ export function PasskeysCard() {
 // ── Change Password ──────────────────────────────────────────────────────
 
 export function ChangePasswordCard() {
+  const locked = useImpersonating();
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [confirm, setConfirm] = useState("");
   const [msg, setMsg] = useState<Msg>({ text: "", type: "" });
 
   return (
-    <Card title="Change Password">
+    <Card locked={locked} title="Change Password">
       <div className="p-5 space-y-3">
         <Banner msg={msg} />
         <input type="password" value={current} onChange={e => setCurrent(e.target.value)} placeholder="Current password"
@@ -652,6 +684,7 @@ export function ChangePasswordCard() {
  * rather than riding along into a client's account.
  */
 export function SessionsCard() {
+  const locked = useImpersonating();
   const [sessions, setSessions] = useState<Session[]>([]);
   const [pending, setPending] = useState<Session | null>(null);
   const [msg, setMsg] = useState<Msg>({ text: "", type: "" });
@@ -664,6 +697,7 @@ export function SessionsCard() {
 
   return (
     <Card title="Sessions" hint="Devices currently signed in to your account">
+      {locked && <LockedNotice />}
       {(msg.text || pending) && (
         <div className="px-5 pt-4 space-y-3">
           <Banner msg={msg} />
@@ -698,6 +732,14 @@ export function SessionsCard() {
                     This device
                   </span>
                 )}
+                {s.impersonator_email && (
+                  <span
+                    className="px-1.5 py-0.5 bg-warn-500/10 text-warn-400 rounded text-[10px] font-medium tracking-wider"
+                    title="Opened by an administrator with Log in as"
+                  >
+                    Admin {s.impersonator_email}
+                  </span>
+                )}
               </p>
               <p className="text-xs text-dark-300 mt-0.5 truncate" title={s.user_agent || ""}>
                 {s.user_agent || "unknown client"}
@@ -709,7 +751,9 @@ export function SessionsCard() {
             {!s.is_current && (
               <button
                 onClick={() => setPending(s)}
-                className="shrink-0 px-3 py-1.5 bg-danger-500/10 text-danger-400 rounded text-xs font-medium hover:bg-danger-500/20"
+                disabled={locked}
+                title={locked ? IMPERSONATION_LOCKED : undefined}
+                className="shrink-0 px-3 py-1.5 bg-danger-500/10 text-danger-400 rounded text-xs font-medium hover:bg-danger-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Revoke
               </button>
@@ -724,6 +768,7 @@ export function SessionsCard() {
 // ── API Keys ─────────────────────────────────────────────────────────────
 
 export function ApiKeysCard() {
+  const locked = useImpersonating();
   const [keys, setKeys] = useState<ApiKey[]>([]);
   const [showNew, setShowNew] = useState(false);
   const [newName, setNewName] = useState("");
@@ -736,6 +781,7 @@ export function ApiKeysCard() {
 
   return (
     <Card
+      locked={locked}
       title="API Keys"
       action={
         <button onClick={() => setShowNew(!showNew)} className="text-xs text-rust-400 hover:text-rust-300">
@@ -815,10 +861,11 @@ export function ApiKeysCard() {
 // ── Export my data ───────────────────────────────────────────────────────
 
 export function ExportMyDataCard() {
+  const locked = useImpersonating();
   const [msg, setMsg] = useState<Msg>({ text: "", type: "" });
 
   return (
-    <Card title="My Data">
+    <Card locked={locked} title="My Data">
       <div className="p-5 space-y-3">
         <Banner msg={msg} />
         <div className="flex items-center justify-between gap-4">

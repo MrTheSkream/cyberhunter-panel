@@ -36,6 +36,10 @@ pub struct ActivityLog {
     /// Resolved from the join, so the operator reads a name rather than a UUID.
     /// NULL when the server row has since been deleted.
     pub server_name: Option<String>,
+    /// The administrator who performed this action while logged in as
+    /// `user_email` ("login as user"); NULL for an ordinary action. The page
+    /// renders "{impersonator_email} as {user_email}".
+    pub impersonator_email: Option<String>,
 }
 
 /// The audit feed's columns, with the host resolved to its name.
@@ -44,7 +48,8 @@ pub struct ActivityLog {
 /// on `activity_logs`, and because a `*` here would silently start shipping any
 /// column a future migration adds to the table.
 const ACTIVITY_COLUMNS: &str = "a.id, a.user_id, a.user_email, a.action, a.target_type, \
-     a.target_name, a.details, a.ip_address, a.created_at, a.server_id, s.name AS server_name \
+     a.target_name, a.details, a.ip_address, a.created_at, a.server_id, s.name AS server_name, \
+     a.impersonator_email \
      FROM activity_logs a LEFT JOIN servers s ON s.id = a.server_id";
 
 /// GET /api/activity - List activity logs (admin only).

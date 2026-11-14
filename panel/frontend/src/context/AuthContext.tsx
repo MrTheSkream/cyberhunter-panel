@@ -6,6 +6,10 @@ interface User {
   id: string;
   email: string;
   role: string;
+  /// Set when an admin is logged in as this account (from `GET /auth/me`).
+  impersonated_by?: { id: string; email: string } | null;
+  /// Unix seconds at which the "log in as" session ends.
+  impersonation_expires_at?: number | null;
 }
 
 interface TwoFaChallenge {
@@ -17,6 +21,7 @@ interface AuthContextType {
   login: (email: string, password: string) => Promise<TwoFaChallenge | null>;
   verify2fa: (tempToken: string, code: string) => Promise<void>;
   logout: () => void;
+  stopImpersonation: () => Promise<void>;
   loading: boolean;
 }
 
@@ -66,7 +71,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(data.user);
   };
 
+  // Ends a "log in as" session. The backend blacklists the borrowed session and
+  // restores the admin's own cookie when it is still valid (`restored`). Either
+  // way the selected server is dropped and the page fully reloads, so every
+  // context starts over as the right identity.
+  const stopImpersonation = async () => {
+    let restored = false;
+    try {
+      const data = await api.post<{ restored?: boolean }>("/auth/impersonate/stop");
+      restored = data.restored === true;
+    } catch (e) {
+      logger.error("Stop impersonation error:", e);
+    }
+    localStorage.removeItem("dp-active-server");
+    window.location.href = restored ? "/" : "/login";
+  };
+
   const logout = () => {
+    // Logging out while logged in as someone else returns to the admin account
+    // (the backend treats both the same way); there is only one path for it.
+    if (user?.impersonated_by) {
+      void stopImpersonation();
+      return;
+    }
     api.post("/auth/logout").catch((e) => logger.error("Logout error:", e));
     // The selected server is per-BROWSER, not per-account, and the next account
     // to sign in here may not own it - a client owns no `servers` row at all, so
@@ -78,7 +105,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, login, verify2fa, logout, loading }}>
+    <AuthContext.Provider value={{ user, login, verify2fa, logout, stopImpersonation, loading }}>
       {children}
     </AuthContext.Provider>
   );

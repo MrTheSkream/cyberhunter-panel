@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import ImpersonationBanner from "./ImpersonationBanner";
 import { Navigate, Outlet, NavLink, Link, useLocation } from "react-router-dom";
 import { useLayoutState, badgeCount } from "../hooks/useLayoutState";
 import { useServer } from "../context/ServerContext";
@@ -20,6 +21,7 @@ export default function AtlasLayout() {
     canSeeHealth,
     twoFaEnforced,
     twoFaEnabled,
+    impersonating,
     sidebarOpen,
     setSidebarOpen,
     visibleGroups,
@@ -317,8 +319,10 @@ export default function AtlasLayout() {
         </nav>
       </div>
 
+      <ImpersonationBanner />
+
       {/* ── 2FA Warning ────────────────────────────────────────────────── */}
-      {twoFaEnforced && !twoFaEnabled && (
+      {twoFaEnforced && !twoFaEnabled && !impersonating && (
         <div className={`border-b px-4 py-3 flex items-center justify-between ${isLight ? "bg-warn-500/5 border-warn-500/20" : "bg-warn-500/10 border-warn-500/20"}`}>
           <div className="flex items-center gap-2">
             <svg

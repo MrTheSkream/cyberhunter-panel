@@ -124,6 +124,8 @@ pub async fn create(
     AuthUser(claims): AuthUser,
     Json(body): Json<CreateTeam>,
 ) -> Result<(StatusCode, Json<Team>), ApiError> {
+    // "Login as user": team membership outlives the session (D4).
+    crate::auth::deny_if_impersonating(&claims)?;
     let name = body.name.trim();
     if name.is_empty() || name.len() > 100 {
         return Err(err(StatusCode::BAD_REQUEST, "Name must be 1-100 characters"));
@@ -180,6 +182,8 @@ pub async fn remove(
     Path(id): Path<Uuid>,
     headers: axum::http::HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    // "Login as user": team membership outlives the session (D4).
+    crate::auth::deny_if_impersonating(&claims)?;
     let team: Option<Team> = sqlx::query_as(
         "SELECT * FROM teams WHERE id = $1 AND owner_id = $2",
     )
@@ -219,6 +223,8 @@ pub async fn invite(
     Path(team_id): Path<Uuid>,
     Json(body): Json<InviteRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    // "Login as user": team membership outlives the session (D4).
+    crate::auth::deny_if_impersonating(&claims)?;
     // Verify caller is owner or admin of this team
     let member_role = get_member_role(&state, team_id, claims.sub).await?;
     if member_role != "owner" && member_role != "admin" {
@@ -325,6 +331,8 @@ pub async fn accept_invite(
     AuthUser(claims): AuthUser,
     Json(body): Json<AcceptInvite>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    // "Login as user": would give the acting admin lasting control (D4).
+    crate::auth::deny_if_impersonating(&claims)?;
     let token_hash = crate::routes::auth::hash_token(&body.token);
 
     let invite: Option<(Uuid, Uuid, String, String)> = sqlx::query_as(
@@ -390,6 +398,8 @@ pub async fn update_member(
     Path((team_id, member_id)): Path<(Uuid, Uuid)>,
     Json(body): Json<UpdateRole>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    // "Login as user": team membership outlives the session (D4).
+    crate::auth::deny_if_impersonating(&claims)?;
     let caller_role = get_member_role(&state, team_id, claims.sub).await?;
     if caller_role != "owner" && caller_role != "admin" {
         return Err(err(StatusCode::FORBIDDEN, "Insufficient permissions"));
@@ -430,6 +440,8 @@ pub async fn remove_member(
     AuthUser(claims): AuthUser,
     Path((team_id, member_id)): Path<(Uuid, Uuid)>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    // "Login as user": team membership outlives the session (D4).
+    crate::auth::deny_if_impersonating(&claims)?;
     let caller_role = get_member_role(&state, team_id, claims.sub).await?;
     if caller_role != "owner" && caller_role != "admin" {
         return Err(err(StatusCode::FORBIDDEN, "Insufficient permissions"));

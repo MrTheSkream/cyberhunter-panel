@@ -5,6 +5,8 @@ import { timeAgo } from "../utils/format";
 interface ActivityEntry {
   id: string;
   user_email: string;
+  // Set when the action was taken by an admin logged in as `user_email`.
+  impersonator_email?: string | null;
   action: string;
   target_type: string | null;
   target_name: string | null;
@@ -17,6 +19,10 @@ interface ActivityEntry {
   server_id: string | null;
   server_name: string | null;
 }
+
+// "admin@y as client@x" when an admin acted through Log in as.
+const actorLabel = (e: ActivityEntry) =>
+  e.impersonator_email ? `${e.impersonator_email} as ${e.user_email}` : e.user_email;
 
 function actionBadge(action: string): { bg: string; text: string } {
   const lower = action.toLowerCase();
@@ -156,7 +162,7 @@ export default function AuditLogContent() {
                       <td className="px-5 py-3">
                         <div className="flex items-center gap-2">
                           <div className="w-6 h-6 rounded-full bg-rust-500/15 text-rust-500 flex items-center justify-center text-xs font-medium shrink-0">{entry.user_email?.[0]?.toUpperCase() || "?"}</div>
-                          <span className="text-sm text-dark-50 truncate max-w-[180px] font-mono">{entry.user_email}</span>
+                          <span className="text-sm text-dark-50 truncate max-w-[260px] font-mono" title={actorLabel(entry)}>{actorLabel(entry)}</span>
                         </div>
                       </td>
                       <td className="px-5 py-3">
@@ -197,7 +203,7 @@ export default function AuditLogContent() {
                     </div>
                     <div className="flex items-center gap-2">
                       <div className="w-5 h-5 rounded-full bg-rust-500/15 text-rust-500 flex items-center justify-center text-[10px] font-medium shrink-0">{entry.user_email?.[0]?.toUpperCase() || "?"}</div>
-                      <span className="text-xs text-dark-200 font-mono truncate">{entry.user_email}</span>
+                      <span className="text-xs text-dark-200 font-mono truncate">{actorLabel(entry)}</span>
                     </div>
                     {(entry.target_name || entry.details) && (
                       <div className="text-xs text-dark-300 font-mono truncate">

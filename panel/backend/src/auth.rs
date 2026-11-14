@@ -44,6 +44,75 @@ pub struct Claims {
     /// field existed still decode). See `log_activity`/`audit_log` call sites.
     #[serde(default)]
     pub key_id: Option<Uuid>,
+    /// Set when an administrator is acting as this user ("login as user",
+    /// `routes/impersonation.rs`): the admin's `users.id`. `sub`/`email`/`role`
+    /// are the impersonated user's, so every ownership check sees exactly what
+    /// that user sees. `None` on every ordinary session (`#[serde(default)]`
+    /// so tokens issued before this field existed still decode).
+    #[serde(default)]
+    pub imp_by: Option<Uuid>,
+    /// The acting administrator's email, for display and the audit trail.
+    #[serde(default)]
+    pub imp_email: Option<String>,
+}
+
+/// Refuse an action that would give an administrator acting as another user
+/// lasting access to, or control over the security of, that account (feature 3,
+/// decision D4): password, 2FA, passkeys, API keys, session revocation, data
+/// exports, team invitations. Call it first thing in the handler.
+pub fn deny_if_impersonating(claims: &Claims) -> Result<(), ApiError> {
+    if claims.imp_by.is_some() {
+        return Err(err_coded(
+            StatusCode::FORBIDDEN,
+            "Not available while logged in as another user",
+            crate::error::CODE_IMPERSONATION_FORBIDDEN,
+        ));
+    }
+    Ok(())
+}
+
+/// The value of cookie `name` in the request's `Cookie` header(s), if any.
+///
+/// Exact name match: `token_admin=` is not `token=`.
+pub fn read_cookie(headers: &axum::http::HeaderMap, name: &str) -> Option<String> {
+    let prefix = format!("{name}=");
+    headers
+        .get_all(header::COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|cookies| cookies.split(';'))
+        .find_map(|s| s.trim().strip_prefix(prefix.as_str()).map(|v| v.to_string()))
+}
+
+/// The `Authorization: Bearer` value, if any.
+pub fn bearer_token(headers: &axum::http::HeaderMap) -> Option<String> {
+    headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(|t| t.to_string())
+}
+
+/// The session JWT the request presents, with the same precedence as
+/// `AuthUser`: a Bearer token first, then the `token` cookie. A `dp_` API key
+/// is not a JWT and yields `None` (it is never an impersonation session).
+pub fn session_jwt_from_headers(headers: &axum::http::HeaderMap) -> Option<String> {
+    match bearer_token(headers) {
+        Some(b) if b.starts_with("dp_") => None,
+        Some(b) => Some(b),
+        None => read_cookie(headers, "token"),
+    }
+}
+
+/// Decode a session JWT, checking signature and expiry only (no blacklist, no
+/// revocation - that is `AuthUser`'s job). `None` if it does not verify.
+pub fn decode_session_jwt(secret: &str, token: &str) -> Option<Claims> {
+    let mut validation = Validation::new(jsonwebtoken::Algorithm::HS256);
+    validation.validate_exp = true;
+    validation.leeway = 0;
+    decode::<Claims>(token, &DecodingKey::from_secret(secret.as_bytes()), &validation)
+        .ok()
+        .map(|d| d.claims)
 }
 
 /// JWT extractor - reads token from Authorization header or `token` cookie.
@@ -224,6 +293,9 @@ async fn authenticate_api_key(state: &AppState, key: &str) -> Result<Claims, Api
         exp: now + 315_360_000, // ~10 years
         iat: now,
         jti: None,
+        // An API key is never an impersonation session.
+        imp_by: None,
+        imp_email: None,
     })
 }
 
@@ -475,5 +547,78 @@ mod session_marker_tests {
         let e = err(StatusCode::UNAUTHORIZED, "Invalid token");
         assert_eq!(e.0, StatusCode::UNAUTHORIZED);
         assert!(body(&e).get("code").is_none());
+    }
+}
+
+#[cfg(test)]
+mod impersonation_helper_tests {
+    use super::*;
+    use axum::http::{HeaderMap, HeaderValue};
+
+    fn claims(imp_by: Option<Uuid>) -> Claims {
+        Claims {
+            sub: Uuid::new_v4(),
+            email: "client@example.com".into(),
+            role: "user".into(),
+            exp: 2_000_000_000,
+            iat: 1_000_000_000,
+            jti: Some("j".into()),
+            key_id: None,
+            imp_by,
+            imp_email: imp_by.map(|_| "admin@example.com".to_string()),
+        }
+    }
+
+    #[test]
+    fn deny_passes_an_ordinary_session() {
+        assert!(deny_if_impersonating(&claims(None)).is_ok());
+    }
+
+    #[test]
+    fn deny_refuses_an_impersonation_session_with_the_contract_body() {
+        let e = deny_if_impersonating(&claims(Some(Uuid::new_v4()))).unwrap_err();
+        assert_eq!(e.0, StatusCode::FORBIDDEN);
+        assert_eq!(e.1 .0["code"], "impersonation_forbidden");
+        assert_eq!(e.1 .0["error"], "Not available while logged in as another user");
+    }
+
+    #[test]
+    fn claims_without_the_new_fields_still_decode() {
+        let json = r#"{"sub":"00000000-0000-0000-0000-000000000001","email":"a@b","role":"admin","exp":1,"iat":1}"#;
+        let c: Claims = serde_json::from_str(json).unwrap();
+        assert!(c.imp_by.is_none() && c.imp_email.is_none());
+    }
+
+    #[test]
+    fn read_cookie_matches_the_exact_name() {
+        let mut h = HeaderMap::new();
+        h.insert(header::COOKIE, HeaderValue::from_static("token_admin=AAA; token=BBB"));
+        assert_eq!(read_cookie(&h, "token").as_deref(), Some("BBB"));
+        assert_eq!(read_cookie(&h, "token_admin").as_deref(), Some("AAA"));
+        assert_eq!(read_cookie(&h, "missing"), None);
+    }
+
+    #[test]
+    fn session_jwt_prefers_bearer_and_ignores_api_keys() {
+        let mut h = HeaderMap::new();
+        h.insert(header::COOKIE, HeaderValue::from_static("token=COOKIE"));
+        assert_eq!(session_jwt_from_headers(&h).as_deref(), Some("COOKIE"));
+        h.insert(header::AUTHORIZATION, HeaderValue::from_static("Bearer JWT"));
+        assert_eq!(session_jwt_from_headers(&h).as_deref(), Some("JWT"));
+        h.insert(header::AUTHORIZATION, HeaderValue::from_static("Bearer dp_abc"));
+        assert_eq!(session_jwt_from_headers(&h), None);
+    }
+
+    #[test]
+    fn decode_session_jwt_checks_the_signature() {
+        let c = claims(Some(Uuid::new_v4()));
+        let tok = jsonwebtoken::encode(
+            &jsonwebtoken::Header::default(),
+            &c,
+            &jsonwebtoken::EncodingKey::from_secret(b"secret-one"),
+        )
+        .unwrap();
+        assert_eq!(decode_session_jwt("secret-one", &tok).unwrap().imp_by, c.imp_by);
+        assert!(decode_session_jwt("secret-two", &tok).is_none());
     }
 }

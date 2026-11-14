@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import ImpersonationBanner from "./ImpersonationBanner";
 import { Navigate, Outlet, NavLink, Link } from "react-router-dom";
 import { useLayoutState, badgeCount } from "../hooks/useLayoutState";
 import { useServer } from "../context/ServerContext";
@@ -20,6 +21,7 @@ export default function GlassLayout() {
     canSeeHealth,
     twoFaEnforced,
     twoFaEnabled,
+    impersonating,
     sidebarOpen,
     setSidebarOpen,
     visibleGroups,
@@ -399,8 +401,12 @@ export default function GlassLayout() {
 
       {/* ── Main content ───────────────────────────────────────────── */}
       <main id="main-content" className="flex-1 overflow-auto">
+        {/* Impersonation banner + mobile header share one sticky container so
+            they stack instead of both pinning to top-0 */}
+        <div className="sticky top-0 z-30">
+        <ImpersonationBanner />
         {/* Mobile header with hamburger */}
-        <div className="sticky top-0 z-30 flex items-center gap-3 px-4 py-3 bg-dark-900/80 backdrop-blur-lg border-b border-dark-600/30 md:hidden">
+        <div className="flex items-center gap-3 px-4 py-3 bg-dark-900/80 backdrop-blur-lg border-b border-dark-600/30 md:hidden">
           <button
             onClick={() => setSidebarOpen(true)}
             className="p-2 text-dark-300 hover:text-dark-50 hover:bg-dark-700/30 rounded-lg"
@@ -414,8 +420,10 @@ export default function GlassLayout() {
           </span>
         </div>
 
-        {/* 2FA enforcement warning */}
-        {twoFaEnforced && !twoFaEnabled && (
+        </div>
+
+        {/* 2FA enforcement warning (not actionable while logged in as another user) */}
+        {twoFaEnforced && !twoFaEnabled && !impersonating && (
           <div className={`border-b px-4 py-3 flex items-center justify-between ${isLight ? "bg-warn-500/5 border-warn-500/20" : "bg-warn-500/10 border-warn-500/20"}`}>
             <div className="flex items-center gap-2">
               <svg

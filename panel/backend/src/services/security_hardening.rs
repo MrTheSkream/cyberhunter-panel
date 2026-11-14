@@ -101,11 +101,15 @@ pub async fn audit_log(
         (Some(g.country.as_str()), Some(g.city.as_str()), Some(g.isp.as_str()))
     }).unwrap_or((None, None, None));
 
+    // "login as user": the admin acting as `actor_email`, from the request's
+    // task-local (services::activity::IMPERSONATOR) - no call site passes it.
+    let impersonator_email = crate::services::activity::current_impersonator().map(|(_, e)| e);
+
     if let Err(e) = sqlx::query(
         "INSERT INTO security_audit_log \
          (event_type, actor_email, actor_ip, target_type, target_name, details, \
-          geo_country, geo_city, geo_isp, severity, api_key_id) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"
+          geo_country, geo_city, geo_isp, severity, api_key_id, impersonator_email) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)"
     )
     .bind(event_type)
     .bind(actor_email)
@@ -118,6 +122,7 @@ pub async fn audit_log(
     .bind(isp)
     .bind(severity)
     .bind(api_key_id)
+    .bind(impersonator_email)
     .execute(pool)
     .await {
         tracing::warn!("Failed to write security audit log: {e}");

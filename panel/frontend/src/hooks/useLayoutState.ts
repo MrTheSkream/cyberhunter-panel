@@ -84,6 +84,8 @@ export interface LayoutState {
   canSeeHealth: boolean;
   twoFaEnforced: boolean;
   twoFaEnabled: boolean;
+  /// An admin is logged in as this account ("Log in as").
+  impersonating: boolean;
   sidebarOpen: boolean;
   setSidebarOpen: (v: boolean) => void;
   visibleGroups: NavGroup[];
@@ -250,6 +252,7 @@ export function useLayoutState(): LayoutState {
     canSeeHealth: !!isAdmin,
     twoFaEnforced,
     twoFaEnabled,
+    impersonating: !!user?.impersonated_by,
     sidebarOpen,
     setSidebarOpen,
     visibleGroups,

@@ -52,6 +52,7 @@ pub mod iac;
 pub mod image_scans;
 pub mod sboms;
 pub mod passkeys;
+pub mod impersonation;
 pub mod php_settings;
 pub mod prometheus;
 pub mod webhook_gateway;
@@ -1086,6 +1087,8 @@ pub fn router() -> Router<AppState> {
         .route("/api/auth/reset-password", post(auth::reset_password))
         .route("/api/auth/change-password", post(auth::change_password))
         .route("/api/auth/revoke-all", post(auth::revoke_all_sessions))
+        // Login as user: return to the admin's own session
+        .route("/api/auth/impersonate/stop", post(impersonation::stop))
         // Session management
         .route("/api/auth/sessions", get(auth::list_sessions))
         .route("/api/auth/sessions/{id}", delete(auth::revoke_session))
@@ -1115,6 +1118,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/users/{id}/toggle-suspend", post(users::toggle_suspend))
         .route("/api/users/{id}/reset-password", post(users::reset_password))
         .route("/api/users/{id}/reset-2fa", post(users::reset_2fa))
+        .route("/api/users/{id}/impersonate", post(impersonation::start))
         // Sites
         .route("/api/sites", get(sites::list).post(sites::create))
         // Read-only, admin-only, and the ONLY site read that looks past

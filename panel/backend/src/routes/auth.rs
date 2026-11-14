@@ -368,7 +368,9 @@ pub async fn login(
         let ip_clone = ip.clone();
         let email_clone = user.email.clone();
         let pool = state.db.clone();
-        tokio::spawn(async move {
+        // A spawned task loses the request's task-local; carry it across.
+        let impersonator = activity::current_impersonator();
+        tokio::spawn(activity::IMPERSONATOR.scope(impersonator, async move {
             // Check if lockdown is active (Feature 9)
             if security_hardening::is_locked_down(&pool).await {
                 // During lockdown, log but don't block admin logins
@@ -422,7 +424,7 @@ pub async fn login(
                     }
                 }
             }
-        });
+        }));
     }
 
     // Check if 2FA is enforced
@@ -546,6 +548,8 @@ pub fn issue_session_pub(
         exp: (now + chrono::Duration::hours(2)).timestamp() as usize,
         jti: Some(jti.clone()),
         key_id: None,
+        imp_by: None,
+        imp_email: None,
     };
 
     let token = encode(
@@ -578,9 +582,13 @@ fn record_login_attempt(
 /// still-valid token, because `AuthUser` authorizes from the stateless JWT and never
 /// reads `user_sessions`. Used by every admin-initiated de-escalation (suspend /
 /// role change / password reset / delete); mirrors the self-service reset_password path.
+///
+/// Also reaches the sessions this user opened AS someone else ("login as user",
+/// `impersonator_id`): an admin who is suspended, demoted or deleted loses
+/// those too, not only the sessions in their own name.
 pub async fn revoke_all_user_sessions(state: &AppState, user_id: uuid::Uuid) {
     let sessions: Vec<(String,)> = sqlx::query_as(
-        "DELETE FROM user_sessions WHERE user_id = $1 RETURNING jti",
+        "DELETE FROM user_sessions WHERE user_id = $1 OR impersonator_id = $1 RETURNING jti",
     )
     .bind(user_id)
     .fetch_all(&state.db)
@@ -607,11 +615,23 @@ pub async fn revoke_all_user_sessions(state: &AppState, user_id: uuid::Uuid) {
 }
 
 /// POST /api/auth/logout - Clear the auth cookie and blacklist the token JTI.
+///
+/// During a "login as user" session this is the same as
+/// `POST /api/auth/impersonate/stop` (same handling, same `{"restored"}` body).
 pub async fn logout(
     State(state): State<AppState>,
     headers: HeaderMap,
     auth: Result<AuthUser, crate::error::ApiError>,
-) -> (StatusCode, [(header::HeaderName, String); 1], Json<serde_json::Value>) {
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    if let Ok(AuthUser(ref claims)) = auth {
+        if let Some(imp_by) = claims.imp_by {
+            return crate::routes::impersonation::end_impersonation(&state, claims, imp_by, &headers)
+                .await;
+        }
+    }
+
     // Blacklist the token's JTI so it cannot be reused
     if let Ok(AuthUser(claims)) = auth {
         if let Some(jti) = claims.jti {
@@ -636,14 +656,24 @@ pub async fn logout(
         [(header::SET_COOKIE, cookie)],
         Json(serde_json::json!({ "ok": true })),
     )
+        .into_response()
 }
 
 /// GET /api/auth/me - Return current authenticated user.
+///
+/// `impersonated_by` / `impersonation_expires_at` are non-null only while an
+/// administrator is acting as this user ("login as user").
 pub async fn me(AuthUser(claims): AuthUser) -> Json<serde_json::Value> {
+    let impersonated_by = claims.imp_by.map(|id| {
+        serde_json::json!({ "id": id, "email": claims.imp_email.clone().unwrap_or_default() })
+    });
+    let impersonation_expires_at = claims.imp_by.map(|_| claims.exp);
     Json(serde_json::json!({
         "id": claims.sub,
         "email": claims.email,
         "role": claims.role,
+        "impersonated_by": impersonated_by,
+        "impersonation_expires_at": impersonation_expires_at,
     }))
 }
 
@@ -1354,6 +1384,8 @@ pub async fn twofa_setup(
     AuthUser(claims): AuthUser,
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    // "Login as user": would give the acting admin lasting control (D4).
+    crate::auth::deny_if_impersonating(&claims)?;
     // Check if already enabled
     let user: User = sqlx::query_as("SELECT * FROM users WHERE id = $1")
         .bind(claims.sub)
@@ -1420,6 +1452,8 @@ pub async fn twofa_enable(
     headers: HeaderMap,
     Json(body): Json<TwoFaVerifyRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    // "Login as user": would give the acting admin lasting control (D4).
+    crate::auth::deny_if_impersonating(&claims)?;
     let user: User = sqlx::query_as("SELECT * FROM users WHERE id = $1")
         .bind(claims.sub)
         .fetch_one(&state.db)
@@ -1663,6 +1697,8 @@ pub async fn twofa_disable(
     headers: HeaderMap,
     Json(body): Json<TwoFaDisableRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    // "Login as user": would give the acting admin lasting control (D4).
+    crate::auth::deny_if_impersonating(&claims)?;
     let user: User = sqlx::query_as("SELECT * FROM users WHERE id = $1")
         .bind(claims.sub)
         .fetch_one(&state.db)
@@ -1763,6 +1799,8 @@ pub async fn twofa_regenerate_recovery_codes(
     headers: HeaderMap,
     Json(body): Json<TwoFaRegenerateRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    // "Login as user": would give the acting admin lasting control (D4).
+    crate::auth::deny_if_impersonating(&claims)?;
     let user: User = sqlx::query_as("SELECT * FROM users WHERE id = $1")
         .bind(claims.sub)
         .fetch_one(&state.db)
@@ -1894,6 +1932,8 @@ pub async fn change_password(
     headers: HeaderMap,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    // "Login as user": would give the acting admin lasting control (D4).
+    crate::auth::deny_if_impersonating(&claims)?;
     let current = body.get("current_password").and_then(|v| v.as_str())
         .ok_or_else(|| err(StatusCode::BAD_REQUEST, "Current password required"))?;
     let new_pass = body.get("new_password").and_then(|v| v.as_str())
@@ -2026,9 +2066,14 @@ pub async fn list_sessions(
         Option<String>,
         chrono::DateTime<chrono::Utc>,
         chrono::DateTime<chrono::Utc>,
+        Option<String>,
     )> = sqlx::query_as(
-        "SELECT id, jti, ip_address, user_agent, created_at, last_seen_at \
-         FROM user_sessions WHERE user_id = $1 ORDER BY last_seen_at DESC",
+        // `impersonator_email`: the admin who opened this session AS the user
+        // ("login as user"), shown as "Admin x" in the list (decision D2).
+        "SELECT s.id, s.jti, s.ip_address, s.user_agent, s.created_at, s.last_seen_at, \
+                imp.email AS impersonator_email \
+         FROM user_sessions s LEFT JOIN users imp ON imp.id = s.impersonator_id \
+         WHERE s.user_id = $1 ORDER BY s.last_seen_at DESC",
     )
     .bind(claims.sub)
     .fetch_all(&state.db)
@@ -2038,7 +2083,7 @@ pub async fn list_sessions(
     let current_jti = claims.jti.unwrap_or_default();
     let result: Vec<serde_json::Value> = sessions
         .iter()
-        .map(|(id, jti, ip, ua, created, seen)| {
+        .map(|(id, jti, ip, ua, created, seen, impersonator_email)| {
             serde_json::json!({
                 "id": id,
                 "ip_address": ip,
@@ -2046,6 +2091,7 @@ pub async fn list_sessions(
                 "created_at": created,
                 "last_seen_at": seen,
                 "is_current": jti == &current_jti,
+                "impersonator_email": impersonator_email,
             })
         })
         .collect();
@@ -2059,6 +2105,8 @@ pub async fn revoke_session(
     AuthUser(claims): AuthUser,
     Path(id): Path<uuid::Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    // "Login as user": would give the acting admin lasting control (D4).
+    crate::auth::deny_if_impersonating(&claims)?;
     // Get the JTI for this session (must belong to the current user)
     let session: Option<(String,)> = sqlx::query_as(
         "SELECT jti FROM user_sessions WHERE id = $1 AND user_id = $2",
@@ -2097,6 +2145,8 @@ pub async fn export_my_data(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    // "Login as user": would give the acting admin lasting control (D4).
+    crate::auth::deny_if_impersonating(&claims)?;
     let user = sqlx::query_as::<_, (String, String, Option<String>, bool, chrono::DateTime<chrono::Utc>)>(
         "SELECT email, role, oauth_provider, totp_enabled, created_at FROM users WHERE id = $1"
     ).bind(claims.sub).fetch_one(&state.db).await

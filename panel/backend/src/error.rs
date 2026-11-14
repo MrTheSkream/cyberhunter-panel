@@ -57,6 +57,12 @@ pub const CODE_SESSION_INVALID: &str = "session_invalid";
 /// letting it short-circuit, and answer with this code and a real sentence.
 pub const CODE_PAYLOAD_TOO_LARGE: &str = "payload_too_large";
 
+/// Stable marker for "this action is refused because the session is an
+/// administrator acting as another user" (feature 3, decision D4). The
+/// frontend shows the sentence and does NOT redirect - the session is fine,
+/// only this action is off limits. Minted by `auth::deny_if_impersonating`.
+pub const CODE_IMPERSONATION_FORBIDDEN: &str = "impersonation_forbidden";
+
 /// Longest agent-authored message passed through to a client.
 const MAX_AGENT_MSG: usize = 400;
 

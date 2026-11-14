@@ -150,6 +150,8 @@ pub async fn create_user(
     ResellerUser(claims): ResellerUser,
     Json(body): Json<CreateUserRequest>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
+    // "Login as user": a new account would outlive the session (D4).
+    crate::auth::deny_if_impersonating(&claims)?;
     if claims.role != "reseller" {
         return Err(err(
             StatusCode::FORBIDDEN,
@@ -301,6 +303,8 @@ pub async fn update_user(
     let user = user.ok_or_else(|| err(StatusCode::NOT_FOUND, "User not found"))?;
 
     if let Some(ref password) = body.password {
+        // "Login as user": a password set here outlives the session (D4).
+        crate::auth::deny_if_impersonating(&claims)?;
         if password.len() < 8 {
             return Err(err(
                 StatusCode::BAD_REQUEST,

@@ -1,6 +1,25 @@
 use sqlx::PgPool;
 use uuid::Uuid;
 
+tokio::task_local! {
+    /// The administrator acting as the request's user ("login as user"), as
+    /// `(admin id, admin email)`. Set for the whole request by the
+    /// `impersonation_context` middleware (main.rs) from the session JWT's
+    /// `imp_by`/`imp_email`, so `log_activity*` and `security_hardening::audit_log`
+    /// attribute every row without any of their call sites changing.
+    ///
+    /// A `tokio::spawn`ed task does not inherit it: a spawn that logs on
+    /// behalf of the request must capture `current_impersonator()` first and
+    /// re-enter it with `IMPERSONATOR.scope(..)`.
+    pub static IMPERSONATOR: Option<(Uuid, String)>;
+}
+
+/// The impersonating admin for the current task, if any. `None` outside a
+/// request scope (background services, spawned tasks).
+pub fn current_impersonator() -> Option<(Uuid, String)> {
+    IMPERSONATOR.try_with(|v| v.clone()).ok().flatten()
+}
+
 pub async fn log_activity(
     pool: &PgPool,
     user_id: Uuid,
@@ -132,8 +151,9 @@ async fn write_row(
     server_id: Option<Uuid>,
     api_key_id: Option<Uuid>,
 ) {
+    let (impersonator_id, impersonator_email) = current_impersonator().unzip();
     if let Err(e) = sqlx::query(
-        "INSERT INTO activity_logs (user_id, user_email, action, target_type, target_name, details, ip_address, server_id, api_key_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
+        "INSERT INTO activity_logs (user_id, user_email, action, target_type, target_name, details, ip_address, server_id, api_key_id, impersonator_id, impersonator_email) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"
     )
     .bind(user_id)
     .bind(user_email)
@@ -144,8 +164,32 @@ async fn write_row(
     .bind(ip_address)
     .bind(server_id)
     .bind(api_key_id)
+    .bind(impersonator_id)
+    .bind(impersonator_email)
     .execute(pool)
     .await {
         tracing::warn!("Failed to log activity '{action}': {e}");
+    }
+}
+
+#[cfg(test)]
+mod impersonator_scope_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn outside_any_scope_there_is_no_impersonator() {
+        assert_eq!(current_impersonator(), None);
+    }
+
+    #[tokio::test]
+    async fn the_scope_value_is_visible_inside_and_gone_after() {
+        let admin = (Uuid::new_v4(), "admin@example.com".to_string());
+        let seen = IMPERSONATOR
+            .scope(Some(admin.clone()), async { current_impersonator() })
+            .await;
+        assert_eq!(seen, Some(admin));
+        assert_eq!(current_impersonator(), None);
+        let none = IMPERSONATOR.scope(None, async { current_impersonator() }).await;
+        assert_eq!(none, None);
     }
 }
