@@ -112,6 +112,8 @@ max_requests 4000, idle 10, terminate = max_execution_time effectif + 30.
 - Propriétaire : `values` seulement ; présence d'un autre champ → 403. Admin : tout.
 - 400 `{error, field?}` si validation (bornes B1, règles A1). Site non PHP → 400.
 - `memory_limit` écrit aussi `php_memory_mb` ; `pool.max_children` écrit `php_max_workers`.
+- Si `upload_max_filesize` / `post_max_size` (posés explicitement) dépassent `max_upload_mb`, celui-ci
+  est relevé au plus grand des deux (plafond 10240), sinon nginx répond 413 ; jamais abaissé.
 - Appliqué tout de suite (vhost + pool). Échec agent (dont 400 de `-t`) → base inchangée
   (transaction), erreur relayée. Réponse : `PhpSettingsResponse` à jour. Journal d'activité.
 

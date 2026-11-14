@@ -428,6 +428,28 @@ pub fn effective_values(row: &PhpRow) -> BTreeMap<String, String> {
     eff
 }
 
+/// nginx `client_max_body_size` (the site's `max_upload_mb`) a row needs so
+/// that the PHP upload/POST sizes it explicitly sets are reachable: without it
+/// nginx answers 413 before PHP sees the request. Only explicitly stored sizes
+/// count (defaults derive from `max_upload_mb` itself), so the result is stable
+/// across saves. `None` = nothing to raise.
+pub fn required_upload_mb(row: &PhpRow) -> Option<i32> {
+    let stored = stored_values(row.settings);
+    if !stored.contains_key("upload_max_filesize") && !stored.contains_key("post_max_size") {
+        return None;
+    }
+    let eff = effective_values(row);
+    let need = ["upload_max_filesize", "post_max_size"]
+        .iter()
+        .filter_map(|k| eff.get(*k).and_then(|s| size_mb(s)))
+        .max()?;
+    let need = need.min(MAX_UPLOAD_MB_LIMIT) as i32;
+    (need > row.max_upload_mb).then_some(need)
+}
+
+/// Upper bound of `max_upload_mb` (same as the site settings form).
+const MAX_UPLOAD_MB_LIMIT: i64 = 10240;
+
 /// Keys of the 12 not sent to the agent (legacy rows only): they come from
 /// the global php.ini of the site's PHP version.
 pub fn inherits_global(eff: &BTreeMap<String, String>) -> Vec<&'static str> {
@@ -837,6 +859,15 @@ pub async fn put_site_php_settings(
         return Err(err(StatusCode::BAD_REQUEST, "PHP settings only apply to PHP sites"));
     }
     let applied = apply_update(&PhpRow::of(&site), obj, is_admin).map_err(update_error)?;
+    let max_upload_mb = required_upload_mb(&PhpRow {
+        settings: &applied.settings,
+        isolation: applied.isolation,
+        disable_shell: applied.disable_shell,
+        memory_mb: applied.memory_mb,
+        max_workers: applied.max_workers,
+        max_upload_mb: site.max_upload_mb,
+    })
+    .unwrap_or(site.max_upload_mb);
     let agent = crate::helpers::agent_for_site_server(&state, site.server_id, &site.domain).await?;
 
     let mut tx = state
@@ -846,13 +877,14 @@ pub async fn put_site_php_settings(
         .map_err(|e| internal_error("php settings tx", e))?;
     let updated: Site = sqlx::query_as(
         "UPDATE sites SET php_settings = $1, php_isolation = $2, php_disable_shell = $3, \
-         php_memory_mb = $4, php_max_workers = $5, updated_at = NOW() WHERE id = $6 RETURNING *",
+         php_memory_mb = $4, php_max_workers = $5, max_upload_mb = $6, updated_at = NOW()          WHERE id = $7 RETURNING *",
     )
     .bind(&applied.settings)
     .bind(applied.isolation)
     .bind(applied.disable_shell)
     .bind(applied.memory_mb)
     .bind(applied.max_workers)
+    .bind(max_upload_mb)
     .bind(site.id)
     .fetch_one(&mut *tx)
     .await
@@ -988,6 +1020,28 @@ mod tests {
 
     fn obj(v: Value) -> Map<String, Value> {
         v.as_object().unwrap().clone()
+    }
+
+    #[test]
+    fn required_upload_follows_explicit_php_sizes() {
+        // Nothing stored: defaults derive from max_upload_mb, never raised.
+        assert_eq!(required_upload_mb(&row(&json!({}))), None);
+        // upload 128M stored, post derived (136M): nginx must take 136 MB.
+        let s = json!({"values": {"upload_max_filesize": "128M"}});
+        assert_eq!(required_upload_mb(&row(&s)), Some(136));
+        // Stable: once max_upload_mb is 136 nothing more to raise.
+        let mut r = row(&s);
+        r.max_upload_mb = 136;
+        assert_eq!(required_upload_mb(&r), None);
+        // Sizes below the nginx limit never lower it.
+        let small = json!({"values": {"upload_max_filesize": "16M", "post_max_size": "16M"}});
+        assert_eq!(required_upload_mb(&row(&small)), None);
+        // Legacy seed (64M / 64M with a 64 MB limit): unchanged.
+        let legacy = json!({"legacy": true, "values": {"upload_max_filesize": "64M", "post_max_size": "64M"}});
+        assert_eq!(required_upload_mb(&row(&legacy)), None);
+        // Form maximum (2048M upload, post derived 2056M).
+        let big = json!({"values": {"upload_max_filesize": "2048M"}});
+        assert_eq!(required_upload_mb(&row(&big)), Some(2056));
     }
 
     #[test]
