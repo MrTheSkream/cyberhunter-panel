@@ -6,6 +6,7 @@ import ProvisionLog from "../components/ProvisionLog";
 import { PrereqCallout, type PrereqResult } from "../components/Prerequisite";
 import { InfoTip } from "../components/FieldHelp";
 import ConfirmDialog from "../components/ConfirmDialog";
+import { useServerIps, serverIpOptionLabel, type ServerIp } from "../utils/serverIps";
 
 interface MailServiceState {
   installed: boolean;
@@ -35,6 +36,11 @@ interface MailDomain {
   catch_all: string | null;
   enabled: boolean;
   created_at: string;
+  /** Forced sending IP; null = automatic (follows the website of the same name). */
+  send_ip_id?: string | null;
+  /** IP mail actually leaves from; null = the primary IP. */
+  effective_send_ip?: string | null;
+  send_ip_source?: "forced" | "site" | "primary";
 }
 
 interface MailAccount {
@@ -155,7 +161,7 @@ export default function Mail() {
   const isAdmin = user?.role === "admin";
   const [domains, setDomains] = useState<MailDomain[]>([]);
   const [selectedDomain, setSelectedDomain] = useState<MailDomain | null>(null);
-  const [tab, setTab] = useState<"accounts" | "aliases" | "dns" | "queue" | "logs">("accounts");
+  const [tab, setTab] = useState<"accounts" | "aliases" | "dns" | "settings" | "queue" | "logs">("accounts");
   const [accounts, setAccounts] = useState<MailAccount[]>([]);
   const [aliases, setAliases] = useState<MailAlias[]>([]);
   const [dnsRecords, setDnsRecords] = useState<DnsRecord[]>([]);
@@ -167,6 +173,13 @@ export default function Mail() {
   const [showAddDomain, setShowAddDomain] = useState(false);
   const [newDomain, setNewDomain] = useState("");
   const [savingDomain, setSavingDomain] = useState(false);
+  // Sending IP ("" = automatic). The IP list is `/server-ips`, an admin route,
+  // and so is everything that picks from it.
+  const [newSendIpId, setNewSendIpId] = useState("");
+  const { ips: serverIps } = useServerIps(isAdmin);
+  const [sendIpId, setSendIpId] = useState("");
+  const [savingSendIp, setSavingSendIp] = useState(false);
+  const [sendIpMessage, setSendIpMessage] = useState<{ text: string; error: boolean } | null>(null);
 
   const [showAddAccount, setShowAddAccount] = useState(false);
   const [accEmail, setAccEmail] = useState("");
@@ -342,8 +355,11 @@ export default function Mail() {
     setSavingDomain(true);
     setMessage({ text: "", type: "" });
     try {
-      const domain = await api.post<MailDomain>("/mail/domains", { domain: newDomain });
+      const body: Record<string, unknown> = { domain: newDomain };
+      if (newSendIpId) body.send_ip_id = newSendIpId;
+      const domain = await api.post<MailDomain>("/mail/domains", body);
       setNewDomain("");
+      setNewSendIpId("");
       setShowAddDomain(false);
       await loadDomains();
       selectDomain(domain);
@@ -351,6 +367,35 @@ export default function Mail() {
     } catch (e) {
       setMessage({ text: e instanceof Error ? e.message : "Failed", type: "error" });
     } finally { setSavingDomain(false); }
+  };
+
+  useEffect(() => { setSendIpId(selectedDomain?.send_ip_id ?? ""); }, [selectedDomain?.id, selectedDomain?.send_ip_id]);
+  useEffect(() => { setSendIpMessage(null); }, [selectedDomain?.id]);
+
+  const primaryIp: ServerIp | undefined = serverIps.find((ip) => ip.is_primary);
+  /** The declared IP that mail of the selected domain leaves from, if known. */
+  const effectiveSendIp: ServerIp | undefined = selectedDomain
+    ? (selectedDomain.effective_send_ip
+        ? serverIps.find((ip) => ip.ip === selectedDomain.effective_send_ip)
+        : primaryIp)
+    : undefined;
+  const effectiveSendIpText =
+    selectedDomain?.effective_send_ip || (primaryIp ? `${primaryIp.ip} (primary IP)` : "the primary IP");
+
+  const handleSaveSendIp = async () => {
+    if (!selectedDomain) return;
+    setSavingSendIp(true);
+    setSendIpMessage(null);
+    try {
+      const updated = await api.put<MailDomain>(`/mail/domains/${selectedDomain.id}/send-ip`, { send_ip_id: sendIpId || null });
+      setDomains((prev) => prev.map((d) => (d.id === updated.id ? updated : d)));
+      setSelectedDomain(updated);
+      // SPF (ip4:) follows the sending IP: refresh the records shown.
+      loadDomainData(updated.id);
+      setSendIpMessage({ text: "Sending IP saved", error: false });
+    } catch (e) {
+      setSendIpMessage({ text: e instanceof Error ? e.message : "Save failed", error: true });
+    } finally { setSavingSendIp(false); }
   };
 
   const handleDeleteDomain = (domain: MailDomain) => {
@@ -861,6 +906,18 @@ export default function Mail() {
             <input type="text" value={newDomain} onChange={(e) => setNewDomain(e.target.value)} placeholder="example.com" className="w-full px-3 py-2 border border-dark-500 rounded-lg text-sm focus:ring-2 focus:ring-accent-500 outline-none" />
             <p className="text-[11px] text-dark-300 mt-1">Your domain name, e.g., example.com</p>
           </div>
+          {serverIps.some((ip) => !ip.is_primary) && (
+            <div>
+              <label className="block text-xs font-medium text-dark-100 mb-1">Sending IP</label>
+              <select value={newSendIpId} onChange={(e) => setNewSendIpId(e.target.value)} className="w-full px-3 py-2 border border-dark-500 rounded-lg text-sm bg-dark-800 font-mono focus:ring-2 focus:ring-accent-500 outline-none">
+                <option value="">Automatic (follows the website's IP)</option>
+                {serverIps.map((ip) => (
+                  <option key={ip.id} value={ip.id}>{serverIpOptionLabel(ip)}</option>
+                ))}
+              </select>
+              <p className="text-[11px] text-dark-300 mt-1">Automatic uses the IP of the website with the same name, or the primary IP if there is none.</p>
+            </div>
+          )}
           <p className="text-xs text-dark-300">DKIM keys and DNS records (MX, SPF, DKIM, DMARC) will be created automatically.</p>
           <div className="flex justify-end">
             <button onClick={handleAddDomain} disabled={savingDomain || !newDomain} className="px-4 py-2 bg-rust-500 text-white rounded-lg text-sm font-medium hover:bg-rust-600 disabled:opacity-50 flex items-center gap-2">
@@ -949,11 +1006,11 @@ export default function Mail() {
                     AdminUser. They are not a filtered view of this domain, so
                     there is nothing to scope them down to. */}
                 {(isAdmin
-                  ? (["accounts", "aliases", "dns", "queue", "logs"] as const)
+                  ? (["accounts", "aliases", "dns", "settings", "queue", "logs"] as const)
                   : (["accounts", "aliases", "dns"] as const)
                 ).map((t) => (
                   <button key={t} onClick={() => setTab(t)} className={`px-4 py-2.5 text-xs font-medium uppercase tracking-wider transition-colors ${tab === t ? "text-dark-50 border-b-2 border-dark-50" : "text-dark-300 hover:text-dark-100"}`}>
-                    {t === "dns" ? "DNS Records" : t === "queue" ? "Queue" : t === "logs" ? "Logs" : t.charAt(0).toUpperCase() + t.slice(1)}
+                    {t === "dns" ? "DNS Records" : t === "settings" ? "Settings" : t === "queue" ? "Queue" : t === "logs" ? "Logs" : t.charAt(0).toUpperCase() + t.slice(1)}
                   </button>
                 ))}
               </div>
@@ -1333,6 +1390,27 @@ export default function Mail() {
                     <PrereqCallout prereq={dnsCheck?.prereq ?? null} className="mb-4" />
 
                     <p className="text-xs text-dark-200 mb-4">Add these records to your DNS provider for {selectedDomain.domain} to send and receive email properly.</p>
+
+                    {/* PTR is set at the IP provider, not in the domain's zone,
+                        so it is shown apart from the records above. Admin only:
+                        the IP list is an admin route. */}
+                    {isAdmin && effectiveSendIp && (
+                      <div className={`mb-4 p-4 border text-xs ${effectiveSendIp.ptr ? "bg-dark-900 border-dark-500" : "bg-warn-500/10 border-warn-500/20"}`}>
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className="px-2 py-0.5 text-xs font-medium bg-accent-500/15 text-accent-400">PTR</span>
+                          <span className="text-dark-200">Reverse DNS of the sending IP — set at your IP provider (e.g. OVH), not in this zone</span>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 font-mono">
+                          <div><span className="text-dark-300">IP: </span><span className="text-dark-50">{effectiveSendIp.public_ip || effectiveSendIp.ip}</span></div>
+                          <div><span className="text-dark-300">Current PTR: </span>{effectiveSendIp.ptr ? <span className="text-dark-50">{effectiveSendIp.ptr}</span> : <span className="text-warn-400">none</span>}</div>
+                        </div>
+                        {effectiveSendIp.ptr ? (
+                          <p className="text-dark-300 mt-2">The PTR is used as the HELO name. It should resolve back to this IP (an A record for <span className="font-mono">{effectiveSendIp.ptr}</span>).</p>
+                        ) : (
+                          <p className="text-warn-400 mt-2">No reverse DNS (PTR): mail sent from this IP will likely be rejected. Set it at your provider (e.g. <span className="font-mono">mail.{selectedDomain.domain}</span>), then use Refresh PTR in <Link to="/ips" className="underline">IP Addresses</Link>.</p>
+                        )}
+                      </div>
+                    )}
                     {dnsRecords.length === 0 ? (
                       <p className="text-dark-300 text-sm text-center py-8">No DNS records generated yet</p>
                     ) : (
@@ -1357,6 +1435,56 @@ export default function Mail() {
                         ))}
                       </div>
                     )}
+                  </div>
+                )}
+
+                {/* Settings Tab — sending IP (admin only) */}
+                {isAdmin && tab === "settings" && (
+                  <div className="space-y-4">
+                    <h3 className="text-xs text-dark-300 uppercase tracking-widest">Sending IP</h3>
+                    <div className="bg-dark-900 border border-dark-500 p-4 text-sm">
+                      <p className="text-dark-200">
+                        Mail from <span className="font-mono text-dark-50">@{selectedDomain.domain}</span> currently leaves from{" "}
+                        <span className="font-mono text-dark-50">{effectiveSendIpText}</span>
+                      </p>
+                      <p className="text-xs text-dark-300 mt-1">
+                        {selectedDomain.send_ip_source === "forced"
+                          ? "This IP is forced for this domain."
+                          : selectedDomain.send_ip_source === "site"
+                          ? `Automatic: it follows the IP of the website ${selectedDomain.domain}.`
+                          : `Automatic: no website named ${selectedDomain.domain} with its own IP on this server, so the primary IP is used.`}
+                      </p>
+                      {effectiveSendIp && !effectiveSendIp.ptr && (
+                        <p className="text-xs text-warn-400 mt-2">No reverse DNS (PTR) on this IP: mail sent from it will likely be rejected. Set it at your provider, then Refresh PTR in <Link to="/ips" className="underline">IP Addresses</Link>.</p>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap items-end gap-3">
+                      <div className="flex-1 min-w-[16rem]">
+                        <label className="block text-xs font-medium text-dark-100 mb-1">Sending IP</label>
+                        <select value={sendIpId} onChange={(e) => { setSendIpId(e.target.value); setSendIpMessage(null); }} className="w-full px-3 py-2 border border-dark-500 rounded-lg text-sm bg-dark-800 font-mono focus:ring-2 focus:ring-accent-500 outline-none">
+                          <option value="">Automatic (follows the website's IP)</option>
+                          {serverIps.map((ip) => (
+                            <option key={ip.id} value={ip.id}>{serverIpOptionLabel(ip)}</option>
+                          ))}
+                          {selectedDomain.send_ip_id && !serverIps.some((ip) => ip.id === selectedDomain.send_ip_id) && (
+                            <option value={selectedDomain.send_ip_id}>{selectedDomain.effective_send_ip || selectedDomain.send_ip_id} (current)</option>
+                          )}
+                        </select>
+                      </div>
+                      <button onClick={handleSaveSendIp} disabled={savingSendIp || sendIpId === (selectedDomain.send_ip_id ?? "")} className="px-4 py-2 bg-rust-500 text-white rounded-lg text-sm font-medium hover:bg-rust-600 disabled:opacity-50">
+                        {savingSendIp ? "Saving..." : "Save"}
+                      </button>
+                    </div>
+                    {sendIpMessage && (
+                      <p className={`text-xs ${sendIpMessage.error ? "text-danger-400" : "text-rust-400"}`}>{sendIpMessage.text}</p>
+                    )}
+                    {relay?.configured && (
+                      <p className="text-xs text-warn-400">An SMTP relay is configured ({relay.relayhost}): outgoing mail goes through the relay, so recipients see the relay's IP, not the one chosen here.</p>
+                    )}
+                    <div className="text-xs text-dark-400 space-y-1">
+                      <p>The SPF record (<span className="font-mono">ip4:</span>) follows the sending IP; check the DNS Records tab after a change. The HELO name is the IP's PTR.</p>
+                      <p>The IP is picked from the sender's domain: mail forwarded on behalf of an external sender leaves from the primary IP.</p>
+                    </div>
                   </div>
                 )}
 

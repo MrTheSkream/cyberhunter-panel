@@ -223,12 +223,12 @@ else
   bad "C3 the backups list is gated only by an array that is empty for the wrong reason"
 fi
 
-# The tab strip: five tabs for an administrator, three for a site owner. Written
-# as two literal tuples so the arm can see a widening — adding "queue" to the
-# owner tuple changes the text this greps.
+# The tab strip: six tabs for an administrator (fork: + "settings", the per-domain
+# sending IP), three for a site owner. Written as two literal tuples so the arm can
+# see a widening — adding "queue" or "settings" to the owner tuple changes the text this greps.
 if has "$PAGE_C" '\["accounts", "aliases", "dns"\] as const' \
-   && has "$PAGE_C" '\["accounts", "aliases", "dns", "queue", "logs"\] as const'; then
-  ok "C4 the tab strip offers three tabs to a site owner and five to an administrator"
+   && has "$PAGE_C" '\["accounts", "aliases", "dns", "settings", "queue", "logs"\] as const'; then
+  ok "C4 the tab strip offers three tabs to a site owner and six to an administrator"
 else
   bad "C4 the tab strip no longer distinguishes the two audiences"
 fi

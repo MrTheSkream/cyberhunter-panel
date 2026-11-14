@@ -322,6 +322,10 @@ pub async fn create(
     if let Some(ref cmd) = parent.app_command {
         agent_body["app_command"] = serde_json::json!(cmd);
     }
+    // Multi-IP: a staging environment is a separate name and starts on the
+    // primary address (its row's `ip_id` is NULL). Sent explicitly — the backend
+    // never leaves the agent to guess.
+    agent_body["bind_ip"] = serde_json::json!(crate::services::server_ips::PRIMARY);
 
     let agent_path = format!("/nginx/sites/{}", staging_domain);
     if let Err(e) = agent.put(&agent_path, agent_body).await {

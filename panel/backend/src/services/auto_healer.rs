@@ -1200,7 +1200,7 @@ async fn auto_renew_ssl(pool: &PgPool, agents: &AgentRegistry) {
                 } else if let Err(e) = agent
                     .put(
                         &format!("/nginx/sites/{}", site.domain),
-                        crate::routes::sites::build_nginx_body(&site),
+                        crate::routes::sites::build_nginx_body(&site, crate::services::server_ips::nginx_bind_ip(pool, &site).await.as_deref()),
                     )
                     .await
                 {

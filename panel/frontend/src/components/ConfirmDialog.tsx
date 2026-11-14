@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
 /**
@@ -53,12 +53,15 @@ export default function ConfirmDialog({
   tone = "danger",
   onConfirm,
   onCancel,
+  children,
 }: {
   label: string;
   confirmLabel?: string;
   tone?: "danger" | "warn";
   onConfirm: () => void;
   onCancel: () => void;
+  /** Optional extra content (e.g. an option checkbox) shown under the label. */
+  children?: ReactNode;
 }) {
   const cancelRef = useRef<HTMLButtonElement>(null);
 
@@ -87,6 +90,7 @@ export default function ConfirmDialog({
         className="bg-dark-800 rounded-lg shadow-xl p-6 w-full max-w-md dp-modal"
       >
         <p className="text-sm text-dark-100 mb-5 whitespace-pre-line">{label}</p>
+        {children && <div className="mb-5">{children}</div>}
         <div className="flex justify-end gap-2">
           <button
             ref={cancelRef}

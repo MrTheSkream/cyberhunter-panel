@@ -23,6 +23,7 @@ pub mod nginx;
 pub mod panel_update;
 pub mod remote_backup;
 pub mod security;
+pub mod server_ips;
 pub mod server_utils;
 pub mod service_installer;
 pub mod services;

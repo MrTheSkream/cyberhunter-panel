@@ -499,7 +499,7 @@ pub async fn retrofit_static_denies() {
 
 /// Detect the server's primary (non-loopback, non-docker) interface IP for nginx listen directives.
 /// Returns empty string if detection fails (templates fall back to wildcard listen).
-fn detect_bind_ip() -> String {
+pub fn detect_bind_ip() -> String {
     use std::net::UdpSocket;
     // Connect to a public IP (doesn't actually send data) to find the outbound interface
     if let Ok(sock) = UdpSocket::bind("0.0.0.0:0") {
@@ -513,6 +513,79 @@ fn detect_bind_ip() -> String {
         }
     }
     String::new()
+}
+
+/// Shape check for `SiteConfig::bind_ip`: `"primary"` → `Ok(None)`, an IPv4
+/// → `Ok(Some(ip))`, anything else → `Err`. Whether the address is actually
+/// assigned on the host is the caller's question (`put_site` asks it); the
+/// renderer only needs the shape, since the value lands in a `listen` line.
+pub fn validate_bind_ip(value: &str) -> Result<Option<std::net::Ipv4Addr>, String> {
+    if value == "primary" {
+        return Ok(None);
+    }
+    value
+        .parse::<std::net::Ipv4Addr>()
+        .map(Some)
+        .map_err(|_| format!("bind_ip must be an IPv4 address or \"primary\", got {value:?}"))
+}
+
+/// The explicit IPv4 an existing vhost listens on, if any — the first
+/// `listen A.B.C.D:port` line. `[::]:80`, bare `listen 80;` and the like are
+/// not an explicit IPv4 and are skipped. Reads through [`listener_lines`] so
+/// it sees exactly the lines the disable/enable path copies.
+pub fn vhost_bind_ip(vhost: &str) -> Option<std::net::Ipv4Addr> {
+    listener_lines(vhost).lines().find_map(|l| {
+        let rest = l.trim().strip_prefix("listen ")?;
+        let addr = rest.split(|c: char| c.is_whitespace() || c == ';').next()?;
+        let (host, _port) = addr.rsplit_once(':')?;
+        host.parse().ok()
+    })
+}
+
+/// Decide which IP a vhost listens on. Pure, so every branch is testable:
+///
+/// 1. `requested` = an IPv4 → it; = `"primary"` → `detected`;
+/// 2. `requested` absent → the IP already written in the existing vhost, if
+///    it is still in `assigned` (internal re-renders — certificate upload,
+///    renewal, Docker app, git deploy — must not move a site back to the
+///    primary IP);
+/// 3. otherwise `detected` (empty string = wildcard `listen 80`).
+pub fn resolve_bind_ip(
+    requested: Option<&str>,
+    existing_vhost: Option<&str>,
+    assigned: &[std::net::Ipv4Addr],
+    detected: &str,
+) -> String {
+    match requested {
+        Some("primary") => detected.to_string(),
+        Some(ip) => ip.to_string(),
+        None => existing_vhost
+            .and_then(vhost_bind_ip)
+            .filter(|ip| assigned.contains(ip))
+            .map(|ip| ip.to_string())
+            .unwrap_or_else(|| detected.to_string()),
+    }
+}
+
+/// [`resolve_bind_ip`] with the system lookups filled in. The host's
+/// addresses are only enumerated when the existing vhost names an IP other
+/// than the detected one — the common case costs no extra process.
+fn bind_ip_for(domain: &str, config: &SiteConfig) -> String {
+    let detected = detect_bind_ip();
+    if config.bind_ip.is_some() {
+        return resolve_bind_ip(config.bind_ip.as_deref(), None, &[], &detected);
+    }
+    let existing = std::fs::read_to_string(vhost_target(domain).path()).ok();
+    let assigned: Vec<std::net::Ipv4Addr> = match existing.as_deref().and_then(vhost_bind_ip) {
+        Some(ip) if ip.to_string() != detected => crate::services::server_ips::host_addrs_sync()
+            .map(|a| a.into_iter().map(|a| a.ip).collect())
+            .unwrap_or_else(|e| {
+                tracing::warn!("{e} — {domain} falls back to the primary IP");
+                Vec::new()
+            }),
+        _ => Vec::new(),
+    };
+    resolve_bind_ip(None, existing.as_deref(), &assigned, &detected)
 }
 
 /// Initialize Tera templates with embedded nginx templates.
@@ -741,11 +814,14 @@ pub fn render_site_config(
             return Err(tera::Error::msg("Invalid SSL key path"));
         }
     }
+    if let Some(ref b) = config.bind_ip {
+        validate_bind_ip(b).map_err(tera::Error::msg)?;
+    }
 
     let mut ctx = Context::new();
     ctx.insert("domain", domain);
     ctx.insert("root", config.root.as_deref().unwrap_or("/var/www"));
-    ctx.insert("bind_ip", &detect_bind_ip());
+    ctx.insert("bind_ip", &bind_ip_for(domain, config));
     ctx.insert("runtime", &config.runtime);
 
     // Resource limits
@@ -1249,5 +1325,76 @@ mod tests {
         assert_eq!(sanitize_header_value("x\" always; location /p { }"), "x always; location /p  ");
         assert!(!sanitize_header_value("a\"b\\c{d}").contains('"'));
         assert!(!sanitize_header_value("a\"b\\c{d}").contains('\\'));
+    }
+
+    // ── multi-IP: which address a vhost listens on ─────────────────────
+
+    const VHOST_ON_11: &str = "server {
+    listen 192.168.250.11:80;
+    listen [::]:80;
+    server_name a.lab;
+}
+server {
+    listen 192.168.250.11:443 ssl;
+    listen [::]:443 ssl;
+    ssl_certificate /x;
+}
+";
+    const VHOST_WILDCARD: &str = "server {
+    listen 80;
+    listen [::]:80;
+}
+";
+
+    fn v4(s: &str) -> std::net::Ipv4Addr {
+        s.parse().unwrap()
+    }
+
+    #[test]
+    fn bind_ip_shape_validation() {
+        assert_eq!(validate_bind_ip("primary"), Ok(None));
+        assert_eq!(validate_bind_ip("192.168.250.11"), Ok(Some(v4("192.168.250.11"))));
+        for bad in ["", "Primary", "1.2.3", "1.2.3.4:80", "::1", "1.2.3.4; include /etc/passwd", "01.2.3.4"] {
+            assert!(validate_bind_ip(bad).is_err(), "{bad:?} accepted");
+        }
+    }
+
+    #[test]
+    fn existing_vhost_ip_is_parsed_from_listen_lines() {
+        assert_eq!(vhost_bind_ip(VHOST_ON_11), Some(v4("192.168.250.11")));
+        assert_eq!(vhost_bind_ip(VHOST_WILDCARD), None);
+        assert_eq!(vhost_bind_ip("server { listen [::]:443 ssl; }"), None);
+    }
+
+    #[test]
+    fn explicit_ip_wins() {
+        let ip = resolve_bind_ip(Some("192.168.250.12"), Some(VHOST_ON_11), &[], "192.168.250.10");
+        assert_eq!(ip, "192.168.250.12");
+    }
+
+    #[test]
+    fn primary_means_detected() {
+        let ip = resolve_bind_ip(Some("primary"), Some(VHOST_ON_11), &[v4("192.168.250.11")], "192.168.250.10");
+        assert_eq!(ip, "192.168.250.10");
+    }
+
+    #[test]
+    fn absent_keeps_the_existing_vhost_ip_while_it_is_assigned() {
+        let assigned = [v4("192.168.250.10"), v4("192.168.250.11")];
+        let ip = resolve_bind_ip(None, Some(VHOST_ON_11), &assigned, "192.168.250.10");
+        assert_eq!(ip, "192.168.250.11");
+    }
+
+    #[test]
+    fn absent_falls_back_to_detected() {
+        // IP gone from the host.
+        let ip = resolve_bind_ip(None, Some(VHOST_ON_11), &[v4("192.168.250.10")], "192.168.250.10");
+        assert_eq!(ip, "192.168.250.10");
+        // No vhost yet.
+        assert_eq!(resolve_bind_ip(None, None, &[], "192.168.250.10"), "192.168.250.10");
+        // Wildcard vhost.
+        assert_eq!(resolve_bind_ip(None, Some(VHOST_WILDCARD), &[], "192.168.250.10"), "192.168.250.10");
+        // Nothing detected → empty → template's wildcard listen.
+        assert_eq!(resolve_bind_ip(None, None, &[], ""), "");
     }
 }

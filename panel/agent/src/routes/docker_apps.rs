@@ -161,6 +161,7 @@ fn proxy_site_config(port: u16) -> SiteConfig {
         bot_protection: None,
         pool_user: None,
         pool_group: None,
+        bind_ip: None,
     }
 }
 

@@ -8,6 +8,7 @@ import { PrereqCallout, useDnsPrereq } from "../components/Prerequisite";
 import { FieldHelp, InfoTip } from "../components/FieldHelp";
 import PhpVersionPicker from "../components/PhpVersionPicker";
 import { useAuth } from "../context/AuthContext";
+import { useServerIps, serverIpOptionLabel } from "../utils/serverIps";
 
 interface Site {
   id: string;
@@ -18,6 +19,10 @@ interface Site {
   enabled: boolean;
   parent_site_id: string | null;
   created_at: string;
+  /** Declared server IP the vhost listens on; null = the primary IP. */
+  ip_id?: string | null;
+  /** Effective IP of `ip_id`; null = primary IP. */
+  bind_ip?: string | null;
   // Present only on the admin all-sites view (GET /api/admin/sites). The
   // owner-scoped list cannot carry them, and would not need to: every row it
   // returns belongs to the person reading it.
@@ -68,6 +73,11 @@ export default function Sites() {
   const [adminEmail, setAdminEmail] = useState("");
   const [adminUser, setAdminUser] = useState("admin");
   const [adminPassword, setAdminPassword] = useState("");
+  // "" = primary IP. `/server-ips` is admin-only, so only admins load the list.
+  const [ipId, setIpId] = useState("");
+  const { ips: serverIps } = useServerIps(isAdmin && showForm);
+  // Only worth a field when there is a choice beyond the primary IP.
+  const ipChoices = serverIps.filter((ip) => !ip.is_primary);
 
   // Preflight the domain as it is typed. Nothing here BLOCKS creation — a site
   // is perfectly valid before its DNS exists, and the brief is explicit that a
@@ -119,6 +129,8 @@ export default function Sites() {
         if (adminPassword) body.admin_password = adminPassword;
       }
 
+      if (ipId) body.ip_id = ipId;
+
       const created = await api.post<Site>("/sites", body);
       setShowForm(false);
       setProvisioningSiteId(created.id);
@@ -130,6 +142,7 @@ export default function Sites() {
       setAdminEmail("");
       setAdminUser("admin");
       setAdminPassword("");
+      setIpId("");
       fetchSites();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create site");
@@ -314,6 +327,24 @@ export default function Sites() {
               </div>
             </div>
             </>
+          )}
+
+          {isAdmin && ipChoices.length > 0 && (
+            <div>
+              <label htmlFor="site-ip" className="block text-sm font-medium text-dark-100 mb-1">IP Address</label>
+              <select
+                id="site-ip"
+                value={ipId}
+                onChange={(e) => setIpId(e.target.value)}
+                className="w-full px-3 py-2.5 border border-dark-500 rounded-lg focus:ring-2 focus:ring-accent-500 focus:border-accent-500 outline-none text-sm bg-dark-800 max-w-md font-mono"
+              >
+                <option value="">Primary IP</option>
+                {ipChoices.map((ip) => (
+                  <option key={ip.id} value={ip.id}>{serverIpOptionLabel(ip)}</option>
+                ))}
+              </select>
+              <p className="text-xs text-dark-400 mt-1.5">The IP nginx listens on for this site. IPv6 stays shared.</p>
+            </div>
           )}
 
           {runtime === "proxy" && (

@@ -37,6 +37,10 @@ pub struct SyncRequest {
     pub domains: Vec<SyncDomain>,
     pub accounts: Vec<SyncAccount>,
     pub aliases: Vec<SyncAlias>,
+    /// PTR of the primary IP, applied as the global `smtp_helo_name` when
+    /// given (left untouched when absent).
+    #[serde(default)]
+    pub primary_helo: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -44,6 +48,14 @@ pub struct SyncDomain {
     pub domain: String,
     pub enabled: bool,
     pub catch_all: Option<String>,
+    /// IPv4 this domain's mail leaves from. Absent / null / the primary IP =
+    /// the default transport. Resolved by the backend (forced IP, else the
+    /// IP of the same-named site, else primary).
+    #[serde(default)]
+    pub send_ip: Option<String>,
+    /// HELO name for `send_ip` (its PTR), when known.
+    #[serde(default)]
+    pub helo: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -1153,6 +1165,37 @@ async fn sync_config(
             return Err(err(StatusCode::BAD_REQUEST, "Invalid alias source local part"));
         }
     }
+    // Validate the per-domain outgoing IP fields: they land in master.cf and
+    // in a Postfix map, so only an IPv4 and a plain hostname get through.
+    let mut send_routes: Vec<(String, std::net::Ipv4Addr, Option<String>)> = Vec::new();
+    for domain in &body.domains {
+        let helo = match domain.helo.as_deref().map(str::trim).filter(|h| !h.is_empty()) {
+            Some(h) => Some(
+                crate::services::server_ips::normalize_hostname(h)
+                    .ok_or_else(|| err(StatusCode::BAD_REQUEST, "Invalid helo hostname"))?,
+            ),
+            None => None,
+        };
+        if let Some(ip) = domain.send_ip.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            let ip: std::net::Ipv4Addr = ip
+                .parse()
+                .map_err(|_| err(StatusCode::BAD_REQUEST, "send_ip must be an IPv4 address"))?;
+            if !super::is_valid_domain(&domain.domain) {
+                return Err(err(StatusCode::BAD_REQUEST, "Invalid domain for send_ip"));
+            }
+            if domain.enabled {
+                send_routes.push((domain.domain.to_ascii_lowercase(), ip, helo));
+            }
+        }
+    }
+    let primary_helo = match body.primary_helo.as_deref().map(str::trim).filter(|h| !h.is_empty()) {
+        Some(h) => Some(
+            crate::services::server_ips::normalize_hostname(h)
+                .ok_or_else(|| err(StatusCode::BAD_REQUEST, "Invalid primary_helo hostname"))?,
+        ),
+        None => None,
+    };
+
     // Validate catch-all entries
     for domain in &body.domains {
         if let Some(catch_all) = &domain.catch_all {
@@ -1238,6 +1281,11 @@ async fn sync_config(
     // Self-contained and fail-safe — see `ensure_sender_login_enforcement`.
     ensure_sender_login_enforcement(&build_sender_login_map(&body)).await;
 
+    // 5b. Per-domain outgoing IP (transports, sender map, HELO). Rolls its own
+    // master.cf/main.cf changes back if `postfix check` refuses them; the
+    // rest of the sync still applies and the error is reported at the end.
+    let transport_result = apply_ip_transports(&send_routes, primary_helo.as_deref()).await;
+
     // 6. Run postmap to rebuild hash tables
     let _ = safe_command("postmap").arg(POSTFIX_VIRTUAL_MAILBOX).output().await;
     let _ = safe_command("postmap").arg(POSTFIX_VIRTUAL_ALIAS).output().await;
@@ -1269,7 +1317,269 @@ async fn sync_config(
     tracing::info!("Mail config synced: {} domains, {} accounts, {} aliases",
         body.domains.len(), body.accounts.len(), body.aliases.len());
 
-    Ok(ok("Mail configuration synced"))
+    match transport_result {
+        Ok(outcome) => Ok(Json(serde_json::json!({
+            "ok": true,
+            "message": "Mail configuration synced",
+            "ip_transports": { "applied": outcome.applied, "skipped": outcome.skipped },
+        }))),
+        Err((e, skipped)) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "error": format!("Mail configuration synced, but the per-domain sending IPs were not applied: {e}"),
+                "ip_transports": { "applied": false, "skipped": skipped },
+            })),
+        )),
+    }
+}
+
+const POSTFIX_MASTER_CF: &str = "/etc/postfix/master.cf";
+const POSTFIX_MAIN_CF: &str = "/etc/postfix/main.cf";
+
+/// Outcome of [`apply_ip_transports`], reported in the sync response as
+/// `ip_transports: {applied, skipped}`.
+struct TransportOutcome {
+    /// The requested routing is what Postfix now has configured (also true
+    /// when there was nothing to do). False when Postfix is not installed.
+    applied: bool,
+    /// Send IPs ignored because they are not assigned on this host (their
+    /// domains send from the primary IP).
+    skipped: Vec<String>,
+}
+
+/// Snapshot of the files [`apply_ip_transports`] may change, restorable on
+/// any failure branch.
+struct PostfixSnapshot {
+    master: String,
+    main: String,
+    map: Option<String>,
+}
+
+impl PostfixSnapshot {
+    async fn restore(&self) {
+        use crate::services::mail_transports as mt;
+        let _ = write_file_atomic(POSTFIX_MASTER_CF, &self.master).await;
+        let _ = write_file_atomic(POSTFIX_MAIN_CF, &self.main).await;
+        match &self.map {
+            Some(m) => {
+                let _ = write_file_atomic(mt::SENDER_TRANSPORT_MAP, m).await;
+                let _ = safe_command("postmap").arg(mt::SENDER_TRANSPORT_MAP).output().await;
+            }
+            None => {
+                let _ = tokio::fs::remove_file(mt::SENDER_TRANSPORT_MAP).await;
+                let _ = tokio::fs::remove_file(format!("{}.db", mt::SENDER_TRANSPORT_MAP)).await;
+            }
+        }
+    }
+}
+
+/// `postfix check`, judged on its exit status only (it prints warnings for
+/// harmless things on stock installs).
+async fn postfix_check() -> Result<(), String> {
+    match safe_command("postfix").arg("check").output().await {
+        Ok(o) if o.status.success() => Ok(()),
+        Ok(o) => Err(String::from_utf8_lossy(&o.stderr).trim().to_string()),
+        Err(e) => Err(format!("postfix check could not run: {e}")),
+    }
+}
+
+/// Write master.cf / main.cf when they differ from what is on disk.
+async fn write_postfix_cf(master: &str, main: &str) -> Result<(), String> {
+    if tokio::fs::read_to_string(POSTFIX_MASTER_CF).await.ok().as_deref() != Some(master) {
+        write_file_atomic(POSTFIX_MASTER_CF, master).await.map_err(|e| format!("cannot write master.cf: {e}"))?;
+    }
+    if tokio::fs::read_to_string(POSTFIX_MAIN_CF).await.ok().as_deref() != Some(main) {
+        write_file_atomic(POSTFIX_MAIN_CF, main).await.map_err(|e| format!("cannot write main.cf: {e}"))?;
+    }
+    Ok(())
+}
+
+/// Apply the per-domain outgoing IPs: `sender_transport` map, the managed
+/// `dp-ip-*` block of master.cf, its rate-limit copy (and HELO record) in
+/// main.cf, the `sender_dependent_default_transport_maps` reference and the
+/// global HELO.
+///
+/// **No window where the map names an undeclared transport.** The map
+/// (`hash:`) is picked up by running daemons as soon as it is postmapped,
+/// master.cf only at reload. So:
+///
+/// 1. master.cf declares old ∪ new transports; `postfix check`; and, if
+///    that added any transport, `postfix reload` so master knows it;
+/// 2. the new map is written and postmapped, then referenced;
+/// 3. master.cf is narrowed to the new set; `postfix check` (the caller's
+///    reload applies it).
+///
+/// Every failure restores master.cf, main.cf and the map (re-postmapped) to
+/// their snapshot. A send IP equal to the primary uses the default
+/// transport; one not assigned on the host is skipped and reported.
+///
+/// HELO: `primary_helo` given → `smtp_helo_name` set and recorded in the
+/// main.cf block. Absent → a value the panel recorded is removed
+/// (`postconf -X`) only if `smtp_helo_name` still equals it; an admin's own
+/// different value is left alone (the record is dropped either way).
+async fn apply_ip_transports(
+    routes: &[(String, std::net::Ipv4Addr, Option<String>)],
+    primary_helo: Option<&str>,
+) -> Result<TransportOutcome, (String, Vec<String>)> {
+    use crate::services::mail_transports as mt;
+    use std::collections::BTreeMap;
+
+    if !Path::new(POSTFIX_MASTER_CF).exists() {
+        // Mail server not installed: nothing to route.
+        return Ok(TransportOutcome { applied: false, skipped: Vec::new() });
+    }
+    let primary = crate::services::server_ips::primary_ip();
+    let assigned: Option<Vec<std::net::Ipv4Addr>> = match crate::services::server_ips::host_addrs().await {
+        Ok(a) => Some(a.into_iter().map(|a| a.ip).collect()),
+        Err(e) => {
+            tracing::warn!("{e}: send IPs not checked against the host's addresses");
+            None
+        }
+    };
+
+    let mut transports: mt::Transports = BTreeMap::new();
+    let mut map: BTreeMap<String, std::net::Ipv4Addr> = BTreeMap::new();
+    let mut skipped: Vec<String> = Vec::new();
+    for (domain, ip, helo) in routes {
+        if primary == Some(*ip) {
+            continue;
+        }
+        if assigned.as_ref().is_some_and(|a| !a.contains(ip)) {
+            tracing::warn!("send IP {ip} for {domain} is not assigned on this server; {domain} sends from the primary IP");
+            if !skipped.contains(&ip.to_string()) {
+                skipped.push(ip.to_string());
+            }
+            continue;
+        }
+        let entry = transports.entry(*ip).or_insert(None);
+        if entry.is_none() {
+            entry.clone_from(helo);
+        }
+        map.insert(domain.clone(), *ip);
+    }
+    let fail = |msg: String, skipped: &Vec<String>| Err((msg, skipped.clone()));
+
+    let snap = PostfixSnapshot {
+        master: match tokio::fs::read_to_string(POSTFIX_MASTER_CF).await {
+            Ok(s) => s,
+            Err(e) => return fail(format!("cannot read master.cf: {e}"), &skipped),
+        },
+        main: match tokio::fs::read_to_string(POSTFIX_MAIN_CF).await {
+            Ok(s) => s,
+            Err(e) => return fail(format!("cannot read main.cf: {e}"), &skipped),
+        },
+        map: tokio::fs::read_to_string(mt::SENDER_TRANSPORT_MAP).await.ok(),
+    };
+
+    // HELO decision.
+    let recorded = mt::recorded_helo(&snap.main);
+    let current_helo = mt::main_cf_value(&snap.main, "smtp_helo_name");
+    let remove_helo = primary_helo.is_none()
+        && recorded.is_some()
+        && current_helo.is_some()
+        && current_helo == recorded;
+    let helo_record = primary_helo;
+
+    let old_t = mt::parse_master_block(&snap.master);
+    let mut union_t = old_t.clone();
+    for (ip, helo) in &transports {
+        union_t.insert(*ip, helo.clone());
+    }
+    let master_for = |t: &mt::Transports| {
+        mt::replace_block(&snap.master, mt::MASTER_BEGIN, mt::MASTER_END, &mt::render_master_block(t))
+    };
+    let master_union = master_for(&union_t);
+    let master_final = master_for(&transports);
+    let new_map = mt::render_sender_transport(&map);
+
+    let final_main_preview = mt::main_cf_with_block(&snap.main, &master_final, helo_record);
+    if transports.is_empty() && primary_helo.is_none() && recorded.is_none() && snap.map.is_none()
+        && master_final == snap.master && final_main_preview == snap.main
+    {
+        // Feature never used on this box: touch nothing.
+        return Ok(TransportOutcome { applied: true, skipped });
+    }
+
+    // 1. Declare old ∪ new.
+    let main_union = mt::main_cf_with_block(&snap.main, &master_union, helo_record);
+    if let Err(e) = write_postfix_cf(&master_union, &main_union).await {
+        snap.restore().await;
+        return fail(e, &skipped);
+    }
+    if let Err(reason) = postfix_check().await {
+        snap.restore().await;
+        tracing::error!("postfix check refused the IP transports, previous configuration restored: {reason}");
+        return fail(format!("postfix check failed (previous configuration restored): {reason}"), &skipped);
+    }
+    if union_t.len() > old_t.len() {
+        let _ = safe_command("postfix").arg("reload").output().await;
+    }
+
+    // 2. The map, postmapped, then referenced.
+    let map_step = async {
+        write_file_atomic(mt::SENDER_TRANSPORT_MAP, &new_map).await
+            .map_err(|e| format!("cannot write {}: {e}", mt::SENDER_TRANSPORT_MAP))?;
+        let pm = safe_command("postmap").arg(mt::SENDER_TRANSPORT_MAP).output().await
+            .map_err(|e| format!("postmap could not run: {e}"))?;
+        if !pm.status.success() {
+            return Err(format!("postmap {} failed: {}", mt::SENDER_TRANSPORT_MAP, String::from_utf8_lossy(&pm.stderr).trim()));
+        }
+        Ok(())
+    };
+    if let Err(e) = map_step.await {
+        snap.restore().await;
+        return fail(e, &skipped);
+    }
+    let mut postconf_args = vec![format!("sender_dependent_default_transport_maps=hash:{}", mt::SENDER_TRANSPORT_MAP)];
+    if let Some(h) = primary_helo {
+        postconf_args.push(format!("smtp_helo_name={h}"));
+    }
+    for a in &postconf_args {
+        let _ = safe_command("postconf").args(["-e", a.as_str()]).output().await;
+    }
+    if remove_helo {
+        let _ = safe_command("postconf").args(["-X", "smtp_helo_name"]).output().await;
+    }
+
+    // 3. Narrow to the new set (re-read main.cf: postconf rewrote it).
+    let main_now = tokio::fs::read_to_string(POSTFIX_MAIN_CF).await.unwrap_or_else(|_| main_union.clone());
+    let main_final = mt::main_cf_with_block(&main_now, &master_final, helo_record);
+    if let Err(e) = write_postfix_cf(&master_final, &main_final).await {
+        snap.restore().await;
+        return fail(e, &skipped);
+    }
+    if let Err(reason) = postfix_check().await {
+        snap.restore().await;
+        tracing::error!("postfix check refused the IP transports, previous configuration restored: {reason}");
+        return fail(format!("postfix check failed (previous configuration restored): {reason}"), &skipped);
+    }
+
+    tracing::info!(
+        "Postfix IP transports: {} transport(s), {} domain(s) routed, {} IP(s) skipped",
+        transports.len(),
+        map.len(),
+        skipped.len()
+    );
+    Ok(TransportOutcome { applied: true, skipped })
+}
+
+/// Regenerate main.cf's per-transport rate-limit copy from the transports
+/// master.cf currently declares. Called after the rate-limit route rewrites
+/// the global values, so the `dp-ip-*` transports follow.
+async fn refresh_ip_transport_limits() {
+    use crate::services::mail_transports as mt;
+    let (Ok(main_cf), Ok(master_cf)) = (
+        tokio::fs::read_to_string(POSTFIX_MAIN_CF).await,
+        tokio::fs::read_to_string(POSTFIX_MASTER_CF).await,
+    ) else {
+        return;
+    };
+    let new_main = mt::main_cf_with_limits(&main_cf, &master_cf);
+    if new_main != main_cf {
+        if let Err(e) = write_file_atomic(POSTFIX_MAIN_CF, &new_main).await {
+            tracing::warn!("Failed to update per-IP transport rate limits in main.cf: {e}");
+        }
+    }
 }
 
 // ── Mail queue management ───────────────────────────────────────────────
@@ -2062,6 +2372,8 @@ async fn rate_limit_set(Json(body): Json<RateLimitRequest>) -> Result<Json<serde
 
     write_file_atomic("/etc/postfix/main.cf", &format!("{cleaned}{rate_config}")).await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &format!("Config write failed: {e}")))?;
+    // The dp-ip-* transports read their own copy of these limits.
+    refresh_ip_transport_limits().await;
 
     let _ = safe_command("systemctl").args(["reload", "postfix"]).output().await;
 
@@ -2086,6 +2398,8 @@ async fn rate_limit_remove() -> Result<Json<serde_json::Value>, ApiErr> {
         .collect::<Vec<_>>().join("\n");
     write_file_atomic("/etc/postfix/main.cf", &cleaned).await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &format!("Config write failed: {e}")))?;
+    // No global limit any more: the dp-ip-* copies go too.
+    refresh_ip_transport_limits().await;
     let _ = safe_command("systemctl").args(["reload", "postfix"]).output().await;
     Ok(ok("Rate limit removed"))
 }
@@ -2594,7 +2908,7 @@ mod tests {
     // authenticated tenants — that is the fresh-VPS leg, not these.
 
     fn domain(name: &str, enabled: bool) -> SyncDomain {
-        SyncDomain { domain: name.into(), enabled, catch_all: None }
+        SyncDomain { domain: name.into(), enabled, catch_all: None, send_ip: None, helo: None }
     }
 
     fn account(email: &str, enabled: bool) -> SyncAccount {
@@ -2641,6 +2955,7 @@ mod tests {
             domains: vec![domain("tenant-a.com", true), domain("tenant-b.com", true)],
             accounts: vec![account("sales@tenant-a.com", true), account("info@tenant-b.com", true)],
             aliases: vec![],
+            primary_helo: None,
         }
     }
 
@@ -2695,6 +3010,7 @@ mod tests {
             domains: vec![domain("tenant-a.com", true)],
             accounts: vec![account("sales@tenant-a.com", false)],
             aliases: vec![],
+            primary_helo: None,
         };
         let t = build_sender_login_map(&req);
         assert!(!t.contains("sales@tenant-a.com\tsales@tenant-a.com"));
@@ -2710,6 +3026,7 @@ mod tests {
             domains: vec![domain("example.com", true), domain("mail.example.com", true)],
             accounts: vec![account("a@example.com", true), account("b@mail.example.com", true)],
             aliases: vec![],
+            primary_helo: None,
         };
         let t = build_sender_login_map(&req);
         assert!(!may_send_as(&t, "b@mail.example.com", "a@example.com"));
@@ -2753,6 +3070,7 @@ mod tests {
             domains: vec![domain("tenant-a.com", true)],
             accounts: vec![account("sales@tenant-a.com", true), account("ceo@tenant-a.com", true)],
             aliases: vec![],
+            primary_helo: None,
         };
         let t = build_sender_login_map(&req);
         assert!(may_send_as(&t, "sales@tenant-a.com", "invoices@tenant-a.com"));

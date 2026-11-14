@@ -115,6 +115,7 @@ const Notifications = lazyRetry(() => import("./pages/Notifications"));
 const Integrations = lazyRetry(() => import("./pages/Integrations"));
 const Users = lazyRetry(() => import("./pages/Users"));
 const ContainerPolicies = lazyRetry(() => import("./pages/ContainerPolicies"));
+const ServerIps = lazyRetry(() => import("./pages/ServerIps"));
 const System = lazyRetry(() => import("./pages/System"));
 const Telemetry = lazyRetry(() => import("./pages/Telemetry"));
 
@@ -160,6 +161,7 @@ createRoot(document.getElementById("root")!).render(
               <Route path="/system-logs" element={<Navigate to="/logs?tab=system" replace />} />
               <Route path="/mail" element={<Mail />} />
               <Route path="/servers" element={<Servers />} />
+              <Route path="/ips" element={<ServerIps />} />
               <Route path="/migration" element={<MigrationWizard />} />
               <Route path="/reseller" element={<ResellerDashboard />} />
               <Route path="/reseller/users" element={<ResellerUsers />} />

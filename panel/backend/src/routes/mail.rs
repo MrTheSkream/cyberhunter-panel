@@ -23,7 +23,41 @@ pub struct MailDomain {
     pub catch_all: Option<String>,
     pub enabled: bool,
     pub created_at: chrono::DateTime<chrono::Utc>,
+    /// Multi-IP: the forced send address. `null` = automatic (the same-named
+    /// site's address, else the primary address).
+    pub send_ip_id: Option<Uuid>,
+    /// The address mail actually leaves from; `null` = the primary address.
+    /// Response-only — filled by [`fill_send_ips`], never a column.
+    #[sqlx(default)]
+    pub effective_send_ip: Option<String>,
+    /// `"forced"` | `"site"` | `"primary"`. Response-only, see [`fill_send_ips`].
+    #[sqlx(default)]
+    pub send_ip_source: String,
 }
+
+/// Fill the response-only send-address fields, with the one resolution the
+/// mail sync and the DNS records use (`services::server_ips`).
+async fn fill_send_ips(db: &sqlx::PgPool, domains: &mut [MailDomain]) {
+    let ids: Vec<Uuid> = domains.iter().map(|d| d.id).collect();
+    let rows = crate::services::server_ips::mail_ip_rows_by_ids(db, &ids)
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!("Could not resolve mail send addresses: {e}");
+            Vec::new()
+        });
+    for d in domains.iter_mut() {
+        let send = match rows.iter().find(|r| r.id == d.id) {
+            Some(r) => r.send_ip(),
+            None => crate::services::server_ips::resolve_send_ip(None, None),
+        };
+        d.effective_send_ip = send.ip.as_ref().map(|ip| ip.ip.clone());
+        d.send_ip_source = send.source.as_str().to_string();
+    }
+}
+
+/// The projection every `MailDomain` read uses.
+const MAIL_DOMAIN_COLUMNS: &str =
+    "id, domain, dkim_selector, dkim_public_key, catch_all, enabled, created_at, send_ip_id";
 
 #[derive(serde::Serialize, sqlx::FromRow)]
 pub struct MailAccount {
@@ -52,6 +86,14 @@ pub struct MailAlias {
 #[derive(serde::Deserialize)]
 pub struct CreateDomainRequest {
     pub domain: String,
+    /// Multi-IP: force a send address. Absent/null = automatic.
+    pub send_ip_id: Option<Uuid>,
+}
+
+#[derive(serde::Deserialize)]
+pub struct SetSendIpRequest {
+    /// `null` = automatic.
+    pub send_ip_id: Option<Uuid>,
 }
 
 #[derive(serde::Deserialize)]
@@ -322,7 +364,7 @@ pub async fn list_domains(
 ) -> Result<Json<Vec<MailDomain>>, ApiError> {
     let domains: Vec<MailDomain> = sqlx::query_as(
         "SELECT md.id, md.domain, md.dkim_selector, md.dkim_public_key, md.catch_all, \
-         md.enabled, md.created_at FROM mail_domains md WHERE (\
+         md.enabled, md.created_at, md.send_ip_id FROM mail_domains md WHERE (\
          EXISTS (SELECT 1 FROM users u WHERE u.id = $2 AND u.role = 'admin') \
          AND (md.server_id = $1 OR md.server_id IS NULL)) \
          OR (EXISTS (\
@@ -339,6 +381,9 @@ pub async fn list_domains(
     .await
     .map_err(|e| internal_error("list domains", e))?;
 
+    let mut domains = domains;
+    fill_send_ips(&state.db, &mut domains).await;
+
     Ok(Json(domains))
 }
 
@@ -353,6 +398,15 @@ pub async fn create_domain(
     let domain = body.domain.trim().to_lowercase();
     if !crate::routes::is_valid_domain(&domain) {
         return Err(err(StatusCode::BAD_REQUEST, "Invalid domain name"));
+    }
+
+    // Multi-IP: a forced send address must be declared on the server the domain
+    // is created on — checked before the agent generates anything.
+    if let Some(ip_id) = body.send_ip_id {
+        crate::services::server_ips::declared_ip_on_server(&state.db, ip_id, server_id)
+            .await
+            .map_err(|e| internal_error("create domain", e))?
+            .ok_or_else(|| err(StatusCode::BAD_REQUEST, "That IP address is not declared on this server"))?;
     }
 
     // Generate DKIM keys via agent
@@ -391,14 +445,15 @@ pub async fn create_domain(
     // and left `idx_mail_domains_domain_server` unable to reject a duplicate
     // (Postgres treats NULLs as distinct, and the old global UNIQUE on `domain` was
     // dropped by that same migration, so the CONFLICT arm below could not fire).
-    let mail_domain: MailDomain = sqlx::query_as(
-        "INSERT INTO mail_domains (domain, dkim_private_key, dkim_public_key, server_id) \
-         VALUES ($1, $2, $3, $4) RETURNING id, domain, dkim_selector, dkim_public_key, catch_all, enabled, created_at",
-    )
+    let mail_domain: MailDomain = sqlx::query_as(&format!(
+        "INSERT INTO mail_domains (domain, dkim_private_key, dkim_public_key, server_id, send_ip_id) \
+         VALUES ($1, $2, $3, $4, $5) RETURNING {MAIL_DOMAIN_COLUMNS}",
+    ))
     .bind(&domain)
     .bind(&encrypted_private_key)
     .bind(&public_key)
     .bind(server_id)
+    .bind(body.send_ip_id)
     .fetch_one(&state.db)
     .await
     .map_err(|e| {
@@ -413,6 +468,15 @@ pub async fn create_domain(
     let _ = agent
         .post("/mail/domains/configure", Some(serde_json::json!({ "domain": domain })))
         .await;
+
+    // Rebuild the maps now, not at the first mailbox change: the sync is what
+    // publishes this domain's send transport (multi-IP §4.4), so a domain created
+    // with — or following a site on — a non-primary address would otherwise send
+    // from the primary one until something unrelated triggered a sync.
+    // Best-effort, like configure above: the row exists and is reported either way.
+    if let Err((status, msg)) = sync_mail_config(&state, server_id, &agent).await {
+        tracing::warn!("Mail sync after creating {domain} was refused ({status}): {:?}", msg.0);
+    }
 
     // ── Auto-DNS: create MX, A, SPF, DMARC, DKIM records ─────────────────
     //
@@ -492,6 +556,8 @@ pub async fn create_domain(
         claims.key_id,
     ).await;
 
+    let mut mail_domain = mail_domain;
+    fill_send_ips(&state.db, std::slice::from_mut(&mut mail_domain)).await;
     Ok((StatusCode::CREATED, Json(mail_domain)))
 }
 
@@ -540,6 +606,64 @@ pub async fn update_domain(
     ).await;
 
     Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+/// PUT /api/mail/domains/{id}/send-ip — force a send address, or `null` for automatic.
+///
+/// The address must be declared on the domain's OWN server (the row's, not the
+/// switcher's). Applied by a mail sync, which publishes the per-domain transport
+/// and HELO. The panel-managed SPF record is not rewritten here: the DNS tab and
+/// dns-check report the new expected `ip4:` value.
+pub async fn set_send_ip(
+    State(state): State<AppState>,
+    AdminUser(claims): AdminUser,
+    Path(id): Path<Uuid>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<SetSendIpRequest>,
+) -> Result<Json<MailDomain>, ApiError> {
+    let (domain, server_id, agent) = mail_domain_agent_for_caller(&state, id, &claims).await?;
+
+    let label = match body.send_ip_id {
+        None => "automatic".to_string(),
+        Some(ip_id) => {
+            crate::services::server_ips::declared_ip_on_server(&state.db, ip_id, server_id)
+                .await
+                .map_err(|e| internal_error("mail send ip", e))?
+                .ok_or_else(|| err(StatusCode::BAD_REQUEST, "That IP address is not declared on this mail domain's server"))?
+                .ip
+        }
+    };
+
+    let mut row: MailDomain = sqlx::query_as(&format!(
+        "UPDATE mail_domains SET send_ip_id = $1, updated_at = NOW() WHERE id = $2 RETURNING {MAIL_DOMAIN_COLUMNS}"
+    ))
+    .bind(body.send_ip_id)
+    .bind(id)
+    .fetch_one(&state.db)
+    .await
+    .map_err(|e| internal_error("mail send ip", e))?;
+
+    let report = sync_mail_config_report(&state, server_id, &agent).await?;
+
+    let ip = crate::routes::client_ip(&headers);
+    activity::log_activity(
+        &state.db, claims.sub, &claims.email, "mail.domain.send_ip",
+        Some("mail"), Some(&domain), Some(&label), ip.as_deref(), claims.key_id,
+    ).await;
+
+    fill_send_ips(&state.db, std::slice::from_mut(&mut row)).await;
+
+    // An explicit change must not report success when it did not take. The row
+    // is KEPT (it is the operator's stated intent and the next successful sync
+    // applies it) and the request answers 502 saying so — rolling back would need
+    // a second sync that could fail the same way and leave the two disagreeing.
+    if let Some(problem) = report.send_ip_problem(row.effective_send_ip.as_deref()) {
+        return Err(err(
+            StatusCode::BAD_GATEWAY,
+            &format!("The sending address was saved, but it is not in effect: {problem}"),
+        ));
+    }
+    Ok(Json(row))
 }
 
 /// DELETE /api/mail/domains/{id}
@@ -648,16 +772,23 @@ pub async fn domain_dns(
     // would create the wrong record by hand and it would resolve and answer. Fall
     // back to the placeholder the endpoint already used when it could not detect an
     // address: it says "put an address here" and names no machine at all.
-    let server_ip = crate::helpers::public_ip_for_server(&state.db, server_id)
-        .await
-        .filter(|ip| !ip.is_empty())
-        .unwrap_or_else(|| "your-server-ip".to_string());
+    //
+    // Multi-IP: the apex A record names the same-named site's address and SPF the
+    // address this domain sends from (services::server_ips). Each falls back to
+    // the placeholder on its own.
+    let (a_ip, spf_ip) =
+        crate::services::server_ips::mail_dns_addresses_for(&state.db, server_id, &domain).await;
+    let placeholder = |ip: Option<String>| {
+        ip.filter(|ip| !ip.is_empty()).unwrap_or_else(|| "your-server-ip".to_string())
+    };
+    let (a_ip, spf_ip) = (placeholder(a_ip), placeholder(spf_ip));
 
-    let records: Vec<serde_json::Value> = crate::services::prerequisites::mail::mail_records(
+    let records: Vec<serde_json::Value> = crate::services::prerequisites::mail::mail_records_for(
         &domain,
         &selector,
         dkim_pub.as_deref(),
-        &server_ip,
+        &a_ip,
+        &spf_ip,
     )
     .into_iter()
     .map(|r| {
@@ -670,9 +801,24 @@ pub async fn domain_dns(
     })
     .collect();
 
+    // Multi-IP: where this domain's mail leaves from, and the PTR (= HELO)
+    // receivers will see for it. `ip`/`ptr` null = the primary address, whose
+    // PTR is not known to the panel unless that address is declared.
+    let send = crate::services::server_ips::mail_ip_rows_by_ids(&state.db, &[id])
+        .await
+        .ok()
+        .and_then(|rows| rows.into_iter().next())
+        .map(|r| r.send_ip())
+        .unwrap_or_else(|| crate::services::server_ips::resolve_send_ip(None, None));
+
     Ok(Json(serde_json::json!({
         "domain": domain,
         "records": records,
+        "send_ip": {
+            "ip": send.ip.as_ref().map(|i| i.ip.clone()),
+            "source": send.source.as_str(),
+            "ptr": send.ip.as_ref().and_then(|i| i.helo()),
+        },
     })))
 }
 
@@ -1448,8 +1594,11 @@ async fn auto_create_mail_dns(
     // the domain is delivered nowhere and SPF authorises a host that never sends
     // it. That is strictly worse than the domain having no records at all, which
     // is a visible, fixable state the DNS tab already reports.
-    let server_ip = match crate::helpers::public_ip_for_server(db, Some(server_id)).await {
-        Some(ip) if !ip.is_empty() => ip,
+    // Multi-IP: A = the same-named site's address, SPF = the send address.
+    let (a_ip, spf_ip) =
+        crate::services::server_ips::mail_dns_addresses_for(db, Some(server_id), domain).await;
+    let (server_ip, spf_ip) = match (a_ip, spf_ip) {
+        (Some(a), Some(spf)) if !a.is_empty() && !spf.is_empty() => (a, spf),
         _ => {
             // The whole set is refused, not just the two records that carry the
             // address. MX names the apex and DKIM/DMARC only mean anything once
@@ -1476,7 +1625,7 @@ async fn auto_create_mail_dns(
     // mail topologies from one product. Now there is one.
     let selector = crate::services::prerequisites::mail::DEFAULT_DKIM_SELECTOR;
     let records =
-        crate::services::prerequisites::mail::mail_records(domain, selector, dkim_public_key, &server_ip);
+        crate::services::prerequisites::mail::mail_records_for(domain, selector, dkim_public_key, &server_ip, &spf_ip);
 
     if provider == "cloudflare" {
         let (zone_id, token) = match (cf_zone_id, cf_api_token) {
@@ -1902,15 +2051,19 @@ pub async fn dns_check(
     // is unaffected — the helper detects the local address outbound, exactly as
     // this line used to — and a member with no recorded address gets an honest
     // "we can't tell" instead of a confident, wrong "misconfigured".
-    let server_ip = crate::helpers::public_ip_for_server(&state.db, server_id)
-        .await
-        .unwrap_or_default();
+    //
+    // Multi-IP: the apex is checked against the site's address, SPF against the
+    // send address — the same pair the DNS tab and auto-DNS use.
+    let (a_ip, spf_ip) =
+        crate::services::server_ips::mail_dns_addresses_for(&state.db, server_id, &domain).await;
+    let (a_ip, spf_ip) = (a_ip.unwrap_or_default(), spf_ip.unwrap_or_default());
 
-    let verdict = crate::services::prerequisites::mail::check_mail_dns_published(
+    let verdict = crate::services::prerequisites::mail::check_mail_dns_published_for(
         &domain,
         &selector,
         dkim_pub.as_deref(),
-        &server_ip,
+        &a_ip,
+        &spf_ip,
     )
     .await;
 
@@ -1919,11 +2072,12 @@ pub async fn dns_check(
         Some(crate::services::prerequisites::Remediation::DnsRecords { records }) => records.clone(),
         // Satisfied (or undeterminable) results carry no remediation; re-derive the
         // set so the tab always lists every record rather than going blank.
-        _ => crate::services::prerequisites::mail::mail_records(
+        _ => crate::services::prerequisites::mail::mail_records_for(
             &domain,
             &selector,
             dkim_pub.as_deref(),
-            &server_ip,
+            &a_ip,
+            &spf_ip,
         ),
     };
 
@@ -1991,15 +2145,15 @@ pub async fn preflight(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let (domain, selector, dkim_pub, server_id) =
         mail_domain_identity(&state.db, id, &claims).await?;
-    let server_ip = crate::helpers::public_ip_for_server(&state.db, server_id)
-        .await
-        .unwrap_or_default();
+    let (a_ip, spf_ip) =
+        crate::services::server_ips::mail_dns_addresses_for(&state.db, server_id, &domain).await;
 
-    let checks = crate::services::prerequisites::mail::evaluate(
+    let checks = crate::services::prerequisites::mail::evaluate_for(
         &domain,
         &selector,
         dkim_pub.as_deref(),
-        &server_ip,
+        &a_ip.unwrap_or_default(),
+        &spf_ip.unwrap_or_default(),
     )
     .await;
 
@@ -2536,16 +2690,25 @@ async fn mail_alias_agent_for_caller(
 /// Separated from [`sync_mail_config`] so that a database failure while gathering
 /// stays distinguishable from the safety precondition, which must never be
 /// swallowed. Only the precondition is fatal to the request.
+///
+/// Multi-IP: each domain also carries `send_ip` + `helo` (resolved here — the
+/// agent does no resolution), and the root carries `primary_helo`. Only the agent
+/// knows which address is its primary one, so `agent_primary` is its answer to
+/// `GET /system/ips`, or `None` when that could not be asked.
 async fn mail_sync_payload(
     state: &AppState,
     server_id: Uuid,
+    agent_primary: Option<&str>,
 ) -> Result<serde_json::Value, sqlx::Error> {
-    let domains: Vec<(String, bool, Option<String>)> = sqlx::query_as(
-        "SELECT domain, enabled, catch_all FROM mail_domains WHERE server_id = $1 ORDER BY domain",
-    )
-    .bind(server_id)
-    .fetch_all(&state.db)
-    .await?;
+    // Same rows as `SELECT domain, enabled, catch_all FROM mail_domains WHERE
+    // server_id = $1 ORDER BY domain`, plus what the send-address resolution needs.
+    let domains = crate::services::server_ips::mail_ip_rows_for_server(&state.db, server_id).await?;
+
+    let declared: Vec<crate::services::server_ips::DeclaredIp> =
+        sqlx::query_as("SELECT id, ip, public_ip, ptr FROM server_ips WHERE server_id = $1")
+            .bind(server_id)
+            .fetch_all(&state.db)
+            .await?;
 
     let accounts: Vec<(String, String, i32, bool, Option<String>)> = sqlx::query_as(
         "SELECT a.email, a.password_hash, a.quota_mb, a.enabled, a.forward_to \
@@ -2565,17 +2728,48 @@ async fn mail_sync_payload(
     .fetch_all(&state.db)
     .await?;
 
-    Ok(serde_json::json!({
-        "domains": domains.iter().map(|(d, e, c)| serde_json::json!({
-            "domain": d, "enabled": e, "catch_all": c
-        })).collect::<Vec<_>>(),
+    Ok(build_sync_payload(&domains, &accounts, &aliases, &declared, agent_primary))
+}
+
+/// The `/mail/sync` body from already-loaded rows. Pure, so the shape the agent
+/// consumes is pinned by unit tests.
+fn build_sync_payload(
+    domains: &[crate::services::server_ips::MailIpRow],
+    accounts: &[(String, String, i32, bool, Option<String>)],
+    aliases: &[(String, String)],
+    declared: &[crate::services::server_ips::DeclaredIp],
+    agent_primary: Option<&str>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "domains": domains.iter().map(|d| {
+            let (send_ip, helo) =
+                crate::services::server_ips::sync_send_fields(&d.send_ip(), agent_primary);
+            serde_json::json!({
+                "domain": d.domain, "enabled": d.enabled, "catch_all": d.catch_all,
+                "send_ip": send_ip, "helo": helo,
+            })
+        }).collect::<Vec<_>>(),
         "accounts": accounts.iter().map(|(email, hash, quota, enabled, fwd)| serde_json::json!({
             "email": email, "password_hash": hash, "quota_mb": quota, "enabled": enabled, "forward_to": fwd
         })).collect::<Vec<_>>(),
         "aliases": aliases.iter().map(|(src, dst)| serde_json::json!({
             "source": src, "destination": dst
         })).collect::<Vec<_>>(),
-    }))
+        "primary_helo": crate::services::server_ips::primary_helo(declared, agent_primary),
+    })
+}
+
+/// The agent's primary address (`GET /system/ips` → `primary`), best-effort.
+/// `None` on an agent that predates multi-IP or cannot be asked: the payload then
+/// still names each domain's address explicitly, and only `primary_helo` is lost.
+pub(crate) async fn agent_primary_ip(agent: &AgentHandle) -> Option<String> {
+    match agent.get("/system/ips").await {
+        Ok(v) => v.get("primary").and_then(|p| p.as_str()).map(str::to_string),
+        Err(e) => {
+            tracing::debug!("Could not read the agent's primary address: {e}");
+            None
+        }
+    }
 }
 
 /// Rebuild ONE server's Postfix/Dovecot maps from the rows that name that server.
@@ -2615,11 +2809,11 @@ async fn mail_sync_payload(
 /// DATA, not on the request, which is why it is fatal where an unreachable agent
 /// is not: the caller can fix it (assign the domains), and until they do there is
 /// no safe payload to send to any host in the fleet.
-async fn sync_mail_config(
+pub(crate) async fn sync_mail_config_report(
     state: &AppState,
     server_id: Uuid,
     agent: &AgentHandle,
-) -> Result<(), ApiError> {
+) -> Result<SyncReport, ApiError> {
     let unscoped: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM mail_domains WHERE server_id IS NULL")
             .fetch_one(&state.db)
@@ -2648,19 +2842,119 @@ async fn sync_mail_config(
     // blip or an agent that is down must not turn a saved change into a 500 — it
     // never did, and widening that here would be a behaviour change hiding inside
     // a security fix.
-    let payload = match mail_sync_payload(state, server_id).await {
+    let agent_primary = agent_primary_ip(agent).await;
+    let payload = match mail_sync_payload(state, server_id, agent_primary.as_deref()).await {
         Ok(p) => p,
         Err(e) => {
             tracing::warn!("Mail sync for server {server_id}: gathering configuration failed: {e}");
-            return Ok(());
+            return Ok(SyncReport::GatherFailed(e.to_string()));
         }
     };
 
-    if let Err(e) = agent.post("/mail/sync", Some(payload)).await {
-        tracing::warn!("Mail sync for server {server_id}: agent rejected the rebuild: {e}");
+    match agent.post("/mail/sync", Some(payload)).await {
+        Ok(v) => Ok(SyncReport::Applied(v)),
+        Err(e) => {
+            tracing::warn!("Mail sync for server {server_id}: agent rejected the rebuild: {e}");
+            Ok(SyncReport::AgentFailed(e))
+        }
     }
+}
 
-    Ok(())
+/// What a mail rebuild past its precondition came to. Every caller that only
+/// needs "best-effort" goes through [`sync_mail_config`]; the two handlers whose
+/// whole purpose is the sending address (`set_send_ip`, the site's
+/// `set_ip`) read it to tell the operator when it did not take.
+pub(crate) enum SyncReport {
+    /// The agent answered; its body (`ip_transports: {applied, skipped}`).
+    Applied(serde_json::Value),
+    GatherFailed(String),
+    AgentFailed(crate::services::agent::AgentError),
+}
+
+impl SyncReport {
+    /// `None` when the per-domain sending address `send_ip` is in effect;
+    /// `Some(reason)` when it is not. `send_ip: None` (primary) only needs the
+    /// sync itself to have succeeded.
+    pub(crate) fn send_ip_problem(&self, send_ip: Option<&str>) -> Option<String> {
+        match self {
+            SyncReport::GatherFailed(e) => Some(format!("the mail configuration could not be gathered: {e}")),
+            SyncReport::AgentFailed(e) => Some(agent_failure_text(e)),
+            SyncReport::Applied(v) => {
+                let t = v.get("ip_transports");
+                let applied = t.and_then(|t| t.get("applied")).and_then(|a| a.as_bool());
+                let skipped: Vec<String> = t
+                    .and_then(|t| t.get("skipped"))
+                    .and_then(|s| s.as_array())
+                    .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+                    .unwrap_or_default();
+                if applied == Some(false) {
+                    return Some("the agent did not apply the per-domain sending addresses".to_string());
+                }
+                match send_ip {
+                    Some(ip) if skipped.iter().any(|s| s == ip) => Some(format!(
+                        "the agent skipped the sending address {ip} (it is not present on the server's interface)"
+                    )),
+                    _ => None,
+                }
+            }
+        }
+    }
+}
+
+/// The agent's own sentence for a failed call, for a message the operator reads.
+fn agent_failure_text(e: &crate::services::agent::AgentError) -> String {
+    match e {
+        crate::services::agent::AgentError::Status(code, body) => {
+            let msg = serde_json::from_str::<serde_json::Value>(body)
+                .ok()
+                .and_then(|v| v.get("error").and_then(|m| m.as_str()).map(str::to_string))
+                .unwrap_or_else(|| body.chars().take(300).collect());
+            format!("agent returned {code}: {msg}")
+        }
+        other => other.to_string(),
+    }
+}
+
+/// Best-effort rebuild: the precondition is still fatal, everything after it
+/// is logged and swallowed, exactly as before multi-IP.
+pub(crate) async fn sync_mail_config(
+    state: &AppState,
+    server_id: Uuid,
+    agent: &AgentHandle,
+) -> Result<(), ApiError> {
+    sync_mail_config_report(state, server_id, agent).await.map(|_| ())
+}
+
+/// Multi-IP: a mail domain in automatic mode sends from the address of the
+/// same-named site, so creating, deleting or renaming that site changes where
+/// its mail leaves from. Re-sync the server when any of `domains` names such a
+/// mail domain. Best-effort: logged, never an error for the site operation.
+pub(crate) async fn resync_if_mail_follows(
+    state: &AppState,
+    server_id: Uuid,
+    domains: &[&str],
+    agent: &AgentHandle,
+) {
+    let names: Vec<String> = domains.iter().map(|d| d.trim().to_lowercase()).collect();
+    let follows: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM mail_domains WHERE server_id = $1 AND domain = ANY($2) AND send_ip_id IS NULL)",
+    )
+    .bind(server_id)
+    .bind(&names)
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(false);
+    if !follows {
+        return;
+    }
+    match sync_mail_config_report(state, server_id, agent).await {
+        Ok(r) => {
+            if let Some(p) = r.send_ip_problem(None) {
+                tracing::warn!("Mail sync after a site change on {names:?}: {p}");
+            }
+        }
+        Err((status, msg)) => tracing::warn!("Mail sync after a site change on {names:?} was refused ({status}): {:?}", msg.0),
+    }
 }
 
 /// Accept only the address character set the agent's `sync_config` accepts (ASCII alphanumeric
@@ -3018,5 +3312,102 @@ mod mail_cert_verdict_tests {
             mail_cert_verdict(false, Some(true), Some("dns-01"), Some("DigiCert Inc")),
             MailCertVerdict::Issue
         );
+    }
+}
+
+#[cfg(test)]
+mod send_ip_payload_tests {
+    use super::build_sync_payload;
+    use crate::services::server_ips::{DeclaredIp, MailIpRow};
+    use uuid::Uuid;
+
+    fn row(domain: &str, forced: Option<(&str, Option<&str>)>, site: Option<Option<(&str, Option<&str>)>>) -> MailIpRow {
+        let (f_id, f_ip, f_ptr) = match forced {
+            Some((ip, ptr)) => (Some(Uuid::from_u128(1)), Some(ip.to_string()), ptr.map(str::to_string)),
+            None => (None, None, None),
+        };
+        let (has_site, s_id, s_ip, s_ptr) = match site {
+            None => (false, None, None, None),
+            Some(None) => (true, None, None, None),
+            Some(Some((ip, ptr))) => (true, Some(Uuid::from_u128(2)), Some(ip.to_string()), ptr.map(str::to_string)),
+        };
+        MailIpRow {
+            id: Uuid::new_v4(),
+            domain: domain.into(),
+            enabled: true,
+            catch_all: None,
+            f_id,
+            f_ip,
+            f_public_ip: None,
+            f_ptr,
+            has_site,
+            s_id,
+            s_ip,
+            s_public_ip: None,
+            s_ptr,
+        }
+    }
+
+    #[test]
+    fn each_domain_carries_its_send_address_and_helo() {
+        let domains = vec![
+            row("a.lab", None, Some(Some(("192.168.250.11", Some("a-mail.lab"))))),
+            row("b.lab", Some(("192.168.250.12", None)), None),
+            row("c.lab", None, None),
+            row("d.lab", None, Some(None)),
+        ];
+        let declared = vec![DeclaredIp {
+            id: Uuid::from_u128(9),
+            ip: "192.168.250.10".into(),
+            public_ip: None,
+            ptr: Some("srv.lab.".into()),
+        }];
+        let p = build_sync_payload(&domains, &[], &[], &declared, Some("192.168.250.10"));
+        let d = p["domains"].as_array().unwrap();
+        assert_eq!(d[0]["send_ip"], "192.168.250.11");
+        assert_eq!(d[0]["helo"], "a-mail.lab");
+        assert_eq!(d[1]["send_ip"], "192.168.250.12");
+        assert!(d[1]["helo"].is_null());
+        for i in [2, 3] {
+            assert!(d[i]["send_ip"].is_null() && d[i]["helo"].is_null());
+        }
+        // Unchanged fields still there for the agent.
+        assert_eq!(d[0]["domain"], "a.lab");
+        assert_eq!(d[0]["enabled"], true);
+        assert_eq!(p["primary_helo"], "srv.lab");
+    }
+
+    #[test]
+    fn without_the_agents_primary_there_is_no_global_helo() {
+        let p = build_sync_payload(&[row("a.lab", Some(("10.0.0.2", None)), None)], &[], &[], &[], None);
+        assert!(p["primary_helo"].is_null());
+        assert_eq!(p["domains"][0]["send_ip"], "10.0.0.2");
+    }
+}
+
+#[cfg(test)]
+mod sync_report_tests {
+    use super::SyncReport;
+    use crate::services::agent::AgentError;
+
+    #[test]
+    fn a_skipped_or_unapplied_sending_address_is_a_problem() {
+        let ok = SyncReport::Applied(serde_json::json!({"ip_transports": {"applied": true, "skipped": ["10.0.0.9"]}}));
+        assert!(ok.send_ip_problem(Some("10.0.0.2")).is_none());
+        assert!(ok.send_ip_problem(Some("10.0.0.9")).unwrap().contains("10.0.0.9"));
+        assert!(ok.send_ip_problem(None).is_none());
+        let not = SyncReport::Applied(serde_json::json!({"ip_transports": {"applied": false, "skipped": []}}));
+        assert!(not.send_ip_problem(None).is_some());
+        // An agent that predates the field reports nothing to complain about.
+        assert!(SyncReport::Applied(serde_json::json!({"ok": true})).send_ip_problem(Some("10.0.0.2")).is_none());
+    }
+
+    #[test]
+    fn the_agents_own_sentence_reaches_the_operator() {
+        let r = SyncReport::AgentFailed(AgentError::Status(
+            500,
+            r#"{"error": "Mail configuration synced, but the per-domain sending IPs were not applied: postfix check failed"}"#.into(),
+        ));
+        assert!(r.send_ip_problem(Some("10.0.0.2")).unwrap().contains("per-domain sending IPs were not applied"));
     }
 }

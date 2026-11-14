@@ -73,6 +73,13 @@ pub struct SiteConfig {
     pub pool_user: Option<String>,
     #[serde(default)]
     pub pool_group: Option<String>,
+    /// IPv4 the vhost listens on: an address assigned on one of the host's
+    /// interfaces, or `"primary"` (the default-route IP the agent detects).
+    /// Absent = keep the IP already written in the existing vhost if it is
+    /// still on the host, else the primary — see
+    /// `services::nginx::resolve_bind_ip`.
+    #[serde(default)]
+    pub bind_ip: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -111,6 +118,35 @@ async fn put_site(
                 message: "Invalid domain format".into(),
             }),
         ));
+    }
+
+    // Validate the listen IP before any side effect: nginx refuses to start
+    // on an address that is not assigned to an interface.
+    if let Some(ref b) = config.bind_ip {
+        match services::nginx::validate_bind_ip(b) {
+            Ok(None) => {}
+            Ok(Some(ip)) => {
+                let assigned = services::server_ips::host_addrs().await.map_err(|e| {
+                    (StatusCode::INTERNAL_SERVER_ERROR, Json(NginxResponse {
+                        success: false,
+                        message: format!("Cannot list the server's IPs: {e}"),
+                    }))
+                })?;
+                if !assigned.iter().any(|a| a.ip == ip) {
+                    return Err((StatusCode::BAD_REQUEST, Json(NginxResponse {
+                        success: false,
+                        message: format!("bind_ip {ip} is not assigned on any interface of this server"),
+                    })));
+                }
+                config.bind_ip = Some(ip.to_string());
+            }
+            Err(e) => {
+                return Err((StatusCode::BAD_REQUEST, Json(NginxResponse {
+                    success: false,
+                    message: e,
+                })));
+            }
+        }
     }
 
     // Create app service for node/python runtimes

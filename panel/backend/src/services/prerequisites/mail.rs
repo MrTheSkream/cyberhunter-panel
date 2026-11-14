@@ -84,14 +84,32 @@ pub fn dkim_txt_value(public_key_pem: &str) -> String {
 /// DockPanel, so neither topology is enforced by the mail stack — which is
 /// exactly why the check accepts both (see [`record_satisfies`]) while we only
 /// ever *advise* one.
+// The single-address form (apex and send address equal): the pre-multi-IP
+// shape, kept for the unit tests and any caller holding one address.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn mail_records(
     domain: &str,
     selector: &str,
     dkim_public_key: Option<&str>,
     server_ip: &str,
 ) -> Vec<DnsRecordHint> {
+    mail_records_for(domain, selector, dkim_public_key, server_ip, server_ip)
+}
+
+/// [`mail_records`] for a domain whose apex and send addresses differ (multi-IP,
+/// conception/01-multi-ip.md §5.3): `a_ip` is the apex A record — the same-named
+/// site's address when there is one, else the send address — and `spf_ip` is the
+/// address mail is sent FROM, which SPF `ip4:` must authorise. Both come from
+/// `services::server_ips::mail_dns_addresses_for`.
+pub fn mail_records_for(
+    domain: &str,
+    selector: &str,
+    dkim_public_key: Option<&str>,
+    a_ip: &str,
+    spf_ip: &str,
+) -> Vec<DnsRecordHint> {
     let mut records = vec![
-        DnsRecordHint::new("@", domain, "A", server_ip, "300")
+        DnsRecordHint::new("@", domain, "A", a_ip, "300")
             .with_purpose("The address other mail servers connect to. Must not be proxied."),
         DnsRecordHint::new("@", domain, "MX", format!("10 {domain}"), "300")
             .with_purpose("Where mail for this domain is delivered."),
@@ -99,7 +117,7 @@ pub fn mail_records(
             "@",
             domain,
             "TXT",
-            format!("v=spf1 a mx ip4:{server_ip} ~all"),
+            format!("v=spf1 a mx ip4:{spf_ip} ~all"),
             "300",
         )
         .with_purpose("SPF — authorises this server to send mail for the domain."),
@@ -242,17 +260,34 @@ async fn lookup(record: &DnsRecordHint) -> Option<Vec<String>> {
 /// your behalf. There is no control to disable, so there is nothing to block;
 /// what there is, is a domain quietly landing in spam folders with nothing
 /// anywhere in the product saying so.
+// The single-address form (apex and send address equal): the pre-multi-IP
+// shape, kept for the unit tests and any caller holding one address.
+#[cfg_attr(not(test), allow(dead_code))]
 pub async fn check_mail_dns_published(
     domain: &str,
     selector: &str,
     dkim_public_key: Option<&str>,
     server_ip: &str,
 ) -> PrereqResult {
-    if server_ip.is_empty() {
+    check_mail_dns_published_for(domain, selector, dkim_public_key, server_ip, server_ip).await
+}
+
+/// [`check_mail_dns_published`] with the apex and send addresses split — see
+/// [`mail_records_for`]. Either being unknown (empty) is "cannot judge".
+pub async fn check_mail_dns_published_for(
+    domain: &str,
+    selector: &str,
+    dkim_public_key: Option<&str>,
+    a_ip: &str,
+    spf_ip: &str,
+) -> PrereqResult {
+    if a_ip.is_empty() || spf_ip.is_empty() {
         return MAIL_DNS_CHECK.result(&MAIL_DNS_NO_PUBLIC_IP, &[]);
     }
+    // SPF satisfaction is judged against the address mail leaves from.
+    let server_ip = spf_ip;
 
-    let wanted = mail_records(domain, selector, dkim_public_key, server_ip);
+    let wanted = mail_records_for(domain, selector, dkim_public_key, a_ip, spf_ip);
 
     let mut checked: Vec<DnsRecordHint> = Vec::with_capacity(wanted.len());
     let mut missing: Vec<String> = Vec::new();
@@ -315,7 +350,7 @@ pub async fn check_mail_dns_published(
     };
 
     rendered
-        .with_expected(server_ip.to_string())
+        .with_expected(a_ip.to_string())
         .with_observed(observed)
         .with_remediation(Remediation::DnsRecords { records: checked })
 }
@@ -335,15 +370,29 @@ pub fn check_dkim_key_present(domain: &str, dkim_public_key: Option<&str>) -> Pr
 }
 
 /// Evaluate the mail prerequisites for one domain.
+// The single-address form (apex and send address equal): the pre-multi-IP
+// shape, kept for the unit tests and any caller holding one address.
+#[cfg_attr(not(test), allow(dead_code))]
 pub async fn evaluate(
     domain: &str,
     selector: &str,
     dkim_public_key: Option<&str>,
     server_ip: &str,
 ) -> Vec<PrereqResult> {
+    evaluate_for(domain, selector, dkim_public_key, server_ip, server_ip).await
+}
+
+/// [`evaluate`] with the apex and send addresses split — see [`mail_records_for`].
+pub async fn evaluate_for(
+    domain: &str,
+    selector: &str,
+    dkim_public_key: Option<&str>,
+    a_ip: &str,
+    spf_ip: &str,
+) -> Vec<PrereqResult> {
     vec![
         check_dkim_key_present(domain, dkim_public_key),
-        check_mail_dns_published(domain, selector, dkim_public_key, server_ip).await,
+        check_mail_dns_published_for(domain, selector, dkim_public_key, a_ip, spf_ip).await,
     ]
 }
 
@@ -367,6 +416,24 @@ mod tests {
     }
 
     // ── the record set ────────────────────────────────────────────────────
+
+    /// Multi-IP: the apex A record names the site's address while SPF authorises
+    /// the address mail is sent from, and the SPF check judges against the latter.
+    #[test]
+    fn split_addresses_put_the_site_in_a_and_the_sender_in_spf() {
+        let r = mail_records_for("example.com", "dockpanel", Some(PEM), "203.0.113.7", "198.51.100.9");
+        let a = r.iter().find(|x| x.record_type == "A").unwrap();
+        assert_eq!(a.value, "203.0.113.7");
+        let spf = r.iter().find(|x| x.value.starts_with("v=spf1")).unwrap();
+        assert_eq!(spf.value, "v=spf1 a mx ip4:198.51.100.9 ~all");
+        assert!(record_satisfies(spf, "v=spf1 ip4:198.51.100.9 -all", "198.51.100.9"));
+        assert!(!record_satisfies(spf, "v=spf1 ip4:203.0.113.7 -all", "198.51.100.9"));
+        // One address everywhere is exactly the pre-multi-IP record set.
+        assert_eq!(
+            serde_json::to_value(mail_records_for("example.com", "dockpanel", Some(PEM), "203.0.113.7", "203.0.113.7")).unwrap(),
+            serde_json::to_value(records()).unwrap()
+        );
+    }
 
     /// The pre-v2.29.0 bug in one assertion: the manual DNS tab published the
     /// agent's hostname where an address belongs.

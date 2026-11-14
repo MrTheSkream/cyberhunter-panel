@@ -18,7 +18,10 @@ soient développés en parallèle. Toute évolution d'un contrat se fait ici d'a
 - `prefix` optionnel (défaut 32), `interface` optionnelle (défaut : interface de la route par défaut).
 - Effet : `ip addr add` (si pas déjà présente) + réécriture de `60-dockpanel.yaml` (600) + `netplan generate`.
   Échec de `generate` → fichier restauré, IP retirée si on l'avait ajoutée, erreur 500.
-- Réponse 200 : l'entrée au format A1. 400 si IP / prefix / interface invalides.
+- Réponse 200 : l'entrée au format A1 **+ `"added": bool`** (true seulement si cet appel a fait `ip addr add` ;
+  false si l'IP était déjà sur l'hôte et a juste été adoptée → le backend ne doit annuler par DELETE que si `added`).
+  400 si IP / prefix / interface invalides. **409 si l'interface n'est définie dans aucun autre fichier netplan**
+  (on refuse de créer une définition concurrente qui couperait le lien au reboot).
 
 ### A3. `DELETE /system/ips/{ip}`
 - 409 `{"error": "..."}` si IP principale ou non gérée (absente de `60-dockpanel.yaml`).
@@ -34,6 +37,8 @@ soient développés en parallèle. Toute évolution d'un contrat se fait ici d'a
 - Chaque `SyncDomain` : `send_ip: Option<String>` (IPv4 ; null/absent = IP principale), `helo: Option<String>`.
 - Racine : `primary_helo: Option<String>` (PTR de l'IP principale → `smtp_helo_name` global si fourni).
 - Transports nommés `dp-ip-<ip avec - à la place des .>` ; carte `/etc/postfix/sender_transport`.
+- Réponse : ajoute `"ip_transports": {"applied": bool, "skipped": ["ip", ...]}` (`skipped` = IP d'envoi ignorées car
+  absentes de l'hôte). Si `postfix check` refuse : `master.cf`, `main.cf` **et la carte** sont restaurés, 500 `{error}`.
 
 ## B. Frontend ← API (JSON, auth existante, en-tête `X-Server-Id` existant)
 

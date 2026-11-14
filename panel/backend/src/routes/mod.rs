@@ -32,6 +32,7 @@ pub mod drift;
 pub mod security;
 pub mod security_scans;
 pub mod servers;
+pub mod server_ips;
 pub mod settings;
 pub mod stacks;
 pub mod staging;
@@ -1127,6 +1128,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/sites/{id}/limits", put(sites::update_limits))
         .route("/api/sites/{id}/bandwidth-usage", get(sites::bandwidth_usage))
         .route("/api/sites/{id}/domain", put(sites::rename_domain))
+        .route("/api/sites/{id}/ip", put(sites::set_ip))
         .route("/api/sites/{id}/transfer", post(sites::transfer))
         .route("/api/sites/{id}/toggle", put(sites::toggle_enabled))
         .route("/api/sites/{id}/fastcgi-cache", put(sites::toggle_fastcgi_cache))
@@ -1547,6 +1549,11 @@ pub fn router() -> Router<AppState> {
         .route("/api/on-call/schedules/{id}", get(on_call::get_schedule).put(on_call::update_schedule).delete(on_call::delete_schedule))
         .route("/api/on-call/whoami", get(on_call::whoami))
         // Escalation Policies (Phase 4 W3)
+        // Multi-IP: the server's IPv4 addresses (admin, scoped by X-Server-Id)
+        .route("/api/server-ips", get(server_ips::list).post(server_ips::create))
+        .route("/api/server-ips/discover", get(server_ips::discover))
+        .route("/api/server-ips/{id}", put(server_ips::update).delete(server_ips::remove))
+        .route("/api/server-ips/{id}/refresh-ptr", post(server_ips::refresh_ptr))
         .route("/api/escalation-policies", get(escalation_policies::list_policies).post(escalation_policies::create_policy))
         .route("/api/escalation-policies/{id}", get(escalation_policies::get_policy).put(escalation_policies::update_policy).delete(escalation_policies::delete_policy))
         // Phase 4 W4: panel self-update + snapshots + fleet rolling update
@@ -1686,6 +1693,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/mail/domains", get(mail::list_domains).post(mail::create_domain))
         .route("/api/mail/domains/{id}", put(mail::update_domain).delete(mail::delete_domain))
         .route("/api/mail/domains/{id}/dns", get(mail::domain_dns))
+        .route("/api/mail/domains/{id}/send-ip", put(mail::set_send_ip))
         .route("/api/mail/domains/{id}/accounts", get(mail::list_accounts).post(mail::create_account))
         .route("/api/mail/domains/{id}/accounts/{account_id}", put(mail::update_account).delete(mail::delete_account))
         .route("/api/mail/domains/{id}/aliases", get(mail::list_aliases).post(mail::create_alias))

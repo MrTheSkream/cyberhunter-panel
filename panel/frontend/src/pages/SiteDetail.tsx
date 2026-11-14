@@ -6,6 +6,7 @@ import { statusColors, runtimeLabelsDetailed as runtimeLabels } from "../constan
 import { PrereqCallout, useDnsPrereq, prereqBlocks } from "../components/Prerequisite";
 import PhpVersionPicker from "../components/PhpVersionPicker";
 import { useAuth } from "../context/AuthContext";
+import { useServerIps, serverIpOptionLabel } from "../utils/serverIps";
 
 interface Site {
   id: string;
@@ -39,6 +40,10 @@ interface Site {
   sftp_uid: number | null;
   created_at: string;
   updated_at: string;
+  /** Declared server IP the vhost listens on; null = the primary IP. */
+  ip_id?: string | null;
+  /** Effective IP of `ip_id`; null = primary IP. */
+  bind_ip?: string | null;
 }
 
 interface StagingInfo {
@@ -100,6 +105,12 @@ export default function SiteDetail() {
   const [switchingRuntime, setSwitchingRuntime] = useState(false);
   const [runtimeMessage, setRuntimeMessage] = useState("");
   const [savingLimits, setSavingLimits] = useState(false);
+  // IP address card. `/server-ips` and `PUT /sites/{id}/ip` are admin routes.
+  const isAdmin = user?.role === "admin";
+  const { ips: serverIps, loaded: serverIpsLoaded } = useServerIps(isAdmin);
+  const [siteIpId, setSiteIpId] = useState("");
+  const [savingIp, setSavingIp] = useState(false);
+  const [ipMessage, setIpMessage] = useState<{ text: string; error: boolean } | null>(null);
   const [limitsMessage, setLimitsMessage] = useState("");
   const [rateLimit, setRateLimit] = useState<string>("");
   const [maxUpload, setMaxUpload] = useState("64");
@@ -537,6 +548,9 @@ export default function SiteDetail() {
       if (force) setForcingSsl(false); else setDns01Loading(false);
     }
   };
+
+  // Keep the IP select on the site's current value whenever it is (re)loaded.
+  useEffect(() => { setSiteIpId(site?.ip_id ?? ""); }, [site?.id, site?.ip_id]);
 
   if (loading) {
     return (
@@ -1405,6 +1419,76 @@ export default function SiteDetail() {
           </Link>
         )}
       </div>
+
+      {/* IP Address — admin only (server IPs are a host-level setting) */}
+      {isAdmin && site.status === "active" && (
+        <div className="bg-dark-800 rounded-lg border border-dark-500 overflow-hidden mt-6">
+          <div className="px-5 py-4 border-b border-dark-600 flex items-center justify-between">
+            <h2 className="text-xs font-medium text-dark-300 uppercase font-mono tracking-widest">IP Address</h2>
+            <span className="text-xs font-mono text-dark-100">
+              {(site.ip_id && serverIps.find((ip) => ip.id === site.ip_id)?.ip) || site.bind_ip || "Primary IP"}
+            </span>
+          </div>
+          <div className="p-5 space-y-3">
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="flex-1 min-w-[16rem]">
+                <label htmlFor="site-ip-select" className="block text-xs font-medium text-dark-200 mb-1">Listen on</label>
+                <select
+                  id="site-ip-select"
+                  value={siteIpId}
+                  onChange={(e) => { setSiteIpId(e.target.value); setIpMessage(null); }}
+                  className="w-full px-3 py-2 border border-dark-500 rounded-lg text-sm bg-dark-800 font-mono focus:ring-2 focus:ring-accent-500 focus:border-accent-500 outline-none"
+                >
+                  <option value="">Primary IP</option>
+                  {serverIps.filter((ip) => !ip.is_primary || ip.id === site.ip_id).map((ip) => (
+                    <option key={ip.id} value={ip.id}>{serverIpOptionLabel(ip)}</option>
+                  ))}
+                  {/* The site's IP may not be in this server's list (other
+                      server selected, list failed): keep it selectable so a
+                      Save never silently moves the site to the primary IP. */}
+                  {site.ip_id && !serverIps.some((ip) => ip.id === site.ip_id) && (
+                    <option value={site.ip_id}>{site.bind_ip || site.ip_id} (current)</option>
+                  )}
+                </select>
+              </div>
+              <button
+                disabled={savingIp || siteIpId === (site.ip_id ?? "")}
+                onClick={async () => {
+                  setSavingIp(true);
+                  setIpMessage(null);
+                  try {
+                    const updated = await api.put<Site & { mail_warning?: string | null }>(`/sites/${id}/ip`, { ip_id: siteIpId || null });
+                    const { mail_warning, ...siteOnly } = updated;
+                    setSite(siteOnly);
+                    const base = `Site now listens on ${updated.bind_ip || "the primary IP"}`;
+                    setIpMessage(mail_warning
+                      ? { text: `${base}. Mail warning: ${mail_warning}`, error: true }
+                      : { text: base, error: false });
+                  } catch (err) {
+                    setIpMessage({ text: err instanceof Error ? err.message : "Save failed", error: true });
+                  } finally {
+                    setSavingIp(false);
+                  }
+                }}
+                className="px-4 py-2 bg-rust-500 text-white rounded-lg text-sm font-medium hover:bg-rust-600 disabled:opacity-50 transition-colors"
+              >
+                {savingIp ? "Saving..." : "Save"}
+              </button>
+            </div>
+            {ipMessage && (
+              <p className={`text-xs ${ipMessage.error ? "text-danger-400" : "text-rust-400"}`}>{ipMessage.text}</p>
+            )}
+            {serverIpsLoaded && serverIps.filter((ip) => !ip.is_primary).length === 0 && (
+              <p className="text-xs text-dark-400">
+                No additional IP declared on this server. Add one in <Link to="/ips" className="text-accent-400 hover:text-accent-300">IP Addresses</Link>.
+              </p>
+            )}
+            <p className="text-xs text-dark-400">
+              DNS A records are updated automatically only for zones managed by the panel. If the DNS of {site.domain} is hosted elsewhere, update its A record yourself after changing the IP. A mail domain with the same name in automatic mode follows this IP for sending.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Resource Limits */}
       {site.status === "active" && (

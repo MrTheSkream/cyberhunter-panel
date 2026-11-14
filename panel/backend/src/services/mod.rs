@@ -32,6 +32,7 @@ pub mod credential_reencrypt;
 pub mod secrets_crypto;
 pub mod security_scanner;
 pub mod server_monitor;
+pub mod server_ips;
 pub mod system_log;
 pub mod status_notices;
 pub mod uptime;

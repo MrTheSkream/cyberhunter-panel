@@ -19,7 +19,8 @@ tar -C /src --exclude='./panel/*/target' --exclude='node_modules' --exclude='./.
 # CRLF -> LF sur les fichiers texte connus.
 find "$work" -type f \( -name '*.rs' -o -name '*.toml' -o -name '*.sql' -o -name '*.conf' -o -name '*.sh' \
     -o -name '*.tera' -o -name '*.html' -o -name '*.json' -o -name '*.yml' -o -name '*.yaml' -o -name '*.txt' \
-    -o -name '*.service' -o -name '*.md' -o -name '*.j2' -o -name '*.tpl' \) -print0 | xargs -0 sed -i 's/\r$//'
+    -o -name '*.service' -o -name '*.md' -o -name '*.j2' -o -name '*.tpl' \
+    -o -name '*.ts' -o -name '*.tsx' -o -name '*.js' -o -name '*.css' \) -print0 | xargs -0 sed -i 's/\r$//'
 
 for c in "${crates[@]}"; do
   echo "=== $mode : panel/$c"

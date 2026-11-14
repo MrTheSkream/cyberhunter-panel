@@ -49,7 +49,7 @@ pub mod mail;
 // The DNS vertical shipped in v2.28.0 addressed as
 // `services::prerequisites::check_dns_points_here`, and its wiring was verified
 // on a fresh box. Re-export so splitting the file moves no call sites.
-pub use dns::check_dns_points_here;
+pub use dns::{check_dns_points_at, check_dns_points_here};
 
 /// Whether a prerequisite currently holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

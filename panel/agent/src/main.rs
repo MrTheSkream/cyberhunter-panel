@@ -187,6 +187,7 @@ async fn main() {
     let app = Router::new()
         .merge(routes::health::router())
         .merge(routes::system::router())
+        .merge(routes::server_ips::router())
         .merge(routes::nginx::router())
         .merge(routes::ssl::router())
         .merge(routes::ssl_registry::router())

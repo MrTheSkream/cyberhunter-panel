@@ -133,11 +133,11 @@ fn dns01_failure_or(
 /// PUT the site's complete vhost body. The single writer behind all three
 /// rebuild entry points below, so a door can never re-render a *partial* vhost
 /// by picking the wrong helper.
-async fn put_full_vhost(agent: &crate::services::agent::AgentHandle, site: &Site) {
+async fn put_full_vhost(pool: &sqlx::PgPool, agent: &crate::services::agent::AgentHandle, site: &Site) {
     if let Err(e) = agent
         .put(
             &format!("/nginx/sites/{}", site.domain),
-            crate::routes::sites::build_nginx_body(site),
+            crate::routes::sites::build_nginx_body(site, crate::services::server_ips::nginx_bind_ip(pool, site).await.as_deref()),
         )
         .await
     {
@@ -180,7 +180,7 @@ pub(crate) async fn rebuild_vhost_for_domain(
         .await
     {
         Ok(Some(site)) => {
-            put_full_vhost(agent, &site).await;
+            put_full_vhost(pool, agent, &site).await;
             tracing::info!(
                 "Rebuilt {domain}'s vhost after an SSL write that did not carry the site's settings"
             );
@@ -209,7 +209,7 @@ pub(crate) async fn rebuild_vhost_for_site(
         .fetch_optional(pool)
         .await
     {
-        Ok(Some(site)) => put_full_vhost(agent, &site).await,
+        Ok(Some(site)) => put_full_vhost(pool, agent, &site).await,
         Ok(None) => {}
         Err(e) => tracing::warn!("Vhost rebuild after SSL op: could not load site {site_id}: {e}"),
     }
@@ -226,7 +226,7 @@ pub(crate) async fn rebuild_vhost_after_ssl(
         .await
     {
         Ok(site) => {
-            put_full_vhost(agent, &site).await;
+            put_full_vhost(&state.db, agent, &site).await;
 
             // This rebuild is the SECOND way a vhost can turn into an HTTPS one.
             // The agent promotes a WordPress site's canonical URL inside
@@ -328,7 +328,12 @@ pub async fn provision(
     // (rendered as a callout) and lets the order proceed; only a domain that
     // resolves to nothing at all — where HTTP-01 cannot possibly complete — is
     // still refused.
-    let dns = crate::services::prerequisites::check_dns_points_here(&site.domain).await;
+    // Multi-IP: judged against the address THIS site publishes (its own, or its
+    // server's) — not the panel's.
+    let expected = crate::services::server_ips::site_dns_address(&state.db, site.server_id, site.ip_id)
+        .await
+        .unwrap_or_default();
+    let dns = crate::services::prerequisites::check_dns_points_at(&site.domain, &expected).await;
     if dns.blocks() {
         return Err(err(StatusCode::PRECONDITION_FAILED, &dns.detail));
     }
@@ -654,8 +659,8 @@ pub async fn preflight_site(
     AuthUser(claims): AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let (domain,): (String,) =
-        sqlx::query_as(&format!("SELECT s.domain FROM sites s WHERE {}", crate::helpers::SITE_CALLER_PREDICATE))
+    let (domain, site_server_id, site_ip_id): (String, Option<Uuid>, Option<Uuid>) =
+        sqlx::query_as(&format!("SELECT s.domain, s.server_id, s.ip_id FROM sites s WHERE {}", crate::helpers::SITE_CALLER_PREDICATE))
             .bind(id)
             .bind(claims.sub)
             .fetch_optional(&state.db)
@@ -663,7 +668,10 @@ pub async fn preflight_site(
             .map_err(|e| internal_error("site preflight", e))?
             .ok_or_else(|| err(StatusCode::NOT_FOUND, "Site not found"))?;
 
-    let dns = crate::services::prerequisites::check_dns_points_here(&domain).await;
+    let expected = crate::services::server_ips::site_dns_address(&state.db, site_server_id, site_ip_id)
+        .await
+        .unwrap_or_default();
+    let dns = crate::services::prerequisites::check_dns_points_at(&domain, &expected).await;
     // The ACME contact is a prerequisite for issuance too, and it is the one the
     // user cannot discover by looking at their DNS.
     let contact = resolve_acme_contact(&state.db, &claims.email).await;

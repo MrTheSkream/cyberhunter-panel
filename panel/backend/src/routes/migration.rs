@@ -725,7 +725,12 @@ pub async fn import(
             // land, so nothing imported is lost — it just needs a human to set
             // the port/command from the site's Settings afterward.
             let runtime = &site_item.runtime;
-            let mut nginx_body = serde_json::json!({ "runtime": runtime });
+            // Multi-IP: an imported site starts on the primary address (its row's
+            // `ip_id` is NULL), sent explicitly rather than left for the agent to guess.
+            let mut nginx_body = serde_json::json!({
+                "runtime": runtime,
+                "bind_ip": crate::services::server_ips::PRIMARY,
+            });
             let mut needs_config: Option<String> = None;
 
             if runtime == "php" {

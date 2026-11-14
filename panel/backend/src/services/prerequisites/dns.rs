@@ -56,6 +56,19 @@ pub(super) fn looks_like_a_domain(domain: &str) -> bool {
 ///   from "pointed at the wrong server" by IP alone — so blocking it would refuse
 ///   a setup we have direct evidence works.
 pub async fn check_dns_points_here(domain: &str) -> PrereqResult {
+    let d = domain.trim().trim_end_matches('.').to_ascii_lowercase();
+    if !looks_like_a_domain(&d) {
+        return DNS_POINTS_HERE_CHECK.result(&DNS_ENTER_A_DOMAIN, &[]);
+    }
+    let server_ip = crate::helpers::detect_public_ip_cached().await;
+    check_dns_points_at(domain, &server_ip).await
+}
+
+/// [`check_dns_points_here`] against a given address — the one a SPECIFIC site
+/// publishes (multi-IP: `services::server_ips::site_dns_address`, which is the
+/// site's own address, or its server's). An empty `expected` is "we don't know
+/// the address", exactly as an undetectable public IP is.
+pub async fn check_dns_points_at(domain: &str, expected: &str) -> PrereqResult {
     let check: &copy::Prereq = &DNS_POINTS_HERE_CHECK;
     let domain = domain.trim().trim_end_matches('.').to_ascii_lowercase();
 
@@ -63,7 +76,7 @@ pub async fn check_dns_points_here(domain: &str) -> PrereqResult {
         return check.result(&DNS_ENTER_A_DOMAIN, &[]);
     }
 
-    let server_ip = crate::helpers::detect_public_ip_cached().await;
+    let server_ip = expected.trim().to_string();
     if server_ip.is_empty() {
         // We don't know our own address, so we cannot judge theirs. Say so
         // plainly rather than inventing a verdict.

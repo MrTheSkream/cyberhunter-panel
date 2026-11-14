@@ -149,6 +149,7 @@ async fn provision(
         bot_protection: None,
         pool_user: None,
         pool_group: None,
+        bind_ip: None,
     };
 
     let canonical = ssl::enable_ssl_for_site(&state.templates, &domain, &site_config)
@@ -311,6 +312,7 @@ async fn upload_cert(
         bot_protection: None,
         pool_user: None,
         pool_group: None,
+        bind_ip: None,
     };
 
     let canonical = ssl::enable_ssl_for_site(&state.templates, &body.domain, &site_config)
@@ -471,6 +473,7 @@ async fn renew(
                 bot_protection: None,
                 pool_user: None,
                 pool_group: None,
+                bind_ip: None,
             };
             match ssl::enable_ssl_for_site(&state.templates, &domain, &site_config).await {
                 Ok(outcome) => canonical = Some(outcome),
@@ -699,7 +702,7 @@ async fn provision_dns01(
                 fastcgi_cache: None, redis_cache: None, redis_db: None,
                 waf_enabled: None, waf_mode: None,
                 csp_policy: None, permissions_policy: None, bot_protection: None,
-                pool_user: None, pool_group: None,
+                pool_user: None, pool_group: None, bind_ip: None,
             };
 
             canonical = Some(

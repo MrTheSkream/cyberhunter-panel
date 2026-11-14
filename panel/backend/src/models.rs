@@ -151,6 +151,34 @@ pub struct Site {
     pub sftp_gid: Option<i32>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    /// The `server_ips` row this site's vhost listens on. NULL = the server's
+    /// primary address (the agent's `detect_bind_ip`), which is every site that
+    /// predates multi-IP.
+    pub ip_id: Option<Uuid>,
+    /// The address `ip_id` names, for the API response only — NOT a column, so
+    /// `SELECT *` leaves it `None`. Filled by
+    /// [`crate::services::server_ips::fill_bind_ip`] in the handlers that return a
+    /// site. The vhost body never reads this field: `build_nginx_body` takes the
+    /// bind address as an explicit argument so no rebuild path can forget it.
+    #[sqlx(default)]
+    pub bind_ip: Option<String>,
+}
+
+/// One IPv4 address declared on a server (`server_ips`). See
+/// `conception/01-multi-ip.md` §3.
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct ServerIpRow {
+    pub id: Uuid,
+    pub server_id: Uuid,
+    pub ip: String,
+    pub prefix: i16,
+    pub interface: Option<String>,
+    pub public_ip: Option<String>,
+    pub ptr: Option<String>,
+    pub ptr_checked_at: Option<DateTime<Utc>>,
+    pub managed: bool,
+    pub label: Option<String>,
+    pub created_at: DateTime<Utc>,
 }
 
 /// Phase 4 W4: persistent panel snapshot (binaries + DB dump + /etc/dockpanel).

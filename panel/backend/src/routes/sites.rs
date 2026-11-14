@@ -210,6 +210,9 @@ pub struct CreateSiteRequest {
     pub admin_email: Option<String>,
     pub admin_user: Option<String>,
     pub admin_password: Option<String>,
+    /// The `server_ips` row the vhost listens on. Absent/null = the primary address.
+    /// Must belong to the server the site is created on.
+    pub ip_id: Option<Uuid>,
 }
 
 /// GET /api/sites — List all sites for the current user.
@@ -237,6 +240,9 @@ pub async fn list(
     .await
     .map_err(|e| internal_error("list sites", e))?;
 
+    let mut sites = sites;
+    crate::services::server_ips::fill_bind_ips(&state.db, &mut sites).await;
+
     Ok(Json(sites))
 }
 
@@ -261,6 +267,9 @@ pub struct AdminSiteRow {
     pub user_id: Uuid,
     pub owner_email: Option<String>,
     pub owner_role: Option<String>,
+    /// Multi-IP, as on [`Site`]: the declared address id and its IP (null = primary).
+    pub ip_id: Option<Uuid>,
+    pub bind_ip: Option<String>,
 }
 
 /// GET /api/admin/sites — every site on this server, with its owner. Admin only.
@@ -296,8 +305,10 @@ pub async fn list_for_admin(
     let sites: Vec<AdminSiteRow> = sqlx::query_as(
         "SELECT s.id, s.domain, s.runtime, s.status, s.enabled, s.ssl_enabled, \
                 s.created_at, s.parent_site_id, s.user_id, \
-                u.email AS owner_email, u.role AS owner_role \
+                u.email AS owner_email, u.role AS owner_role, \
+                s.ip_id, si.ip AS bind_ip \
          FROM sites s LEFT JOIN users u ON u.id = s.user_id \
+         LEFT JOIN server_ips si ON si.id = s.ip_id \
          WHERE s.server_id = $1 ORDER BY s.created_at DESC LIMIT $2 OFFSET $3",
     )
     .bind(server_id)
@@ -459,6 +470,22 @@ pub async fn create(
     // Domain uniqueness — sites, git deploys AND Docker apps — was checked by
     // `domain_claim::ensure_claimable` above, before any of this work started.
 
+    // Multi-IP: the address must be declared on THIS server. Choosing one is an
+    // administrator's decision (addresses are server inventory, not tenant data).
+    let bind_ip: String = match body.ip_id {
+        None => crate::services::server_ips::bind_ip_value(None),
+        Some(ip_id) => {
+            if claims.role != "admin" {
+                return Err(err(StatusCode::FORBIDDEN, "Only an administrator can choose a site's IP address"));
+            }
+            let row = crate::services::server_ips::declared_ip_on_server(&state.db, ip_id, server_id)
+                .await
+                .map_err(|e| internal_error("site ip check", e))?
+                .ok_or_else(|| err(StatusCode::BAD_REQUEST, "That IP address is not declared on this server"))?;
+            crate::services::server_ips::bind_ip_value(Some(&row.ip))
+        }
+    };
+
     // Check reseller quota before creating site
     check_reseller_quota(&state.db, claims.sub, "sites").await?;
 
@@ -503,8 +530,8 @@ pub async fn create(
     };
 
     let site: Site = sqlx::query_as(
-        "INSERT INTO sites (user_id, server_id, domain, runtime, status, proxy_port, php_version, php_preset, app_command) \
-         VALUES ($1, $2, $3, $4, 'creating', $5, $6, $7, $8) RETURNING *",
+        "INSERT INTO sites (user_id, server_id, domain, runtime, status, proxy_port, php_version, php_preset, app_command, ip_id) \
+         VALUES ($1, $2, $3, $4, 'creating', $5, $6, $7, $8, $9) RETURNING *",
     )
     .bind(claims.sub)
     .bind(server_id)
@@ -514,6 +541,7 @@ pub async fn create(
     .bind(&body.php_version)
     .bind(body.php_preset.as_deref().unwrap_or("generic"))
     .bind(&body.app_command)
+    .bind(body.ip_id)
     .fetch_one(&mut *tx)
     .await
     .map_err(|e| {
@@ -574,6 +602,7 @@ pub async fn create(
     agent_body["redis_db"] = serde_json::json!(0);
     agent_body["waf_enabled"] = serde_json::json!(false);
     agent_body["waf_mode"] = serde_json::json!("detection");
+    agent_body["bind_ip"] = serde_json::json!(bind_ip);
 
     // Atomically reserve the reseller site-quota slot BEFORE the agent creates the
     // nginx vhost — closes the check-then-increment TOCTOU without orphaning an nginx
@@ -624,6 +653,8 @@ pub async fn create(
             }
 
             tracing::info!("Site created: {} ({})", body.domain, runtime);
+            // Multi-IP: an automatic same-named mail domain now follows this site's address.
+            crate::routes::mail::resync_if_mail_follows(&state, server_id, &[&domain], &agent).await;
             let ip = crate::routes::client_ip(&headers);
             activity::log_activity(
                 &state.db, claims.sub, &claims.email, "site.create",
@@ -744,6 +775,9 @@ pub async fn create(
                 // member's site at the panel, which made the site unreachable at
                 // the very name the form had just claimed for it.
                 let dns_server_id = server_id;
+                // Multi-IP: the address THIS site listens on (public_ip → ip →
+                // the server's primary public address).
+                let dns_ip_id = body.ip_id;
                 tokio::spawn(async move {
                     // Extract parent domain
                     let parts: Vec<&str> = dns_domain.splitn(3, '.').collect();
@@ -765,7 +799,7 @@ pub async fn create(
 
                     if let Some((provider, cf_zone_id, cf_api_token, cf_api_email)) = zone {
                         let Some(server_ip) =
-                            crate::helpers::public_ip_for_server(&dns_db, Some(dns_server_id)).await
+                            crate::services::server_ips::site_dns_address(&dns_db, Some(dns_server_id), dns_ip_id).await
                         else {
                             // Refusing is the whole point: an A record naming the
                             // wrong machine is worse than no record, because it
@@ -1336,6 +1370,8 @@ pub async fn create(
                 });
             }
 
+            let mut updated = updated;
+            crate::services::server_ips::fill_bind_ip(&state.db, &mut updated).await;
             Ok((StatusCode::CREATED, Json(updated)))
         }
         Err(e) => {
@@ -1456,6 +1492,8 @@ pub async fn get_one(
     .map_err(|e| internal_error("get_one sites", e))?
     .ok_or_else(|| err(StatusCode::NOT_FOUND, "Site not found"))?;
 
+    let mut site = site;
+    crate::services::server_ips::fill_bind_ip(&state.db, &mut site).await;
     Ok(Json(site))
 }
 
@@ -1514,7 +1552,7 @@ pub async fn switch_php(
     // Permissions-Policy / bot-protection on every PHP switch.
     let mut updated_site = site.clone();
     updated_site.php_version = Some(version.to_string());
-    let agent_body = build_nginx_body(&updated_site);
+    let agent_body = build_nginx_body(&updated_site, crate::services::server_ips::nginx_bind_ip(&state.db, &updated_site).await.as_deref());
 
     let agent_path = format!("/nginx/sites/{}", site.domain);
     agent
@@ -1538,6 +1576,8 @@ pub async fn switch_php(
         claims.key_id,
     ).await;
 
+    let mut updated = updated;
+    crate::services::server_ips::fill_bind_ip(&state.db, &mut updated).await;
     Ok(Json(updated))
 }
 
@@ -1649,7 +1689,7 @@ pub async fn switch_runtime(
     let mut updated_site = site.clone();
     updated_site.runtime = target.to_string();
     updated_site.php_version = php_version.clone();
-    let agent_body = build_nginx_body(&updated_site);
+    let agent_body = build_nginx_body(&updated_site, crate::services::server_ips::nginx_bind_ip(&state.db, &updated_site).await.as_deref());
 
     let agent_path = format!("/nginx/sites/{}", site.domain);
     agent
@@ -1692,6 +1732,8 @@ pub async fn switch_runtime(
     )
     .await;
 
+    let mut updated = updated;
+    crate::services::server_ips::fill_bind_ip(&state.db, &mut updated).await;
     Ok(Json(updated))
 }
 
@@ -1906,7 +1948,7 @@ pub async fn update_limits(
     // Rebuild the FULL vhost from the post-update site (includes the new limits +
     // custom_nginx AND the site's WAF/CSP/Permissions-Policy/bot-protection that
     // a hand-rolled partial body used to drop).
-    let agent_body = build_nginx_body(&updated);
+    let agent_body = build_nginx_body(&updated, crate::services::server_ips::nginx_bind_ip(&state.db, &updated).await.as_deref());
 
     let agent_path = format!("/nginx/sites/{}", site.domain);
     agent
@@ -1936,6 +1978,8 @@ pub async fn update_limits(
         claims.key_id,
     ).await;
 
+    let mut updated = updated;
+    crate::services::server_ips::fill_bind_ip(&state.db, &mut updated).await;
     Ok(Json(updated))
 }
 
@@ -2195,6 +2239,10 @@ pub async fn remove(
     ).bind(claims.sub).execute(&state.db).await;
 
     tracing::info!("Site deleted: {}", site.domain);
+    // Multi-IP: an automatic same-named mail domain falls back to the primary address.
+    if let Some(sid) = site.server_id {
+        crate::routes::mail::resync_if_mail_follows(&state, sid, &[&site.domain], &agent).await;
+    }
     let ip = crate::routes::client_ip(&headers);
     activity::log_activity(
         &state.db, claims.sub, &claims.email, "site.delete",
@@ -2231,6 +2279,7 @@ pub async fn remove(
         // longer serves the name, which is a subdomain-takeover surface and not
         // merely untidy.
         let dns_server_id = site.server_id;
+        let dns_ip_id = site.ip_id;
         tokio::spawn(async move {
             // Extract parent domain
             let parts: Vec<&str> = dns_domain.splitn(3, '.').collect();
@@ -2252,7 +2301,7 @@ pub async fn remove(
 
             if let Some((provider, cf_zone_id, cf_api_token, cf_api_email)) = zone {
                 let Some(server_ip) =
-                    crate::helpers::public_ip_for_server(&dns_db, dns_server_id).await
+                    crate::services::server_ips::site_dns_address(&dns_db, dns_server_id, dns_ip_id).await
                 else {
                     tracing::warn!("Auto-DNS cleanup: could not resolve the public address of the server {dns_domain} lived on — leaving the record in place rather than deleting one that may belong to another host");
                     return;
@@ -2855,10 +2904,26 @@ pub async fn clone_site(
     // if a later agent step fails the site row persists and legitimately holds the slot.
     let clone_slot_reserved = reserve_reseller_site_slot(&state, claims.sub).await?;
 
+    // Multi-IP: the clone listens where its source does when both are on the
+    // same server; an address belongs to one server, so a clone onto another
+    // host starts on that host's primary address. Row and vhost get the same value.
+    let clone_ip_id: Option<Uuid> = if source.server_id == Some(server_id) { source.ip_id } else { None };
+    let clone_bind_ip: String = match clone_ip_id {
+        None => crate::services::server_ips::bind_ip_value(None),
+        Some(ip_id) => crate::services::server_ips::bind_ip_value(
+            crate::services::server_ips::declared_ip(&state.db, ip_id)
+                .await
+                .map_err(|e| internal_error("clone site ip", e))?
+                .map(|row| row.ip)
+                .as_deref(),
+        ),
+    };
+    let clone_ip_id = if clone_bind_ip == crate::services::server_ips::PRIMARY { None } else { clone_ip_id };
+
     // Create new site record
     let new_site: Site = match sqlx::query_as::<_, Site>(
-        "INSERT INTO sites (user_id, server_id, domain, runtime, status, php_version, root_path, rate_limit, max_upload_mb, php_memory_mb, php_max_workers, php_preset, app_command) \
-         VALUES ($1, $2, $3, $4, 'active', $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *"
+        "INSERT INTO sites (user_id, server_id, domain, runtime, status, php_version, root_path, rate_limit, max_upload_mb, php_memory_mb, php_max_workers, php_preset, app_command, ip_id) \
+         VALUES ($1, $2, $3, $4, 'active', $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *"
     )
     .bind(claims.sub)
     .bind(server_id)
@@ -2872,6 +2937,7 @@ pub async fn clone_site(
     .bind(source.php_max_workers)
     .bind(&source.php_preset)
     .bind(&source.app_command)
+    .bind(clone_ip_id)
     .fetch_one(&state.db).await
     {
         Ok(s) => s,
@@ -2914,6 +2980,7 @@ pub async fn clone_site(
     nginx_body["redis_db"] = serde_json::json!(source.redis_db);
     nginx_body["waf_enabled"] = serde_json::json!(source.waf_enabled);
     nginx_body["waf_mode"] = serde_json::json!(source.waf_mode);
+    nginx_body["bind_ip"] = serde_json::json!(clone_bind_ip);
 
     agent.put(&format!("/nginx/sites/{target_domain}"), nginx_body).await
         .map_err(|e| agent_error("Nginx config", e))?;
@@ -2989,6 +3056,7 @@ pub async fn clone_site(
         });
     }
 
+    crate::routes::mail::resync_if_mail_follows(&state, server_id, &[target_domain], &agent).await;
     Ok((StatusCode::CREATED, Json(serde_json::json!({ "ok": true, "site_id": new_site.id, "domain": target_domain }))))
 }
 
@@ -3385,6 +3453,11 @@ pub async fn rename_domain(
         .ok();
 
     tracing::info!("Domain renamed: {old_domain} → {new_domain}");
+    // Multi-IP: the old name's automatic mail domain loses its site, the new
+    // name's gains one — both change sending address.
+    if let Some(sid) = site.server_id {
+        crate::routes::mail::resync_if_mail_follows(&state, sid, &[&old_domain, &new_domain], &agent).await;
+    }
     activity::log_activity(
         &state.db, claims.sub, &claims.email, "site.rename_domain",
         Some("site"), Some(&new_domain), Some(&old_domain), None,
@@ -3515,7 +3588,7 @@ pub async fn toggle_fastcgi_cache(
     updated_site.fastcgi_cache = enabled;
     agent.put(
         &format!("/nginx/sites/{}", site.domain),
-        build_nginx_body(&updated_site),
+        build_nginx_body(&updated_site, crate::services::server_ips::nginx_bind_ip(&state.db, &updated_site).await.as_deref()),
     ).await.map_err(|e| agent_error("FastCGI cache", e))?;
 
     // Update DB
@@ -3660,7 +3733,7 @@ pub async fn toggle_redis_cache(
     updated_site.redis_db = redis_db;
     agent.put(
         &format!("/nginx/sites/{}", site.domain),
-        build_nginx_body(&updated_site),
+        build_nginx_body(&updated_site, crate::services::server_ips::nginx_bind_ip(&state.db, &updated_site).await.as_deref()),
     ).await.map_err(|e| agent_error("Redis nginx config", e))?;
 
     // Update DB
@@ -3796,7 +3869,7 @@ pub async fn enable_sftp(
     updated_site.sftp_gid = Some(gid);
     agent.put(
         &format!("/nginx/sites/{}", site.domain),
-        build_nginx_body(&updated_site),
+        build_nginx_body(&updated_site, crate::services::server_ips::nginx_bind_ip(&state.db, &updated_site).await.as_deref()),
     ).await.map_err(|e| agent_error("SFTP nginx/pool rebuild", e))?;
 
     let ip = crate::routes::client_ip(&headers);
@@ -3869,7 +3942,7 @@ pub async fn disable_sftp(
     updated_site.sftp_enabled = false;
     agent.put(
         &format!("/nginx/sites/{}", site.domain),
-        build_nginx_body(&updated_site),
+        build_nginx_body(&updated_site, crate::services::server_ips::nginx_bind_ip(&state.db, &updated_site).await.as_deref()),
     ).await.map_err(|e| agent_error("SFTP nginx/pool revert", e))?;
 
     agent.post(
@@ -3991,7 +4064,7 @@ pub async fn toggle_waf(
     updated_site.waf_mode = mode.to_string();
     agent.put(
         &format!("/nginx/sites/{}", site.domain),
-        build_nginx_body(&updated_site),
+        build_nginx_body(&updated_site, crate::services::server_ips::nginx_bind_ip(&state.db, &updated_site).await.as_deref()),
     ).await.map_err(|e| agent_error("WAF nginx config", e))?;
 
     // Update DB
@@ -4145,7 +4218,14 @@ async fn ensure_domain_available(
 }
 
 /// Build the full nginx agent body from a Site model. Shared by all config-rebuild paths.
-pub(crate) fn build_nginx_body(site: &crate::models::Site) -> serde_json::Value {
+///
+/// `bind_ip` is an explicit argument, not read from the row, so that no rebuild
+/// path can forget it: a vhost re-rendered without the site's address would move
+/// an IP-bound site back to the primary address on its next SSL renewal. Callers
+/// get it from [`crate::services::server_ips::nginx_bind_ip`] — the declared
+/// address, or `"primary"`. `None` (the address could not be read) omits the key,
+/// and the agent then keeps the address already written in the vhost.
+pub(crate) fn build_nginx_body(site: &crate::models::Site, bind_ip: Option<&str>) -> serde_json::Value {
     let mut body = serde_json::json!({
         "runtime": site.runtime,
         "fastcgi_cache": site.fastcgi_cache,
@@ -4195,6 +4275,9 @@ pub(crate) fn build_nginx_body(site: &crate::models::Site) -> serde_json::Value 
         // that already succeeded under a different name.
         body["pool_user"] = serde_json::json!(format!("sftp{uid}"));
         body["pool_group"] = serde_json::json!(format!("sftpg{gid}"));
+    }
+    if let Some(ip) = bind_ip {
+        body["bind_ip"] = serde_json::json!(ip);
     }
     body
 }
@@ -4255,7 +4338,7 @@ pub async fn update_security_headers(
     let mut updated_site = site.clone();
     updated_site.csp_policy = csp.clone();
     updated_site.permissions_policy = perms.clone();
-    let agent_body = build_nginx_body(&updated_site);
+    let agent_body = build_nginx_body(&updated_site, crate::services::server_ips::nginx_bind_ip(&state.db, &updated_site).await.as_deref());
 
     agent.put(
         &format!("/nginx/sites/{}", site.domain),
@@ -4311,7 +4394,7 @@ pub async fn toggle_bot_protection(
     // Rebuild nginx with bot protection
     let mut updated_site = site.clone();
     updated_site.bot_protection = mode.to_string();
-    let agent_body = build_nginx_body(&updated_site);
+    let agent_body = build_nginx_body(&updated_site, crate::services::server_ips::nginx_bind_ip(&state.db, &updated_site).await.as_deref());
 
     agent.put(
         &format!("/nginx/sites/{}", site.domain),
@@ -4522,9 +4605,380 @@ pub async fn transfer(
     })))
 }
 
+// ──────────────────────────────────────────────────────────────
+// Multi-IP: the address a site listens on (conception/01-multi-ip.md §5.2)
+// ──────────────────────────────────────────────────────────────
+
+#[derive(serde::Deserialize)]
+pub struct SetSiteIpRequest {
+    /// `null` = the server's primary address.
+    pub ip_id: Option<Uuid>,
+}
+
+/// PUT /api/sites/{id}/ip — Move a site to another address of its own server.
+///
+/// Row → full vhost rebuild on the site's host → (best-effort) the panel-managed
+/// A record follows when it named the old address → a same-named mail domain in
+/// automatic mode follows too (mail sync + SPF `ip4:`), as HestiaCP's
+/// `v-change-web-domain-ip` rebuilds the mail domain. Admin only: addresses are
+/// server inventory.
+///
+/// The row is written first so the rebuild reads one source of truth, and put
+/// back if the agent refuses (an address no longer on the interface is a 400
+/// from the agent) — the row must never claim an address the vhost does not use.
+pub async fn set_ip(
+    State(state): State<AppState>,
+    AdminUser(claims): AdminUser,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(body): Json<SetSiteIpRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let site: Site = sqlx::query_as(&SITE_FOR_CALLER_ALL)
+        .bind(id)
+        .bind(claims.sub)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| internal_error("site ip", e))?
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "Site not found"))?;
+
+    let agent = crate::helpers::agent_for_site_server(&state, site.server_id, &site.domain).await?;
+    let Some(server_id) = site.server_id else {
+        return Err(err(StatusCode::CONFLICT, "This site is not associated with a server"));
+    };
+
+    let new_row = match body.ip_id {
+        None => None,
+        Some(ip_id) => Some(
+            crate::services::server_ips::declared_ip_on_server(&state.db, ip_id, server_id)
+                .await
+                .map_err(|e| internal_error("site ip", e))?
+                .ok_or_else(|| err(StatusCode::BAD_REQUEST, "That IP address is not declared on this site's server"))?,
+        ),
+    };
+
+    if site.ip_id == body.ip_id {
+        let mut site = site;
+        crate::services::server_ips::fill_bind_ip(&state.db, &mut site).await;
+        return Ok(Json(serde_json::to_value(site).unwrap_or_default()));
+    }
+
+    // Resolved BEFORE the write: the DNS follow-up replaces only a record that
+    // still names the address this site is leaving.
+    let old_public = crate::services::server_ips::site_dns_address(&state.db, site.server_id, site.ip_id).await;
+    let old_label = match site.ip_id {
+        Some(old) => crate::services::server_ips::declared_ip(&state.db, old)
+            .await
+            .ok()
+            .flatten()
+            .map(|r| r.ip)
+            .unwrap_or_else(|| old.to_string()),
+        None => crate::services::server_ips::PRIMARY.to_string(),
+    };
+
+    let updated: Site = sqlx::query_as("UPDATE sites SET ip_id = $1, updated_at = NOW() WHERE id = $2 RETURNING *")
+        .bind(body.ip_id)
+        .bind(id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(|e| internal_error("site ip", e))?;
+
+    let bind_ip = crate::services::server_ips::bind_ip_value(new_row.as_ref().map(|r| r.ip.as_str()));
+    let agent_path = format!("/nginx/sites/{}", site.domain);
+    if let Err(e) = agent.put(&agent_path, build_nginx_body(&updated, Some(&bind_ip))).await {
+        if let Err(re) = sqlx::query("UPDATE sites SET ip_id = $1, updated_at = NOW() WHERE id = $2")
+            .bind(site.ip_id)
+            .bind(id)
+            .execute(&state.db)
+            .await
+        {
+            tracing::error!("Site {}: the agent refused the address change and the row could not be put back: {re}", site.domain);
+        }
+        return Err(agent_error("Site IP change", e));
+    }
+
+    let new_public = crate::services::server_ips::site_dns_address(&state.db, site.server_id, updated.ip_id).await;
+
+    // A same-named mail domain in automatic mode sends from the site's address,
+    // so it moves with it. Read now (cheap) so the DNS task knows whether SPF moves.
+    let mail_follows: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM mail_domains WHERE server_id = $1 AND domain = lower($2) AND send_ip_id IS NULL)",
+    )
+    .bind(server_id)
+    .bind(&site.domain)
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(false);
+
+    // The vhost change is applied and stays applied; a mail rebuild that did not
+    // take is reported to the operator as `mail_warning` on the response rather
+    // than failing a request whose primary effect succeeded.
+    let mut mail_warning: Option<String> = None;
+    if mail_follows {
+        match crate::routes::mail::sync_mail_config_report(&state, server_id, &agent).await {
+            Ok(report) => {
+                let send_ip = new_row.as_ref().map(|r| r.ip.as_str());
+                if let Some(p) = report.send_ip_problem(send_ip) {
+                    mail_warning = Some(format!("The site moved, but its mail domain's sending address did not follow: {p}"));
+                }
+            }
+            Err((status, msg)) => {
+                let m = msg.0.get("error").and_then(|e| e.as_str()).unwrap_or("mail sync refused").to_string();
+                tracing::warn!("Site {}: mail sync after the address change was refused ({status}): {m}", site.domain);
+                mail_warning = Some(format!("The site moved, but mail was not re-synced: {m}"));
+            }
+        }
+    }
+
+    if let (Some(old), Some(new)) = (old_public, new_public) {
+        if old != new {
+            let db = state.db.clone();
+            let owner = site.user_id;
+            let domain = site.domain.clone();
+            tokio::spawn(async move {
+                let a = replace_site_dns_records(&db, owner, &domain, "A", |c| swap_a_content(c, &old, &new)).await;
+                tracing::info!("Site IP change: {a} A record(s) for {domain} moved {old} → {new}");
+                if mail_follows {
+                    let spf = replace_site_dns_records(&db, owner, &domain, "TXT", |c| swap_spf_ip4(c, &old, &new)).await;
+                    tracing::info!("Site IP change: {spf} SPF record(s) for {domain} moved {old} → {new}");
+                }
+            });
+        }
+    }
+
+    let new_label = new_row.as_ref().map(|r| r.ip.clone()).unwrap_or_else(|| crate::services::server_ips::PRIMARY.to_string());
+    let ip = crate::routes::client_ip(&headers);
+    activity::log_activity(
+        &state.db, claims.sub, &claims.email, "site.ip.change",
+        Some("site"), Some(&site.domain), Some(&format!("{old_label} → {new_label}")), ip.as_deref(),
+        claims.key_id,
+    ).await;
+
+    let mut updated = updated;
+    crate::services::server_ips::fill_bind_ip(&state.db, &mut updated).await;
+    let mut out = serde_json::to_value(&updated).map_err(|e| internal_error("site ip", e))?;
+    if let Some(w) = mail_warning {
+        out["mail_warning"] = serde_json::json!(w);
+    }
+    Ok(Json(out))
+}
+
+/// `A` content swap: the record moves only if it names the old address.
+fn swap_a_content(content: &str, old: &str, new: &str) -> Option<String> {
+    (content.trim() == old).then(|| new.to_string())
+}
+
+/// SPF swap: replace the `ip4:<old>` mechanism (any qualifier) with `ip4:<new>`,
+/// keeping everything else the operator wrote. `None` when there is nothing to
+/// change. Quoting (as PowerDNS stores TXT) is preserved.
+fn swap_spf_ip4(content: &str, old: &str, new: &str) -> Option<String> {
+    let trimmed = content.trim();
+    let quoted = trimmed.len() >= 2 && trimmed.starts_with('"') && trimmed.ends_with('"');
+    let inner = if quoted { &trimmed[1..trimmed.len() - 1] } else { trimmed };
+    if !inner.starts_with("v=spf1") {
+        return None;
+    }
+    let mut changed = false;
+    let terms: Vec<String> = inner
+        .split_whitespace()
+        .map(|t| {
+            let (qual, rest) = match t.chars().next() {
+                Some(q @ ('+' | '-' | '~' | '?')) => (q.to_string(), &t[1..]),
+                _ => (String::new(), t),
+            };
+            if rest == format!("ip4:{old}") || rest == format!("ip4:{old}/32") {
+                changed = true;
+                format!("{qual}ip4:{new}")
+            } else {
+                t.to_string()
+            }
+        })
+        .collect();
+    if !changed {
+        return None;
+    }
+    let joined = terms.join(" ");
+    Some(if quoted { format!("\"{joined}\"") } else { joined })
+}
+
+/// Rewrite the `rtype` records named `domain` in the owner's panel-managed zone
+/// (Cloudflare or PowerDNS — the same two providers site creation publishes to),
+/// through `swap`. Best-effort; returns how many records changed. A zone the
+/// panel does not manage is left alone — the UI warns about that case.
+async fn replace_site_dns_records<F>(
+    db: &sqlx::PgPool,
+    owner: Uuid,
+    domain: &str,
+    rtype: &str,
+    swap: F,
+) -> usize
+where
+    F: Fn(&str) -> Option<String>,
+{
+    let parts: Vec<&str> = domain.splitn(3, '.').collect();
+    let parent = if parts.len() >= 3 {
+        format!("{}.{}", parts[parts.len() - 2], parts[parts.len() - 1])
+    } else {
+        domain.to_string()
+    };
+
+    let zone: Option<(String, Option<String>, Option<String>, Option<String>)> = match sqlx::query_as(
+        "SELECT provider, cf_zone_id, cf_api_token, cf_api_email FROM dns_zones WHERE domain = $1 AND user_id = $2"
+    ).bind(&parent).bind(owner).fetch_optional(db).await {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!("DB error fetching DNS zone for the address change of {domain}: {e}");
+            None
+        }
+    };
+    let Some((provider, cf_zone_id, cf_api_token, cf_api_email)) = zone else {
+        return 0;
+    };
+
+    let mut changed = 0usize;
+    if provider == "cloudflare" {
+        let (Some(zid), Some(tok)) = (cf_zone_id, cf_api_token) else { return 0 };
+        let client = reqwest::Client::new();
+        let headers = crate::helpers::cf_headers(&tok, cf_api_email.as_deref());
+        let Ok(resp) = client
+            .get(format!("https://api.cloudflare.com/client/v4/zones/{zid}/dns_records?type={rtype}&name={domain}"))
+            .headers(headers.clone())
+            .send()
+            .await
+        else {
+            return 0;
+        };
+        let Ok(data) = resp.json::<serde_json::Value>().await else { return 0 };
+        for record in data.get("result").and_then(|r| r.as_array()).cloned().unwrap_or_default() {
+            let (Some(rid), Some(content)) = (
+                record.get("id").and_then(|v| v.as_str()),
+                record.get("content").and_then(|v| v.as_str()),
+            ) else {
+                continue;
+            };
+            if let Some(new_content) = swap(content) {
+                let ok = client
+                    .patch(format!("https://api.cloudflare.com/client/v4/zones/{zid}/dns_records/{rid}"))
+                    .headers(headers.clone())
+                    .json(&serde_json::json!({ "content": new_content }))
+                    .send()
+                    .await
+                    .map(|r| r.status().is_success())
+                    .unwrap_or(false);
+                if ok {
+                    changed += 1;
+                }
+            }
+        }
+    } else if provider == "powerdns" {
+        let pdns: Vec<(String, String)> = sqlx::query_as(
+            "SELECT key, value FROM settings WHERE key IN ('pdns_api_url', 'pdns_api_key')"
+        ).fetch_all(db).await.unwrap_or_default();
+        let purl = pdns.iter().find(|(k, _)| k == "pdns_api_url").map(|(_, v)| v.clone());
+        let pkey_enc = pdns.iter().find(|(k, _)| k == "pdns_api_key").map(|(_, v)| v.clone());
+        let (Some(url), Some(key_enc)) = (purl, pkey_enc) else { return 0 };
+        let key = crate::services::secrets_crypto::decrypt_credential_from_env(&key_enc);
+        let zfqdn = if parent.ends_with('.') { parent.clone() } else { format!("{parent}.") };
+        let client = reqwest::Client::new();
+        let Ok(resp) = client
+            .get(format!("{url}/api/v1/servers/localhost/zones/{zfqdn}"))
+            .header("X-API-Key", &key)
+            .send()
+            .await
+        else {
+            return 0;
+        };
+        let Ok(zone) = resp.json::<serde_json::Value>().await else { return 0 };
+        let name = format!("{domain}.");
+        let rrset = zone
+            .get("rrsets")
+            .and_then(|r| r.as_array())
+            .and_then(|sets| {
+                sets.iter()
+                    .find(|s| s.get("name").and_then(|v| v.as_str()) == Some(name.as_str())
+                        && s.get("type").and_then(|v| v.as_str()) == Some(rtype))
+                    .cloned()
+            });
+        let Some(rrset) = rrset else { return 0 };
+        let ttl = rrset.get("ttl").and_then(|v| v.as_u64()).unwrap_or(300);
+        let mut records: Vec<serde_json::Value> = Vec::new();
+        for r in rrset.get("records").and_then(|v| v.as_array()).cloned().unwrap_or_default() {
+            let content = r.get("content").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+            let disabled = r.get("disabled").and_then(|v| v.as_bool()).unwrap_or(false);
+            let content = match swap(&content) {
+                Some(c) => {
+                    changed += 1;
+                    c
+                }
+                None => content,
+            };
+            records.push(serde_json::json!({ "content": content, "disabled": disabled }));
+        }
+        if changed > 0 {
+            let ok = client
+                .patch(format!("{url}/api/v1/servers/localhost/zones/{zfqdn}"))
+                .header("X-API-Key", &key)
+                .json(&serde_json::json!({"rrsets":[{"name": name, "type": rtype, "ttl": ttl, "changetype": "REPLACE", "records": records}]}))
+                .send()
+                .await
+                .map(|r| r.status().is_success())
+                .unwrap_or(false);
+            if !ok {
+                changed = 0;
+            }
+        }
+    }
+    changed
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── multi-IP: the DNS follow-up of an address change ─────────────────
+
+    #[test]
+    fn an_a_record_moves_only_when_it_names_the_old_address() {
+        assert_eq!(swap_a_content("10.0.0.1", "10.0.0.1", "10.0.0.2").as_deref(), Some("10.0.0.2"));
+        assert_eq!(swap_a_content("104.16.0.1", "10.0.0.1", "10.0.0.2"), None);
+    }
+
+    #[test]
+    fn spf_keeps_the_operators_terms_and_swaps_only_the_old_ip4() {
+        assert_eq!(
+            swap_spf_ip4("v=spf1 a mx ip4:10.0.0.1 include:sendgrid.net ~all", "10.0.0.1", "10.0.0.2").as_deref(),
+            Some("v=spf1 a mx ip4:10.0.0.2 include:sendgrid.net ~all")
+        );
+        assert_eq!(
+            swap_spf_ip4("\"v=spf1 a mx +ip4:10.0.0.1/32 ~all\"", "10.0.0.1", "10.0.0.2").as_deref(),
+            Some("\"v=spf1 a mx +ip4:10.0.0.2 ~all\"")
+        );
+        assert_eq!(swap_spf_ip4("v=spf1 a mx ip4:10.0.0.10 ~all", "10.0.0.1", "10.0.0.2"), None);
+        assert_eq!(swap_spf_ip4("google-site-verification=x", "10.0.0.1", "10.0.0.2"), None);
+    }
+
+    #[test]
+    fn the_vhost_body_always_names_an_address() {
+        let site: Site = serde_json::from_str(r#"{
+            "id": "00000000-0000-0000-0000-000000000000", "user_id": "00000000-0000-0000-0000-000000000000", "server_id": null, "domain": "a.example",
+            "runtime": "static", "status": "active", "proxy_port": null, "php_version": null,
+            "root_path": null, "ssl_enabled": false, "ssl_cert_path": null, "ssl_key_path": null,
+            "ssl_expiry": null, "ssl_profile": null, "ssl_renewal_at": null, "ssl_renewal_checked_at": null,
+            "ssl_challenge": null, "ssl_cert_subject": null, "ssl_wildcard": null, "ssl_dns_zone_id": null,
+            "rate_limit": null, "max_upload_mb": 64, "php_memory_mb": 256, "php_max_workers": 5,
+            "custom_nginx": null, "php_preset": null, "app_command": null, "parent_site_id": null,
+            "synced_at": null, "enabled": true, "fastcgi_cache": false, "redis_cache": false, "redis_db": 0,
+            "waf_enabled": false, "waf_mode": "detection", "csp_policy": null, "permissions_policy": null,
+            "bot_protection": "off", "bandwidth_quota_mb": null, "bandwidth_suspended_at": null,
+            "sftp_enabled": false, "sftp_uid": null, "sftp_gid": null,
+            "created_at": "2026-11-14T00:00:00Z", "updated_at": "2026-11-14T00:00:00Z",
+            "ip_id": null
+        }"#)
+        .unwrap();
+        assert_eq!(build_nginx_body(&site, Some("primary"))["bind_ip"], "primary");
+        assert_eq!(build_nginx_body(&site, Some("192.0.2.107"))["bind_ip"], "192.0.2.107");
+        // A failed read omits the key so the agent keeps the vhost's own address.
+        assert!(build_nginx_body(&site, None).get("bind_ip").is_none());
+    }
 
     // ── proxy_port validation — s241 H4 (SSRF + firewall-clobber DoS) ────
 
