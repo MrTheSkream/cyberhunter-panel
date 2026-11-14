@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# DockPanel Tier 2 Cert Pin E2E Test Suite
+# CyberHunter - Panel Tier 2 Cert Pin E2E Test Suite
 #
 # Exercises the full Phase 3 #3 Tier 2 flow end-to-end:
 #   - Trust-On-First-Use (TOFU) fingerprint capture via /api/agent/checkin
@@ -10,25 +10,25 @@
 #   - Activity-log capture of the rotate action
 #   - Re-TOFU after rotate (new fingerprint captured cleanly)
 #   - RemoteAgentClient::new_with_pin construction via POST /api/servers/{id}/test
-#     (regression guard for the v2.7.18 rustls CryptoProvider panic — if the
+#     (regression guard for the v2.7.18 rustls CryptoProvider panic - if the
 #     CryptoProvider is not installed, the API process panics at ClientConfig
 #     build time instead of handling the request)
 #
 # Auth strategy: if DOCKPANEL_TEST_PASSWORD is set, logs in via the panel's
 # /api/auth/login endpoint; otherwise mints a short-lived admin JWT locally
 # from the JWT_SECRET in /etc/dockpanel/api.env (which additionally needs
-# python3 with PyJWT — a bare CI runner has neither, so CI sets the password).
+# python3 with PyJWT - a bare CI runner has neither, so CI sets the password).
 # The CSRF-gate sub-test works in either mode because the minted token is
 # equally valid as a cookie. Inserts a synthetic "online" server row so the
 # local server is never disturbed, and always cleans up via an EXIT trap.
 #
-# ⚠ THIS IS A LIVE SUITE, NOT A SOURCE PIN — it needs a running API, a
+# ⚠ THIS IS A LIVE SUITE, NOT A SOURCE PIN - it needs a running API, a
 # postgres it can reach, and an admin row, and it MUTATES whichever database
 # it is pointed at. It was named `tier2-pin-e2e.sh` until s346, which put it
 # inside the `tests/*-pin-e2e.sh` glob that the CI sweep, the docs census and
 # every local "run all the pins" one-liner walk. It had to be carved out of
 # all three by name, and the carve-outs were the whole of its CI story: it ran
-# in NO job at all, on any machine but its author's, for its entire life —
+# in NO job at all, on any machine but its author's, for its entire life -
 # while on a developer box the local sweep silently pointed it at the live
 # panel database. The name was the trap. It is now a `*-e2e.sh` live suite
 # like its neighbours, with a job of its own (ci.yml `tier2-certpin`).
@@ -57,13 +57,13 @@ psql_exec() {
 }
 
 echo "═══════════════════════════════════════════════"
-echo "  DockPanel Tier 2 Cert Pin E2E Test Suite"
+echo "  CyberHunter - Panel Tier 2 Cert Pin E2E Test Suite"
 echo "═══════════════════════════════════════════════"
 
 # ── Prove the database is reachable, before asking it anything ────────────
 # psql_exec swallows stderr so a query's answer is never polluted by a notice.
-# The cost is that EVERY failure — no docker, wrong container, wrong role,
-# wrong database — comes back as the empty string, and the first question we
+# The cost is that EVERY failure - no docker, wrong container, wrong role,
+# wrong database - comes back as the empty string, and the first question we
 # ask is one whose empty answer already means something else entirely. Without
 # this probe a mistyped container name reports "Admin user row not found" and
 # sends whoever is fixing it to the users table.
@@ -89,7 +89,7 @@ fi
 #      run as part of dev smoke-checks without hard-coding a password.
 # The token is used as a Bearer header (CSRF-exempt). The CSRF-gate test
 # below sends the same token as a COOKIE, which is equally valid in either
-# mode — so all 14 assertions run whichever way the token was obtained.
+# mode - so all 14 assertions run whichever way the token was obtained.
 COOKIE_TOKEN=""
 BEARER_TOKEN=""
 if [ -n "$ADMIN_PASSWORD" ]; then
@@ -127,7 +127,7 @@ BEARER="Authorization: Bearer $BEARER_TOKEN"
 # status='online' so AgentRegistry::for_server() resolves the row (it filters
 # status != 'pending'). agent_url points at a loopback port with no listener;
 # the TLS handshake in the regression-guard section will fail, but that is
-# the intent — we want to prove the API stays alive.
+# the intent - we want to prove the API stays alive.
 TEST_TOKEN="tier2-pin-test-$(date +%s)-$RANDOM"
 TEST_TOKEN_HASH=$(printf '%s' "$TEST_TOKEN" | sha256sum | cut -d' ' -f1)
 TEST_URL="https://127.0.0.1:9994"
@@ -179,7 +179,7 @@ STATUS=$(do_checkin "$FP_A")
 
 STORED=$(psql_exec "SELECT COALESCE(cert_fingerprint, '') FROM servers WHERE id = '$TEST_SERVER_ID'")
 [ "$STORED" = "$FP_A" ] && green "TOFU captured fingerprint in DB" \
-    || red "TOFU capture failed — DB value: ${STORED:-<empty>}"
+    || red "TOFU capture failed - DB value: ${STORED:-<empty>}"
 
 STATUS=$(do_checkin "$FP_A")
 [ "$STATUS" = "200" ] && green "Match checkin (same pin) returns 200" \
@@ -207,7 +207,7 @@ sect "Admin Rotate Cert Pin"
 # X-Requested-With header.
 #
 # Note: AdminUser::from_request_parts used to flatten the underlying
-# AuthUser error — including the CSRF 403 — into a generic 401
+# AuthUser error - including the CSRF 403 - into a generic 401
 # ("Authentication required"). Since v2.11.2 it propagates the inner
 # rejection, so the blocked case surfaces as 403 ("Missing CSRF header").
 # Both are accepted below so this test spans either behaviour; the delta
@@ -242,7 +242,7 @@ STATUS=$(do_checkin "$FP_B")
 
 STORED=$(psql_exec "SELECT COALESCE(cert_fingerprint, '') FROM servers WHERE id = '$TEST_SERVER_ID'")
 [ "$STORED" = "$FP_B" ] && green "Re-TOFU captured new fingerprint" \
-    || red "Re-TOFU capture failed — DB value: ${STORED:-<empty>}"
+    || red "Re-TOFU capture failed - DB value: ${STORED:-<empty>}"
 
 # ─────────────────────────────────────────────────────────────────────────
 sect "PinnedFingerprintVerifier Construction (v2.7.18 regression guard)"
@@ -252,7 +252,7 @@ sect "PinnedFingerprintVerifier Construction (v2.7.18 regression guard)"
 # calls RemoteAgentClient::new_with_pin, which constructs a
 # rustls::ClientConfig via ::builder(). Under rustls 0.23+ this reads
 # CryptoProvider::get_default(); without a process-level install_default()
-# the call panics — which surfaces as HTTP 500 because axum's panic
+# the call panics - which surfaces as HTTP 500 because axum's panic
 # handler catches it. The agent_url points at an empty port so reqwest
 # will fail to connect, and the handler should return 502 "Agent
 # unreachable". Asserting exactly 502 distinguishes the happy path
@@ -262,11 +262,11 @@ STATUS=$(curl -s -o /tmp/tier2_resp -w "%{http_code}" -X POST \
     -H "$BEARER" -H "Content-Type: application/json" -d '{}' --max-time 30 2>/dev/null)
 case "$STATUS" in
     ""|000)
-        red "API did not respond to /test — suspected crash (status '$STATUS')"
+        red "API did not respond to /test - suspected crash (status '$STATUS')"
         ;;
     500)
         BODY=$(cat /tmp/tier2_resp 2>/dev/null | head -c 200)
-        red "Test endpoint returned 500 — possible rustls CryptoProvider panic: $BODY"
+        red "Test endpoint returned 500 - possible rustls CryptoProvider panic: $BODY"
         ;;
     502)
         green "Test endpoint returned 502 (agent unreachable, CryptoProvider OK)"
@@ -286,7 +286,7 @@ echo "════════════════════════�
 echo "  Results: $PASS passed, $FAIL failed ($TOTAL total)"
 echo "═══════════════════════════════════════════════"
 
-# A suite that asserted nothing must not be able to report success — this
+# A suite that asserted nothing must not be able to report success - this
 # file's own history is the argument for the guard (ship-gate §S2).
 if [ "$TOTAL" -eq 0 ]; then
     echo "FATAL: no assertions ran, so a green here would mean nothing"

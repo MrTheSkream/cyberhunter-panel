@@ -1,4 +1,4 @@
-//! GAP 1: Backup Policy Executor — runs every 60s, evaluates cron schedules,
+//! GAP 1: Backup Policy Executor - runs every 60s, evaluates cron schedules,
 //! executes backup_policies across sites, databases, and volumes.
 
 use chrono::{Datelike, Timelike};
@@ -29,12 +29,12 @@ struct PolicyRow {
 
 /// v1 backup-encryption passphrase: a literal substring of `JWT_SECRET`.
 ///
-/// ⚠ SECURITY (s434): weak by construction — it hands anyone who learns a
+/// ⚠ SECURITY (s434): weak by construction - it hands anyone who learns a
 /// backup passphrase 32 bytes of the same secret every session token is
 /// HMAC-signed with, coupling "one old backup file leaked" to "every session
 /// on this install can be forged." Kept ONLY so `derive_backup_encryption_key_for_version`
 /// can still decrypt a backup written before v2 existed. Never call this
-/// directly and never use it for a new encrypt — see
+/// directly and never use it for a new encrypt - see
 /// [`crate::services::secrets_crypto::derive_backup_encryption_key_v2`] for
 /// the current derivation and the full account of what was wrong with this one.
 fn derive_backup_encryption_key_v1(jwt_secret: &str) -> String {
@@ -42,8 +42,8 @@ fn derive_backup_encryption_key_v1(jwt_secret: &str) -> String {
 }
 
 /// The backup-encryption key version every NEW encrypted backup is written
-/// with. Bump this — and add a new `vN` derivation plus a match arm in
-/// [`derive_backup_encryption_key_for_version`] — if the derivation ever
+/// with. Bump this - and add a new `vN` derivation plus a match arm in
+/// [`derive_backup_encryption_key_for_version`] - if the derivation ever
 /// needs to change again. Never repurpose an existing version number: a
 /// `database_backups.encryption_key_version` row is a permanent record of
 /// which derivation actually produced that file, and reusing a number would
@@ -55,12 +55,12 @@ pub const CURRENT_BACKUP_KEY_VERSION: i16 = 2;
 ///
 /// This is the SINGLE SOURCE OF TRUTH for the derivation. The encrypt side
 /// (`execute_policy`) and the decrypt side (`routes::backup_orchestrator::restore_db_backup`)
-/// previously derived the key from two DIFFERENT, incompatible sources — restore read a
-/// `backup_destinations.encryption_key` column that nothing ever writes — so every
+/// previously derived the key from two DIFFERENT, incompatible sources - restore read a
+/// `backup_destinations.encryption_key` column that nothing ever writes - so every
 /// encrypted DB backup was permanently unrestorable and DR was silently broken in encrypted
 /// mode (lesson #70: resolve by the value that actually produced the artifact, not a
 /// re-derived phantom). Keyed on the process JWT secret (`config.jwt_secret`, == the
-/// `JWT_SECRET` env the executor is handed), so both sides agree byte-for-byte — PROVIDED
+/// `JWT_SECRET` env the executor is handed), so both sides agree byte-for-byte - PROVIDED
 /// both sides ask for the same `version`. Restore reads `database_backups.encryption_key_version`
 /// (written at encrypt time) rather than assuming [`CURRENT_BACKUP_KEY_VERSION`], so a backup
 /// written under an older derivation stays restorable after the derivation changes.
@@ -68,14 +68,14 @@ pub fn derive_backup_encryption_key_for_version(version: i16, jwt_secret: &str) 
     match version {
         1 => derive_backup_encryption_key_v1(jwt_secret),
         // Unknown/future version numbers fall through to the current
-        // derivation rather than panicking — a corrupt or downgraded-reader
+        // derivation rather than panicking - a corrupt or downgraded-reader
         // scenario then fails LOUDLY (openssl rejects the wrong passphrase)
         // instead of crashing the executor.
         _ => crate::services::secrets_crypto::derive_backup_encryption_key_v2(jwt_secret),
     }
 }
 
-/// The passphrase a NEW encrypted backup is written with — always
+/// The passphrase a NEW encrypted backup is written with - always
 /// [`CURRENT_BACKUP_KEY_VERSION`]. Restoring an EXISTING backup must call
 /// [`derive_backup_encryption_key_for_version`] with that row's own recorded
 /// version instead of this function.
@@ -98,12 +98,12 @@ pub fn derive_backup_encryption_key(jwt_secret: &str) -> String {
 /// off-site destination and been shown no indication it was ignored. A backup
 /// that only exists on the disk it is insuring is not a backup.
 ///
-/// The sibling path — `backup_scheduler`, which runs per-site schedules — was
+/// The sibling path - `backup_scheduler`, which runs per-site schedules - was
 /// described here as having "uploaded correctly all along". That was wrong, and
 /// wrong in a way this comment helped preserve: it had the same missing decrypt
 /// this path did, so both were posting ciphertext as the credential while Test
 /// Connection went on reporting success. Both now go through
-/// `agent_destination_payload`. What remains true is the rest — this path shares
+/// `agent_destination_payload`. What remains true is the rest - this path shares
 /// the scheduler's retry ladder and its refusal to record a backup whose upload
 /// failed.
 struct ResolvedDestination {
@@ -129,14 +129,14 @@ async fn resolve_destination(db: &PgPool, policy: &PolicyRow) -> Option<Resolved
         Ok(Some(r)) => r,
         Ok(None) => {
             tracing::error!(
-                "Policy '{}': destination {id} no longer exists — backups will stay on this server",
+                "Policy '{}': destination {id} no longer exists - backups will stay on this server",
                 policy.name
             );
             return None;
         }
         Err(e) => {
             tracing::error!(
-                "Policy '{}': could not read destination {id} ({e}) — backups will stay on this server",
+                "Policy '{}': could not read destination {id} ({e}) - backups will stay on this server",
                 policy.name
             );
             return None;
@@ -177,7 +177,7 @@ async fn upload_to_destination(
     for (attempt, delay) in delays.iter().enumerate() {
         // See the sibling call in `backup_scheduler`: plain `post` caps the call at
         // 60s while the agent budgets 600s for the same upload, so a slow-but-fine
-        // transfer was reported as a failure three times over — and here that also
+        // transfer was reported as a failure three times over - and here that also
         // trips `destination_down`, which skips off-siting for every remaining site,
         // database and volume in the run and raises an incident saying the backups
         // "exist only on this server" about backups that had just been uploaded.
@@ -189,7 +189,7 @@ async fn upload_to_destination(
             Err(e) => {
                 last_err = e.to_string();
                 if attempt < delays.len() - 1 {
-                    tracing::warn!("Upload attempt {} failed for {label}: {last_err} — retrying in {delay}s", attempt + 1);
+                    tracing::warn!("Upload attempt {} failed for {label}: {last_err} - retrying in {delay}s", attempt + 1);
                     tokio::time::sleep(std::time::Duration::from_secs(*delay)).await;
                 }
             }
@@ -200,14 +200,14 @@ async fn upload_to_destination(
     false
 }
 
-/// Run the backup policy executor loop — checks every 60 seconds for due policies.
+/// Run the backup policy executor loop - checks every 60 seconds for due policies.
 /// Fleet-wide policy query, so it takes the REGISTRY. Each leg resolves its own host:
 /// sites and databases per ROW (via `sites.server_id`, which is NOT NULL), volumes per
 /// POLICY (their subject list comes from the agent, so there is no row to read).
 ///
 /// Left local, the volume leg was the worst shape in the codebase: it enumerated the
 /// PANEL's containers, tarred the PANEL's volumes, stamped each row with the member's
-/// `server_id`, and reported success — with no failure path at all. s298's correctly
+/// `server_id`, and reported success - with no failure path at all. s298's correctly
 /// scoped `auto_healer` then refused to prune those rows, because they claimed to
 /// belong to another host, so retention was enforced on nothing.
 pub async fn run(db: PgPool, agents: AgentRegistry, jwt_secret: String, mut shutdown_rx: tokio::sync::broadcast::Receiver<()>) {
@@ -262,7 +262,7 @@ async fn tick(db: &PgPool, agents: &AgentRegistry, jwt_secret: &str) -> Result<(
     }
 
     // Record backup storage metric for growth tracking. SUM(BIGINT) returns
-    // NUMERIC in postgres — cast to bigint so sqlx can decode into i64.
+    // NUMERIC in postgres - cast to bigint so sqlx can decode into i64.
     let total_storage: Option<(i64,)> = sqlx::query_as(
         "SELECT COALESCE(SUM(size_bytes), 0)::bigint FROM ( \
             SELECT size_bytes FROM backups UNION ALL \
@@ -276,7 +276,7 @@ async fn tick(db: &PgPool, agents: &AgentRegistry, jwt_secret: &str) -> Result<(
         ).bind(format!("{}", bytes)).execute(db).await;
     }
 
-    // Proactive backup freshness alerting — once per hour
+    // Proactive backup freshness alerting - once per hour
     let now_ts = now.timestamp();
     let last_check = LAST_STALE_CHECK.load(std::sync::atomic::Ordering::Relaxed);
     if now_ts - last_check >= 3600 {
@@ -323,7 +323,7 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
     let mut upload_failures = 0;
 
     // Circuit breaker. Each upload retries three times with 5s/15s/30s backoff,
-    // so a destination that is simply DOWN would cost ~50 seconds PER FILE — a
+    // so a destination that is simply DOWN would cost ~50 seconds PER FILE - a
     // policy covering forty sites would sit in one 60-second tick for half an
     // hour, starving every other policy behind it. The first exhausted retry
     // ladder is enough evidence: stop dialling for the rest of this run and let
@@ -334,8 +334,8 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
     let mut remote_prune_warned = false;
 
     // Get encryption key if encrypt is enabled. Use the shared derivation (single source of
-    // truth) keyed on the jwt_secret passed into the executor — which equals the
-    // state.config.jwt_secret the restore path uses — NOT a separate std::env read that could
+    // truth) keyed on the jwt_secret passed into the executor - which equals the
+    // state.config.jwt_secret the restore path uses - NOT a separate std::env read that could
     // drift from it. This is what makes an encrypted backup actually restorable.
     let encryption_key: Option<String> = if policy.encrypt {
         Some(derive_backup_encryption_key(jwt_secret))
@@ -343,7 +343,7 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
         None
     };
 
-    // The key reaches the database dump and nothing else — the agent has no
+    // The key reaches the database dump and nothing else - the agent has no
     // encryption path for a site or volume archive, so there is nowhere to send
     // it. Say so per run rather than letting the flag imply cover it does not
     // give: a site archive is the whole webroot, and since v2.34.0 it also
@@ -352,7 +352,7 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
     // one to the same destination.
     if policy.encrypt && (policy.backup_sites || policy.backup_volumes) {
         tracing::warn!(
-            "Policy '{}': encryption applies to database dumps only — this policy's site/volume archives are stored and uploaded unencrypted",
+            "Policy '{}': encryption applies to database dumps only - this policy's site/volume archives are stored and uploaded unencrypted",
             policy.name
         );
     }
@@ -370,14 +370,14 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
         for (site_id, domain, site_server_id) in &sites {
             // Resolve THIS site's host. Never fall back to local: archiving a member's
             // site against the panel's own /var/www either fails every night for ever,
-            // or — where the same domain legally exists on both hosts — silently tars
+            // or - where the same domain legally exists on both hosts - silently tars
             // the wrong machine's files and prunes the member's real off-site copies.
             let agent = match agents.for_server(*site_server_id).await {
                 Ok(a) => a,
                 Err(e) => {
                     failures += 1;
                     tracing::warn!(
-                        "Policy '{}': skipping site {domain} — its server {site_server_id} \
+                        "Policy '{}': skipping site {domain} - its server {site_server_id} \
                          is unreachable ({e}). Not archiving it on another host.",
                         policy.name
                     );
@@ -385,7 +385,7 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
                 }
             };
             let agent = &agent;
-            // WITH the site's databases — a policy-driven backup that omitted
+            // WITH the site's databases - a policy-driven backup that omitted
             // them would reintroduce, on the automated path, exactly the gap
             // v2.34.0 closed on the manual one.
             let site_dbs = crate::routes::backups::site_database_specs(db, jwt_secret, *site_id).await;
@@ -430,7 +430,7 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
                             // prune (SFTP has no supported path), so a discarded body
                             // left the policy showing an enforced retention count over
                             // a destination that never deletes anything. Reported once
-                            // per run — a forty-site policy should not write forty
+                            // per run - a forty-site policy should not write forty
                             // identical rows.
                             match agent.post("/backups/prune", Some(serde_json::json!({
                                 "destination": dest.payload,
@@ -441,7 +441,7 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
                                     if let Some(msg) = resp.get("message").and_then(|v| v.as_str()) {
                                         if !remote_prune_warned {
                                             remote_prune_warned = true;
-                                            // "warning", not "warn" — the API filters and
+                                            // "warning", not "warn" - the API filters and
                                             // counts on the former, so a "warn" row was
                                             // uncountable in the Warnings tile and grey in
                                             // the list. Its sibling at backup_scheduler.rs
@@ -465,7 +465,7 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
                             destination_down = true;
                         }
                     } else if destination.is_some() {
-                        // Breaker already open — count it, don't dial.
+                        // Breaker already open - count it, don't dial.
                         upload_failures += 1;
                     }
 
@@ -473,7 +473,7 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
                     // cannot find or restore: every list and restore path keys off
                     // this row. Discarding the Result reported the run green over
                     // an archive that exists on disk and nowhere in the product.
-                    // The realistic trigger is not "the database is down" — it is
+                    // The realistic trigger is not "the database is down" - it is
                     // deleting a backup destination mid-run, which makes every
                     // remaining insert in that run a foreign-key violation.
                     match sqlx::query(
@@ -504,13 +504,13 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
 
     // Backup databases
     if policy.backup_databases {
-        // `server_id` comes free from the join this query already makes — the same
+        // `server_id` comes free from the join this query already makes - the same
         // shape `create_db_backup` uses. Without it the panel `docker exec`s whatever
         // answers to `dockpanel-db-{name}` on ITS OWN host, and that name is unique
         // only per owner, so the dump can be another tenant's database entirely.
         //
         // LEFT JOIN both owner tables + COALESCE, same pattern as databases.rs's
-        // list()/get() — a plain `JOIN sites` here silently dropped every
+        // list()/get() - a plain `JOIN sites` here silently dropped every
         // stack-owned database (site_id IS NULL for those rows since v2.242.0's
         // standalone-DB-for-stacks ship), so they got zero backup coverage,
         // scheduled or manual, with no error anywhere in the chain.
@@ -529,7 +529,7 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
             let Some(db_server_id) = *db_server_id else {
                 failures += 1;
                 tracing::warn!(
-                    "Policy '{}': skipping database {db_name} — its owner (site or \
+                    "Policy '{}': skipping database {db_name} - its owner (site or \
                      stack) row has no server_id.",
                     policy.name
                 );
@@ -540,7 +540,7 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
                 Err(e) => {
                     failures += 1;
                     tracing::warn!(
-                        "Policy '{}': skipping database {db_name} — its server \
+                        "Policy '{}': skipping database {db_name} - its server \
                          {db_server_id} is unreachable ({e}).",
                         policy.name
                     );
@@ -615,7 +615,7 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
         }
     }
 
-    // Backup volumes (Docker app volumes). This is an admin-only capability — the
+    // Backup volumes (Docker app volumes). This is an admin-only capability - the
     // direct create_volume_backup endpoint is AdminUser, and the enumeration below is
     // fleet-wide with NO per-user scoping. Policy CRUD is now admin-gated, but guard
     // the executor too so any legacy non-admin-owned policy cannot drive volume backups.
@@ -629,13 +629,13 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
     .flatten()
     .unwrap_or(false);
     if policy.backup_volumes && !owner_is_admin {
-        tracing::warn!("Policy '{}': skipping volume backup — owner is not an admin", policy.name);
+        tracing::warn!("Policy '{}': skipping volume backup - owner is not an admin", policy.name);
     }
     if policy.backup_volumes && owner_is_admin { 'vol: {
         // Volumes have no per-row host to read: the subject list comes from asking an
         // agent for its containers, so the POLICY's server decides which agent. When
-        // the policy names none — the only thing the UI can currently produce, since
-        // the policy form has no server picker — resolve the local server EXPLICITLY
+        // the policy names none - the only thing the UI can currently produce, since
+        // the policy form has no server picker - resolve the local server EXPLICITLY
         // and record that id, rather than writing the policy's NULL through.
         //
         // Recording the server actually reached (not `policy.server_id`) is the whole
@@ -647,7 +647,7 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
         };
         let Some(vol_server_id) = vol_server_id else {
             tracing::warn!(
-                "Policy '{}': skipping volume backup — no server on the policy and the \
+                "Policy '{}': skipping volume backup - no server on the policy and the \
                  local server id is not yet known (setup incomplete).",
                 policy.name
             );
@@ -658,7 +658,7 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
             Err(e) => {
                 failures += 1;
                 tracing::warn!(
-                    "Policy '{}': skipping volume backup — server {vol_server_id} is \
+                    "Policy '{}': skipping volume backup - server {vol_server_id} is \
                      unreachable ({e}). Not tarring another host's volumes under its name.",
                     policy.name
                 );
@@ -753,7 +753,7 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
         }
     }}
 
-    // An upload failure is NOT a backup failure — the file exists locally, and it
+    // An upload failure is NOT a backup failure - the file exists locally, and it
     // is counted in `successes` because it was taken. It IS a disaster-recovery
     // failure, though, and reporting the run as a clean success would be exactly
     // the silence this change exists to remove. So it degrades the status and
@@ -783,7 +783,7 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
     let trouble = |kind: &str| -> String {
         match (failures, upload_failures) {
             (0, u) => format!(
-                "{u} of {successes} {kind} could not be uploaded to the configured destination — \
+                "{u} of {successes} {kind} could not be uploaded to the configured destination - \
                  they exist only on this server."
             ),
             (f, 0) => format!("{f} {kind} failed out of {total_attempted} total"),
@@ -903,7 +903,7 @@ mod tests {
 
     #[test]
     fn backup_key_derivation_handles_short_secret() {
-        // Must not panic on a secret shorter than 32 bytes — v1's own
+        // Must not panic on a secret shorter than 32 bytes - v1's own
         // 32.min(len) guard existed for exactly this; HKDF has no such limit,
         // but the guard against a panic on short input still matters.
         let _ = derive_backup_encryption_key("short");
@@ -963,7 +963,7 @@ mod tests {
     #[test]
     fn unknown_version_falls_through_to_current_not_a_panic() {
         // A row from a future/downgraded reader naming a version this build
-        // doesn't recognise must not crash the executor — it should derive
+        // doesn't recognise must not crash the executor - it should derive
         // SOME key (which will then correctly fail to decrypt, a loud and
         // recoverable failure) rather than panic and take the whole run down.
         let jwt = "some-jwt-secret";

@@ -13,7 +13,7 @@ import {
  *
  * Until this page existed, all of it lived on `/settings`, whose nav row is
  * `adminOnly`, so a `client`, `user` or `reseller` had no way to change their own
- * password or enrol in 2FA — while the layout's own banner told them 2FA was
+ * password or enrol in 2FA - while the layout's own banner told them 2FA was
  * required and linked them to that same admin page. The endpoints were never the
  * obstacle: every one is `AuthUser` and scoped to the caller's own id.
  *

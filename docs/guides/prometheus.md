@@ -1,6 +1,6 @@
 # Prometheus Metrics Endpoint
 
-DockPanel can expose its operational metrics in [Prometheus exposition format](https://prometheus.io/docs/instrumenting/exposition_formats/) so external Prometheus, VictoriaMetrics, Grafana Agent, or any OpenMetrics-compatible scraper can consume them.
+CyberHunter - Panel can expose its operational metrics in [Prometheus exposition format](https://prometheus.io/docs/instrumenting/exposition_formats/) so external Prometheus, VictoriaMetrics, Grafana Agent, or any OpenMetrics-compatible scraper can consume them.
 
 The endpoint is **disabled by default** and gated by a scrape token. When disabled, the endpoint returns `404 Not Found` so a panel with metrics off does not advertise a scrape surface at all.
 
@@ -35,7 +35,7 @@ The token may also be sent as a query parameter (`?token=...`) for tools that ca
 
 ## Exposed metrics
 
-All metric names are part of DockPanel's public API and will not be renamed between minor versions. Units follow Prometheus / Node Exporter conventions (`_percent`, `_mb`, `_celsius`, `_watts`).
+All metric names are part of CyberHunter - Panel's public API and will not be renamed between minor versions. Units follow Prometheus / Node Exporter conventions (`_percent`, `_mb`, `_celsius`, `_watts`).
 
 ### System resources (per server)
 
@@ -83,13 +83,13 @@ Emits `severity="none"` with value `0` when no alerts are firing, so scrapers ca
 |--------|------|--------|
 | `dockpanel_info` | gauge (always 1) | `version` |
 
-Use this to pivot a Grafana dashboard on DockPanel version for upgrade cutovers.
+Use this to pivot a Grafana dashboard on CyberHunter - Panel version for upgrade cutovers.
 
 ## Pre-built Grafana dashboard
 
 A drop-in Grafana dashboard ships in the repo at [`dashboards/dockpanel-grafana.json`](https://github.com/ovexro/dockpanel/blob/main/dashboards/dockpanel-grafana.json). It covers:
 
-- Header stats — DockPanel version, servers reporting, sites, alerts firing by severity, GPUs reporting
+- Header stats - CyberHunter - Panel version, servers reporting, sites, alerts firing by severity, GPUs reporting
 - CPU / memory / disk timeseries per server (with thresholds at sensible levels)
 - Top servers by CPU and memory (bar gauges)
 - Sites by status (donut)
@@ -102,7 +102,7 @@ A `Server` template variable lets you focus on a single host or any subset.
 
 1. Grafana → **Dashboards** → **New** → **Import**
 2. Upload `dockpanel-grafana.json` (or paste its contents)
-3. Pick the Prometheus datasource that's scraping DockPanel and click **Import**
+3. Pick the Prometheus datasource that's scraping CyberHunter - Panel and click **Import**
 
 The dashboard's UID is `dockpanel-fleet` so direct links from your runbooks stay stable across re-imports.
 
@@ -123,14 +123,14 @@ sum(dockpanel_alerts_firing{severity!="none"})
 
 ## Why the data is 30s stale
 
-Every scrape reads the latest row from the metrics tables written by the 30-second metrics collector. DockPanel does **not** re-poll agents per scrape — that would make metrics expensive to collect and skew the existing collection cadence used for the dashboard charts. Prometheus default scrape intervals (15-60s) are well within this staleness window.
+Every scrape reads the latest row from the metrics tables written by the 30-second metrics collector. CyberHunter - Panel does **not** re-poll agents per scrape - that would make metrics expensive to collect and skew the existing collection cadence used for the dashboard charts. Prometheus default scrape intervals (15-60s) are well within this staleness window.
 
 ## Troubleshooting
 
-**Scraper sees 404** — the endpoint is disabled. Enable it from Settings.
+**Scraper sees 404** - the endpoint is disabled. Enable it from Settings.
 
-**Scraper sees 401** — the bearer token doesn't match the stored hash. Confirm you copied the whole token (69 characters including `dpms_`) and that Prometheus is sending it on `/api/metrics`, not some other path.
+**Scraper sees 401** - the bearer token doesn't match the stored hash. Confirm you copied the whole token (69 characters including `dpms_`) and that Prometheus is sending it on `/api/metrics`, not some other path.
 
-**No GPU metrics** — GPUs only appear after the collector has stored at least one row in `gpu_metrics_history`. On a fresh install, this takes up to 30 seconds after the agent first reports GPU info.
+**No GPU metrics** - GPUs only appear after the collector has stored at least one row in `gpu_metrics_history`. On a fresh install, this takes up to 30 seconds after the agent first reports GPU info.
 
-**Sites metric shows 0** — only ingested during a successful scrape; check that the panel's database has rows in the `sites` table.
+**Sites metric shows 0** - only ingested during a successful scrape; check that the panel's database has rows in the `sites` table.

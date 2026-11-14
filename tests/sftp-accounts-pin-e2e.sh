@@ -2,28 +2,28 @@
 # Regression pin for PER-SITE SFTP ACCOUNTS (GH #108).
 #
 # Real Linux system accounts, a real chroot jail, and a real sshd config
-# change — the highest-blast-radius thing this codebase has ever generated on
+# change - the highest-blast-radius thing this codebase has ever generated on
 # its own. The invariants this suite exists to protect:
 #
 #   - uid/gid allocation goes through a real Postgres SEQUENCE (nextval()),
-#     never a MAX(sftp_uid)+1 read — the latter races under two concurrent
+#     never a MAX(sftp_uid)+1 read - the latter races under two concurrent
 #     enables (both can read the same MAX before either commits)
-#   - the sshd drop-in is written, validated (`sshd -t`), and RELOADED —
+#   - the sshd drop-in is written, validated (`sshd -t`), and RELOADED -
 #     never the existing SSH-hardening code's bare `restart_sshd` with no
 #     validation, which would risk locking out SSH on a bad Match block
 #   - the SFTP password is never piped through stdin or handled by extending
-#     the shared `UnsandboxedCommand` primitive — it's hashed in-process
+#     the shared `UnsandboxedCommand` primitive - it's hashed in-process
 #     (`sha-crypt`) and set via `usermod -p <hash>`, so the plaintext never
 #     needs infrastructure this codebase doesn't already have
 #   - teardown never deletes a Linux account without first proving (via the
 #     owner marker) that the uid actually belongs to the domain being torn
-#     down — the same fail-closed shape as every other `owned_*` check
-#   - the real site directory is never moved — only bind-mounted into the
-#     jail and chowned in place — so no nginx/PHP-FPM/WP-CLI/CMS-installer
+#     down - the same fail-closed shape as every other `owned_*` check
+#   - the real site directory is never moved - only bind-mounted into the
+#     jail and chowned in place - so no nginx/PHP-FPM/WP-CLI/CMS-installer
 #     path anywhere else in the codebase had to change
 #   - the backend's `pool_user`/`pool_group` naming convention and the
 #     agent's `sftp_username`/`sftp_groupname` functions that actually create
-#     the accounts must produce byte-identical names — they are two separate
+#     the accounts must produce byte-identical names - they are two separate
 #     binaries, so nothing but this pin catches a drift between them
 #   - no password is ever persisted anywhere in the schema
 #
@@ -50,7 +50,7 @@ for f in "$MIGRATION" "$AGENT_SVC" "$AGENT_ROUTE" "$AGENT_OWNERSHIP" "$BACKEND" 
   [ -f "$f" ] || { echo "missing $f"; exit 1; }
 done
 
-# Strip line comments only — a block-comment stripper is what deleted 485
+# Strip line comments only - a block-comment stripper is what deleted 485
 # lines of real code until s294; this deliberately does the narrow, safe thing.
 code() { sed 's://.*$::' "$1"; }
 flat() { code "$1" | tr -d ' \t\n'; }
@@ -68,7 +68,7 @@ must_contain() {
   flat_needle=$(printf '%s' "$needle" | tr -d ' \t\n')
   case "$flat" in
     *"$flat_needle"*) ok "$desc" ;;
-    *) bad "$desc — pattern not found (whitespace-insensitive): $needle" ;;
+    *) bad "$desc - pattern not found (whitespace-insensitive): $needle" ;;
   esac
 }
 
@@ -78,7 +78,7 @@ must_contain "$MIG_FLAT" 'CREATE SEQUENCE IF NOT EXISTS sftp_id_seq' \
 must_contain "$BACKEND_FLAT" "SELECT nextval('sftp_id_seq')" \
   "enable_sftp allocates via nextval(), not a MAX(sftp_uid)+1 read"
 case "$BACKEND_FLAT" in
-  *'MAX(sftp_uid)'*) bad "a MAX(sftp_uid) read exists somewhere in sites.rs — the race this pin exists to prevent" ;;
+  *'MAX(sftp_uid)'*) bad "a MAX(sftp_uid) read exists somewhere in sites.rs - the race this pin exists to prevent" ;;
   *) ok "no MAX(sftp_uid) read anywhere in sites.rs" ;;
 esac
 
@@ -106,11 +106,11 @@ must_contain "$SVC_FLAT" 'ShaCrypt::default()' \
 must_contain "$SVC_FLAT" '"usermod",&[]).args(["-p",hash.as_str()' \
   "usermod -p receives the HASH, never the plaintext password"
 case "$SVC_FLAT" in
-  *'"chpasswd"'*) bad "sftp_accounts.rs shells out to chpasswd — this pin assumes the hash-then-usermod path instead" ;;
+  *'"chpasswd"'*) bad "sftp_accounts.rs shells out to chpasswd - this pin assumes the hash-then-usermod path instead" ;;
   *) ok "no chpasswd call anywhere in sftp_accounts.rs" ;;
 esac
 case "$MIG_FLAT" in
-  *'sftp_password'*) bad "the migration defines a password-shaped column — none should exist, a Linux account needs no stored password to reset" ;;
+  *'sftp_password'*) bad "the migration defines a password-shaped column - none should exist, a Linux account needs no stored password to reset" ;;
   *) ok "no password column anywhere in the migration" ;;
 esac
 
@@ -118,16 +118,16 @@ echo
 echo "── C2: the salt is sized for SHA-crypt's own 16-character cap, not the generic default ──"
 # Live-verified bug (fresh-VPS drive, this session): ShaCrypt::default().hash_
 # password() auto-generates a salt via `password_hash`'s generic
-# RECOMMENDED_SALT_LEN — 16 RAW BYTES, which base64-encodes to 22 characters.
+# RECOMMENDED_SALT_LEN - 16 RAW BYTES, which base64-encodes to 22 characters.
 # SHA-crypt's own spec caps the salt at 16 CHARACTERS; glibc's crypt() (what
 # PAM actually calls to verify a real login) truncates an over-long salt when
 # recomputing the hash, so it silently computes a DIFFERENT digest than the
-# one stored. Not an error anywhere — a correct password fails to
+# one stored. Not an error anywhere - a correct password fails to
 # authenticate, forever, with nothing pointing at the cause. Confirmed on-box
 # via Python's own crypt.crypt(): a hash made with the default 16-byte salt
 # round-tripped as WRONG. 12 raw bytes -> exactly 16 base64 characters.
 case "$SVC_FLAT" in
-  *'.hash_password(plaintext.as_bytes())'*) bad "set_password calls the generic auto-salt hash_password() — this is the exact live-verified authentication-always-fails bug" ;;
+  *'.hash_password(plaintext.as_bytes())'*) bad "set_password calls the generic auto-salt hash_password() - this is the exact live-verified authentication-always-fails bug" ;;
   *) ok "set_password does not call the generic auto-salt hash_password()" ;;
 esac
 must_contain "$SVC_FLAT" 'letsalt:[u8;12]' \
@@ -145,7 +145,7 @@ must_contain "$SVC_FLAT" 'if!crate::services::ownership::sftp_user(uid,domain).m
   "deprovision refuses to proceed unless the marker proves this uid belongs to this domain"
 case "$OWNERSHIP_FLAT" in
   *'crate::services::sftp_accounts::owner_marker_path(uid)'*) ok "the ownership check reads the SAME marker path provision() writes, not a re-derived one" ;;
-  *) bad "ownership::sftp_user does not read services::sftp_accounts::owner_marker_path — could check the wrong file" ;;
+  *) bad "ownership::sftp_user does not read services::sftp_accounts::owner_marker_path - could check the wrong file" ;;
 esac
 
 echo
@@ -153,7 +153,7 @@ echo "── E: the real site directory is bind-mounted, never moved ──"
 must_contain "$SVC_FLAT" 'What={site_dir}' \
   "the bind mount's What= targets the real, unmoved site directory"
 case "$SVC_FLAT" in
-  *'rename('*|*'std::fs::rename'*) bad "sftp_accounts.rs renames/moves a path — the design deliberately avoids restructuring the docroot" ;;
+  *'rename('*|*'std::fs::rename'*) bad "sftp_accounts.rs renames/moves a path - the design deliberately avoids restructuring the docroot" ;;
   *) ok "sftp_accounts.rs never renames/moves the site directory" ;;
 esac
 must_contain "$SVC_FLAT" 'systemd-escape' \
@@ -163,21 +163,21 @@ echo
 echo "── E2: /var/dockpanel-sftp creation/removal goes through the unsandboxed escape ──"
 # Live-verified bug (fresh-VPS drive, this session): the agent's own systemd
 # unit runs under ProtectSystem=strict, namespacing its writable set at unit
-# START — /var/dockpanel-sftp is a brand-new top-level directory this feature
+# START - /var/dockpanel-sftp is a brand-new top-level directory this feature
 # creates on first use, so a plain std::fs::create_dir_all/remove_dir_all on
 # it fails with a real "Read-only file system (os error 30)" the exact same
 # way routes/mail.rs's VMAIL_DIR creation already documents and works around.
 # ReadWritePaths listing the directory (added to dockpanel-agent.service)
-# only helps on a LATER restart after it already exists once — creation and
+# only helps on a LATER restart after it already exists once - creation and
 # teardown must go through safe_command_unsandboxed regardless.
 case "$SVC_FLAT" in
-  *'std::fs::create_dir_all(&content_dir)'*) bad "provision() creates the jail content dir via plain std::fs — hits the live-verified EROFS bug" ;;
+  *'std::fs::create_dir_all(&content_dir)'*) bad "provision() creates the jail content dir via plain std::fs - hits the live-verified EROFS bug" ;;
   *) ok "provision() does not create the jail content dir via plain std::fs" ;;
 esac
 must_contain "$SVC_FLAT" 'safe_command_unsandboxed("mkdir",&[]).args(["-p",&content_dir])' \
   "provision() creates the jail content dir via the unsandboxed escape"
 case "$SVC_FLAT" in
-  *'std::fs::remove_dir_all(&jail)'*) bad "deprovision() removes the jail tree via plain std::fs — hits the same live-verified EROFS bug on teardown" ;;
+  *'std::fs::remove_dir_all(&jail)'*) bad "deprovision() removes the jail tree via plain std::fs - hits the same live-verified EROFS bug on teardown" ;;
   *) ok "deprovision() does not remove the jail tree via plain std::fs" ;;
 esac
 must_contain "$SVC_FLAT" 'safe_command_unsandboxed("rm",&[]).args(["-rf",&jail])' \
@@ -186,7 +186,7 @@ must_contain "$(flat panel/agent/dockpanel-agent.service)" '-/var/dockpanel-sftp
   "the agent's systemd unit lists /var/dockpanel-sftp in ReadWritePaths (defense-in-depth for restarts after first use)"
 
 echo
-echo "── F: PHP-FPM pool ownership — the actual isolation, both directions ──"
+echo "── F: PHP-FPM pool ownership - the actual isolation, both directions ──"
 must_contain "$SVC_FLAT" '"chown",&[]).args(["-R",&format!("{username}:{groupname}"),&site_dir]' \
   "provision() re-owns the real site directory to the new per-site identity"
 must_contain "$SVC_FLAT" '"chown",&[]).args(["-R","www-data:www-data",&site_dir]' \
@@ -227,13 +227,13 @@ echo "── I2: disable_sftp reverts the PHP-FPM pool BEFORE tearing down the a
 # remove a uid with a running process, and the OLD PHP-FPM pool's workers
 # are still alive under the SFTP uid until the pool is reverted+reloaded.
 # Calling the agent's /sftp/.../disable endpoint (which runs userdel) BEFORE
-# reverting the pool silently failed the account/group removal every time —
+# reverting the pool silently failed the account/group removal every time -
 # "disabled" reported success over a half-torn-down box, with nothing in any
 # log pointing at the cause until deprovision()'s userdel/groupdel calls
 # were changed from fire-and-forget to logged (§I3 below).
 DISABLE_FN=$(awk '/^pub async fn disable_sftp\(/{f=1} f&&/^pub async fn /&&!/^pub async fn disable_sftp\(/{exit} f{print}' "$BACKEND")
 if [ -z "$DISABLE_FN" ]; then
-  bad "could not extract disable_sftp() from sites.rs — function renamed or moved"
+  bad "could not extract disable_sftp() from sites.rs - function renamed or moved"
 else
   ok "disable_sftp() extracted (bounded on the next pub async fn)"
 fi
@@ -245,13 +245,13 @@ if [ -z "$PUT_POS" ] || [ -z "$POST_POS" ]; then
 elif [ "$PUT_POS" -lt "$POST_POS" ]; then
   ok "the PHP-FPM pool/vhost rebuild happens before the agent's SFTP disable call"
 else
-  bad "the agent's SFTP disable call (userdel) happens BEFORE the pool revert — this is the exact live-verified ordering bug (old workers still running as the doomed uid block userdel)"
+  bad "the agent's SFTP disable call (userdel) happens BEFORE the pool revert - this is the exact live-verified ordering bug (old workers still running as the doomed uid block userdel)"
 fi
 
 echo
 echo "── I3: userdel/groupdel failures are logged, not silently swallowed ──"
 case "$SVC_FLAT" in
-  *'let_=safe_command_unsandboxed("userdel"'*) bad "deprovision() still discards the userdel result with let _ = ... — a future ordering regression would fail silently again" ;;
+  *'let_=safe_command_unsandboxed("userdel"'*) bad "deprovision() still discards the userdel result with let _ = ... - a future ordering regression would fail silently again" ;;
   *) ok "deprovision() does not silently discard the userdel result" ;;
 esac
 must_contain "$SVC_FLAT" 'match safe_command_unsandboxed("userdel",&[]).args([&username]).output().await{' \
@@ -260,28 +260,28 @@ must_contain "$SVC_FLAT" 'match safe_command_unsandboxed("groupdel",&[]).args([&
   "groupdel's result is matched and a failure is logged"
 
 echo
-echo "── I4: deprovision() stops this domain's PHP-FPM pool itself — never trusts caller ordering ──"
+echo "── I4: deprovision() stops this domain's PHP-FPM pool itself - never trusts caller ordering ──"
 # Live-verified the SAME bug through a SECOND, independent caller after §I2's
 # fix: disable_sftp's pool-revert-then-reload unblocked userdel there, but
 # site DELETION's teardown (nginx.rs::delete_site) only ever removes the
-# PHP-FPM pool CONFIG FILE — it never reloads php-fpm, so an already-running
+# PHP-FPM pool CONFIG FILE - it never reloads php-fpm, so an already-running
 # worker under the doomed uid is untouched by it, and userdel failed exactly
 # the same way through this path with no ordering fix available to share.
 #
-# The FIRST fix attempt — `pkill -9 -u <uid>` right before userdel — was
+# The FIRST fix attempt - `pkill -9 -u <uid>` right before userdel - was
 # ALSO live-verified insufficient on its own: killing the workers does not
 # stop the php-fpm MASTER (root, unaffected by pkill -u) from immediately
 # respawning new ones per the pool config still on disk. New PIDs appeared
 # between the pkill and the userdel call every time. Only removing the pool
 # file and reloading stops the master from wanting workers under this
-# identity at all — pkill stays as a second layer, not the fix by itself.
+# identity at all - pkill stays as a second layer, not the fix by itself.
 must_contain "$SVC_FLAT" 'letpool_path=format!("/etc/php/{version}/fpm/pool.d/{}.conf",domain.replace(' \
   "deprovision() locates and removes this domain's PHP-FPM pool config directly"
 must_contain "$SVC_FLAT" 'crate::services::nginx::reload_php_fpm(version).await' \
   "deprovision() reloads php-fpm after removing the pool config, so the master stops respawning workers under this identity"
 must_contain "$SVC_FLAT" '"pkill",&[]).args(["-9","-u",&uid.to_string()]' \
   "deprovision() also force-kills any remaining process as a second layer, before userdel"
-# Both the pool removal AND the pkill must happen BEFORE userdel — a
+# Both the pool removal AND the pkill must happen BEFORE userdel - a
 # mutation reordering either one reproduces a live-verified bug.
 DEPROVISION_FN=$(awk '/^pub async fn deprovision\(/{f=1} f&&/^pub async fn /&&!/^pub async fn deprovision\(/{exit} f{print}' "$AGENT_SVC")
 DEPROVISION_FN_FLAT=$(printf '%s' "$DEPROVISION_FN" | tr -d ' \t\n')
@@ -293,25 +293,25 @@ if [ -z "$POOL_REMOVE_POS" ] || [ -z "$PKILL_POS" ] || [ -z "$USERDEL_POS" ]; th
 elif [ "$POOL_REMOVE_POS" -lt "$USERDEL_POS" ] && [ "$PKILL_POS" -lt "$USERDEL_POS" ]; then
   ok "both the PHP-FPM pool removal and pkill run before userdel inside deprovision()"
 else
-  bad "userdel does not run strictly after BOTH the pool removal and pkill inside deprovision() — this ordering is what the live-verified fix depends on"
+  bad "userdel does not run strictly after BOTH the pool removal and pkill inside deprovision() - this ordering is what the live-verified fix depends on"
 fi
 
 echo
 echo "── J: the frontend never lets an operator type their own SFTP password ──"
-# Bounded on the card's own comment markers — SiteDetail.tsx is thousands of
+# Bounded on the card's own comment markers - SiteDetail.tsx is thousands of
 # lines with several UNRELATED password inputs elsewhere (database, mail
 # accounts), so a whole-file substring check would either miss a real bug or
 # false-positive on one of those. A fixed line window would silently stop
 # covering the card if a future edit made it longer or shorter.
 SFTP_CARD=$(awk '/\{\/\* SFTP Access \*\/\}/{f=1} f{print} f&&/\{\/\* WAF \(ModSecurity\) \*\/\}/{exit}' "$FRONTEND")
 if [ -z "$SFTP_CARD" ]; then
-  bad "could not extract the SFTP Access card from SiteDetail.tsx — markers moved or were renamed"
+  bad "could not extract the SFTP Access card from SiteDetail.tsx - markers moved or were renamed"
 else
   ok "SFTP Access card block extracted (bounded on its own comment markers)"
 fi
 CARD_FLAT=$(printf '%s' "$SFTP_CARD" | tr -d ' \t\n')
 case "$CARD_FLAT" in
-  *'type="password"'*) bad "the SFTP Access card has a free-text password input — passwords should only ever be server-generated" ;;
+  *'type="password"'*) bad "the SFTP Access card has a free-text password input - passwords should only ever be server-generated" ;;
   *) ok "no free-text password input inside the SFTP Access card" ;;
 esac
 must_contain "$CARD_FLAT" 'sftp/reset-password' \
@@ -326,7 +326,7 @@ echo "── K: safe_cmd.rs escapes \$ for every argument through the unsandboxe
 # its trailing argv into the transient unit's own ExecStart=, which systemd's
 # unit-file grammar subjects to $VAR/${VAR} environment-variable expansion.
 # A SHA-crypt hash ($6$salt$hash) silently lost everything from the first
-# unset $6 onward — this affects EVERY current and future caller of
+# unset $6 onward - this affects EVERY current and future caller of
 # safe_command_unsandboxed, not just SFTP, since bcrypt/Argon2/SHA-crypt all
 # use $ as their MCF field separator. Fixed once, at the shared primitive,
 # not worked around per call site.
@@ -335,7 +335,7 @@ must_contain "$SAFE_CMD_FLAT" 'fnescape_dollar_for_systemd_run' \
 must_contain "$SAFE_CMD_FLAT" $'s.replace(\'$\',"$$")' \
   "the escape doubles a literal \$ (systemd's own escape for it, confirmed on-box to round-trip)"
 must_contain "$SAFE_CMD_FLAT" 'argv.push(escape_dollar_for_systemd_run(a.as_ref()))' \
-  "the escape is applied automatically inside arg()/args() — no caller has to remember to do it"
+  "the escape is applied automatically inside arg()/args() - no caller has to remember to do it"
 case "$SAFE_CMD_FLAT" in
   *'argv.push(a.as_ref().to_os_string())'*)
     bad "safe_cmd.rs still has an arg()/args() implementation that pushes raw, un-escaped arguments" ;;

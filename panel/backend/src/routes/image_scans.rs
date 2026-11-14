@@ -208,7 +208,7 @@ pub struct ScanByImageRequest {
     pub image: String,
 }
 
-/// POST /api/image-scan/scan — Scan an arbitrary image (ad-hoc).
+/// POST /api/image-scan/scan - Scan an arbitrary image (ad-hoc).
 pub async fn scan_image(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -220,7 +220,7 @@ pub async fn scan_image(
     Ok(Json(result))
 }
 
-/// POST /api/apps/{name}/scan — Scan the image used by a specific Docker app.
+/// POST /api/apps/{name}/scan - Scan the image used by a specific Docker app.
 pub async fn scan_app(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -237,7 +237,7 @@ pub async fn scan_app(
     Ok(Json(result))
 }
 
-/// GET /api/apps/{name}/scan — Latest stored scan result for the app's image.
+/// GET /api/apps/{name}/scan - Latest stored scan result for the app's image.
 pub async fn get_app_scan(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -253,7 +253,7 @@ pub async fn get_app_scan(
 
     // The app was resolved on the scoped server, so the scan must come from the
     // scoped server too. Reading by image alone answered with whichever host
-    // scanned that name last — a badge about a container the operator is not
+    // scanned that name last - a badge about a container the operator is not
     // looking at.
     let row: Option<(String, String, i32, i32, i32, i32, i32, serde_json::Value, chrono::DateTime<chrono::Utc>)> =
         sqlx::query_as(
@@ -272,12 +272,12 @@ pub async fn get_app_scan(
     Ok(Json(row.map(row_to_finding)))
 }
 
-/// GET /api/image-scan/recent — Latest result for every scanned image.
+/// GET /api/image-scan/recent - Latest result for every scanned image.
 /// This is the only handler in the module that never took a `ServerScope` at
 /// all, and it is the one that hydrates the Apps page's vulnerability badges.
 /// The frontend keys the response into a `Record<image, finding>`, so a
 /// fleet-wide `DISTINCT ON (image)` collapsed every host's result for an image
-/// into one row, last writer wins, with no duplicate and no error to notice —
+/// into one row, last writer wins, with no duplicate and no error to notice -
 /// just a wrong number. Scoping the query is what keeps that map correct
 /// without the client having to change.
 pub async fn list_recent(
@@ -330,14 +330,14 @@ fn row_to_finding(
 ///
 /// ⚠ The lookup is scoped to the DEPLOY TARGET. Reading by image alone let a
 /// clean scan on one host wave a vulnerable image onto another, and a dirty
-/// scan on one host block a deploy on another — and because a foreign row
+/// scan on one host block a deploy on another - and because a foreign row
 /// satisfied the 7-day freshness test, the background scan that was supposed to
 /// arm the gate on THIS host never fired either.
 ///
 /// ⚠ THE GATE HAS TO RUN ON EVERY DOOR THAT PUTS AN IMAGE ON THE HOST. Until
 /// v2.122.0 this was the template deploy's private guard and nothing else called
 /// it, while `SECURITY.md` and the Settings toggle both said "deploys" without
-/// qualification — so changing an app's image, deploying a compose file and
+/// qualification - so changing an app's image, deploying a compose file and
 /// creating or editing a stack all walked past a threshold the operator had set.
 /// [`preflight_gate_image`] is the part that does the work; keep new doors
 /// calling it rather than re-deriving the rule, and see
@@ -362,8 +362,8 @@ pub async fn preflight_gate(
 }
 
 /// True when the operator has switched the deploy gate on and given it a
-/// threshold. Split out so a caller can decline to do expensive work — an agent
-/// round trip, a YAML parse — for a gate that is off, which is the default.
+/// threshold. Split out so a caller can decline to do expensive work - an agent
+/// round trip, a YAML parse - for a gate that is off, which is the default.
 async fn gate_is_armed(pool: &sqlx::PgPool) -> Result<bool, ApiError> {
     let (enabled, on_deploy, gate, _hours) = read_settings(pool)
         .await
@@ -379,7 +379,7 @@ async fn gate_is_armed(pool: &sqlx::PgPool) -> Result<bool, ApiError> {
 ///
 /// ⚠ `update_app` deliberately does NOT call it, and that is not an oversight.
 /// It re-pulls the SAME reference the app already runs, so the only scan on file
-/// is a scan of the image being replaced — gating on it would refuse the update
+/// is a scan of the image being replaced - gating on it would refuse the update
 /// precisely when the running image is vulnerable, which is the update that
 /// fixes it. A guard that blocks the remedy is worse than no guard.
 pub async fn preflight_gate_image(
@@ -468,7 +468,7 @@ pub(crate) async fn resolve_template_image(
 
 // ── Internal helpers ────────────────────────────────────────────────────
 
-/// Look up the Docker image for a running DockPanel-managed app by name.
+/// Look up the Docker image for a running CyberHunter - Panel-managed app by name.
 async fn resolve_app_image(
     agent: &crate::services::agent::AgentHandle,
     app_name: &str,
@@ -496,9 +496,9 @@ async fn resolve_app_image(
 /// The `state_key` an image's vulnerability alert fires and resolves under.
 ///
 /// ⚠ `alerts.state_key` is `VARCHAR(100)` (this table's own `image` column is
-/// `VARCHAR(512)` — the schema already anticipates references this long). A
-/// digest-pinned reference on a private registry — repo path + `@sha256:` +
-/// 64 hex chars — easily exceeds 100, and the obvious `format!` overflows the
+/// `VARCHAR(512)` - the schema already anticipates references this long). A
+/// digest-pinned reference on a private registry - repo path + `@sha256:` +
+/// 64 hex chars - easily exceeds 100, and the obvious `format!` overflows the
 /// column: the INSERT then fails and `fire_alert` silently swallows the
 /// error, so the alert never fires at all, which is worse than the silence
 /// this whole feature exists to fix. Mirrors
@@ -515,7 +515,7 @@ fn image_scan_state_key(image: &str) -> String {
     use sha2::{Digest, Sha256};
     let digest = hex::encode(Sha256::digest(image.as_bytes()));
     let prefix = "image:";
-    // ⚠ Taken by CHARACTER, not by byte — an image reference is not a
+    // ⚠ Taken by CHARACTER, not by byte - an image reference is not a
     // validated field, and a byte slice could land inside a multi-byte
     // sequence and panic.
     let budget = MAX - prefix.len() - 17;
@@ -564,7 +564,7 @@ pub async fn scan_and_store(
     .await
     .map_err(|e| internal_error("store image scan", e))?;
 
-    // Trim history per (server, image) — keep last 30 entries.
+    // Trim history per (server, image) - keep last 30 entries.
     //
     // The cap was per IMAGE, which was correct only while one host existed. Now
     // that rows carry a host, an unscoped trim would make a busy server's scans
@@ -585,13 +585,13 @@ pub async fn scan_and_store(
     // this (server, image) pair first clears whatever alert the LAST scan of
     // it raised, then raises a new one only if THIS scan is still dirty.
     // Before this, a critical CVE in a running container produced no alert at
-    // all — not from a manual/deploy-triggered scan, and not from the 30-min
+    // all - not from a manual/deploy-triggered scan, and not from the 30-min
     // background sweep that runs this same function against every fleet
-    // member — so nothing paged and nothing showed up as a firing count; the
+    // member - so nothing paged and nothing showed up as a firing count; the
     // only way to notice was opening the Apps page and reading the badge.
     // Keyed per (server_id, image) as the state_key so two images on the same
     // host, or the same image on two hosts, never resolve or suppress each
-    // other's alert — and so a fleet-wide sweep re-checking many images every
+    // other's alert - and so a fleet-wide sweep re-checking many images every
     // 30 minutes cannot stack duplicate firing rows for one that stays dirty:
     // it is resolved and re-fired, not fired again on top of itself.
     let admins: Vec<(uuid::Uuid,)> = sqlx::query_as("SELECT id FROM users WHERE role = 'admin'")
@@ -609,7 +609,7 @@ pub async fn scan_and_store(
             &state_key,
             &format!("Image scan alert resolved: {}", result.image),
             &format!(
-                "A later scan of {} found no critical or high severity vulnerability — the earlier alert no longer applies.",
+                "A later scan of {} found no critical or high severity vulnerability - the earlier alert no longer applies.",
                 result.image
             ),
         )
@@ -724,7 +724,7 @@ mod tests {
     #[test]
     fn image_scan_state_key_truncates_by_char_not_byte() {
         // A multi-byte character sitting at the truncation boundary must not
-        // panic — the reference is not a validated field. Rust's `.len()` is
+        // panic - the reference is not a validated field. Rust's `.len()` is
         // BYTE length, and Postgres `VARCHAR(100)` is CHARACTER length, so the
         // two are not comparable here; the property under test is "does not
         // panic slicing mid-character", not a byte-length bound.

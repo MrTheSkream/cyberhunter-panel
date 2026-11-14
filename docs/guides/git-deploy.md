@@ -2,7 +2,7 @@
 
 ## Overview
 
-Git Deploy lets you push code to a Git repository and have DockPanel automatically build and deploy it. The pipeline supports:
+Git Deploy lets you push code to a Git repository and have CyberHunter - Panel automatically build and deploy it. The pipeline supports:
 
 - **Webhook-triggered deploys** from GitHub, GitLab, or any Git provider
 - **Nixpacks auto-detection** for 30+ languages (no Dockerfile needed)
@@ -21,25 +21,25 @@ Git Deploy lets you push code to a Git repository and have DockPanel automatical
    - **Branch**: `main`
    - **Port**: The port your app listens on (e.g., `3000`)
    - **Domain** (optional): `app.example.com` for auto reverse proxy + SSL
-   - **HTTPS**: plain HTTP, a Let's Encrypt certificate DockPanel orders for
+   - **HTTPS**: plain HTTP, a Let's Encrypt certificate CyberHunter - Panel orders for
      you, or a certificate you already registered under Monitoring →
-     Certificates — see below
+     Certificates - see below
 4. Click **Create**
 
-DockPanel will clone the repository, detect the build method, build a Docker image, and start the container.
+CyberHunter - Panel will clone the repository, detect the build method, build a Docker image, and start the container.
 
 ### Serving a registered certificate instead of Let's Encrypt
 
-If you already hold a certificate — a wildcard from your CA, a corporate PKI
-leaf — register it once under **Monitoring → Certificates**, then choose
+If you already hold a certificate - a wildcard from your CA, a corporate PKI
+leaf - register it once under **Monitoring → Certificates**, then choose
 **Registered certificate** for HTTPS instead of ordering a new Let's Encrypt
 one. The certificate must actually cover the domain you're deploying to; a
 mismatch is refused rather than served, and every deploy re-checks it, not
 just the first.
 
 If the certificate can't be applied at deploy time (removed since, or no
-longer covers the domain), the deploy still succeeds — the container comes
-up — but the domain is served over plain HTTP and the panel raises a
+longer covers the domain), the deploy still succeeds - the container comes
+up - but the domain is served over plain HTTP and the panel raises a
 warning naming why. It never silently downgrades a certificate that was
 already live: on a redeploy of a *running* container the existing HTTPS vhost
 is left untouched unless the domain itself changes.
@@ -50,7 +50,7 @@ silently falling back to plain HTTP or Let's Encrypt.
 
 > **Before you build: a Git Deploy container has no persistent storage unless you
 > declare one.** Every deploy replaces the container, so anything the app
-> writes to its own filesystem is lost on the next deploy — unless you add a
+> writes to its own filesystem is lost on the next deploy - unless you add a
 > **Persistent Volume** for that path. Read [Persistent Volumes](#persistent-volumes)
 > before you design where your data lives.
 
@@ -65,7 +65,7 @@ Both removals are conditional, and deliberately so. The old vhost is removed
 only while it still proxies to *this* deploy's container; if something else has
 since taken that hostname over, the config is left exactly where it is and the
 panel logs why. The certificate directory is kept if another vhost still points
-at it — a wildcard shared across the zone, for example.
+at it - a wildcard shared across the zone, for example.
 
 > **Clearing the Domain field entirely is still refused.** Moving a deploy from
 > one hostname to another is supported; removing its hostname without supplying
@@ -89,18 +89,18 @@ Webhooks trigger automatic deploys when you push to your repository.
 
 ### GitHub
 
-1. In DockPanel, open your Git Deploy and copy the **Webhook URL** (shown after creation)
+1. In CyberHunter - Panel, open your Git Deploy and copy the **Webhook URL** (shown after creation)
 2. In GitHub, go to your repository > **Settings** > **Webhooks** > **Add webhook**
 3. Configure:
-   - **Payload URL**: Paste the webhook URL from DockPanel
+   - **Payload URL**: Paste the webhook URL from CyberHunter - Panel
    - **Content type**: `application/json`
-   - **Secret**: Leave empty (DockPanel validates by repository URL)
+   - **Secret**: Leave empty (CyberHunter - Panel validates by repository URL)
    - **Events**: Select "Just the push event"
 4. Click **Add webhook**
 
 ### GitLab
 
-1. Copy the webhook URL from DockPanel
+1. Copy the webhook URL from CyberHunter - Panel
 2. In GitLab, go to your project > **Settings** > **Webhooks**
 3. Configure:
    - **URL**: Paste the webhook URL
@@ -113,7 +113,7 @@ Now every push to the configured branch triggers a build and deploy.
 ## Deploy Keys (Private Repositories)
 
 Private repositories are cloned over **SSH**, with a deploy key the panel
-generates for you. Generate it from the panel — a key you place on the server by
+generates for you. Generate it from the panel - a key you place on the server by
 hand is not used, because the only thing that records where a deploy's key lives
 is the **Generate Deploy Key** button.
 
@@ -121,7 +121,7 @@ is the **Generate Deploy Key** button.
    ```
    git@github.com:you/your-private-app.git
    ```
-   The first deploy will fail to clone until step 3 — that is expected.
+   The first deploy will fail to clone until step 3 - that is expected.
 
 2. Open the deploy and click **Generate Deploy Key**. The panel creates the
    keypair on the server that hosts the deploy, stores the private key where the
@@ -149,7 +149,7 @@ password prompt to answer. Use the SSH URL and a deploy key as above.
 
 > **Do not put a token in the repository URL.**
 > `https://TOKEN@github.com/you/app.git` clones, which is exactly what makes it
-> tempting — but the URL is stored as you typed it, so the token ends up in the
+> tempting - but the URL is stored as you typed it, so the token ends up in the
 > panel's database, in `.git/config` on the server, in git's own error output,
 > and in every pre-update snapshot archive. It also keeps working after you
 > rotate the token in the panel, because the checkout on disk still has the old
@@ -172,8 +172,8 @@ so the status check on GitHub's own commit/PR view is clickable.
 
 **By default a Git Deploy container has no volumes and no bind mounts, and
 every deploy replaces the container.** Anything the application writes to its
-own filesystem — uploaded files, generated documents, a SQLite database, a
-cache — is gone on the next deploy unless the path is declared as a
+own filesystem - uploaded files, generated documents, a SQLite database, a
+cache - is gone on the next deploy unless the path is declared as a
 **Persistent Volume** in the deploy's settings.
 
 Nothing used to warn you at the time: the first deploy worked, the app wrote
@@ -185,7 +185,7 @@ before you rely on it surviving a redeploy.
 ### How it works
 
 - **Container paths only.** You declare where the app writes *inside the
-  container* — `/data`, not a host path. DockPanel manages the host location
+  container* - `/data`, not a host path. CyberHunter - Panel manages the host location
   for you, under its own data directory, one subdirectory per deploy per
   declared path. There is no field for the host side, and there does not need
   to be one.
@@ -193,8 +193,8 @@ before you rely on it surviving a redeploy.
   immediately, but nothing about the running container changes until you
   deploy again.
 - **Adding a path to an already-running deploy carries its existing data
-  forward.** If the app already wrote real files at that path — in the
-  container's own writable layer, because it was never mounted — the next
+  forward.** If the app already wrote real files at that path - in the
+  container's own writable layer, because it was never mounted - the next
   deploy copies them out onto the new persistent location before the old
   container is removed. You do not lose what was already there.
 - **Blue-green is not used for a deploy with any persistent volume.**
@@ -202,7 +202,7 @@ before you rely on it surviving a redeploy.
   two containers writing the same files at once is exactly the kind of
   silent corruption a single-writer database (SQLite, for example) cannot
   survive. A deploy with a volume gets the ordinary stop-then-start path
-  instead — a brief gap in traffic, never two writers.
+  instead - a brief gap in traffic, never two writers.
 - **Removing a path from the list stops mounting it on the next deploy, but
   does not delete the data.** It stays on disk, orphaned, in case you added it
   back or need to recover it by hand.
@@ -212,7 +212,7 @@ before you rely on it surviving a redeploy.
 ### What still does not get one
 
 - **Preview environments never get persistent volumes**, even if the parent
-  deploy has them. A preview is throwaway by design — its TTL cleanup would
+  deploy has them. A preview is throwaway by design - its TTL cleanup would
   otherwise be destroying real data instead of a re-clonable checkout.
 - **A Compose-based deploy** (see the warning below) does not go through this
   field at all; volumes there come from the compose file itself.
@@ -223,15 +223,15 @@ A declared volume is local disk on one server. For anything that needs to
 survive moving the app to another machine, or that several instances need to
 share, these remain the better fit:
 
-- **A database** — create one under **Databases** and connect to it with an
+- **A database** - create one under **Databases** and connect to it with an
   environment variable.
-- **Object storage** — S3, MinIO or similar for user uploads and generated
+- **Object storage** - S3, MinIO or similar for user uploads and generated
   files.
 
 Two things that look like solutions and are not:
 
 - **`VOLUME` in the Dockerfile alone**, with nothing declared in the deploy's
-  settings, still gives each new container a fresh anonymous volume — nothing
+  settings, still gives each new container a fresh anonymous volume - nothing
   carries over.
 - **Mounting something by hand with `docker run`** is undone by the next
   deploy, which recreates the container through the panel.
@@ -243,7 +243,7 @@ Two things that look like solutions and are not:
 > domain goes on serving the previous build while the new stack runs beside it
 > on its own port. Blue-green deploys and preview environments are unavailable
 > while a compose file is present, and a rollback entry recorded under Compose
-> has no image to roll back to. Use the Persistent Volumes field above instead —
+> has no image to roll back to. Use the Persistent Volumes field above instead -
 > it is built for exactly this and keeps the domain, certificate, zero-downtime
 > swaps, previews and rollback all working.
 
@@ -251,8 +251,8 @@ Two parts of that warning were closed in v2.148.0, and the rest of it stands:
 
 - A compose file with a service that **builds from source instead of naming an
   image** is now **refused**, and the refusal names the services. Previously the
-  compose engine skipped them silently, so a repository with a Dockerfile — the
-  usual case — deployed without its own application. If you see that refusal,
+  compose engine skipped them silently, so a repository with a Dockerfile - the
+  usual case - deployed without its own application. If you see that refusal,
   either give each of those services an already-built `image:`, or remove the
   compose file: without it the deployment builds your Dockerfile and also gets
   the domain, the certificate, zero-downtime swaps, previews and rollback.
@@ -261,12 +261,12 @@ Two parts of that warning were closed in v2.148.0, and the rest of it stands:
   it, because the per-service outcomes arrive inside a successful HTTP response
   and nothing read them. This mattered more than it sounds: the compose engine
   removes nothing, so a *second* compose deploy of the same deployment collides
-  with its own container names and every service fails — and that was reported
+  with its own container names and every service fails - and that was reported
   as a successful deploy of the new commit.
 
 ## Nixpacks Auto-Detection
 
-DockPanel uses [Nixpacks](https://nixpacks.com) to automatically detect your app's language and build it into an optimized Docker image -- no Dockerfile required.
+CyberHunter - Panel uses [Nixpacks](https://nixpacks.com) to automatically detect your app's language and build it into an optimized Docker image -- no Dockerfile required.
 
 Supported languages include: Node.js, Python, Go, Rust, Ruby, PHP, Java, .NET, Elixir, Haskell, Crystal, Dart, Swift, Zig, and more (30+ total).
 
@@ -280,7 +280,7 @@ The build method used is tracked per deployment in the deploy history.
 
 ### Customizing the Build
 
-If Nixpacks does not detect your app correctly, add a `Dockerfile` to your repository root and DockPanel will use it instead.
+If Nixpacks does not detect your app correctly, add a `Dockerfile` to your repository root and CyberHunter - Panel will use it instead.
 
 For Nixpacks-specific customization, add a `nixpacks.toml` to your repository:
 
@@ -304,7 +304,7 @@ Preview environments let you deploy branches for testing before merging.
 1. Create a Git Deploy for your main branch
 2. Configure **preview_ttl_hours** (e.g., `72` for 3-day TTL)
 3. Push to a feature branch and trigger the webhook
-4. DockPanel creates a preview deployment on an auto-assigned port
+4. CyberHunter - Panel creates a preview deployment on an auto-assigned port
 5. Access it at `preview-branch-name.example.com` or via the assigned port
 6. After the TTL expires, the preview is automatically cleaned up
 
@@ -326,18 +326,18 @@ to approve it.
    than a deploy started, and the other administrators are notified once.
 2. The request appears under **Pending Approvals** at the top of the Git Deploy page,
    naming the deployment, the repository and branch, and who asked.
-3. A second administrator presses **Approve** — which starts the build — or **Reject**,
+3. A second administrator presses **Approve** - which starts the build - or **Reject**,
    which is final; the requester has to ask again.
 
 Notes worth knowing before you rely on it:
 
 - **You cannot approve your own request.** On an install with only one administrator
   nobody can ever approve, so the owner gets a **Withdraw** button instead. That is the
-  only way out — a deployment may have just one request waiting at a time.
+  only way out - a deployment may have just one request waiting at a time.
 - **It covers the Deploy button only.** Webhook deploys, scheduled (cron and one-time)
   deploys, and rollbacks all still deploy without approval. If you need those covered,
   turn them off on the deployment as well.
-- **The deployment's owner can switch the setting off** — the administrator it constrains,
+- **The deployment's owner can switch the setting off** - the administrator it constrains,
   and no other: editing a deployment is scoped to the account that owns it, so a second
   administrator cannot clear the flag on someone else's. Doing so cancels whatever was
   waiting, and is written to the security audit log, which cannot be edited or deleted.
@@ -357,7 +357,7 @@ Every deployment is tracked in the deploy history with a build hash and timestam
 3. Find the version you want to roll back to
 4. Click **Rollback**
 
-DockPanel performs a blue-green rollback: it starts the old version in a new container, verifies the health check, and switches traffic -- the same zero-downtime process as a forward deploy.
+CyberHunter - Panel performs a blue-green rollback: it starts the old version in a new container, verifies the health check, and switches traffic -- the same zero-downtime process as a forward deploy.
 
 ## Deploy History
 

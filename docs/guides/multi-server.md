@@ -2,7 +2,7 @@
 
 ## Overview
 
-DockPanel lets you manage unlimited remote servers from a single panel. One server runs the full panel (API + frontend + database), and remote servers run only the lightweight agent binary (~22MB, ~35MB RAM). All communication between the panel and remote agents uses HTTPS with token-based authentication.
+CyberHunter - Panel lets you manage unlimited remote servers from a single panel. One server runs the full panel (API + frontend + database), and remote servers run only the lightweight agent binary (~22MB, ~35MB RAM). All communication between the panel and remote agents uses HTTPS with token-based authentication.
 
 ## Architecture
 
@@ -35,7 +35,7 @@ curl -sSL https://your-panel.example.com/install-agent.sh | sudo bash -s -- \
 ```
 
 Where:
-- `--panel-url` -- The URL of your main DockPanel instance
+- `--panel-url` -- The URL of your main CyberHunter - Panel instance
 - `--token` -- The agent authentication token (found in Settings > API or `/etc/dockpanel/api.env` on the panel server)
 - `--server-id` -- The server UUID (generated when you add the server in the panel)
 
@@ -131,7 +131,7 @@ a fleet member. Select the panel server to use them:
 
 - **The web terminal.** Ticket-based, and the browser reaches the agent through
   the panel's own address, so a member's shell is not reachable from the panel UI.
-  Use SSH for a member. DockPanel says so when you try, naming the server you
+  Use SSH for a member. CyberHunter - Panel says so when you try, naming the server you
   have selected, rather than appearing to fail.
 - **Live log streaming** (the "Stream" toggle on the Logs page), for the same
   reason. Reading, searching and downloading a member's logs works normally --
@@ -155,6 +155,6 @@ If you use reseller accounts, you can allocate specific servers to specific rese
 
 Allocate them in **Admin → Resellers**: expand a reseller's row, pick a server and
 allocate it. The same row is where you set that reseller's quotas and white-label
-branding, and where you promote an account to reseller in the first place — the role
+branding, and where you promote an account to reseller in the first place - the role
 dropdown in **Users** deliberately does not offer it, because a reseller needs a
 profile as well as a role.

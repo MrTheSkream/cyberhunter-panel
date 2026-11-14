@@ -78,7 +78,7 @@ pub struct UpdateVaultRequest {
     pub name: Option<String>,
     pub description: Option<String>,
     /// A double option, deliberately. The `COALESCE($n, col)` shape the two fields
-    /// above use can SET a value and can never CLEAR one — the client sends null for
+    /// above use can SET a value and can never CLEAR one - the client sends null for
     /// "none", the handler folds it back onto the stored value, and the save answers
     /// green having changed nothing. That is the notification-destination defect
     /// v2.120.0 shipped a fix for, and a link that cannot be removed is worse here
@@ -91,7 +91,7 @@ pub struct UpdateVaultRequest {
 
 /// Distinguishes "key absent" from "key present and null" for [`UpdateVaultRequest`].
 /// `#[serde(default)]` supplies the outer `None` when the key is missing; this only
-/// ever runs when the key IS present, so it wraps whatever it finds — including null.
+/// ever runs when the key IS present, so it wraps whatever it finds - including null.
 pub(crate) fn explicit_option<'de, D, T>(de: D) -> Result<Option<Option<T>>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -103,7 +103,7 @@ where
 /// A vault may only be linked to a site the caller may already reach.
 ///
 /// The deploy-time injector matches vaults to sites on `v.site_id = $1` ALONE, with no
-/// owner test — safe only for as long as nothing can write the column, which was true
+/// owner test - safe only for as long as nothing can write the column, which was true
 /// while the create form omitted it and stops being true the moment an operator gets a
 /// site picker. Validating on the write side is what keeps that join sound, and it is
 /// the same predicate the rest of the panel uses to decide which sites a caller sees.
@@ -160,7 +160,7 @@ const VALID_TYPES: &[&str] = &["env", "api_key", "password", "certificate", "cus
 /// Derive the vault encryption key to WRITE with. `pub(crate)` so provisioning
 /// paths that generate credentials (site creation writing the CMS admin password
 /// into the site's auto-created vault) encrypt with the SAME key the Secrets
-/// Manager decrypts with — a second derivation here would store values the UI
+/// Manager decrypts with - a second derivation here would store values the UI
 /// can't read.
 ///
 /// ⚠ READERS MUST NOT USE THIS. It returns one source, and a value written
@@ -172,13 +172,13 @@ const VALID_TYPES: &[&str] = &["env", "api_key", "password", "certificate", "cus
 ///
 /// The empty-string case (`SECRETS_ENCRYPTION_KEY=` exported but blank) is
 /// handled inside `vault_key_primary` and treated as unset, matching what the
-/// credential path has always done — carried as an open nit since s328.
+/// credential path has always done - carried as an open nit since s328.
 pub(crate) fn get_encryption_key(jwt_secret: &str) -> String {
     secrets_crypto::vault_key_primary(jwt_secret)
 }
 
 /// Byte-slicing (`&value[..4]`) panics whenever byte offset 4 doesn't land on a
-/// UTF-8 char boundary — reachable from any secret value containing a
+/// UTF-8 char boundary - reachable from any secret value containing a
 /// multi-byte character (e.g. a pasted passphrase), and every masking call
 /// site hits it: `create_secret`/`update_secret`'s response, and every
 /// default (`reveal=false`) `list_secrets` call thereafter, since the value
@@ -196,7 +196,7 @@ fn mask_value(value: &str) -> String {
 
 // ── Vault CRUD ──────────────────────────────────────────────────────────────
 
-/// GET /api/secrets/vaults — List vaults.
+/// GET /api/secrets/vaults - List vaults.
 pub async fn list_vaults(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -211,7 +211,7 @@ pub async fn list_vaults(
     Ok(Json(vaults))
 }
 
-/// POST /api/secrets/vaults — Create a vault.
+/// POST /api/secrets/vaults - Create a vault.
 pub async fn create_vault(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -243,7 +243,7 @@ pub async fn create_vault(
     Ok((StatusCode::CREATED, Json(vault)))
 }
 
-/// DELETE /api/secrets/vaults/{id} — Delete a vault and all its secrets.
+/// DELETE /api/secrets/vaults/{id} - Delete a vault and all its secrets.
 pub async fn delete_vault(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -261,7 +261,7 @@ pub async fn delete_vault(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// PUT /api/secrets/vaults/{id} — Update vault name/description.
+/// PUT /api/secrets/vaults/{id} - Update vault name/description.
 pub async fn update_vault(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -318,7 +318,7 @@ async fn verify_vault(state: &AppState, vault_id: Uuid, user_id: Uuid) -> Result
     exists.map(|_| ()).ok_or_else(|| err(StatusCode::NOT_FOUND, "Vault not found"))
 }
 
-/// GET /api/secrets/vaults/{vault_id}/secrets — List secrets in a vault.
+/// GET /api/secrets/vaults/{vault_id}/secrets - List secrets in a vault.
 pub async fn list_secrets(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -364,7 +364,7 @@ pub async fn list_secrets(
     Ok(Json(entries))
 }
 
-/// POST /api/secrets/vaults/{vault_id}/secrets — Create a secret.
+/// POST /api/secrets/vaults/{vault_id}/secrets - Create a secret.
 pub async fn create_secret(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -430,7 +430,7 @@ pub async fn create_secret(
     })))
 }
 
-/// PUT /api/secrets/vaults/{vault_id}/secrets/{secret_id} — Update a secret value.
+/// PUT /api/secrets/vaults/{vault_id}/secrets/{secret_id} - Update a secret value.
 pub async fn update_secret(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -504,7 +504,7 @@ pub async fn update_secret(
     }))
 }
 
-/// DELETE /api/secrets/vaults/{vault_id}/secrets/{secret_id} — Delete a secret.
+/// DELETE /api/secrets/vaults/{vault_id}/secrets/{secret_id} - Delete a secret.
 pub async fn delete_secret(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -526,7 +526,7 @@ pub async fn delete_secret(
 
 // ── Version History ─────────────────────────────────────────────────────────
 
-/// GET /api/secrets/vaults/{vault_id}/secrets/{secret_id}/versions — Version history.
+/// GET /api/secrets/vaults/{vault_id}/secrets/{secret_id}/versions - Version history.
 pub async fn list_versions(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -552,7 +552,7 @@ pub async fn list_versions(
 
 // ── Inject into Site ────────────────────────────────────────────────────────
 
-/// POST /api/secrets/vaults/{vault_id}/inject/{site_id} — Inject auto-inject secrets into site .env.
+/// POST /api/secrets/vaults/{vault_id}/inject/{site_id} - Inject auto-inject secrets into site .env.
 pub async fn inject_to_site(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -564,7 +564,7 @@ pub async fn inject_to_site(
     // This writes DECRYPTED secrets into a site's nginx env on whichever host the
     // handle points at. Taking that from the caller's selection meant one tenant's
     // secrets could be written into the env of a machine their site does not run on
-    // — the one member of this family where a misdispatch is a disclosure and not
+    // - the one member of this family where a misdispatch is a disclosure and not
     // merely a wrong answer. The row names the host.
     let (domain, agent) =
         crate::helpers::site_agent_for_caller(&state, site_id, &claims).await?;
@@ -627,7 +627,7 @@ pub async fn inject_to_site(
 
 // ── Pull (get all secrets as env format) ────────────────────────────────────
 
-/// GET /api/secrets/vaults/{vault_id}/pull — Get all secrets as KEY=VALUE (for CLI).
+/// GET /api/secrets/vaults/{vault_id}/pull - Get all secrets as KEY=VALUE (for CLI).
 pub async fn pull(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -654,7 +654,7 @@ pub async fn pull(
 
 // ── GAP 17: Vault Export (encrypted backup) ─────────────────────────────────
 
-/// GET /api/secrets/vaults/{vault_id}/export — Export vault as encrypted JSON (for backup/transfer).
+/// GET /api/secrets/vaults/{vault_id}/export - Export vault as encrypted JSON (for backup/transfer).
 pub async fn export_vault(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -670,7 +670,7 @@ pub async fn export_vault(
         .bind(vault_id).fetch_all(&state.db).await
         .map_err(|e| internal_error("export vault", e))?;
 
-    // Export with encrypted values (portable — can be imported on another DockPanel with same key)
+    // Export with encrypted values (portable - can be imported on another CyberHunter - Panel with same key)
     let secrets_export: Vec<serde_json::Value> = rows.into_iter().map(|r| {
         serde_json::json!({
             "key": r.key,
@@ -691,7 +691,7 @@ pub async fn export_vault(
     })))
 }
 
-/// POST /api/secrets/vaults/{vault_id}/import — Import secrets from exported JSON.
+/// POST /api/secrets/vaults/{vault_id}/import - Import secrets from exported JSON.
 pub async fn import_vault(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -734,7 +734,7 @@ mod mask_value_tests {
 
     /// The exact scenario `&value[..4]` panicked on: byte offset 4 lands
     /// mid-character in the 3-byte 日, which is NOT a char boundary. This is
-    /// executed, not asserted — a byte-slicing regression here panics the
+    /// executed, not asserted - a byte-slicing regression here panics the
     /// test itself rather than merely failing an assertion.
     #[test]
     fn a_multibyte_value_straddling_the_old_byte_offset_does_not_panic() {
@@ -753,7 +753,7 @@ mod mask_value_tests {
     fn short_values_are_fully_masked() {
         assert_eq!(mask_value(""), "••••••••");
         assert_eq!(mask_value("ab"), "••••••••");
-        assert_eq!(mask_value("abcd"), "••••••••"); // exactly 4 chars — still fully masked
+        assert_eq!(mask_value("abcd"), "••••••••"); // exactly 4 chars - still fully masked
     }
 
     #[test]
@@ -775,7 +775,7 @@ mod vault_key_tests {
     ///
     /// The third assertion is the one that explains four and a half months of
     /// silence. AES-GCM is authenticated, so the wrong key does not yield
-    /// plausible-looking rubbish a caller might notice — it yields `Err`. A
+    /// plausible-looking rubbish a caller might notice - it yields `Err`. A
     /// reader that discarded that error had nothing left to report.
     #[test]
     fn the_vault_key_is_not_the_jwt_secret() {
@@ -790,7 +790,7 @@ mod vault_key_tests {
         );
         assert!(
             decrypt(&sealed, jwt).is_err(),
-            "the JWT secret must not open the vault — if it ever does, the two \
+            "the JWT secret must not open the vault - if it ever does, the two \
              key spaces have collapsed and the derivation is decorative"
         );
     }

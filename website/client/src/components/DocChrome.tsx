@@ -7,7 +7,7 @@ import { Logo } from './Logo';
  *
  * s278 fixed Privacy and Terms by giving them one header instead of two, on the
  * reasoning that a page which hand-rolls its own chrome is a page that will
- * quietly go stale — and both had, for four months, still drawing a mark the
+ * quietly go stale - and both had, for four months, still drawing a mark the
  * product had retired. That fix stopped one file short. `Security.tsx` was
  * rebuilt twenty-nine minutes before the spine landed in `Landing.tsx` and so
  * inherited none of it: its own header, its own ground (#09090b against the
@@ -22,7 +22,7 @@ import { Logo } from './Logo';
  * page: a hairline between sections (`.rule`) and a fixed left column carrying
  * a mono label that names what KIND of thing the section is (`.measure` +
  * `.eyebrow`). What the label buys on a long reference page is the same thing
- * it buys on a contract — you find the part you came for without a table of
+ * it buys on a contract - you find the part you came for without a table of
  * contents bolted on top.
  */
 
@@ -48,7 +48,7 @@ export function DocHeader() {
         <Link to="/" className="flex items-center gap-2.5">
           <Logo className="h-6 w-6" />
           <span className="text-[17px] font-semibold tracking-[-0.01em] text-[#f4f4f5]">
-            DockPanel
+            CyberHunter - Panel
           </span>
         </Link>
         <Link
@@ -72,7 +72,7 @@ export function DocFooter() {
           <Link to="/" className="flex items-center gap-2.5">
             <Logo className="h-5 w-5" />
             <span className="text-[14px] font-semibold tracking-[-0.01em] text-[#f4f4f5]">
-              DockPanel
+              CyberHunter - Panel
             </span>
           </Link>
           <div className="flex flex-wrap gap-x-6 gap-y-2 text-[13px] text-zinc-600">
@@ -102,7 +102,7 @@ export function DocFooter() {
           </div>
         </div>
         <div className="mt-8 flex flex-col items-start justify-between gap-2 border-t border-[#1e1e22] pt-6 sm:flex-row sm:items-center">
-          <span className="text-[12px] text-zinc-700">&copy; 2026 DockPanel</span>
+          <span className="text-[12px] text-zinc-700">&copy; 2026 CyberHunter - Panel</span>
           <span className="text-[11px] text-zinc-700">Solo-developed &middot; AGPL v3</span>
         </div>
       </div>
@@ -122,7 +122,7 @@ export function DocShell({ children }: { children: ReactNode }) {
 }
 
 /**
- * The opening block. No `.rule` above it — the header's own border is already
+ * The opening block. No `.rule` above it - the header's own border is already
  * that line, and two hairlines a row apart read as a mistake.
  */
 export function DocTitle({
@@ -155,8 +155,8 @@ export function DocTitle({
 
 /**
  * One section on the spine: the hairline, the margin label, and a content
- * column beside it. What goes in the column is the page's business — prose on a
- * contract, ruled measurements on the security page — so this supplies the
+ * column beside it. What goes in the column is the page's business - prose on a
+ * contract, ruled measurements on the security page - so this supplies the
  * structure and nothing else.
  */
 export function DocSection({

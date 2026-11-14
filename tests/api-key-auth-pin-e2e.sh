@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# api-key-auth-pin-e2e.sh — s467
+# api-key-auth-pin-e2e.sh - s467
 #
 # Wires the panel's previously-unwired `dp_`-prefixed API key scaffold
 # (routes/api_keys.rs) into `AuthUser` (auth.rs), so it authenticates like a
-# session JWT on every AuthUser-gated handler — the missing half that let the
+# session JWT on every AuthUser-gated handler - the missing half that let the
 # CLI (panel/cli/src/backend_client.rs) restore a site's DATABASE as well as
 # its files, which the agent alone structurally cannot do (no DB
 # credentials). Full design: project_dockpanel_tech_debt_p198. Full account
@@ -11,30 +11,30 @@
 # workflow caught before shipping: project_dockpanel_tech_debt_p206.
 #
 # What the skeptic caught, each pinned below:
-#   §A5 — a bad/expired key must NOT use the `session_invalid()` marker (that
+#   §A5 - a bad/expired key must NOT use the `session_invalid()` marker (that
 #     means "your BROWSER session died, go log in"; a `dp_` key is a
 #     session-less bearer credential, same class as an agent token).
-#   §A6/A7 — "Revoke all sessions" and the Panic Button both promise a total
+#   §A6/A7 - "Revoke all sessions" and the Panic Button both promise a total
 #     logout; a `dp_` key must die too if it was minted BEFORE that
 #     revocation fired (comparing its own `created_at`, since it has no
 #     `iat` of its own to re-derive).
-#   §B — the hot-path lookup column (`key_hash`) needs an index, or every
+#   §B - the hot-path lookup column (`key_hash`) needs an index, or every
 #     API-key request forces a sequential scan of the whole table.
-#   §C — the CLI's SSE-stream reader must decide pass/fail from the
+#   §C - the CLI's SSE-stream reader must decide pass/fail from the
 #     TERMINAL "complete" step's own status only, matching the panel UI's
-#     own rule — not from whether ANY earlier step carried status="error"
+#     own rule - not from whether ANY earlier step carried status="error"
 #     (the restore handler emits a non-fatal advisory that way on purpose).
-#   §C (byte safety) — decoding UTF-8 per raw chunk, before a full frame has
+#   §C (byte safety) - decoding UTF-8 per raw chunk, before a full frame has
 #     arrived, can corrupt a multi-byte character split across a chunk
 #     boundary.
-#   §D — the CLI's domain→site-id lookup (GET /api/sites, owner-only) is
+#   §D - the CLI's domain→site-id lookup (GET /api/sites, owner-only) is
 #     narrower than the restore endpoints it feeds (SITE_CALLER_PREDICATE:
-#     owner OR admin-of-host) — needs a GET /api/admin/sites fallback.
+#     owner OR admin-of-host) - needs a GET /api/admin/sites fallback.
 #
 # Live-fire proof, not just these source pins: a throwaway Vultr VPS ran the
 # real published v2.220.0 install, swapped in these locally-built api+cli
 # binaries, and drove every one of the above through the CLI's own restore
-# command — see project_dockpanel_tech_debt_p206 for the full transcript
+# command - see project_dockpanel_tech_debt_p206 for the full transcript
 # (marker-row DB restore, revoked-key-then-remint, the files-only-metadata/
 # real-DB-dump-in-archive scenario that reproduced the false "Restore
 # failed" bug pre-fix, and an admin's key restoring a site owned by a
@@ -47,7 +47,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
 echo
 echo "=================================================="
-echo "  dp_ API-key auth wiring — source pins (s467)"
+echo "  dp_ API-key auth wiring - source pins (s467)"
 echo "=================================================="
 echo
 
@@ -107,7 +107,7 @@ COOKIE_FALLBACK_LINE=$(grep -nE '^\s*let token = bearer_token\.clone\(\)\.or_els
 if [ -n "$DP_CHECK_LINE" ] && [ -n "$COOKIE_FALLBACK_LINE" ] && [ "$DP_CHECK_LINE" -lt "$COOKIE_FALLBACK_LINE" ]; then
   ok "A2 the dp_ check runs BEFORE the JWT/cookie-fallback logic (an early return, not a fallback)"
 else
-  bad "A2 the dp_ check is not positioned before the JWT/cookie path — it would never be reached, or would run after a wasted decode attempt"
+  bad "A2 the dp_ check is not positioned before the JWT/cookie path - it would never be reached, or would run after a wasted decode attempt"
 fi
 
 if has "$AUTH_C" 'async fn authenticate_api_key\(state: &AppState, key: &str\) -> Result<Claims, ApiError>'; then
@@ -121,11 +121,11 @@ AAK_BODY=$(fnbody "$AUTH_C" "authenticate_api_key")
 if lacks "$AAK_BODY" 'session_invalid\('; then
   ok "A4 authenticate_api_key() never uses the session_invalid() marker (a key is not a browser session)"
 else
-  bad "A4 authenticate_api_key() calls session_invalid() — a bad/revoked key would wrongly redirect a browser to /login"
+  bad "A4 authenticate_api_key() calls session_invalid() - a bad/revoked key would wrongly redirect a browser to /login"
 fi
 
 # Control: session_invalid() itself still exists and is still used by the JWT
-# path — proves A4 passes because the call was REMOVED from this function
+# path - proves A4 passes because the call was REMOVED from this function
 # specifically, not because the whole helper was deleted project-wide.
 if has "$AUTH_C" 'fn session_invalid\(msg: &str\) -> ApiError' && has "$AUTH_C" 'session_invalid\("Authentication required"\)'; then
   ok "A4-control session_invalid() still exists and still gates the JWT/cookie path"
@@ -136,14 +136,14 @@ fi
 if has "$AAK_BODY" 'SELECT id, user_id, created_at FROM api_keys WHERE key_hash = \$1'; then
   ok "A5 the key lookup selects id, user_id AND created_at (created_at feeds the revocation check below)"
 else
-  bad "A5 the key-lookup query is missing created_at — the revocation check below cannot compare against a mint time"
+  bad "A5 the key-lookup query is missing created_at - the revocation check below cannot compare against a mint time"
 fi
 
 if has "$AAK_BODY" 'state\.sessions_revoked_at\.read\(\)\.await' \
   && has "$AAK_BODY" 'created_at\.timestamp\(\) < ts'; then
   ok "A6 a key minted BEFORE the last 'revoke all sessions'/Panic Button fire is refused"
 else
-  bad "A6 the sessions_revoked_at check is missing — a stolen/leaked key would survive an incident-response logout that explicitly promises to kill it"
+  bad "A6 the sessions_revoked_at check is missing - a stolen/leaked key would survive an incident-response logout that explicitly promises to kill it"
 fi
 
 if has "$AAK_BODY" 'role == "suspended"'; then
@@ -169,7 +169,7 @@ else
 fi
 
 if has "$MIGRATION_C" 'CREATE UNIQUE INDEX idx_api_keys_hash ON api_keys\(key_hash\);'; then
-  ok "B1 a UNIQUE index on api_keys(key_hash) exists — without it, every dp_ request sequential-scans the whole table"
+  ok "B1 a UNIQUE index on api_keys(key_hash) exists - without it, every dp_ request sequential-scans the whole table"
 else
   bad "B1 the key_hash index is missing or not UNIQUE"
 fi
@@ -189,11 +189,11 @@ FP_BODY=$(fnbody "$BACKEND_CLIENT_C" "follow_progress")
 if lacks "$FP_BODY" 'saw_error'; then
   ok "C2 follow_progress() has no cross-step 'saw_error' latch left over from the fixed defect"
 else
-  bad "C2 a saw_error-shaped latch is back — an earlier advisory-only error step would again fail a successful restore"
+  bad "C2 a saw_error-shaped latch is back - an earlier advisory-only error step would again fail a successful restore"
 fi
 
 # The terminal check must read `status` (this event's own field) at the
-# `step_name == "complete"` branch — not a variable accumulated from earlier
+# `step_name == "complete"` branch - not a variable accumulated from earlier
 # events. Scoped to the tail of the function so an unrelated status==\"error\"
 # comparison elsewhere in the file can't satisfy this.
 COMPLETE_BRANCH=$(awk '/step_name == "complete"/{f=1} f' <<< "$FP_BODY")
@@ -208,7 +208,7 @@ if has "$BACKEND_CLIENT_C" 'let mut buf: Vec<u8> = Vec::new\(\);' \
   && lacks "$BACKEND_CLIENT_C" 'String::from_utf8_lossy\(&chunk\)'; then
   ok "C4 raw bytes are buffered across chunks and decoded only once a complete frame has arrived (chunk boundaries can split a multi-byte char)"
 else
-  bad "C4 a raw chunk is decoded independently before a full frame has been assembled — a split multi-byte character would corrupt a printed message"
+  bad "C4 a raw chunk is decoded independently before a full frame has been assembled - a split multi-byte character would corrupt a printed message"
 fi
 
 # ── §D backup.rs: domain resolution matches the restore endpoint's own scope ─
@@ -220,13 +220,13 @@ RESTORE_VIA_BACKEND_BODY=$(fnbody "$BACKUP_C" "cmd_backup_restore_via_backend")
 if has "$RESTORE_VIA_BACKEND_BODY" '"/api/admin/sites"'; then
   ok "D1 cmd_backup_restore_via_backend falls back to GET /api/admin/sites"
 else
-  bad "D1 no /api/admin/sites fallback — an admin's key can restore a site it doesn't own via the API, but the CLI's own domain lookup would 404 first"
+  bad "D1 no /api/admin/sites fallback - an admin's key can restore a site it doesn't own via the API, but the CLI's own domain lookup would 404 first"
 fi
 
 if has "$RESTORE_VIA_BACKEND_BODY" 'owned_site_id'; then
   ok "D2 the fallback is conditioned on the owner-scoped lookup coming up empty, not run unconditionally"
 else
-  bad "D2 no owned/not-owned branch found — cannot confirm the fallback is actually gated"
+  bad "D2 no owned/not-owned branch found - cannot confirm the fallback is actually gated"
 fi
 
 echo

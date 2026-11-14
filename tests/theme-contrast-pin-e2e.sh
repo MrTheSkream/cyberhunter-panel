@@ -6,7 +6,7 @@
 # light, and the light pair was a retrofit: the neutral ramp was inverted so a
 # single card class works everywhere, but the brand and interactive ramps were
 # left running light-to-dark. On a white ground that made the dominant ink
-# unreadable — the worst measured 1.86:1 across 319 sites — while the theme that
+# unreadable - the worst measured 1.86:1 across 319 sites - while the theme that
 # had been given a second pass looked fine, because roughly a hundred substring
 # overrides repainted its broken markup. Reviewing new UI on that theme was
 # therefore a FALSE PASS, and every defect below survived for months behind it.
@@ -26,7 +26,7 @@
 # the step it hovers. Any palette that satisfies those passes; any that does not
 # fails, whichever hexes it happens to use.
 #
-# THE ARITHMETIC IS IN awk ON PURPOSE — no python3, no node, no jq, so the suite
+# THE ARITHMETIC IS IN awk ON PURPOSE - no python3, no node, no jq, so the suite
 # runs anywhere the rest of the estate does.
 #
 # PROSE SAFETY. Every arm runs against COMMENT-STRIPPED source. The stylesheet
@@ -59,7 +59,7 @@ CSSCODE=$(sed 's://.*$::' "$CSS")
 
 # ── the token table, parsed out of the stylesheet itself ────────────────────
 # Emits "theme token hex" for every theme, with the base @theme block inherited
-# by any theme that does not override a step — which is exactly how the cascade
+# by any theme that does not override a step - which is exactly how the cascade
 # resolves it at runtime.
 TOKENS=$(printf '%s\n' "$CSSCODE" | awk '
   /^@theme[[:space:]]*\{/                     { blk="terminal"; next }
@@ -93,21 +93,21 @@ CSSLINES=$(printf '%s\n' "$CSSCODE" | grep -c . || true)
 if [ "$CSSLINES" -ge 800 ]; then
   ok "stylesheet survives the comment strip: $CSSLINES non-blank lines"
 else
-  bad "stylesheet stripped to $CSSLINES lines — subject truncated, arms are vacuous"
+  bad "stylesheet stripped to $CSSLINES lines - subject truncated, arms are vacuous"
 fi
 
 THEMEN=$(printf '%s\n' "$TOKENS" | awk '{print $1}' | sort -u | grep -c . || true)
 if [ "$THEMEN" -eq 6 ]; then
   ok "all six theme blocks parsed out of the stylesheet"
 else
-  bad "parsed $THEMEN theme blocks, expected 6 — the token table is not trustworthy"
+  bad "parsed $THEMEN theme blocks, expected 6 - the token table is not trustworthy"
 fi
 
 TOKN=$(printf '%s\n' "$TOKENS" | grep -c . || true)
 if [ "$TOKN" -ge 200 ]; then
   ok "token table resolved: $TOKN theme/step pairs"
 else
-  bad "token table has only $TOKN rows — parse failed"
+  bad "token table has only $TOKN rows - parse failed"
 fi
 
 # Every colour utility the app actually consumes, comment-stripped.
@@ -119,7 +119,7 @@ USEDN=$(printf '%s\n' "$USED" | grep -c . || true)
 if [ "$USEDN" -ge 20 ]; then
   ok "consumed-token census found $USEDN distinct steps in use"
 else
-  bad "consumed-token census found only $USEDN steps — the enumeration is broken, not the code"
+  bad "consumed-token census found only $USEDN steps - the enumeration is broken, not the code"
 fi
 
 echo "§1 every token the app consumes is defined in every theme"
@@ -137,7 +137,7 @@ MISSING=$(printf '%s\n' "$TOKENS" | awk -v used="$USED" '
 if [ -z "$MISSING" ]; then
   ok "no consumed step is undefined in any theme"
 else
-  bad "consumed but undefined — these classes emit NO css:$MISSING"
+  bad "consumed but undefined - these classes emit NO css:$MISSING"
 fi
 
 # CONTROL. This arm is only meaningful if the check above can actually fail, so
@@ -147,7 +147,7 @@ WARN300=$(printf '%s\n' "$TOKENS" | awk '$2=="warn-300"{n++} END{print n+0}')
 if [ "$WARN300" -eq 0 ]; then
   ok "control: an undefined step is genuinely absent from the parsed table"
 else
-  bad "control: warn-300 is now defined — §1's discriminator has changed, re-read it"
+  bad "control: warn-300 is now defined - §1's discriminator has changed, re-read it"
 fi
 
 echo "§2 no stock Tailwind colour utility survives in the app"
@@ -159,7 +159,7 @@ STOCKN=$(find "$FE/pages" "$FE/components" \( -name '*.tsx' -o -name '*.ts' \) -
 if [ "$STOCKN" -eq 0 ]; then
   ok "0 stock-palette colour utilities in pages/ and components/"
 else
-  bad "$STOCKN stock-palette colour utilities are back — no theme rule remaps them"
+  bad "$STOCKN stock-palette colour utilities are back - no theme rule remaps them"
 fi
 
 # CONTROL for §2: the census regex has to be able to match something, or a green
@@ -168,7 +168,7 @@ CTRL=$(printf 'className="bg-emerald-500/10 text-amber-300"\n' | grep -cE "$STOC
 if [ "$CTRL" -ge 1 ]; then
   ok "control: the stock-palette census pattern fires on a known stock string"
 else
-  bad "control: the census pattern matches nothing — §2 proved nothing"
+  bad "control: the census pattern matches nothing - §2 proved nothing"
 fi
 
 echo "§3 the role constraints, computed from the parsed hexes"
@@ -207,13 +207,13 @@ check_floor() {  # label  fg:bg  floor
   out=$(contrast "$spec:$floor")
   worst=${out%% *}; where=${out##* }
   if [ "$worst" = "MISSING" ]; then
-    bad "$label — a token in this constraint is undefined ($where)"
+    bad "$label - a token in this constraint is undefined ($where)"
     return
   fi
   if awk -v w="$worst" -v f="$floor" 'BEGIN{exit !(w+0 >= f+0)}'; then
-    ok "$label — worst theme $where at ${worst}:1 (floor $floor)"
+    ok "$label - worst theme $where at ${worst}:1 (floor $floor)"
   else
-    bad "$label — $where at ${worst}:1, under the $floor floor"
+    bad "$label - $where at ${worst}:1, under the $floor floor"
   fi
 }
 
@@ -257,7 +257,7 @@ CS_D=$(printf '%s\n' "$CSSCODE" | grep -cE 'color-scheme:[[:space:]]*dark' || tr
 if [ "$CS_L" -ge 1 ] && [ "$CS_D" -ge 1 ]; then
   ok "the stylesheet declares color-scheme for both the light and the dark case"
 else
-  bad "color-scheme is undeclared — the UA paints every native control light-scheme"
+  bad "color-scheme is undeclared - the UA paints every native control light-scheme"
 fi
 
 WRITERS=$(find "$FE" panel/frontend/public \( -name '*.tsx' -o -name '*.ts' -o -name '*.js' \) -print0 2>/dev/null \
@@ -265,7 +265,7 @@ WRITERS=$(find "$FE" panel/frontend/public \( -name '*.tsx' -o -name '*.ts' -o -
 if [ "$WRITERS" -ge 3 ]; then
   ok "the attribute still has $WRITERS writers, so the new rules have something to read"
 else
-  bad "only $WRITERS writers set data-color-scheme — the new rules are dead"
+  bad "only $WRITERS writers set data-color-scheme - the new rules are dead"
 fi
 
 echo "§6 the destructive hover was corrected everywhere, not in the file someone opened"
@@ -284,7 +284,7 @@ MDLIT=$(printf '%s\n' "$CSSCODE" | grep 'markdown-body' | grep -cE 'rgba\(255, ?
 if [ "$MDLIT" -eq 0 ]; then
   ok "no white-on-dark literal survives in the markdown rules"
 else
-  bad "$MDLIT markdown rules still hardcode a literal — invisible on the light themes"
+  bad "$MDLIT markdown rules still hardcode a literal - invisible on the light themes"
 fi
 
 echo "§8 the scoped fill override cannot leak onto the tinted chips"
@@ -293,13 +293,13 @@ EMBER=$(printf '%s\n' "$CSSCODE" | grep -c 'data-theme="ember"\] \.bg-rust-500\.
 if [ "$EMBER" -ge 1 ]; then
   ok "the fill override is written as a compound class selector"
 else
-  bad "the compound-class fill override is gone — the dark-ink label is unscoped or missing"
+  bad "the compound-class fill override is gone - the dark-ink label is unscoped or missing"
 fi
 
 # The property that matters is narrow: a rule that sets the LABEL colour on the
 # brand fill must select that fill as a class, because `[class*="bg-rust-500"]`
 # also matches `bg-rust-500/10` and would repaint every tinted chip's text. A
-# rule that only sets a BACKGROUND may select however it likes — the progress-bar
+# rule that only sets a BACKGROUND may select however it likes - the progress-bar
 # track override has done so since long before this ship, and it is not the
 # hazard. So: scan ember's rule blocks, keep the ones declaring a text colour,
 # and require none of them to select the fill by substring.
@@ -313,7 +313,7 @@ LEAK=$(printf '%s\n' "$CSSCODE" | awk '
 if [ "$LEAK" -eq 0 ]; then
   ok "no ember rule sets a label colour via a substring match on the fill"
 else
-  bad "$LEAK ember rule(s) set a label colour by substring — the tinted chips match too"
+  bad "$LEAK ember rule(s) set a label colour by substring - the tinted chips match too"
 fi
 
 echo "§9 the panel UI does not restate a number it does not own"
@@ -328,7 +328,7 @@ RESTATED=$(find "$FE" \( -name '*.tsx' -o -name '*.ts' \) -print0 \
 if [ "$RESTATED" -eq 0 ]; then
   ok "no hardcoded catalogue count is restated in the panel UI"
 else
-  bad "$RESTATED hardcoded catalogue count(s) in the panel UI — they rot silently"
+  bad "$RESTATED hardcoded catalogue count(s) in the panel UI - they rot silently"
 fi
 
 echo

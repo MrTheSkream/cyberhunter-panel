@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression pins for s260 — site backups carry their databases.
+# Regression pins for s260 - site backups carry their databases.
 #
 # s259 drove a restore on a real box and found the defect this closes: a site
 # backup was `tar czf` of the webroot and nothing else, so restoring a WordPress
@@ -13,7 +13,7 @@
 #      still produces exactly the archive it always did.
 #   B. A MISSING DATABASE IS REPORTED, NEVER SWALLOWED. A dump that fails, or a
 #      database the panel refuses to touch, is named in the result and recorded
-#      on the backup row — because "is my content in here?" has to be answerable
+#      on the backup row - because "is my content in here?" has to be answerable
 #      later, not only at the moment the backup ran.
 #   C. THE DUMPS NEVER REACH THE DOCUMENT ROOT. They are the site's entire
 #      content in plaintext and the webroot is served to the public, so restore
@@ -63,7 +63,7 @@ has  "$AGENT_RT" 'body: Option<Json<SiteDbBody>>' \
 hasE "$API" 'agent\.post\(&agent_path, Some\(agent_body\)\)' \
      "the panel actually sends the databases to the agent"
 has  "$API" 'async fn site_databases' \
-     "the panel resolves a site's databases (the agent cannot — it has no DB access)"
+     "the panel resolves a site's databases (the agent cannot - it has no DB access)"
 has  "$API" 'decrypt_credential_or_legacy' \
      "database credentials are decrypted before being handed down"
 
@@ -78,7 +78,7 @@ has  "$API" 'databases_included, databases_expected' \
 has  "$MIGRATION" 'databases_included' \
      "a migration adds the columns"
 has  "$MIGRATION" 'DEFAULT 0' \
-     "pre-existing rows default to 0 — true of every archive made before this ship"
+     "pre-existing rows default to 0 - true of every archive made before this ship"
 has  "$API" 'Backup created WITHOUT' \
      "an incomplete backup does not report a clean success"
 has  "$API" 'is not fully provisioned yet' \
@@ -95,7 +95,7 @@ has  "$AGENT_SVC" '"--exclude", PAYLOAD_DIR' \
 has  "$AGENT_SVC" 'async fn extract_payload' \
      "the payload is extracted to staging first, separately from the files"
 has  "$AGENT_SVC" 'from_mode(0o700)' \
-     "staging is root-only — the dumps are the site's content in plaintext"
+     "staging is root-only - the dumps are the site's content in plaintext"
 hasE "$AGENT_SVC" 'remove_dir_all\(&?stage' \
      "staging is always removed, including on the error path"
 has  "$AGENT_SVC" 'site root contains a reserved' \
@@ -109,7 +109,7 @@ hasE "$AGENT_SVC" 'self\.files_restored && self\.databases_failed\.is_empty\(\)'
      "ok() requires BOTH the files and every database"
 has  "$AGENT_RT" 'StatusCode::INTERNAL_SERVER_ERROR, Json(payload)' \
      "the agent answers a partial restore with a failure carrying the report"
-has  "$API" 'Restore failed — files restored, database not' \
+has  "$API" 'Restore failed - files restored, database not' \
      "the panel names the dangerous state explicitly"
 has  "$API" 'backup.restore_partial' \
      "a partial restore is a distinct activity-log event"
@@ -120,7 +120,7 @@ echo
 echo "G. EVERY path that creates a site backup includes the databases"
 # The manual button and the scheduled job must not disagree. A scheduled backup
 # that quietly omitted the database would be this exact defect surviving in the
-# path people rely on most — and nobody is watching when it runs.
+# path people rely on most - and nobody is watching when it runs.
 has  "$API" 'pub async fn site_database_specs' \
      "one shared resolver, reachable from the schedulers as well as the route"
 hasnt "$SCHED" 'agent_path, None' \

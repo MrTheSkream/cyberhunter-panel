@@ -19,7 +19,7 @@ pub struct ListParams {
     pub event_type: Option<String>,
 }
 
-/// GET /api/telemetry/events — List local telemetry events (admin only).
+/// GET /api/telemetry/events - List local telemetry events (admin only).
 pub async fn list_events(
     State(state): State<AppState>,
     AdminUser(_claims): AdminUser,
@@ -115,7 +115,7 @@ pub async fn list_events(
 
 // ── Stats ──────────────────────────────────────────────────────────────
 
-/// GET /api/telemetry/stats — Event counts by category and type (admin only).
+/// GET /api/telemetry/stats - Event counts by category and type (admin only).
 pub async fn stats(
     State(state): State<AppState>,
     AdminUser(_claims): AdminUser,
@@ -168,7 +168,7 @@ pub async fn stats(
 
 // ── Config ─────────────────────────────────────────────────────────────
 
-/// GET /api/telemetry/config — Get telemetry configuration (admin only).
+/// GET /api/telemetry/config - Get telemetry configuration (admin only).
 pub async fn get_config(
     State(state): State<AppState>,
     AdminUser(_claims): AdminUser,
@@ -206,7 +206,7 @@ pub async fn get_config(
         "current_version".to_string(),
         serde_json::Value::String(current_version.to_string()),
     );
-    // Derived here so no client has to compare versions of its own — and so
+    // Derived here so no client has to compare versions of its own - and so
     // that a stored row which is not newer than this binary stops rendering a
     // banner. The raw value stays in the payload: the row is what was last
     // seen on GitHub, `update_available` is what it means for this panel.
@@ -226,7 +226,7 @@ pub struct ConfigUpdate {
     pub telemetry_endpoint: Option<String>,
 }
 
-/// PUT /api/telemetry/config — Update telemetry configuration (admin only).
+/// PUT /api/telemetry/config - Update telemetry configuration (admin only).
 pub async fn update_config(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -235,7 +235,7 @@ pub async fn update_config(
     // Validate endpoint URL if provided
     if let Some(ref endpoint) = body.telemetry_endpoint {
         if endpoint.is_empty() {
-            // Empty string is valid — means "disable remote telemetry"
+            // Empty string is valid - means "disable remote telemetry"
         } else if !endpoint.starts_with("https://") {
             return Err(err(
                 StatusCode::BAD_REQUEST,
@@ -299,9 +299,9 @@ pub async fn update_config(
 
 // ── Preview Report ─────────────────────────────────────────────────────
 
-/// GET /api/telemetry/preview — Preview what would be sent (admin only).
+/// GET /api/telemetry/preview - Preview what would be sent (admin only).
 /// NOTE: this handler deliberately takes no per-request server scope extractor.
-/// `telemetry_events` has no server dimension —
+/// `telemetry_events` has no server dimension -
 /// every row is written by `telemetry_collector` from the PANEL host's own agent. Taking
 /// the caller's `X-Server-Id` (which the frontend sends on every request from a global
 /// picker) paired a fleet MEMBER's hostname, kernel and service list with the PANEL's
@@ -357,13 +357,13 @@ pub async fn preview(
         "dockpanel_version": env!("CARGO_PKG_VERSION"),
         "events": batch,
         "event_count": batch.len(),
-        "note": "The events below are exactly what would be sent, PII stripped. The \"system\" block above is local diagnostic context for your review — the actual outbound payload's system info is only { dockpanel_version, installation_id }, never host details.",
+        "note": "The events below are exactly what would be sent, PII stripped. The \"system\" block above is local diagnostic context for your review - the actual outbound payload's system info is only { dockpanel_version, installation_id }, never host details.",
     })))
 }
 
 // ── Send Now ───────────────────────────────────────────────────────────
 
-/// POST /api/telemetry/send — Send pending events now (admin only).
+/// POST /api/telemetry/send - Send pending events now (admin only).
 pub async fn send_now(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -416,7 +416,7 @@ pub async fn send_now(
 
 // ── Export Report ──────────────────────────────────────────────────────
 
-/// GET /api/telemetry/export — Export all unsent events as a downloadable JSON (admin only).
+/// GET /api/telemetry/export - Export all unsent events as a downloadable JSON (admin only).
 pub async fn export_report(
     State(state): State<AppState>,
     AdminUser(_claims): AdminUser,
@@ -469,7 +469,7 @@ pub struct ClearParams {
     pub before_days: Option<i64>,
 }
 
-/// DELETE /api/telemetry/events — Clear old telemetry events (admin only).
+/// DELETE /api/telemetry/events - Clear old telemetry events (admin only).
 pub async fn clear_events(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -504,7 +504,7 @@ pub async fn clear_events(
 
 // ── Update Status ──────────────────────────────────────────────────────
 
-/// GET /api/telemetry/update-status — Check if a DockPanel update is available (admin only).
+/// GET /api/telemetry/update-status - Check if a CyberHunter - Panel update is available (admin only).
 pub async fn update_status(
     State(state): State<AppState>,
     AdminUser(_claims): AdminUser,
@@ -534,7 +534,7 @@ pub async fn update_status(
     // Belt to the collector's braces. The presence of a row proved only that a
     // check once found something; it is an update only while it names a release
     // newer than the binary answering this request. Deliberately does NOT
-    // delete the row — a GET must not mutate. Clearing is the collector's job,
+    // delete the row - a GET must not mutate. Clearing is the collector's job,
     // at start-up and on every poll.
     let mut has_update = false;
     for (key, value) in rows {
@@ -551,10 +551,10 @@ pub async fn update_status(
     Ok(Json(serde_json::Value::Object(result)))
 }
 
-/// POST /api/telemetry/check-updates — Force an update check now (admin only).
+/// POST /api/telemetry/check-updates - Force an update check now (admin only).
 ///
 /// Runs the poll inline and reports what it found. It used to spawn the check
-/// and answer "Update check started" before it had started anything — which
+/// and answer "Update check started" before it had started anything - which
 /// under `update_channel = hold` was answering success for a poll that returned
 /// immediately without contacting GitHub. Clicking a button labelled "Check
 /// Now" is an explicit operator request, and `hold` suppresses *automatic*
@@ -581,7 +581,7 @@ pub async fn check_updates(
         "success": true,
         "message": match &available {
             Some(v) => format!("Update available: v{v}"),
-            None => "No update available — you are on the latest version.".to_string(),
+            None => "No update available - you are on the latest version.".to_string(),
         },
         "available_version": available,
     })))

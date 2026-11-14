@@ -6,7 +6,7 @@
 # files with no copy anywhere, no history, and no way to review a change or
 # rebuild the machine. Three sessions of cache-header work lived only in them.
 #
-# A config copied into a repo by hand goes stale, so this is not a copy — it is
+# A config copied into a repo by hand goes stale, so this is not a copy - it is
 # a renderer with a check mode, run by `nginx-contract` in CI and cheap to run
 # by hand after any edit:
 #
@@ -23,7 +23,7 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEST="$REPO/deploy/nginx"
 MODE="${1:---check}"
 
-# Neither value is hardcoded — writing this box's address into a public repo is
+# Neither value is hardcoded - writing this box's address into a public repo is
 # the exact leak the placeholders exist to prevent, and the pre-commit hook
 # blocks on it. Both are derived, so this works unchanged on any origin.
 detect_origin_ip() {
@@ -78,7 +78,7 @@ for pair in $FILES; do
         # Off-box (CI) there is nothing to compare against; assert the copy is
         # present and carries no host-specific value instead. A check that
         # silently passes when it cannot see the thing it checks is worse than
-        # no check — this is the same vacuous-pass class as lesson #108d.
+        # no check - this is the same vacuous-pass class as lesson #108d.
         if [ ! -r "$live" ]; then
             if grep -qE "$ORIGIN_IP|$SITE_ROOT" "$repo"; then
                 echo "LEAK: deploy/nginx/$name contains a host-specific value"; RC=1

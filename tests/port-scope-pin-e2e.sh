@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression pins for the s375 ship — a port allocator and the unique index
+# Regression pins for the s375 ship - a port allocator and the unique index
 # behind it disagreed about what a port is unique WITHIN.
 #
 # `20260319000000_multi_server.sql` un-globalised five columns under the header
@@ -7,18 +7,18 @@
 # `git_deploys.host_port`. The NEXT migration re-introduced the global shape on
 # two neighbouring columns, against allocators that were already server-scoped:
 #
-#   * `git_previews.host_port` — the allocator scopes through a JOIN and picks
+#   * `git_previews.host_port` - the allocator scopes through a JOIN and picks
 #     the first free port in 8000-8999, so on a fleet the second server's used
 #     set is empty, it picks 8000, and the INSERT collides with the first
 #     server's row. The rejection was logged at warn and stepped over, and the
 #     deploy ran anyway: container, port, vhost and certificate created with NO
 #     ROW, and every consumer of a preview is row-driven.
-#   * `sites.proxy_port` — same first-fit collision from `generate_series(5000,
+#   * `sites.proxy_port` - same first-fit collision from `generate_series(5000,
 #     5999)`, reported to the operator as CONFLICT "Domain already exists".
 #
 # The invariant these arms pin is NOT "a port index must name server_id".
 # `databases.port` is globally unique and globally allocated, and that is
-# correct — the table has no `server_id` to scope by. The invariant is that the
+# correct - the table has no `server_id` to scope by. The invariant is that the
 # INDEX and its ALLOCATOR agree, which is the thing that was false and which no
 # textual arm elsewhere in the suite family could see: every line involved was
 # correct on its own, in two files that never mention each other.
@@ -30,7 +30,7 @@ cd "$(dirname "$0")/.." || exit 1
 
 PASS=0; FAIL=0
 ok()  { printf '\033[32m✓\033[0m %s\n' "$1"; PASS=$((PASS+1)); }
-bad() { printf '\033[31m✗\033[0m %s — %s\n' "$1" "$2"; FAIL=$((FAIL+1)); }
+bad() { printf '\033[31m✗\033[0m %s - %s\n' "$1" "$2"; FAIL=$((FAIL+1)); }
 eq()  { [ "$2" = "$3" ] && ok "$1" || bad "$1" "expected '$3', got '$2'"; }
 
 # ugrep's --ignore-files shim honours .gitignore, so every count below uses the
@@ -54,9 +54,9 @@ trap 'rm -rf "$WORK"' EXIT
 # An arm that measures an empty subject prints green for every absence below, so
 # every subject is asserted before it is measured (lesson #143).
 GD_LINES=$($G -c '' "$GD"); ST_LINES=$($G -c '' "$ST")
-[ "$GD_LINES" -gt 3000 ] && ok "A0 subject extracted — $GD is $GD_LINES lines" \
-  || bad "A0 subject extracted" "$GD is only $GD_LINES lines — every arm below examined nothing"
-[ "$ST_LINES" -gt 2000 ] && ok "A0b subject extracted — $ST is $ST_LINES lines" \
+[ "$GD_LINES" -gt 3000 ] && ok "A0 subject extracted - $GD is $GD_LINES lines" \
+  || bad "A0 subject extracted" "$GD is only $GD_LINES lines - every arm below examined nothing"
+[ "$ST_LINES" -gt 2000 ] && ok "A0b subject extracted - $ST is $ST_LINES lines" \
   || bad "A0b subject extracted" "$ST is only $ST_LINES lines"
 
 echo "── A. The effective port-bearing unique indexes, DERIVED from the migrations ─"
@@ -78,9 +78,9 @@ $G -oiE 'DROP +INDEX +(IF +EXISTS +)?[A-Za-z0-9_]+' "$WORK/stmts.txt" \
 # (lesson #480). Both floors are controls, not assertions about the product.
 NCREATE=$($G -c '' "$WORK/creates.txt")
 NDROP=$($G -c '' "$WORK/drops.txt")
-[ "$NCREATE" -ge 15 ] && ok "A0c migration parse is live — $NCREATE CREATE UNIQUE INDEX statements read" \
-  || bad "A0c migration parse is live" "only $NCREATE parsed — the extraction failed, every arm in §A examined nothing"
-[ "$NDROP" -ge 8 ] && ok "A0d DROP INDEX parse is live — $NDROP names read" \
+[ "$NCREATE" -ge 15 ] && ok "A0c migration parse is live - $NCREATE CREATE UNIQUE INDEX statements read" \
+  || bad "A0c migration parse is live" "only $NCREATE parsed - the extraction failed, every arm in §A examined nothing"
+[ "$NDROP" -ge 8 ] && ok "A0d DROP INDEX parse is live - $NDROP names read" \
   || bad "A0d DROP INDEX parse is live" "only $NDROP parsed"
 
 # The surviving set: created and not later dropped. Every drop in this tree
@@ -107,7 +107,7 @@ NPORT=$($G -c '' "$WORK/portidx.txt")
 # since 2026-03-19. If this is absent the filter is wrong, not the tree.
 $G -qF 'idx_git_deploys_host_port_server' "$WORK/portidx.txt" \
   && ok "A1-control the derivation finds the sibling that was scoped correctly in 2026-03" \
-  || bad "A1-control" "idx_git_deploys_host_port_server is not in the derived set — the filter is broken, not the tree"
+  || bad "A1-control" "idx_git_deploys_host_port_server is not in the derived set - the filter is broken, not the tree"
 
 # A1-control-neg (negative): the global preview index must be GONE from the live
 # set and PRESENT in the drop set. Asserting both directions is what separates
@@ -121,14 +121,14 @@ fi
 
 # A1: THE INVARIANT. For every live port-bearing unique index, the index's scope
 # and its allocator's scope must be the same. A table with no `server_id` cannot
-# be scoped and its allocator must therefore be global too — that is `databases`,
+# be scoped and its allocator must therefore be global too - that is `databases`,
 # and it is correct, which is why this arm is not "must contain server_id".
 VIOL=""; AGREE=0
 while IFS=$'\t' read -r name tbl cols; do
   case ",$cols," in *,server_id,*) idx_scoped=1 ;; *) idx_scoped=0 ;; esac
   # Each branch locates the allocator's BASE query first and only then asks
   # whether it carries a server predicate. A pattern that silently stops
-  # matching therefore reports `unmapped` — red — instead of reporting "global",
+  # matching therefore reports `unmapped` - red - instead of reporting "global",
   # which is a real answer and would be the reassuring direction.
   case "$tbl" in
     git_previews)  A=$GD; base='SELECT gp\.host_port FROM git_previews gp'; scoped='WHERE gd\.server_id = \$1' ;;
@@ -156,17 +156,17 @@ while IFS=$'\t' read -r name tbl cols; do
   # Accumulated into ONE assertion rather than emitted per index. `docs-claims`
   # §3 re-runs every suite and compares its live tally to the number published in
   # four places, so a per-member arm would move the published count every time
-  # the tree gains a port index — a false red on an unrelated change (#529).
+  # the tree gains a port index - a false red on an unrelated change (#529).
   if [ "$alloc_scoped" = unmapped ]; then
     VIOL="$VIOL
-    $name ($tbl.$cols): no allocator mapped — add it to this arm and state whether it is server-scoped"
+    $name ($tbl.$cols): no allocator mapped - add it to this arm and state whether it is server-scoped"
   elif [ "$alloc_scoped" != "$idx_scoped" ]; then
     if [ "$idx_scoped" = 0 ]; then
       VIOL="$VIOL
-    $name ($tbl.$cols): allocator is server-scoped, index is GLOBAL — every server after the first picks the bottom of the range for ever and its INSERT is rejected"
+    $name ($tbl.$cols): allocator is server-scoped, index is GLOBAL - every server after the first picks the bottom of the range for ever and its INSERT is rejected"
     else
       VIOL="$VIOL
-    $name ($tbl.$cols): index is server-scoped, allocator is GLOBAL — the allocator lost its predicate"
+    $name ($tbl.$cols): index is server-scoped, allocator is GLOBAL - the allocator lost its predicate"
     fi
   else
     AGREE=$((AGREE + 1))
@@ -179,8 +179,8 @@ else
   bad "A1 a port index and its allocator disagree" "$VIOL"
 fi
 
-[ "$NPORT" -ge 4 ] && ok "A2 the port-index population is $NPORT — all four port-bearing tables reached" \
-  || bad "A2 the port-index population" "only $NPORT derived — expected at least 4 (databases, git_deploys, git_previews, sites)"
+[ "$NPORT" -ge 4 ] && ok "A2 the port-index population is $NPORT - all four port-bearing tables reached" \
+  || bad "A2 the port-index population" "only $NPORT derived - expected at least 4 (databases, git_deploys, git_previews, sites)"
 
 echo "── B. git_previews carries the host its allocator scopes by ────────────────"
 
@@ -200,7 +200,7 @@ $G -qE 'ALTER COLUMN server_id SET NOT NULL' "$MIGF" \
   && ok "B4 the column is tightened to NOT NULL" \
   || bad "B4 the column is tightened to NOT NULL" "a nullable server_id makes the unique index unenforceable"
 $G -qE 'RAISE WARNING' "$MIGF" \
-  && ok "B4b the tightening is guarded — a migration that aborts is worse than a nullable column" \
+  && ok "B4b the tightening is guarded - a migration that aborts is worse than a nullable column" \
   || bad "B4b the tightening is guarded" "an unguarded SET NOT NULL can abort the upgrade on an install this backfill cannot reach"
 
 # B5: the INSERT must name the column, or every new row is NULL and the index
@@ -214,11 +214,11 @@ echo "── C. A failed record is a refusal, not a warning ──────�
 
 # C1 is the defect. Everything else in this file guards the collision; this arm
 # guards what the code DID about it. Keyed on the return, not on the absence of
-# the warn — the warn is still there and still correct, it just no longer stands
+# the warn - the warn is still there and still correct, it just no longer stands
 # alone.
 # The two anchors are the log line and the spawn. NEITHER is anything this
 # section asserts about, which is the point: an earlier draft anchored on the
-# refusal's own sentence, so deleting the refusal — the exact defect — made C1
+# refusal's own sentence, so deleting the refusal - the exact defect - made C1
 # and C2 go MISSING rather than RED. A check whose anchor is the thing it checks
 # for cannot fail ([[feedback_verifier_shares_source]]); it can only vanish.
 # Verified by mutation: P1 and P5 now turn C1 and C2 red directly.
@@ -233,34 +233,34 @@ if [ -n "$GD_UPSERT_WARN" ] && [ -n "$GD_SPAWN" ] && [ "$GD_SPAWN" -gt "$GD_UPSE
   # build there must be a return: otherwise the container, the port, the vhost
   # and the certificate are created for a row that does not exist.
   printf '%s\n' "$BLOCK" | $G -qE 'return Err\(' \
-    && ok "C1 the failed upsert RETURNS before the spawn — no build starts without a row" \
+    && ok "C1 the failed upsert RETURNS before the spawn - no build starts without a row" \
     || bad "C1 the failed upsert returns before the spawn" \
-           "nothing between line $GD_UPSERT_WARN and the spawn at $GD_SPAWN returns — the deploy proceeds with no row"
+           "nothing between line $GD_UPSERT_WARN and the spawn at $GD_SPAWN returns - the deploy proceeds with no row"
 
   # C2: the reason is echoed verbatim into the webhook's HTTP body at :1684 and
   # from there into GitHub's delivery log, and that door has no auth extractor.
   # An interpolated sqlx error there publishes the constraint name, the table,
   # and on some paths the conflicting value.
-  eq "C2 the refusal interpolates nothing — it cannot carry database detail to an unauthenticated caller" \
+  eq "C2 the refusal interpolates nothing - it cannot carry database detail to an unauthenticated caller" \
      "$(printf '%s\n' "$BLOCK" | $G -c 'format!')" "0"
   eq "C2b the one interpolation in the block is the log's, not the refusal's" \
      "$(printf '%s\n' "$BLOCK" | $G -c '{e}')" "1"
   eq "C2b-control there is exactly one log line in the block to own it" \
      "$(printf '%s\n' "$BLOCK" | $G -c 'tracing::warn!')" "1"
 else
-  bad "C0 anchors" "warn='$GD_UPSERT_WARN' spawn='$GD_SPAWN' — §C cannot be evaluated"
+  bad "C0 anchors" "warn='$GD_UPSERT_WARN' spawn='$GD_SPAWN' - §C cannot be evaluated"
 fi
 
 # C3: the operator still gets the detail the pusher does not.
 eq "C3 the sqlx error is logged for the operator, with the branch that produced it" \
    "$($G -cE 'Failed to upsert git preview record for branch .\{branch\}.: \{e\}' "$GD")" "1"
 
-echo "── D. sites.proxy_port — the collision the operator was told was a domain ──"
+echo "── D. sites.proxy_port - the collision the operator was told was a domain ──"
 
 eq "D1 the site proxy_port index is scoped to the server" \
    "$($G -cE 'idx_sites_proxy_port_server' "$MIGF")" "1"
 $G -qE 'ON sites\(proxy_port, server_id\) WHERE proxy_port IS NOT NULL' "$MIGF" \
-  && ok "D1b the partial predicate survives — a NULL proxy_port means the runtime does not proxy" \
+  && ok "D1b the partial predicate survives - a NULL proxy_port means the runtime does not proxy" \
   || bad "D1b the partial predicate survives" "dropping WHERE proxy_port IS NOT NULL makes every non-proxying site collide"
 $G -qE 'DROP INDEX IF EXISTS idx_sites_proxy_port;' "$MIGF" \
   && ok "D1c the global site port index is dropped" \
@@ -284,7 +284,7 @@ echo "── E. The sweeps still resolve the host they act on ──────
 
 # The teardown's authority comes from the DEPLOY's server_id, reached through the
 # JOIN. Adding a column to git_previews must not tempt anyone into dropping that
-# JOIN — `unattended-host-scope-pin-e2e.sh` F8 pins the same thing from the other
+# JOIN - `unattended-host-scope-pin-e2e.sh` F8 pins the same thing from the other
 # side, and this arm states why it must stay.
 # Keyed on the SELECT LIST, not on the bare token: `d.server_id` also appears in
 # the comment that explains why it is there, so a bare count measures the prose
@@ -293,7 +293,7 @@ eq "E1 both preview sweeps still carry the deploy's server_id through the JOIN" 
    "$($G -cE 'p\.host_port, d\.server_id' "$PC")" "2"
 $G -qE 'JOIN git_deploys d' "$PC" \
   && ok "E1-control the JOIN those columns come from is present" \
-  || bad "E1-control" "the JOIN is gone — E1 counted something else"
+  || bad "E1-control" "the JOIN is gone - E1 counted something else"
 
 echo
 echo "PASS $PASS / FAIL $FAIL"

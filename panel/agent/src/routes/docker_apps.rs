@@ -62,12 +62,12 @@ async fn ensure_managed(container_id: &str) -> Result<(), (StatusCode, Json<serd
     })
 }
 
-/// GET /apps/templates — List all available app templates.
+/// GET /apps/templates - List all available app templates.
 async fn templates() -> Json<Vec<docker_apps::AppTemplate>> {
     Json(docker_apps::list_templates())
 }
 
-/// POST /apps/deploy — Deploy an app from a template, optionally with reverse proxy + SSL.
+/// POST /apps/deploy - Deploy an app from a template, optionally with reverse proxy + SSL.
 async fn deploy(
     State(state): State<AppState>,
     Json(body): Json<DeployRequest>,
@@ -166,7 +166,7 @@ fn proxy_site_config(port: u16) -> SiteConfig {
     }
 }
 
-/// How a domain claimed by a deploy is to be secured — the request's TLS
+/// How a domain claimed by a deploy is to be secured - the request's TLS
 /// fields resolved into one decision before anything runs.
 ///
 /// Until v2.160.0 the only signal was whether `ssl_email` was present, and a
@@ -188,11 +188,11 @@ pub(crate) enum TlsIntent<'a> {
 impl<'a> TlsIntent<'a> {
     /// Resolve the wire fields. `Err` is the sentence a handler answers 400
     /// with, and it is asked BEFORE any container runs.
-    /// `use_traefik` refuses `provided` HERE, before any container runs — the
+    /// `use_traefik` refuses `provided` HERE, before any container runs - the
     /// same front-door discipline this function already applies to a bad
     /// alias or a missing `ssl_email`. Until now the combination was refused
     /// only INSIDE `expose_domain`'s Traefik branch, after `deploy_app` had
-    /// already created the container — exactly the outcome this function's
+    /// already created the container - exactly the outcome this function's
     /// own doc comment (on the `deploy` handler above) says a request naming
     /// an unhonourable mode must never produce: "a running container and a
     /// warning" instead of nothing deployed. Traefik's file provider has no
@@ -205,7 +205,7 @@ impl<'a> TlsIntent<'a> {
         use_traefik: bool,
     ) -> Result<TlsIntent<'a>, String> {
         match tls_mode {
-            // Legacy inference — an older panel that knows no mode. Kept
+            // Legacy inference - an older panel that knows no mode. Kept
             // exactly as it was, presence and not content, so nothing an old
             // panel sends changes meaning.
             None => Ok(match ssl_email {
@@ -216,7 +216,7 @@ impl<'a> TlsIntent<'a> {
             Some("acme") => match ssl_email {
                 Some(email) if !email.trim().is_empty() => Ok(TlsIntent::Acme { email }),
                 _ => Err(
-                    "tls_mode acme needs an ssl_email — the address the Let's Encrypt account \
+                    "tls_mode acme needs an ssl_email - the address the Let's Encrypt account \
                      is registered under"
                         .to_string(),
                 ),
@@ -229,11 +229,11 @@ impl<'a> TlsIntent<'a> {
                 )),
                 Some(alias) if ssl::is_valid_cert_alias(alias) => Ok(TlsIntent::Provided { alias }),
                 Some(alias) => Err(format!(
-                    "'{alias}' is not a certificate alias — 1 to 64 lowercase letters, digits or \
+                    "'{alias}' is not a certificate alias - 1 to 64 lowercase letters, digits or \
                      hyphens, starting and ending with a letter or digit"
                 )),
                 None => Err(
-                    "tls_mode provided needs tls_certificate — the alias of a registered certificate"
+                    "tls_mode provided needs tls_certificate - the alias of a registered certificate"
                         .to_string(),
                 ),
             },
@@ -257,7 +257,7 @@ impl<'a> TlsIntent<'a> {
 /// way the request asked.
 ///
 /// Extracted from `deploy` so compose stacks reach the same code rather than a
-/// second copy of it. Until v2.54.0 a stack had no route to any of this — the
+/// second copy of it. Until v2.54.0 a stack had no route to any of this - the
 /// compose deploy request carried no domain field at all, so a stack could only
 /// ever be reached on `127.0.0.1:{port}` and "SSL doesn't work" was the
 /// accurate report of a feature that did not exist.
@@ -271,49 +271,49 @@ impl<'a> TlsIntent<'a> {
 /// the mode was INFERRED from whether an address was present, and the reason
 /// that could not be a new request field alone was the REDEPLOY rather than the
 /// first deploy. `stacks::update` sends the domain on every edit and tears the
-/// vhost down only when the domain actually changes — so an ordinary YAML edit
+/// vhost down only when the domain actually changes - so an ordinary YAML edit
 /// arrived here with the same domain and no address. This function rewrote the
 /// vhost from `proxy_site_config`, which carries no certificate, and returned at
 /// the address check. The `:443` server block was gone, on an edit that never
 /// mentioned TLS, and `https.conf` had already sent a year of
-/// `Strict-Transport-Security` — so every browser that had seen the site refused
+/// `Strict-Transport-Security` - so every browser that had seen the site refused
 /// the plain-HTTP replacement. A hard outage with no way back for the visitor,
 /// not a downgrade anyone can click past.
 ///
 /// The mode is now STORED by the panel (`docker_stacks.tls_mode`, with the
 /// alias beside it) and sent on every deploy, arriving here as [`TlsIntent`].
 /// The two repairs that were named: the OMISSION half is closed because an
-/// absent address is no longer the signal — a stored mode is; the MODE half is
+/// absent address is no longer the signal - a stored mode is; the MODE half is
 /// the `Provided` arm, which short-circuits BEFORE the HTTP-first write below,
 /// because that write is the one that strips `:443` from behind HSTS. A
 /// provided domain whose certificate cannot be served is left exactly as it
-/// was and reported — never degraded to HTTP. `external_tls` remains the shape
+/// was and reported - never degraded to HTTP. `external_tls` remains the shape
 /// that was copied FROM and not the precedent: it declines TLS on this box, so
 /// there is no `:443` block for a redeploy to lose.
 ///
 /// Reported as #104; the design was accepted in writing on 2026-08-12 and its
 /// three points are binding:
 ///   1. Multiple registered certificates from the start, each named at upload
-///      time — not a single default slot. Migrating a one-slot design after
+///      time - not a single default slot. Migrating a one-slot design after
 ///      domains have been claimed against it is the expensive version. Built:
 ///      the registry under `ssl::SSL_REGISTRY_DIR`, one directory per alias,
 ///      served by `routes/ssl_registry.rs`.
 ///   2. Referenced by alias, never by filesystem path. A claim naming a path
 ///      breaks the first time anything moves. Built: `TlsIntent::Provided`
 ///      carries the alias and `ssl::registry_paths` resolves it here.
-///   3. SAN validation AT CLAIM TIME — the panel checks the claimed domain
+///   3. SAN validation AT CLAIM TIME - the panel checks the claimed domain
 ///      actually falls under the supplied certificate's SAN, rather than
 ///      trusting the operator and failing at TLS handshake time later. The
 ///      reporter called this the most valuable of the three, for the reason
 ///      that it shares the quiet failure mode of the trap above: operator
 ///      error goes undetected until a browser complains. ⭐ DO NOT BUILD THIS
-///      — it already exists and is unit-tested: `ssl::cert_covers_domain`
+///      - it already exists and is unit-tested: `ssl::cert_covers_domain`
 ///      (`services/ssl.rs`), called from the site upload path at
 ///      `routes/ssl.rs`, from the registry's covers door, and re-asked in the
 ///      `Provided` arm below as defence in depth. It handles wildcards, the CN
 ///      fallback for a certificate carrying no SAN, case and trailing-dot
 ///      normalisation, and refuses partial wildcards. It lives in the AGENT
-///      because this crate depends on an X.509 parser and the panel does not —
+///      because this crate depends on an X.509 parser and the panel does not -
 ///      which is where the reporter said the check belonged.
 ///
 /// ⚠ A fourth consideration is OURS, not the reporter's, and is NOT binding:
@@ -321,10 +321,10 @@ impl<'a> TlsIntent<'a> {
 /// product's stated position on three other surfaces). It is worth doing; it
 /// was never put to the reporter and must not be presented as agreed. Until
 /// v2.157.0 this comment listed it as accepted point 3 and omitted SAN
-/// validation entirely — inverting which of the two a contributor would treat
+/// validation entirely - inverting which of the two a contributor would treat
 /// as settled. The thread is the record: read it before building. (Since
-/// v2.161.0 a stack's ACME certificate IS renewed on a schedule — the panel's
-/// `security_scanner::renew_stack_certificate` drives it — so the suppression
+/// v2.161.0 a stack's ACME certificate IS renewed on a schedule - the panel's
+/// `security_scanner::renew_stack_certificate` drives it - so the suppression
 /// this paragraph calls unbuilt now has something real to suppress. The
 /// registry root still sits outside every renewal path by construction, see
 /// `ssl::SSL_REGISTRY_DIR`, and the panel-side guard declines any stack whose
@@ -337,7 +337,7 @@ async fn expose_domain(
     use_traefik: bool,
     response: &mut serde_json::Value,
 ) {
-    // Held for the full duration — this writes the same `nginx::vhost_target`
+    // Held for the full duration - this writes the same `nginx::vhost_target`
     // path `ssl::enable_ssl_for_site` and `unexpose_domain` also write/delete,
     // with no coordination before this fix. See site_lock's module doc.
     let _guard = crate::site_lock::lock_site(domain).await;
@@ -347,7 +347,7 @@ async fn expose_domain(
         if let TlsIntent::Provided { alias } = tls {
             // Traefik's file provider has no per-route certificate form the
             // agent writes, so a registered certificate cannot reach it. Refuse
-            // in words and write nothing — a route silently written without
+            // in words and write nothing - a route silently written without
             // TLS would be the HSTS outage above, one proxy over.
             tracing::warn!("Auto-proxy (Traefik): {domain} asked for registered certificate {alias}, which only nginx can serve");
             response["proxy_warning"] = serde_json::json!(
@@ -380,7 +380,7 @@ async fn expose_domain(
     // This arm runs BEFORE the HTTP-first write below and never reaches it. The
     // HTTP-first write is what strips the `:443` block from behind a year of
     // HSTS, so a provided domain is either rendered with its certificate or
-    // left exactly as it was — never rewritten to plain HTTP and never handed
+    // left exactly as it was - never rewritten to plain HTTP and never handed
     // to the ACME path.
     if let TlsIntent::Provided { alias } = tls {
         let (cert_path, key_path) = ssl::registry_paths(alias);
@@ -411,7 +411,7 @@ async fn expose_domain(
             return;
         }
         // Rendered through the ordinary renderer with the registry paths named
-        // outright — NOT through `enable_ssl_for_site`, which hardcodes the
+        // outright - NOT through `enable_ssl_for_site`, which hardcodes the
         // per-domain tree and would point the vhost at a directory this
         // certificate is deliberately not in.
         let mut site_config = proxy_site_config(port);
@@ -446,8 +446,8 @@ async fn expose_domain(
                 "{domain} is disabled, so the proxy configuration was saved but is not \
                  serving. Enable the site to bring it up."
             ));
-            // The certificate IS bound — the parked body carries it and serves it
-            // the moment the site is enabled — so this is not a refused TLS leg,
+            // The certificate IS bound - the parked body carries it and serves it
+            // the moment the site is enabled - so this is not a refused TLS leg,
             // and the panel must not read it as one.
             response["domain"] = serde_json::json!(domain);
             response["ssl"] = serde_json::json!(true);
@@ -591,7 +591,7 @@ async fn expose_domain(
                 continue;
             }
             Err(e) => {
-                tracing::warn!("DNS not propagated for {}: {} — trying SSL anyway", domain, e);
+                tracing::warn!("DNS not propagated for {}: {} - trying SSL anyway", domain, e);
                 break;
             }
         }
@@ -608,7 +608,7 @@ async fn expose_domain(
                     Err(e) => {
                         tracing::warn!("Auto-SSL: enable_ssl_for_site failed for {domain}: {e}");
                         response["ssl_warning"] =
-                            serde_json::json!(format!("SSL enable failed: {e} — retry from panel"));
+                            serde_json::json!(format!("SSL enable failed: {e} - retry from panel"));
                         response["ssl_pending"] = serde_json::json!(true);
                     }
                 }
@@ -616,20 +616,20 @@ async fn expose_domain(
             Err(e) => {
                 tracing::warn!("Auto-SSL: cert provisioning failed for {domain}: {e}");
                 response["ssl_warning"] =
-                    serde_json::json!(format!("SSL provisioning failed: {e} — retry from panel"));
+                    serde_json::json!(format!("SSL provisioning failed: {e} - retry from panel"));
                 response["ssl_pending"] = serde_json::json!(true);
             }
         },
         Err(e) => {
             tracing::warn!("Auto-SSL: ACME account failed: {e}");
             response["ssl_warning"] =
-                serde_json::json!(format!("ACME account failed: {e} — retry from panel"));
+                serde_json::json!(format!("ACME account failed: {e} - retry from panel"));
             response["ssl_pending"] = serde_json::json!(true);
         }
     }
 }
 
-/// Take a domain back down: remove the vhost, the certificates and the logs —
+/// Take a domain back down: remove the vhost, the certificates and the logs -
 /// but only the ones that can still be proved to belong to the caller.
 ///
 /// Every delete here is conditional on the resource saying so. Before v2.53.0
@@ -638,7 +638,7 @@ async fn expose_domain(
 /// with the Compose-stack teardown so a stack cannot grow a second, unguarded
 /// copy of the same deletes.
 async fn unexpose_domain(domain: &str, host_port: Option<u16>, response: &mut serde_json::Value) {
-    // Held for the full duration — see expose_domain's matching guard and
+    // Held for the full duration - see expose_domain's matching guard and
     // site_lock's module doc for why removal must not interleave with a
     // concurrent expose/update on the same domain.
     let _guard = crate::site_lock::lock_site(domain).await;
@@ -647,7 +647,7 @@ async fn unexpose_domain(domain: &str, host_port: Option<u16>, response: &mut se
     // leg inside checks ownership itself.
     traefik::remove_route_config(domain);
 
-    // Remove nginx config — only if it is still fronting THIS container.
+    // Remove nginx config - only if it is still fronting THIS container.
     // The vhost is rendered from the same template a site's is, so the only
     // thing in it identifying the app is the `proxy_pass` to the port the
     // container published.
@@ -657,7 +657,7 @@ async fn unexpose_domain(domain: &str, host_port: Option<u16>, response: &mut se
     // `vhost_target` picks (a disabled domain's write goes to the parked
     // path, invisible to nginx), so removing only the live path stranded the
     // parked file for good on a removed app whose domain happened to be
-    // disabled at the time — the domain became permanently unreclaimable, and
+    // disabled at the time - the domain became permanently unreclaimable, and
     // silently: `is_valid_domain` sees no vhost and no error, and a
     // re-deploy under the same domain would find the STALE parked body
     // sitting there ready to be restored by a future enable. Same ownership
@@ -674,7 +674,7 @@ async fn unexpose_domain(domain: &str, host_port: Option<u16>, response: &mut se
             std::fs::remove_file(config_path).ok();
             removed_vhost = true;
             // The parked file is never read by nginx (that is its entire
-            // purpose), so removing it owes no reload — only the live path
+            // purpose), so removing it owes no reload - only the live path
             // going away needs nginx told.
             if is_live {
                 if let Err(e) = nginx::reload().await {
@@ -684,7 +684,7 @@ async fn unexpose_domain(domain: &str, host_port: Option<u16>, response: &mut se
             tracing::info!("Auto-proxy cleanup: removed nginx config for {domain} ({config_path})");
         } else {
             tracing::warn!(
-                "Auto-proxy cleanup: LEAVING {config_path} in place — it does not \
+                "Auto-proxy cleanup: LEAVING {config_path} in place - it does not \
                  proxy to this container's port. Another site or app now serves \
                  {domain}; removing this app must not take it down."
             );
@@ -698,21 +698,21 @@ async fn unexpose_domain(domain: &str, host_port: Option<u16>, response: &mut se
     // provisioned once under the zone apex and SHARED by every site in the
     // zone, so this directory is not necessarily this app's to delete.
     //
-    // Also gated on `removed_vhost`, not just `cert_dir_in_use_elsewhere` — a
+    // Also gated on `removed_vhost`, not just `cert_dir_in_use_elsewhere` - a
     // STOPPED (parked) container reports no port in Docker's live listing, so
     // the vhost check above cannot prove ownership and correctly leaves the
     // vhost standing; `cert_dir_in_use_elsewhere` explicitly excludes that
     // same still-standing vhost when it scans for other references (a solo
     // domain's own vhost never counts as "in use elsewhere"), so without this
     // gate the certificate files were deleted out from under a vhost that
-    // still named them — breaking `nginx -t` for the WHOLE server at the next
+    // still named them - breaking `nginx -t` for the WHOLE server at the next
     // reload for any reason. Only delete the certs when the vhost naming them
     // was ALSO just removed this call, matching the log-removal gate below.
     let ssl_dir = format!("/etc/dockpanel/ssl/{domain}");
     if removed_vhost && std::path::Path::new(&ssl_dir).exists() {
         if ownership::cert_dir_in_use_elsewhere(domain) {
             tracing::warn!(
-                "SSL cleanup: LEAVING {ssl_dir} in place — another vhost still \
+                "SSL cleanup: LEAVING {ssl_dir} in place - another vhost still \
                  points at it. Deleting it would break that site at the next \
                  nginx reload."
             );
@@ -722,7 +722,7 @@ async fn unexpose_domain(domain: &str, host_port: Option<u16>, response: &mut se
         }
     } else if std::path::Path::new(&ssl_dir).exists() {
         tracing::warn!(
-            "SSL cleanup: LEAVING {ssl_dir} in place — its vhost was not removed \
+            "SSL cleanup: LEAVING {ssl_dir} in place - its vhost was not removed \
              this call (often a stopped/parked container, whose port Docker no \
              longer reports), so deleting the certs would orphan a vhost that \
              still names them."
@@ -730,8 +730,8 @@ async fn unexpose_domain(domain: &str, host_port: Option<u16>, response: &mut se
     }
 
     // Let's Encrypt is NOT the panel's namespace and this code never had any
-    // business in it. Neither tree issues through certbot — provisioning is
-    // instant_acme into /etc/dockpanel/ssl above — so every lineage this
+    // business in it. Neither tree issues through certbot - provisioning is
+    // instant_acme into /etc/dockpanel/ssl above - so every lineage this
     // could reach was created by the operator, out of band. Deleting
     // live/ + archive/ + renewal/ destroyed the certificate, its whole
     // history, and the automation that would have renewed it, for a
@@ -740,9 +740,9 @@ async fn unexpose_domain(domain: &str, host_port: Option<u16>, response: &mut se
     // Postfix and Dovecot are pointed at (`routes/mail.rs`
     // `panel_tls_paths`), whose documented fallback is the distro snakeoil.
     // There is no marker distinguishing a panel-era lineage from an
-    // operator's, so there is no safe narrowing — the delete is gone.
+    // operator's, so there is no safe narrowing - the delete is gone.
 
-    // Remove nginx logs — only ours to remove if the vhost was ours. When
+    // Remove nginx logs - only ours to remove if the vhost was ours. When
     // another site now serves this domain, these are that site's logs.
     if removed_vhost {
         let access_log = format!("/var/log/nginx/{domain}.access.log");
@@ -752,7 +752,7 @@ async fn unexpose_domain(domain: &str, host_port: Option<u16>, response: &mut se
     }
 }
 
-/// GET /apps — List all deployed apps.
+/// GET /apps - List all deployed apps.
 async fn list() -> Result<Json<Vec<docker_apps::DeployedApp>>, (StatusCode, Json<serde_json::Value>)>
 {
     let apps = docker_apps::list_deployed_apps().await.map_err(|e| {
@@ -765,7 +765,7 @@ async fn list() -> Result<Json<Vec<docker_apps::DeployedApp>>, (StatusCode, Json
     Ok(Json(apps))
 }
 
-/// POST /apps/{container_id}/stop — Stop a running app.
+/// POST /apps/{container_id}/stop - Stop a running app.
 async fn stop(
     Path(container_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
@@ -789,7 +789,7 @@ async fn stop(
     Ok(Json(serde_json::json!({ "success": true })))
 }
 
-/// POST /apps/{container_id}/start — Start a stopped app.
+/// POST /apps/{container_id}/start - Start a stopped app.
 async fn start(
     Path(container_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
@@ -813,7 +813,7 @@ async fn start(
     Ok(Json(serde_json::json!({ "success": true })))
 }
 
-/// POST /apps/{container_id}/restart — Restart an app.
+/// POST /apps/{container_id}/restart - Restart an app.
 async fn restart(
     Path(container_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
@@ -837,7 +837,7 @@ async fn restart(
     Ok(Json(serde_json::json!({ "success": true })))
 }
 
-/// GET /apps/{container_id}/logs — Get app container logs.
+/// GET /apps/{container_id}/logs - Get app container logs.
 async fn logs(
     Path(container_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
@@ -861,7 +861,7 @@ async fn logs(
     Ok(Json(serde_json::json!({ "logs": output })))
 }
 
-/// POST /apps/{container_id}/update — Pull latest image and recreate container.
+/// POST /apps/{container_id}/update - Pull latest image and recreate container.
 /// Uses blue-green deployment (zero-downtime) when the app has a domain with nginx reverse proxy.
 async fn update(
     Path(container_id): Path<String>,
@@ -877,7 +877,7 @@ async fn update(
     // Spawned onto its own task: a dropped connection (the caller is itself a
     // spawned backend task relaying a browser request through a Cloudflare
     // edge with a ~100s origin budget) must not cancel this future mid-recreate
-    // — between `remove_container` and `create_container` the app has no
+    // - between `remove_container` and `create_container` the app has no
     // container at all, only its bind-mounted data survives.
     let cid = container_id.clone();
     let result = tokio::spawn(async move { docker_apps::update_app(&cid).await })
@@ -904,7 +904,7 @@ async fn update(
     })))
 }
 
-/// GET /apps/{container_id}/env — Get container environment variables.
+/// GET /apps/{container_id}/env - Get container environment variables.
 async fn get_env(
     Path(container_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
@@ -925,12 +925,12 @@ async fn get_env(
             )
         })?;
 
-    // Sensitive env var name patterns — mask values containing these substrings.
+    // Sensitive env var name patterns - mask values containing these substrings.
     //
     // Substring and not a whole token, deliberately: an unknown key is safer
     // over-masked than under-masked, and `APIKEY` has no separator to anchor on.
     // The cost of that choice is paid by `catalogue_non_secret_env`, which
-    // exempts the names our OWN templates declare non-secret — otherwise
+    // exempts the names our OWN templates declare non-secret - otherwise
     // `KEYCLOAK_ADMIN`, `NEXTAUTH_URL` and `AUTHENTIK_POSTGRESQL__HOST` all read
     // as `********`.
     const SENSITIVE_PATTERNS: &[&str] = &[
@@ -961,7 +961,7 @@ struct UpdateEnvRequest {
     env: HashMap<String, String>,
 }
 
-/// PUT /apps/{container_id}/env — Update environment variables and recreate container.
+/// PUT /apps/{container_id}/env - Update environment variables and recreate container.
 async fn update_env(
     Path(container_id): Path<String>,
     Json(body): Json<UpdateEnvRequest>,
@@ -996,7 +996,7 @@ async fn update_env(
     Ok(Json(serde_json::json!({ "success": true, "container_id": new_id })))
 }
 
-/// GET /apps/{container_id}/stats — Get live resource usage for a container.
+/// GET /apps/{container_id}/stats - Get live resource usage for a container.
 async fn container_stats(
     Path(container_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
@@ -1036,7 +1036,7 @@ async fn container_stats(
     }
 }
 
-/// GET /apps/{container_id}/shell-info — Get shell availability for a container.
+/// GET /apps/{container_id}/shell-info - Get shell availability for a container.
 async fn shell_info(
     Path(container_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
@@ -1089,7 +1089,7 @@ async fn shell_info(
     })))
 }
 
-/// POST /apps/{container_id}/exec — Execute a command inside a container.
+/// POST /apps/{container_id}/exec - Execute a command inside a container.
 async fn exec_command(
     Path(container_id): Path<String>,
     Json(body): Json<serde_json::Value>,
@@ -1158,7 +1158,7 @@ async fn exec_command(
     })))
 }
 
-/// GET /apps/{container_id}/volumes — Get volume info and sizes.
+/// GET /apps/{container_id}/volumes - Get volume info and sizes.
 async fn container_volumes(
     Path(container_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
@@ -1252,7 +1252,7 @@ struct RegistryLoginRequest {
     password: String,
 }
 
-/// POST /apps/registry-login — Login to a private Docker registry.
+/// POST /apps/registry-login - Login to a private Docker registry.
 async fn registry_login(
     Json(body): Json<RegistryLoginRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
@@ -1319,10 +1319,10 @@ async fn registry_login(
     }
 }
 
-/// GET /apps/registries — List configured registries.
+/// GET /apps/registries - List configured registries.
 async fn list_registries() -> Json<serde_json::Value> {
     // `docker login` (above) runs through `safe_command`, which points
-    // `DOCKER_CONFIG` at this dir — `/root/.docker/config.json` is never
+    // `DOCKER_CONFIG` at this dir - `/root/.docker/config.json` is never
     // written by any panel-initiated login, so reading it here always
     // reported "no registries configured" regardless of what was logged in.
     let config_path = format!("{}/config.json", crate::safe_cmd::DOCKER_CONFIG_DIR);
@@ -1338,7 +1338,7 @@ async fn list_registries() -> Json<serde_json::Value> {
     Json(serde_json::json!({ "registries": servers }))
 }
 
-/// POST /apps/registry-logout — Logout from a registry.
+/// POST /apps/registry-logout - Logout from a registry.
 async fn registry_logout(
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
@@ -1368,7 +1368,7 @@ async fn registry_logout(
     Ok(Json(serde_json::json!({ "success": true })))
 }
 
-/// DELETE /apps/{container_id} — Remove a deployed app and clean up its proxy.
+/// DELETE /apps/{container_id} - Remove a deployed app and clean up its proxy.
 async fn remove(
     Path(container_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
@@ -1401,7 +1401,7 @@ async fn remove(
     // Clean up proxy config (nginx + Traefik) + SSL certs if domain was set.
     //
     // Every delete here is now conditional on the resource saying it belongs to
-    // this app. Before, all of them fired on the label alone — so removing an
+    // this app. Before, all of them fired on the label alone - so removing an
     // app whose domain a site had since taken over destroyed the SITE's vhost,
     // certificates and logs, and nothing said so.
     if let Some(ref domain) = domain {
@@ -1409,14 +1409,14 @@ async fn remove(
         unexpose_domain(domain, identity.host_port, &mut response).await;
     }
 
-    // Clean up persistent volume data — only when this container actually
+    // Clean up persistent volume data - only when this container actually
     // bind-mounts out of that directory. The name label is not proof: a compose
     // service carries a caller-supplied `container_name` in the same label while
     // its own data lives under /var/lib/dockpanel/compose, so removing it used
     // to delete the identically-named template app's entire data tree.
     // The directory comes from the container's OWN binds, never from its name label.
     // Rebuilding it from the label missed anything the v2.111.0-v2.113.3 migration had
-    // moved — that wrote under a directory named for the CONTAINER — so a migrated app's
+    // moved - that wrote under a directory named for the CONTAINER - so a migrated app's
     // data survived its own deletion, and silently: the label-derived path did not exist,
     // so even the warning below never printed.
     match (identity.app_dir.as_ref(), identity.name.as_ref()) {
@@ -1428,7 +1428,7 @@ async fn remove(
             let label_dir = format!("{}/{}", docker_apps::APP_DATA_DIR, name);
             if std::path::Path::new(&label_dir).exists() {
                 tracing::warn!(
-                    "Volume cleanup: LEAVING {label_dir} in place — this container \
+                    "Volume cleanup: LEAVING {label_dir} in place - this container \
                      had no bind mount under it, so the directory belongs to a \
                      different app."
                 );
@@ -1459,7 +1459,7 @@ struct ComposeParseRequest {
     expose_port: Option<u16>,
 }
 
-/// POST /apps/compose/parse — Parse docker-compose.yml and return services preview.
+/// POST /apps/compose/parse - Parse docker-compose.yml and return services preview.
 async fn compose_parse(
     Json(body): Json<ComposeParseRequest>,
 ) -> Result<Json<Vec<compose::ComposeService>>, (StatusCode, Json<serde_json::Value>)> {
@@ -1473,7 +1473,7 @@ async fn compose_parse(
     Ok(Json(services))
 }
 
-/// POST /apps/compose/validate — Validate compose YAML with detailed feedback.
+/// POST /apps/compose/validate - Validate compose YAML with detailed feedback.
 async fn compose_validate(
     Json(body): Json<ComposeParseRequest>,
 ) -> Json<serde_json::Value> {
@@ -1493,7 +1493,7 @@ async fn compose_validate(
                 if svc.image.ends_with(":latest") || !svc.image.contains(':') {
                     warnings.push(serde_json::json!({
                         "service": svc.key,
-                        "message": "Using ':latest' tag — pin to a specific version for reproducible deploys",
+                        "message": "Using ':latest' tag - pin to a specific version for reproducible deploys",
                     }));
                 }
 
@@ -1502,7 +1502,7 @@ async fn compose_validate(
                     if port.host < 1024 && port.host != 80 && port.host != 443 {
                         warnings.push(serde_json::json!({
                             "service": svc.key,
-                            "message": format!("Privileged port {} — consider using a higher port", port.host),
+                            "message": format!("Privileged port {} - consider using a higher port", port.host),
                         }));
                     }
                 }
@@ -1512,7 +1512,7 @@ async fn compose_validate(
                 if db_images.iter().any(|db| svc.image.contains(db)) && svc.volumes.is_empty() {
                     warnings.push(serde_json::json!({
                         "service": svc.key,
-                        "message": "Database service without volumes — data will be lost on container restart",
+                        "message": "Database service without volumes - data will be lost on container restart",
                     }));
                 }
 
@@ -1520,7 +1520,7 @@ async fn compose_validate(
                 if svc.restart.is_empty() || svc.restart == "no" {
                     info.push(serde_json::json!({
                         "service": svc.key,
-                        "message": "No restart policy — container won't auto-restart. Consider 'unless-stopped'",
+                        "message": "No restart policy - container won't auto-restart. Consider 'unless-stopped'",
                     }));
                 }
 
@@ -1528,30 +1528,30 @@ async fn compose_validate(
                 if svc.environment.is_empty() && db_images.iter().any(|db| svc.image.contains(db)) {
                     warnings.push(serde_json::json!({
                         "service": svc.key,
-                        "message": "Database without environment variables — password/root may use defaults",
+                        "message": "Database without environment variables - password/root may use defaults",
                     }));
                 }
 
-                // This deployer has no field for user/healthcheck/entrypoint —
+                // This deployer has no field for user/healthcheck/entrypoint -
                 // saying "valid" over a compose file that declares one would
                 // silently drop a directive the author wrote and expects
                 // honoured. [[project_dockpanel_tech_debt_p185]] carry I.
                 if svc.user_ignored {
                     warnings.push(serde_json::json!({
                         "service": svc.key,
-                        "message": "'user:' is not supported and will be ignored — the image's own default user runs this container",
+                        "message": "'user:' is not supported and will be ignored - the image's own default user runs this container",
                     }));
                 }
                 if svc.healthcheck_ignored {
                     warnings.push(serde_json::json!({
                         "service": svc.key,
-                        "message": "'healthcheck:' is not supported and will be ignored — Docker's own healthcheck state will not reflect it",
+                        "message": "'healthcheck:' is not supported and will be ignored - Docker's own healthcheck state will not reflect it",
                     }));
                 }
                 if svc.entrypoint_ignored {
                     warnings.push(serde_json::json!({
                         "service": svc.key,
-                        "message": "'entrypoint:' is not supported and will be ignored — the image's own ENTRYPOINT runs unchanged",
+                        "message": "'entrypoint:' is not supported and will be ignored - the image's own ENTRYPOINT runs unchanged",
                     }));
                 }
             }
@@ -1566,7 +1566,7 @@ async fn compose_validate(
     // YAML syntax check
     if body.yaml.contains('\t') {
         warnings.push(serde_json::json!({
-            "message": "YAML contains tabs — use spaces for indentation to avoid parse errors",
+            "message": "YAML contains tabs - use spaces for indentation to avoid parse errors",
         }));
     }
 
@@ -1578,7 +1578,7 @@ async fn compose_validate(
     }))
 }
 
-/// POST /apps/compose/deploy — Deploy services from parsed compose file,
+/// POST /apps/compose/deploy - Deploy services from parsed compose file,
 /// optionally behind a domain with a certificate.
 async fn compose_deploy(
     State(state): State<AppState>,
@@ -1604,7 +1604,7 @@ async fn compose_deploy(
     // below: a request the agent cannot honour is refused BEFORE any container
     // runs, not reported as a warning beside a running one.
     // Compose stacks have no `use_traefik` field of their own (matching the
-    // literal `false` this handler already passes to `expose_domain` below) —
+    // literal `false` this handler already passes to `expose_domain` below) -
     // a stack can never be Traefik-routed, so this is always the nginx arm.
     let tls = TlsIntent::from_request(
         body.tls_mode.as_deref(),
@@ -1675,7 +1675,7 @@ struct StackActionRequest {
     domain: Option<String>,
 }
 
-/// POST /apps/stack/action — Perform a lifecycle action on all containers in a stack.
+/// POST /apps/stack/action - Perform a lifecycle action on all containers in a stack.
 async fn stack_action(
     Json(body): Json<StackActionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
@@ -1706,10 +1706,10 @@ async fn stack_action(
         ));
     }
 
-    // Read the published port while the containers still exist — it is what
+    // Read the published port while the containers still exist - it is what
     // proves the vhost is this stack's before anything deletes it. Sourced
     // from `inspect_container`'s HostConfig (via `inspect_host_port`), the
-    // same primitive `removal_identity` already uses for single-app removal —
+    // same primitive `removal_identity` already uses for single-app removal -
     // NOT `DeployedApp.port` (`stack_containers`' own field), which reflects
     // Docker's LIVE container listing and reads empty the moment a stack is
     // stopped ("parked"), permanently stranding its vhost and certificate the
@@ -1755,7 +1755,7 @@ async fn stack_action(
         // is ours.
         compose::remove_stack_network(Some(&body.stack_id)).await;
 
-        // And the vhost, certificates and logs — through the same guarded
+        // And the vhost, certificates and logs - through the same guarded
         // teardown an app removal uses, so a stack cannot delete a domain that
         // has since been taken over by a site.
         if let Some(ref domain) = body.domain {
@@ -1769,7 +1769,7 @@ async fn stack_action(
     Ok(Json(response))
 }
 
-/// GET /apps/images — List Docker images.
+/// GET /apps/images - List Docker images.
 async fn list_images() -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let output = tokio::time::timeout(
         std::time::Duration::from_secs(30),
@@ -1795,17 +1795,17 @@ async fn list_images() -> Result<Json<serde_json::Value>, (StatusCode, Json<serd
     Ok(Json(serde_json::json!({ "images": images })))
 }
 
-/// POST /apps/images/prune — Remove unused Docker images.
+/// POST /apps/images/prune - Remove unused Docker images.
 ///
 /// Deliberately NOT `-a`: `-a` widens the sweep from dangling (untagged)
 /// images to every image not backing a running container, which reaches
 /// git-deploy rollback targets (`dockpanel-git-<name>:<hash>`, kept for
 /// `deploy_or_update`'s rollback path with no pull fallback) and manual
-/// snapshots (`dockpanel-snapshot:*`) — neither can be re-pulled from a
+/// snapshots (`dockpanel-snapshot:*`) - neither can be re-pulled from a
 /// registry. Mirrors the scoped reclaim's own C4 rule
 /// (`diagnostics.rs`'s `docker-reclaim` arm, `tests/unattended-host-scope-
 /// pin-e2e.sh` §C4): the label filter is defense in depth for a dangling
-/// image that happens to carry the label, not what makes this safe — the
+/// image that happens to carry the label, not what makes this safe - the
 /// dropped `-a` is.
 async fn prune_images_all() -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let output = tokio::time::timeout(
@@ -1821,10 +1821,10 @@ async fn prune_images_all() -> Result<Json<serde_json::Value>, (StatusCode, Json
     Ok(Json(serde_json::json!({ "success": true, "output": stdout.trim() })))
 }
 
-/// DELETE /apps/images/{id} — Remove a specific Docker image.
+/// DELETE /apps/images/{id} - Remove a specific Docker image.
 async fn remove_image(Path(id): Path<String>) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     // Validate image ID: alphanumeric + : / . - _ only, and never a leading
-    // dash — the charset alone still allows a string like "--help", which
+    // dash - the charset alone still allows a string like "--help", which
     // `docker rmi` reads as a flag rather than a reference and exits 0.
     let is_valid = !id.is_empty()
         && id.len() <= 256
@@ -1856,7 +1856,7 @@ struct SnapshotRequest {
     tag: Option<String>,
 }
 
-/// POST /apps/{container_id}/snapshot — Commit container to image.
+/// POST /apps/{container_id}/snapshot - Commit container to image.
 async fn snapshot_container(
     Path(container_id): Path<String>,
     Json(body): Json<SnapshotRequest>,
@@ -1920,10 +1920,10 @@ fn is_valid_image_ref(image: &str) -> bool {
         && !image.starts_with('-')
 }
 
-/// POST /apps/{container_id}/change-image — Change a container's image tag.
+/// POST /apps/{container_id}/change-image - Change a container's image tag.
 /// Recreates the container with the new image while PRESERVING its full runtime config
 /// (caps, security_opt, port bindings, restart, resource limits, GPU, labels, env, volumes)
-/// via `docker_apps::change_container_image` — see that fn for the s237 rationale.
+/// via `docker_apps::change_container_image` - see that fn for the s237 rationale.
 async fn change_image(
     Path(container_id): Path<String>,
     Json(body): Json<serde_json::Value>,
@@ -1959,7 +1959,7 @@ async fn change_image(
     })))
 }
 
-/// POST /apps/{container_id}/update-limits — Update CPU/memory limits on a running container.
+/// POST /apps/{container_id}/update-limits - Update CPU/memory limits on a running container.
 async fn update_container_limits(
     Path(container_id): Path<String>,
     Json(body): Json<serde_json::Value>,
@@ -2010,7 +2010,7 @@ async fn update_container_limits(
     })))
 }
 
-/// GET /apps/update-check — Check all managed containers for available image updates.
+/// GET /apps/update-check - Check all managed containers for available image updates.
 async fn update_check() -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     match docker_apps::check_image_updates().await {
         Ok(results) => {
@@ -2062,7 +2062,7 @@ pub fn router() -> Router<AppState> {
 
 // ─── Ollama Model Management ────────────────────────────────────────────
 
-/// GET /apps/{container_id}/ollama/models — List models installed in an Ollama container.
+/// GET /apps/{container_id}/ollama/models - List models installed in an Ollama container.
 async fn ollama_list_models(
     Path(container_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
@@ -2105,7 +2105,7 @@ async fn ollama_list_models(
     Ok(Json(serde_json::json!({ "models": models })))
 }
 
-/// POST /apps/{container_id}/ollama/pull — Pull a model into an Ollama container.
+/// POST /apps/{container_id}/ollama/pull - Pull a model into an Ollama container.
 async fn ollama_pull_model(
     Path(container_id): Path<String>,
     Json(body): Json<serde_json::Value>,
@@ -2125,7 +2125,7 @@ async fn ollama_pull_model(
         return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "Invalid model name characters" }))));
     }
 
-    // ollama pull can take a long time for large models — 10 minute timeout
+    // ollama pull can take a long time for large models - 10 minute timeout
     let output = tokio::time::timeout(
         std::time::Duration::from_secs(600),
         safe_command("docker")
@@ -2146,7 +2146,7 @@ async fn ollama_pull_model(
     })))
 }
 
-/// POST /apps/{container_id}/ollama/delete — Remove a model from an Ollama container.
+/// POST /apps/{container_id}/ollama/delete - Remove a model from an Ollama container.
 async fn ollama_delete_model(
     Path(container_id): Path<String>,
     Json(body): Json<serde_json::Value>,
@@ -2180,7 +2180,7 @@ async fn ollama_delete_model(
     })))
 }
 
-/// GET /apps/gpu-info — Full GPU monitoring: utilization, VRAM, temperature, power, per-process usage.
+/// GET /apps/gpu-info - Full GPU monitoring: utilization, VRAM, temperature, power, per-process usage.
 async fn gpu_info() -> Json<serde_json::Value> {
     // Query comprehensive GPU metrics in one call
     let output = tokio::time::timeout(
@@ -2210,7 +2210,7 @@ async fn gpu_info() -> Json<serde_json::Value> {
 
     let stdout = String::from_utf8_lossy(&gpu_out.stdout);
     let gpus: Vec<serde_json::Value> = stdout.lines().filter(|l| !l.trim().is_empty()).map(|line| {
-        // Split on ", " — GPU names can theoretically contain commas, so we parse
+        // Split on ", " - GPU names can theoretically contain commas, so we parse
         // index (first field) and the 11 numeric/string fields from the right,
         // treating everything in between as the GPU name.
         let p: Vec<&str> = line.split(", ").collect();
@@ -2370,7 +2370,7 @@ mod tls_intent_tests {
         assert!(TlsIntent::from_request(Some("letsencrypt"), Some("x@y.z"), None, false).is_err());
     }
 
-    /// Traefik's file provider has no per-route certificate form — refused at
+    /// Traefik's file provider has no per-route certificate form - refused at
     /// the front door now, before `deploy_app` ever creates a container,
     /// rather than discovered afterward inside `expose_domain`'s Traefik
     /// branch (a running container plus a warning, the exact outcome this
@@ -2378,7 +2378,7 @@ mod tls_intent_tests {
     #[test]
     fn provided_mode_is_refused_through_traefik_before_any_container_exists() {
         assert!(TlsIntent::from_request(Some("provided"), None, Some("wildcard-2026"), true).is_err());
-        // The control: the identical alias, nginx-routed, still succeeds — this
+        // The control: the identical alias, nginx-routed, still succeeds - this
         // is a Traefik-specific refusal, not a blanket break of "provided".
         assert_eq!(
             TlsIntent::from_request(Some("provided"), None, Some("wildcard-2026"), false),

@@ -21,7 +21,7 @@ pub struct LogoUploadResponse {
     pub logo_url: String,
 }
 
-/// POST /api/branding/logo — Admin-only image upload.
+/// POST /api/branding/logo - Admin-only image upload.
 ///
 /// Body: raw image bytes. Header `Content-Type` must be one of the allowed
 /// types. Magic bytes are also checked so a malicious caller can't just send
@@ -103,7 +103,7 @@ pub async fn upload_logo(
     Ok(Json(LogoUploadResponse { logo_url }))
 }
 
-/// GET /api/branding/logo/{filename} — Public read of an uploaded branding logo.
+/// GET /api/branding/logo/{filename} - Public read of an uploaded branding logo.
 /// No auth: the login page (which is unauthenticated) needs to be able to render
 /// the logo via `<img src="/api/branding/logo/...">`. The filename is restricted
 /// to the `logo-<hash>.<ext>` shape, so attackers cannot path-traverse.

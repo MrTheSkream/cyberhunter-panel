@@ -1,15 +1,15 @@
 /**
- * The DockPanel mark.
+ * The CyberHunter - Panel mark.
  *
  * There were two marks before this, which is one too many: the header used a
- * lucide `Server` glyph inside a white rounded square — a stock icon in the
- * default container — while the favicon was a different drawing entirely
+ * lucide `Server` glyph inside a white rounded square - a stock icon in the
+ * default container - while the favicon was a different drawing entirely
  * (green ground, three rules, two status squares). Neither was used on the
  * other's surface, so the product had no consistent identity anywhere.
  *
  * This one is drawn from the page's own vocabulary rather than from an icon
  * set. The block is the terminal cursor the install animation already blinks,
- * and the notch cut out of it is a rack unit seen end-on — the two things this
+ * and the notch cut out of it is a rack unit seen end-on - the two things this
  * product actually is, in one glyph. No enclosing chip: a mark that needs a
  * rounded square behind it to look intentional is not carrying its own weight.
  *
@@ -23,10 +23,10 @@ export function Logo({ className = 'h-6 w-6' }: { className?: string }) {
       viewBox="0 0 24 24"
       className={className}
       role="img"
-      aria-label="DockPanel"
+      aria-label="CyberHunter - Panel"
       fill="none"
     >
-      {/* The block. One solid form — the product is one file. */}
+      {/* The block. One solid form - the product is one file. */}
       <path
         d="M4 2h16v20H4z"
         fill="#43ef82"

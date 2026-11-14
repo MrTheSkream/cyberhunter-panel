@@ -25,7 +25,7 @@ use crate::AppState;
 /// `suspended` is included deliberately: a reseller must be able to delete an
 /// account the panel has suspended, and resetting the password of a suspended
 /// account changes a hash that cannot be used to sign in until an administrator
-/// restores the role — so including it grants no access the suspension withholds.
+/// restores the role - so including it grants no access the suspension withholds.
 const RESELLER_MANAGEABLE_ROLES: &[&str] = &["user", "client", "suspended"];
 
 #[derive(serde::Serialize)]
@@ -68,7 +68,7 @@ pub struct ResellerServerItem {
     pub ip_address: Option<String>,
 }
 
-/// GET /api/reseller/dashboard — Reseller dashboard data (quota usage + server count).
+/// GET /api/reseller/dashboard - Reseller dashboard data (quota usage + server count).
 pub async fn dashboard(
     State(state): State<AppState>,
     ResellerUser(claims): ResellerUser,
@@ -113,7 +113,7 @@ pub async fn dashboard(
     }))
 }
 
-/// GET /api/reseller/users — List users belonging to this reseller.
+/// GET /api/reseller/users - List users belonging to this reseller.
 pub async fn list_users(
     State(state): State<AppState>,
     ResellerUser(claims): ResellerUser,
@@ -144,7 +144,7 @@ pub async fn list_users(
     Ok(Json(users))
 }
 
-/// POST /api/reseller/users — Create a new user under this reseller.
+/// POST /api/reseller/users - Create a new user under this reseller.
 pub async fn create_user(
     State(state): State<AppState>,
     ResellerUser(claims): ResellerUser,
@@ -197,7 +197,7 @@ pub async fn create_user(
     // `email_verified` is TRUE for the same reason as the admin-side door: the
     // reseller types the address and the password, and this handler sends no mail at
     // all. Omitting the column left it FALSE with no `email_token`, so the account
-    // could never sign in once SMTP was configured and could never verify — and this
+    // could never sign in once SMTP was configured and could never verify - and this
     // path was the worse of the two, because the release valve added for #100
     // (`POST /api/security/users/{id}/verify-email`) takes `AdminUser`, so a reseller
     // could not free the client they had just created. They would have had to ask the
@@ -247,7 +247,7 @@ pub async fn create_user(
     ))
 }
 
-/// PUT /api/reseller/users/{id} — Update a reseller's user (password only).
+/// PUT /api/reseller/users/{id} - Update a reseller's user (password only).
 pub async fn update_user(
     State(state): State<AppState>,
     ResellerUser(claims): ResellerUser,
@@ -267,7 +267,7 @@ pub async fn update_user(
             // ⚠ `role = ANY(...)`, not `role = 'user'`, and NOT `role <> 'admin'`.
             //
             // `list_users` above scopes on `reseller_id` alone, so a reseller's
-            // table shows every account beneath them whatever its role — and it
+            // table shows every account beneath them whatever its role - and it
             // renders Reset Password and Delete on every row (`ResellerUsers.tsx`
             // has no role column at all). This predicate then resolved to `None`
             // for anything that was not exactly `user`, and the caller met
@@ -278,8 +278,8 @@ pub async fn update_user(
             // `docs/guides/roles-and-ownership.md` prescribes: setting an account's
             // role to Client (`users::ASSIGNABLE_ROLES` contains it) or suspending
             // it (which writes `role = 'suspended'`). `helpers.rs:235` and `:343`
-            // describe this exact mechanism — twice, as the reason an un-suspend
-            // must never guess a role — and the reseller side was never brought
+            // describe this exact mechanism - twice, as the reason an un-suspend
+            // must never guess a role - and the reseller side was never brought
             // into step with it.
             //
             // Enumerated rather than negated on purpose: a role added to
@@ -322,7 +322,7 @@ pub async fn update_user(
             .map_err(|e| internal_error("update user", e))?;
 
         // A password reset must evict the user's live token(s) (mirrors the admin
-        // users::reset_password fix) — otherwise a stolen session survives the reset.
+        // users::reset_password fix) - otherwise a stolen session survives the reset.
         crate::routes::auth::revoke_all_user_sessions(&state, id).await;
     }
 
@@ -358,7 +358,7 @@ pub async fn update_user(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// DELETE /api/reseller/users/{id} — Delete a user under this reseller.
+/// DELETE /api/reseller/users/{id} - Delete a user under this reseller.
 pub async fn delete_user(
     State(state): State<AppState>,
     ResellerUser(claims): ResellerUser,
@@ -381,7 +381,7 @@ pub async fn delete_user(
             .map_err(|e| internal_error("delete user", e))?
     } else {
         sqlx::query_as(
-            // Same predicate as `update_user` — see the note there. Kept as one
+            // Same predicate as `update_user` - see the note there. Kept as one
             // shared constant rather than two literals precisely because these two
             // drifted apart from `list_users` and nothing noticed.
             "SELECT id, email FROM users \
@@ -397,7 +397,7 @@ pub async fn delete_user(
 
     let user = user.ok_or_else(|| err(StatusCode::NOT_FOUND, "User not found"))?;
 
-    // Revoke the user's live token(s) before deletion — otherwise the stateless JWT
+    // Revoke the user's live token(s) before deletion - otherwise the stateless JWT
     // keeps authenticating as a now-nonexistent principal until it expires (mirrors
     // users::remove).
     crate::routes::auth::revoke_all_user_sessions(&state, id).await;
@@ -456,7 +456,7 @@ pub async fn delete_user(
     Ok(Json(serde_json::json!({ "ok": true, "email": user.1 })))
 }
 
-/// GET /api/reseller/servers — List servers allocated to this reseller.
+/// GET /api/reseller/servers - List servers allocated to this reseller.
 pub async fn list_servers(
     State(state): State<AppState>,
     ResellerUser(claims): ResellerUser,
@@ -496,7 +496,7 @@ async fn reserve_reseller_user_slot(state: &AppState, reseller_id: Uuid) -> Resu
     if reserved.is_some() {
         return Ok(());
     }
-    // 0 rows: profile missing OR quota exhausted — distinguish for the right error.
+    // 0 rows: profile missing OR quota exhausted - distinguish for the right error.
     let has_profile: Option<(Uuid,)> = sqlx::query_as(
         "SELECT user_id FROM reseller_profiles WHERE user_id = $1",
     )
@@ -506,7 +506,7 @@ async fn reserve_reseller_user_slot(state: &AppState, reseller_id: Uuid) -> Resu
     .map_err(|e| internal_error("reserve reseller user quota", e))?;
 
     if has_profile.is_some() {
-        Err(err(StatusCode::FORBIDDEN, "User quota exceeded — upgrade your reseller plan"))
+        Err(err(StatusCode::FORBIDDEN, "User quota exceeded - upgrade your reseller plan"))
     } else {
         Err(err(StatusCode::NOT_FOUND, "Reseller profile not found"))
     }

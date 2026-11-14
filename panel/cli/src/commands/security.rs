@@ -44,7 +44,7 @@ pub async fn cmd_security_scan(token: &str, output: &str) -> Result<(), String> 
     let findings = result["findings"].as_array().unwrap_or(&empty);
 
     // The agent's ScanResult carries only per-finding severities, no
-    // precomputed overall risk_level — derive it from the highest severity
+    // precomputed overall risk_level - derive it from the highest severity
     // among the findings actually returned. security_scanner.rs's only
     // severity values are "critical"/"warning"/"info" (checked in source).
     let risk_rank = |s: &str| match s {

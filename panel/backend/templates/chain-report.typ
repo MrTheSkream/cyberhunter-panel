@@ -1,12 +1,12 @@
-// DockPanel chain-of-trust report.
+// CyberHunter - Panel chain-of-trust report.
 // Compiled by services/chain_report.rs:render_chain_report_pdf via the typst
 // CLI. Reads its data from sys.inputs.data_path (a JSON file).
 
 #let data = json(sys.inputs.data_path)
 
 #set document(
-  title: "DockPanel Chain-of-Trust Report",
-  author: "DockPanel " + data.panel_version,
+  title: "CyberHunter - Panel Chain-of-Trust Report",
+  author: "CyberHunter - Panel " + data.panel_version,
 )
 #set page(
   paper: "us-letter",
@@ -16,7 +16,7 @@
   footer: context [
     #set text(size: 8pt, fill: rgb("#777"))
     #grid(columns: (1fr, 1fr),
-      align(left)[Generated #data.generated_at by DockPanel #data.panel_version],
+      align(left)[Generated #data.generated_at by CyberHunter - Panel #data.panel_version],
       align(right)[Page #counter(page).display() of #counter(page).final().first()],
     )
   ],
@@ -60,7 +60,7 @@
   else [#calc.round(n / 1024.0 / 1024.0 / 1024.0, digits: 2) GB]
 }
 
-#let duration_ms(ms) = if ms == none [—] else [#calc.round(ms / 1000.0, digits: 1) s]
+#let duration_ms(ms) = if ms == none [\-] else [#calc.round(ms / 1000.0, digits: 1) s]
 
 // ── Header ──────────────────────────────────────────────────────────────
 
@@ -69,7 +69,7 @@
 // `if …{}` here bound only the first branch and the `else if` lines below it were
 // re-lexed as a paragraph and PRINTED above the masthead. Wrapping the chain in a
 // code block makes newlines trivia, exactly as `humanbytes` and `status_pill` above
-// already do — they were never broken for that reason alone.
+// already do - they were never broken for that reason alone.
 #let kind_label = {
   if data.backup.kind == "site" { "Site" }
   else if data.backup.kind == "database" { "Database" }
@@ -78,7 +78,7 @@
 }
 
 #align(left)[
-  #text(size: 22pt, weight: "bold", fill: dp_brand)[DockPanel]
+  #text(size: 22pt, weight: "bold", fill: dp_brand)[CyberHunter - Panel]
   #h(0.5em)
   #text(size: 14pt, fill: dp_dim, weight: "regular")[Chain-of-Trust Report]
   #h(0.5em)
@@ -107,8 +107,8 @@
 
 #kv("Filename", mono(data.backup.filename))
 #kv("Size", humanbytes(data.backup.size_bytes))
-#kv("SHA-256", mono(if data.backup.sha256_hash != none { data.backup.sha256_hash } else { "—" }))
-#kv("Previous hash", mono(if data.backup.previous_hash != none { data.backup.previous_hash } else { "—" }))
+#kv("SHA-256", mono(if data.backup.sha256_hash != none { data.backup.sha256_hash } else { "-" }))
+#kv("Previous hash", mono(if data.backup.previous_hash != none { data.backup.previous_hash } else { "-" }))
 
 // ── Verifications ───────────────────────────────────────────────────────
 
@@ -136,7 +136,7 @@
       text(size: 8.5pt)[#v.checks_passed / #v.checks_run],
       text(size: 8.5pt)[#duration_ms(v.duration_ms)],
       text(size: 8.5pt, fill: if v.error_message != none { dp_fail } else { dp_dim })[
-        #if v.error_message != none { v.error_message } else { "—" }
+        #if v.error_message != none { v.error_message } else { "-" }
       ],
     )).flatten()
   )
@@ -165,13 +165,13 @@
     ..data.drills.map(d => (
       status_pill(d.status),
       text(size: 8.5pt)[#if d.started_at != none { d.started_at } else { d.created_at }],
-      text(size: 8.5pt)[#if d.http_status != none { str(d.http_status) } else { "—" }],
+      text(size: 8.5pt)[#if d.http_status != none { str(d.http_status) } else { "-" }],
       text(size: 8.5pt)[#duration_ms(d.duration_ms)],
       text(size: 8.5pt, fill: if d.error_message != none { dp_fail } else { dp_dim })[
         #{
           if d.error_message != none { d.error_message }
           else if d.body_excerpt != none { d.body_excerpt }
-          else { "—" }
+          else { "-" }
         }
       ],
     )).flatten()
@@ -191,7 +191,7 @@
   This report is a point-in-time snapshot of one #lower(kind_label) backup
   and its full verification + restore-drill history. Hashes are SHA-256 over
   the backup artifact bytes, recorded when the backup was taken and not
-  re-computed since — this document reports what was recorded, and does not
+  re-computed since - this document reports what was recorded, and does not
   itself attest that the stored artifact still matches its hash. Restore
   drills end-to-end probe a real restore into a scratch container.
 ]

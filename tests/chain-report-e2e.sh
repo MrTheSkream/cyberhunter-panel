@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# DockPanel Chain-of-Trust Report E2E Test Suite
+# CyberHunter - Panel Chain-of-Trust Report E2E Test Suite
 #
 # v2.8.1: site-only.
 # v2.8.2: extended to db + volume backups via the generic
@@ -34,7 +34,7 @@ psql_exec() {
 }
 
 echo "═══════════════════════════════════════════════"
-echo "  DockPanel Chain-of-Trust Report E2E Suite"
+echo "  CyberHunter - Panel Chain-of-Trust Report E2E Suite"
 echo "═══════════════════════════════════════════════"
 
 # ── Auth ──────────────────────────────────────────────────────────────────
@@ -74,7 +74,7 @@ fi
 AUTH=(-H "Authorization: Bearer $BEARER_TOKEN")
 BOGUS_UUID="00000000-0000-0000-0000-000000000000"
 
-# ── Auth gate (one kind covers the whole route — admin guard is shared) ──
+# ── Auth gate (one kind covers the whole route - admin guard is shared) ──
 sect "Authentication gate"
 
 UNAUTH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
@@ -100,7 +100,7 @@ fi
 # Run the same shape of checks for every kind so any regression on one
 # kind shows up immediately. Each kind discovers a real backup row from
 # its respective table; if there's no fixture, the JSON+PDF assertions
-# for that kind are skipped (counts as 7 skips, not failures — used by
+# for that kind are skipped (counts as 7 skips, not failures - used by
 # fresh-VPS runs where only one kind has been seeded).
 
 assert_kind() {
@@ -180,7 +180,7 @@ assert_kind() {
             red "$kind: PDF suspiciously small ($SIZE bytes)"
         fi
     elif [ "$PDF_STATUS" = "503" ]; then
-        skip "$kind: PDF returned 503 (typst install/compile failed — likely no outbound HTTPS or sha256 mismatch)"
+        skip "$kind: PDF returned 503 (typst install/compile failed - likely no outbound HTTPS or sha256 mismatch)"
     else
         red "$kind: PDF returned $PDF_STATUS (want 200)"
     fi

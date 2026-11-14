@@ -3,7 +3,7 @@ use crate::safe_cmd::safe_command;
 
 /// The file sshd (and other PAM-based auth) actually logs to on this box.
 /// Debian/Ubuntu writes `/var/log/auth.log`; the RHEL family (CentOS/Rocky/
-/// AlmaLinux/Fedora — a first-class `setup.sh` target, see its
+/// AlmaLinux/Fedora - a first-class `setup.sh` target, see its
 /// `centos|rocky|almalinux|fedora` branches) writes the same events to
 /// `/var/log/secure` instead. Neither call site that read this path used to
 /// check which one actually exists, so a RHEL box silently looked identical
@@ -57,7 +57,7 @@ pub fn resolve_log_path(log_type: &str) -> Result<String, String> {
     }
 }
 
-/// Validate a domain name — no slashes, no `..`, only alphanumeric, hyphens, dots.
+/// Validate a domain name - no slashes, no `..`, only alphanumeric, hyphens, dots.
 fn validate_domain(domain: &str) -> Result<(), String> {
     if domain.is_empty() {
         return Err("Domain cannot be empty".into());
@@ -166,7 +166,7 @@ pub async fn search_log(
     .map_err(|_| "Search timed out".to_string())?
     .map_err(|e| format!("grep failed: {e}"))?;
 
-    // grep returns exit code 1 for "no matches" — not an error
+    // grep returns exit code 1 for "no matches" - not an error
     if !output.status.success() && output.status.code() != Some(1) {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!("grep error: {stderr}"));

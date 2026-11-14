@@ -1,16 +1,16 @@
 // A second client, alongside `client.rs`, for the ONE class of operation the
-// agent structurally cannot do: anything needing the panel's own database —
+// agent structurally cannot do: anything needing the panel's own database -
 // site/database ownership, credentials, and (the reason this file exists) a
 // restore that must load a database dump as well as replace files. `client.rs`
 // talks to the agent over its local Unix socket with the agent's own token;
 // this one talks to the panel API over HTTP with a separate, admin-minted key.
 //
-// See routes/api_keys.rs (backend) — a `dp_`-prefixed key, hashed the same way
+// See routes/api_keys.rs (backend) - a `dp_`-prefixed key, hashed the same way
 // `agent.token` is, authenticated by auth.rs's `AuthUser` extractor exactly
 // like a session JWT. On the common single-box install this key authorizes no
 // more than `agent.token` already does (both cap at "everything on this
 // machine"); on a multi-server fleet an admin-minted key reaches every server
-// that admin registered, not only the one the CLI runs on — no narrower scope
+// that admin registered, not only the one the CLI runs on - no narrower scope
 // exists yet (`iac_tokens.scopes` is an unused column that could start one).
 
 const API_ENV_PATH: &str = "/etc/dockpanel/api.env";
@@ -27,7 +27,7 @@ pub fn load_token() -> Result<String, String> {
     let raw = std::fs::read_to_string(TOKEN_PATH).map_err(|_| not_configured())?;
     let token = raw.trim().to_string();
     // An empty (or whitespace-only) file reads as "present" to a bare
-    // read_to_string — without this check a leftover file from a reverted
+    // read_to_string - without this check a leftover file from a reverted
     // setup silently routes every restore into a panel-API call that 401s,
     // instead of falling back to the agent-only path like a genuinely
     // unconfigured install does.
@@ -38,7 +38,7 @@ pub fn load_token() -> Result<String, String> {
 }
 
 /// Resolve the panel API's base URL from the SAME `LISTEN_ADDR` its own
-/// systemd unit's `EnvironmentFile=` feeds it — always in sync with what the
+/// systemd unit's `EnvironmentFile=` feeds it - always in sync with what the
 /// backend actually bound, no new operator config for the common single-box
 /// install. This is deliberately NOT `BASE_URL` (also in api.env): that is the
 /// panel's PUBLIC address behind nginx/Cloudflare, which the CLI running
@@ -50,7 +50,7 @@ fn base_url() -> Result<String, String> {
     let addr = env
         .lines()
         .find_map(|l| l.trim().strip_prefix("LISTEN_ADDR="))
-        .ok_or_else(|| format!("{API_ENV_PATH} has no LISTEN_ADDR — cannot reach the panel API"))?
+        .ok_or_else(|| format!("{API_ENV_PATH} has no LISTEN_ADDR - cannot reach the panel API"))?
         .trim();
     Ok(format!("http://{addr}"))
 }
@@ -103,13 +103,13 @@ pub async fn post_empty(path: &str, token: &str) -> Result<serde_json::Value, St
 }
 
 /// Consume the panel's provisioning-log SSE stream (`routes/system.rs::install_log`,
-/// shared by every async panel job — restores included) until it emits a `step
+/// shared by every async panel job - restores included) until it emits a `step
 /// == "complete"` event or the connection ends, printing each step as it
 /// arrives so a long restore isn't silent.
 ///
 /// Pass/fail is decided ONLY by the terminal `step == "complete"` event's own
 /// `status`, matching the panel UI's own rule
-/// (`ProvisionLog.tsx`: `completeStep?.status === "error"`) — NOT by whether
+/// (`ProvisionLog.tsx`: `completeStep?.status === "error"`) - NOT by whether
 /// any earlier step carried `status: "error"`. The restore handler
 /// deliberately emits a non-fatal advisory with `status: "error"` for a
 /// files-only archive restored onto a DB-attached site (it restores the files
@@ -117,13 +117,13 @@ pub async fn post_empty(path: &str, token: &str) -> Result<serde_json::Value, St
 /// would report that as a failure the app itself does not consider one.
 ///
 /// Uses `Response::chunk()` rather than `bytes_stream()` so this file needs no
-/// `futures`/`futures_util` dependency of its own — SSE framing here is exactly
+/// `futures`/`futures_util` dependency of its own - SSE framing here is exactly
 /// what axum's `Event::default().data(json)` always produces: one `data: <json
 /// with no embedded newlines>` line per event, frames separated by a blank
 /// line. The keep-alive comment line (`: ping`) doesn't start with `data: ` and
 /// is silently skipped, same as a real EventSource would. Buffers raw BYTES
 /// (not a `String`) across chunks and only UTF-8-decodes a complete frame once
-/// its terminating `\n\n` has actually arrived — chunk boundaries have no
+/// its terminating `\n\n` has actually arrived - chunk boundaries have no
 /// obligation to land on a UTF-8 character boundary, and decoding each raw
 /// chunk independently (as an earlier version of this function did) could
 /// turn a multi-byte character split across two reads into a stray
@@ -177,7 +177,7 @@ pub async fn follow_progress(install_id: &str, token: &str) -> Result<(), String
 
                 if step_name == "complete" {
                     return if status == "error" {
-                        Err("Restore failed \u{2014} see the messages above.".to_string())
+                        Err("Restore failed - see the messages above.".to_string())
                     } else {
                         Ok(())
                     };

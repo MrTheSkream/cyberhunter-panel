@@ -84,8 +84,8 @@ pub fn client_ip(headers: &HeaderMap) -> Option<String> {
 /// It lives here because it has THREE readers that must agree: the git-deploy
 /// webhook, the site-deploy webhook, and the cleanup task in `main.rs`, which
 /// sheds zero-count entries above its cap and therefore has to know what a
-/// count "at the limit" is. They disagreed once already — the janitor evicted
-/// on a five-minute window while both handlers promised an hour — and a literal
+/// count "at the limit" is. They disagreed once already - the janitor evicted
+/// on a five-minute window while both handlers promised an hour - and a literal
 /// repeated in three files is how that happens.
 pub const WEBHOOK_ATTEMPT_LIMIT: u32 = 10;
 
@@ -112,7 +112,7 @@ pub fn is_valid_domain(domain: &str) -> bool {
 ///
 /// The list is derived from THIS install, not from the vendor. Until v2.31.0 it
 /// was the hardcoded triple `["dockpanel.dev","panel.example.com",
-/// "docs.dockpanel.dev"]` — our own marketing domains plus a documentation
+/// "docs.dockpanel.dev"]` - our own marketing domains plus a documentation
 /// placeholder, compiled into every customer's build, where they protect
 /// nothing and merely refuse three arbitrary names (s252 F9).
 ///
@@ -121,7 +121,7 @@ pub fn is_valid_domain(domain: &str) -> bool {
 /// the panel's `server_name` and phish the admin login (the s241 squat).
 ///
 /// **Exact host only, deliberately.** The panel session cookie is host-scoped
-/// (no `Domain=` attribute — see `auth::cookie_secure_flag`'s neighbours), so a
+/// (no `Domain=` attribute - see `auth::cookie_secure_flag`'s neighbours), so a
 /// subdomain cannot read it and does not collide with the panel's server_name.
 /// Reserving subdomains here would instead break the ordinary case of a panel
 /// at an apex: an operator running the panel on `example.com` must still be
@@ -147,7 +147,7 @@ pub fn is_reserved_domain(domain: &str) -> bool {
 
 /// Extract the bare host from `BASE_URL` as setup.sh writes it
 /// (`https://panel.example.com`, or empty on a domainless install). Only the
-/// host is read — never the scheme, which does not describe how the vhost is
+/// host is read - never the scheme, which does not describe how the vhost is
 /// actually served (see the warning above `auth::cookie_secure_flag`).
 fn panel_host_from_base_url(base: &str) -> Option<String> {
     let b = base.trim().to_lowercase();
@@ -168,7 +168,7 @@ fn panel_host_from_base_url(base: &str) -> Option<String> {
 /// [`is_reserved_domain`] plus the host THIS request arrived on.
 ///
 /// **`BASE_URL` is not a reliable statement of the panel's hostname.** It is
-/// routinely empty on a box whose panel nginx serves a real domain — observed on
+/// routinely empty on a box whose panel nginx serves a real domain - observed on
 /// demo.dockpanel.dev and on a fresh install, because `setup.sh` only writes it
 /// when `PANEL_DOMAIN` was supplied. s256 shipped a guard that trusted it alone,
 /// and on the demo box that made this check inert: creating a site for the
@@ -193,7 +193,7 @@ pub fn is_reserved_domain_for(domain: &str, headers: &HeaderMap) -> bool {
         return false;
     };
     // Reuse the BASE_URL parser: it strips an optional scheme, a path and a
-    // port, and lowercases — a bare `demo.example.com:8443` is exactly that
+    // port, and lowercases - a bare `demo.example.com:8443` is exactly that
     // shape minus the scheme.
     match panel_host_from_base_url(host) {
         Some(h) => reserved_match(domain, Some(&h), &[]),
@@ -219,7 +219,7 @@ fn reserved_match(domain: &str, panel_host: Option<&str>, zones: &[String]) -> b
 /// double-quoted argument in a `.conf` template, and Tera does NOT autoescape
 /// `.conf`, so an unescaped `"` (or a trailing `\`) closes the quoted string
 /// early and lets the remainder inject arbitrary nginx directives. `;` is
-/// intentionally allowed — a real CSP uses it as a directive separator and it is
+/// intentionally allowed - a real CSP uses it as a directive separator and it is
 /// inert inside the quotes.
 pub fn is_safe_header_value(v: &str) -> bool {
     !v.contains('"')
@@ -262,7 +262,7 @@ pub fn is_safe_relative_path(path: &str) -> bool {
 }
 
 /// Reduce ordinary shell quoting/escaping so keyword-blocklist matching sees
-/// what the shell will actually run, not what was literally typed —
+/// what the shell will actually run, not what was literally typed -
 /// `r'm' -rf /` and `w\get` contain no "rm -rf /"/"wget" substring, but the
 /// real shell this command eventually runs through (`sh -c` in
 /// `git_build.rs::run_hook` on the agent side) strips the quotes/backslashes
@@ -302,7 +302,7 @@ pub fn is_safe_shell_command(cmd: &str) -> Result<(), &'static str> {
     }
 
     // A bare `;` always chains regardless of exit status; a bare (unpaired)
-    // `|` chains just as effectively — neither is caught by the verb-anchored
+    // `|` chains just as effectively - neither is caught by the verb-anchored
     // patterns below (";bash", "| sh", ...), which never matched "id;whoami"
     // or "id|whoami" (no space, no shell name). `&&`/`||` remain allowed for
     // legitimate multi-step commands (e.g. "migrate && cache:clear"): only a
@@ -328,12 +328,12 @@ pub fn is_safe_shell_command(cmd: &str) -> Result<(), &'static str> {
         }
     }
     // A bare `&` backgrounds a command and, mid-string, acts as a chain
-    // separator exactly like `;`/`|` — "id&whoami" runs both, unpatched by
+    // separator exactly like `;`/`|` - "id&whoami" runs both, unpatched by
     // either the `;` check or the `|` scan above. Only a PAIRED `&&` is the
     // legitimate operator; scan runs of `&` the same way runs of `|` are
     // scanned above.
     // A bare `&` backgrounds a command and, mid-string, acts as a chain
-    // separator exactly like `;`/`|` — "id&whoami" runs both, unpatched by
+    // separator exactly like `;`/`|` - "id&whoami" runs both, unpatched by
     // either the `;` check or the `|` scan above. Only a PAIRED `&&` is the
     // legitimate operator; scan runs of `&` the same way runs of `|` are
     // scanned above.
@@ -432,7 +432,7 @@ pub fn is_safe_shell_command(cmd: &str) -> Result<(), &'static str> {
 /// Every image reference a Compose document would run, in declaration order.
 ///
 /// Read here rather than from the agent's `/apps/compose/parse` so the deploy
-/// gate can refuse before anything is claimed, created or sent to a host — and
+/// gate can refuse before anything is claimed, created or sent to a host - and
 /// so a compose door pays no round trip when the gate is switched off. Parsed
 /// the same way [`validate_compose_yaml`] parses it, for the same reason: a
 /// string scan is bypassable with anchors, aliases and alternate quoting.
@@ -454,7 +454,7 @@ pub fn compose_images(yaml: &str) -> Vec<String> {
         .collect()
 }
 
-/// The services the agent will SILENTLY DROP — those naming no image.
+/// The services the agent will SILENTLY DROP - those naming no image.
 ///
 /// The compose engine deserialises each service into a struct whose `image` is
 /// an `Option<String>` and skips the service outright when it is `None`. That
@@ -464,9 +464,9 @@ pub fn compose_images(yaml: &str) -> Vec<String> {
 ///
 /// ⚠ The predicate has to be the AGENT'S question, not a similar one. The agent
 /// reads a typed `Option<String>`; this side reads an untyped YAML value, and
-/// the two disagree about YAML null. `image:` written with no value — the
+/// the two disagree about YAML null. `image:` written with no value - the
 /// ordinary way an author blanks the line while switching a service over to
-/// `build:` — is `Some(Value::Null)` here and `None` there, so a predicate
+/// `build:` - is `Some(Value::Null)` here and `None` there, so a predicate
 /// spelled `.get("image").is_none()` reports nothing while the agent drops the
 /// service. Measured over `image:`, `image: ~`, `image: ""`, `image: "   "`, a
 /// missing key and a fully-populated file; only the arm below agrees with the
@@ -620,7 +620,7 @@ pub fn is_safe_nginx_config(config: &str) -> Result<(), &'static str> {
 
     // Directives the site template already writes at SERVER level, into the same
     // `server { … }` block this text is injected into. nginx refuses a duplicate
-    // outright, so accepting one produced a configuration it rejects — and the
+    // outright, so accepting one produced a configuration it rejects - and the
     // agent's copy of this check runs inside the template RENDER, whose failure
     // reaches the operator as `Operation failed. Reference: <uuid>` (agent_error
     // hands a sentence through only on 4xx). Refused here so the reason survives
@@ -639,14 +639,14 @@ pub fn is_safe_nginx_config(config: &str) -> Result<(), &'static str> {
         match directive.as_str() {
             "client_max_body_size" => {
                 return Err(
-                    "The site already sets 'client_max_body_size' — nginx refuses a \
+                    "The site already sets 'client_max_body_size' - nginx refuses a \
                             duplicate and the whole site would fail to load. Change the site's \
                             maximum upload size instead; that is the control that writes it.",
                 );
             }
             "gzip" | "gzip_min_length" => {
                 return Err(
-                    "The site already enables gzip — nginx refuses a duplicate 'gzip' or \
+                    "The site already enables gzip - nginx refuses a duplicate 'gzip' or \
                             'gzip_min_length' and the whole site would fail to load. Compression \
                             is on for every site already.",
                 );
@@ -666,7 +666,7 @@ mod tests {
 
     /// `dockpanel-fanout` s429: a bare `;`/`|` (no trailing space, no "sh"/
     /// "bash" suffix) passed straight through the old verb-anchored dangerous
-    /// list — `is_safe_shell_command("id;whoami")` returned `Ok(())`. This is
+    /// list - `is_safe_shell_command("id;whoami")` returned `Ok(())`. This is
     /// the SAME gap as the agent-side `is_safe_cron_command` fix (both share
     /// the identical bypass shape), on the save-time side used by cron,
     /// pre_build_cmd, and post_deploy_cmd. `&&`/`||` must keep working.
@@ -686,7 +686,7 @@ mod tests {
     #[test]
     fn shell_command_rejects_bare_ampersand_keeps_paired() {
         // The completeness-critic's executed PoC strings: `;` and `|` were fixed,
-        // `&` was not — a bare `&` chains just as effectively (background + continue).
+        // `&` was not - a bare `&` chains just as effectively (background + continue).
         assert!(is_safe_shell_command("id&whoami").is_err());
         assert!(is_safe_shell_command("id & whoami").is_err());
         assert!(is_safe_shell_command("echo hi & id > /tmp/pwned").is_err());
@@ -698,7 +698,7 @@ mod tests {
     /// `dockpanel-fanout` s454 completeness critic: this function had no
     /// quote/backslash normalization at all, so `r'm' -rf /` and `w\get`
     /// contain no "rm -rf /"/"wget" substring and pass every dangerous-
-    /// pattern list below — the same gap the agent-side
+    /// pattern list below - the same gap the agent-side
     /// `command_filter::normalize_for_blocklist` was already built to close
     /// for its own siblings. This save-time gate guards cron/pre_build_cmd/
     /// post_deploy_cmd, whose values are eventually shell-executed.
@@ -732,13 +732,13 @@ mod tests {
     fn compose_images_survives_the_shapes_that_are_not_images() {
         // A build-only service has no reference to gate on.
         assert!(compose_images("services:\n  app:\n    build: .\n").is_empty());
-        // Malformed input is not a licence to deploy ungated — but it is also
+        // Malformed input is not a licence to deploy ungated - but it is also
         // not this function's error to raise: validate_compose_yaml refuses it
         // first, and every caller runs that.
         assert!(compose_images("{{{").is_empty());
         assert!(compose_images("version: '3'\n").is_empty());
         // A whole-node alias DOES resolve, which is the reason this parses
-        // rather than greps — a string scan would see one image here.
+        // rather than greps - a string scan would see one image here.
         let aliased = "services:\n  a: &base\n    image: redis:7\n  b: *base\n";
         assert_eq!(compose_images(aliased).len(), 2);
 
@@ -746,7 +746,7 @@ mod tests {
         // the agent deserialises the same document with the same crate, so a
         // service whose image arrives only through a merge key has no image on
         // the agent's side either and never runs. The extractor and the thing
-        // it guards agree by construction — which is the property that matters,
+        // it guards agree by construction - which is the property that matters,
         // not whether either of them implements merge keys.
         let merged = "services:\n  a: &base\n    image: redis:7\n  b:\n    <<: *base\n";
         assert_eq!(compose_images(merged).len(), 1);
@@ -773,7 +773,7 @@ mod tests {
         // service to `build:`. Here that is `Some(Value::Null)`; on the agent it
         // deserialises to `None` and the service is dropped. A predicate spelled
         // `.get("image").is_none()` returns nothing for all three spellings
-        // below while the agent drops the service — the refusal would be green
+        // below while the agent drops the service - the refusal would be green
         // from birth against the ordinary spelling of the thing it refuses.
         for yaml in [
             "services:\n  web:\n    image:\n    build: .\n  db:\n    image: postgres:16\n",
@@ -805,7 +805,7 @@ mod tests {
         }
     }
 
-    // ── Reserved (control-plane) domains — s241 H2/H3 ───────────────────
+    // ── Reserved (control-plane) domains - s241 H2/H3 ───────────────────
 
     #[test]
     fn reserved_domains_rejected() {
@@ -829,7 +829,7 @@ mod tests {
         assert!(reserved_match("example.com", apex, none));
         assert!(!reserved_match("blog.example.com", apex, none));
 
-        // A domainless install (BASE_URL empty) reserves nothing — the panel is
+        // A domainless install (BASE_URL empty) reserves nothing - the panel is
         // on its own port, so no site vhost can collide with it.
         assert!(!reserved_match("anything.example.com", None, none));
 
@@ -867,7 +867,7 @@ mod tests {
         let h_port = host_hdr("192.168.1.50:8443");
         assert!(is_reserved_domain_for("192.168.1.50", &h_port));
 
-        // Exact host only — subdomains of the panel host stay available, and
+        // Exact host only - subdomains of the panel host stay available, and
         // unrelated domains are unaffected.
         assert!(!is_reserved_domain_for("blog.panel.example.com", &h));
         assert!(!is_reserved_domain_for("example.com", &h));
@@ -900,13 +900,13 @@ mod tests {
             panel_host_from_base_url("https://[2001:db8::1]:8443").as_deref(),
             Some("2001:db8::1")
         );
-        // A domainless install writes BASE_URL= (empty) — must yield no host,
+        // A domainless install writes BASE_URL= (empty) - must yield no host,
         // NOT an empty string that would then match a trimmed empty domain.
         assert_eq!(panel_host_from_base_url(""), None);
         assert_eq!(panel_host_from_base_url("   "), None);
     }
 
-    // ── add_header value validation — s241 C1 ───────────────────────────
+    // ── add_header value validation - s241 C1 ───────────────────────────
 
     #[test]
     fn header_value_rejects_nginx_breakout() {
@@ -920,7 +920,7 @@ mod tests {
         assert!(!is_safe_header_value("a{b}"));
     }
 
-    // ── custom_nginx blocklist — s241 C2 (backend defense-in-depth) ─────
+    // ── custom_nginx blocklist - s241 C2 (backend defense-in-depth) ─────
 
     #[test]
     fn nginx_config_blocks_chained_access_log() {
@@ -931,8 +931,8 @@ mod tests {
         assert!(is_safe_nginx_config("proxy_read_timeout 120s;").is_ok());
     }
 
-    /// This asserted the OPPOSITE until v2.122.1 — that `client_max_body_size
-    /// 20m;` is valid input — matching the agent-side test that made the same
+    /// This asserted the OPPOSITE until v2.122.1 - that `client_max_body_size
+    /// 20m;` is valid input - matching the agent-side test that made the same
     /// claim. The site template writes that directive at server level, into the
     /// same block this text lands in, so nginx refuses the result and the site
     /// stops loading. Refused HERE as well as in the agent, because only this
@@ -1119,7 +1119,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/sites", get(sites::list).post(sites::create))
         // Read-only, admin-only, and the ONLY site read that looks past
         // `user_id`. It is what makes `POST /api/sites/{id}/transfer` reversible
-        // — without it an admin who hands a site to a client cannot see the row
+        // - without it an admin who hands a site to a client cannot see the row
         // again, and the Transfer control lives on a page that then 404s them.
         .route("/api/admin/sites", get(sites::list_for_admin))
         .route("/api/sites/{id}", get(sites::get_one).delete(sites::remove))
@@ -1219,7 +1219,7 @@ pub fn router() -> Router<AppState> {
         // The Certificates page's control for a stack's certificate. A stack has
         // no `sites` row, so the site-shaped renew route could never address one.
         .route("/api/stacks/{id}/renew-ssl", post(stacks::renew_ssl))
-        // TLS certificate registry — named certificates a stack claims by alias (#104)
+        // TLS certificate registry - named certificates a stack claims by alias (#104)
         .route("/api/tls-certificates", get(tls_certificates::list).post(tls_certificates::create))
         .route("/api/tls-certificates/{id}", put(tls_certificates::replace).delete(tls_certificates::remove))
         // Docker Apps (admin)
@@ -1341,7 +1341,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/sbom/generate", post(sboms::generate))
         // Wildcard, not a single segment: an image reference contains slashes
         // (`ghcr.io/org/app:v1`), so `{image}` matched only the bare
-        // `name:tag` shape and 404'd for every registry-qualified image — which
+        // `name:tag` shape and 404'd for every registry-qualified image - which
         // is most of the catalogue.
         .route("/api/sbom/image/{*image}", get(sboms::get_image_sbom))
         .route("/api/apps/{name}/sbom", get(sboms::download_app_sbom).post(sboms::generate_app))
@@ -1452,7 +1452,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/status-page/subscribe", post(incidents::subscribe))
         // Both methods on purpose. The handler's own doc comment, the guide's
         // prose and the guide's API table have all published DELETE since this
-        // shipped, while the route accepted POST only — so every reader who
+        // shipped, while the route accepted POST only - so every reader who
         // followed the documentation got a 405, and the one method that worked
         // was named on no published surface. POST stays because the repo's own
         // e2e calls it and removing it would break a working caller.
@@ -1461,9 +1461,9 @@ pub fn router() -> Router<AppState> {
             post(incidents::unsubscribe).delete(incidents::unsubscribe),
         )
         .route("/api/terminal/shared/{id}", get(terminal::view_shared))
-        // Heartbeat endpoint (no auth — monitor validates by ID)
+        // Heartbeat endpoint (no auth - monitor validates by ID)
         .route("/api/heartbeat/{monitor_id}/{token}", post(monitors::heartbeat))
-        // Webhooks (no auth — validated by secret/signature)
+        // Webhooks (no auth - validated by secret/signature)
         .route("/api/webhooks/deploy/{site_id}/{secret}", post(deploy::webhook))
         // Staging Environments
         .route("/api/sites/{id}/staging", get(staging::get_staging).post(staging::create).delete(staging::destroy))
@@ -1493,7 +1493,7 @@ pub fn router() -> Router<AppState> {
         // PHP Extensions Manager
         .route("/api/php/extensions/{version}", get(sites::php_extensions))
         .route("/api/php/extensions/install", post(sites::install_php_extension))
-        // Agent endpoints — Bearer token from the servers table, never a cookie
+        // Agent endpoints - Bearer token from the servers table, never a cookie
         // or a user JWT. This comment used to say exactly that while
         // /api/agent/version demanded `AuthUser`, a credential an agent cannot
         // hold; it 401'd on every request for four releases and the comment is a
@@ -1501,7 +1501,7 @@ pub fn router() -> Router<AppState> {
         //   /api/agent/version
         //     -> crate::auth::authenticate_agent + agent_rate_limit
         //     (the remote-command channel this comment used to also name,
-        //     /api/agent/commands + /api/agent/commands/result, was removed —
+        //     /api/agent/commands + /api/agent/commands/result, was removed -
         //     it could never execute a command)
         //   /api/agent/checkin
         //     -> its OWN check (agent_checkin.rs): the server_id comes from the

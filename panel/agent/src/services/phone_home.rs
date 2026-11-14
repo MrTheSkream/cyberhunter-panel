@@ -39,7 +39,7 @@ impl PhoneHomeConfig {
 ///
 /// `cpu` supplies the CPU figure. This function used to build a `System::new_all()`
 /// and read `global_cpu_usage()` off it, which reports the delta between the
-/// constructor's refresh and `refresh_all()`'s — a window consisting almost
+/// constructor's refresh and `refresh_all()`'s - a window consisting almost
 /// entirely of this function's own walk of `/proc`. Measured on an idle 12-core
 /// box whose true usage was 4.5%, that pattern returned anywhere from 4.5% to
 /// 22.1% across consecutive runs; on a single-core box the self-inflicted share
@@ -109,11 +109,11 @@ pub async fn run(config: PhoneHomeConfig, cpu: CpuSampler) {
     // one: it asked the panel for queued commands every five seconds and mapped
     // each to a local HTTP call. The panel could only ever queue ONE of the
     // eleven actions this side accepted, and that one named a route this agent
-    // does not serve — so in the whole life of the feature no member could
+    // does not serve - so in the whole life of the feature no member could
     // execute anything, and the queue was empty everywhere. What it did carry
     // was a forwarder that pasted a caller-supplied string straight into a
     // request path against a loopback listener serving the WHOLE agent API.
-    // Reconciling the two vocabularies — the obvious one-line "fix" — would have
+    // Reconciling the two vocabularies - the obvious one-line "fix" - would have
     // switched that on rather than off. Per-host work goes through the panel's
     // own per-server resolver, which authenticates, checks ownership and calls
     // the agent's real route directly.
@@ -188,8 +188,8 @@ async fn auto_update_loop(config: PhoneHomeConfig) {
                 // A failed update leaves this agent's version unchanged, so the
                 // comparison above stays true for ever. Without this check, a
                 // target that cannot come up on this box would make the timer
-                // repeat the whole destructive sequence — download, swap,
-                // restart, failed health poll, roll back, restart again —
+                // repeat the whole destructive sequence - download, swap,
+                // restart, failed health poll, roll back, restart again -
                 // indefinitely and unattended. Worse, the rollback restarts this
                 // process, so the loop would resume at its INITIAL delay rather
                 // than the 6-hour one, repeating roughly hourly on every box in
@@ -199,14 +199,14 @@ async fn auto_update_loop(config: PhoneHomeConfig) {
                     crate::routes::panel_update::target_already_failed_destructively(&target)
                 {
                     tracing::warn!(
-                        "Agent auto-update: NOT retrying {target} — an earlier attempt already \
+                        "Agent auto-update: NOT retrying {target} - an earlier attempt already \
                          replaced this binary and had to roll back ({why}). Staying on \
                          {current_version}. Fix the release, or start a fleet update from the \
                          panel to override this."
                     );
                 } else {
                     tracing::info!(
-                        "Panel target is {target}, running {current_version} — starting self-update"
+                        "Panel target is {target}, running {current_version} - starting self-update"
                     );
                     if let Err(e) =
                         crate::routes::panel_update::start_agent_self_update(&target).await
@@ -226,8 +226,8 @@ async fn auto_update_loop(config: PhoneHomeConfig) {
             }
         }
 
-        // Jitter. Unlike the panel-driven fleet path — which the orchestrator
-        // serialises — every agent runs this timer independently, so a fleet
+        // Jitter. Unlike the panel-driven fleet path - which the orchestrator
+        // serialises - every agent runs this timer independently, so a fleet
         // restarted together would otherwise check in together and then all pull
         // from GitHub at the same moment.
         let jitter = rand::random::<u64>() % 1800;
@@ -239,14 +239,14 @@ async fn auto_update_loop(config: PhoneHomeConfig) {
 ///
 /// `Ok(None)` means "nothing to do": the panel returns a null target when the
 /// operator has not enabled agent auto-update, or when the update channel is on
-/// hold. That is how the OFF switch reaches a box — an agent is never trusted to
+/// hold. That is how the OFF switch reaches a box - an agent is never trusted to
 /// decide for itself that it should update.
 ///
 /// **The status check before `.json()` is the entire point of this function.**
 /// It used to be absent, and an error body is still valid JSON: a 401
 /// deserialised cleanly, the missing version field fell back to the running
 /// version, the two compared equal, and the loop reported "up to date" at debug
-/// level — below the unit's own log level. A permanently dead auth path was
+/// level - below the unit's own log level. A permanently dead auth path was
 /// therefore indistinguishable in the journal from a healthy fleet, for four
 /// releases (s233).
 async fn fetch_target(
@@ -281,7 +281,7 @@ mod tests {
     /// The periodic update check must never swap a binary itself again.
     ///
     /// It used to: it downloaded the asset, hashed it, wrote a backup nothing
-    /// ever read, and renamed over its own running executable — with no health
+    /// ever read, and renamed over its own running executable - with no health
     /// check afterwards and no rollback. `scripts/agent-self-update.sh` does all
     /// of that correctly and is pinned by its own tests, so the only thing this
     /// file may do is ASK the panel and hand a version string to the shared

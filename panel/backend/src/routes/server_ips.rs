@@ -7,7 +7,7 @@
 //! interface. The list merges the two:
 //!
 //! * `on_system` / `is_primary` come from the agent. When the agent cannot be
-//!   asked, both read `false` and the list still answers — this is an inventory
+//!   asked, both read `false` and the list still answers - this is an inventory
 //!   page, and an unreachable box is exactly when an operator needs to see what
 //!   is declared on it. The DB `managed` value is shown as stored in that case.
 //! * `managed` comes from the agent when it reports the address (it owns
@@ -240,7 +240,7 @@ pub async fn list(
     let system = match system_ips(&agent).await {
         Ok(s) => Some(s),
         Err(e) => {
-            tracing::warn!("Server IPs for {server_id}: agent could not be asked ({e}) — on_system/is_primary reported false");
+            tracing::warn!("Server IPs for {server_id}: agent could not be asked ({e}) - on_system/is_primary reported false");
             None
         }
     };
@@ -252,7 +252,7 @@ pub async fn list(
     ))
 }
 
-/// GET /api/server-ips/discover — addresses on the interface not yet declared.
+/// GET /api/server-ips/discover - addresses on the interface not yet declared.
 pub async fn discover(
     State(state): State<AppState>,
     AdminUser(_claims): AdminUser,
@@ -278,7 +278,7 @@ pub struct CreateServerIpRequest {
     pub add_to_system: bool,
 }
 
-/// POST /api/server-ips — declare an address already on the interface, or put it
+/// POST /api/server-ips - declare an address already on the interface, or put it
 /// there first (`add_to_system: true`, agent `POST /system/ips`). Reads its PTR.
 pub async fn create(
     State(state): State<AppState>,
@@ -424,7 +424,7 @@ pub struct UpdateServerIpRequest {
     pub public_ip: Option<Option<String>>,
 }
 
-/// PUT /api/server-ips/{id} — label and public address (NAT).
+/// PUT /api/server-ips/{id} - label and public address (NAT).
 ///
 /// A changed `public_ip` changes what the DNS tabs and checks expect; records
 /// already published in a managed zone are not rewritten here.
@@ -472,7 +472,7 @@ pub async fn update(
     Ok(Json(dto_for(&state.db, &agent, row).await?))
 }
 
-/// POST /api/server-ips/{id}/refresh-ptr — re-read the PTR; a changed PTR is a
+/// POST /api/server-ips/{id}/refresh-ptr - re-read the PTR; a changed PTR is a
 /// changed HELO, so the server's mail configuration is re-synced.
 pub async fn refresh_ptr(
     State(state): State<AppState>,
@@ -494,7 +494,7 @@ pub async fn refresh_ptr(
     .map_err(|e| internal_error("refresh ptr", e))?;
 
     if row.ptr != current.ptr {
-        tracing::info!("PTR of {} changed ({:?} → {:?}) — re-syncing mail", row.ip, current.ptr, row.ptr);
+        tracing::info!("PTR of {} changed ({:?} → {:?}) - re-syncing mail", row.ip, current.ptr, row.ptr);
         // Best-effort: the PTR is stored either way; a refused rebuild is logged.
         if let Err((status, msg)) = crate::routes::mail::sync_mail_config(&state, server_id, &agent).await {
             tracing::warn!("Mail sync after the PTR change of {} was refused ({status}): {:?}", row.ip, msg.0);

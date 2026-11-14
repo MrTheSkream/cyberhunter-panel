@@ -69,7 +69,7 @@ pub struct AppState {
     pub templates: Arc<Tera>,
     pub system: Arc<Mutex<System>>,
     /// Whole-system CPU usage, sampled on a fixed cadence. Handlers must read
-    /// this rather than refreshing CPU themselves — see [`crate::services::cpu_sampler`]
+    /// this rather than refreshing CPU themselves - see [`crate::services::cpu_sampler`]
     /// for why a per-request refresh reports the caller's timing, not the load.
     pub cpu: crate::services::cpu_sampler::CpuSampler,
     pub docker: Docker,
@@ -161,7 +161,7 @@ mod tests {
     }
 }
 
-/// Auth middleware — validates Bearer token on all routes except /health.
+/// Auth middleware - validates Bearer token on all routes except /health.
 /// Uses constant-time comparison to prevent timing attacks.
 /// Supports a grace period for the previous token during rotation.
 pub async fn auth_middleware(
@@ -249,7 +249,7 @@ pub async fn rotate_token(
     Ok(axum::Json(serde_json::json!({ "new_token": new_token })))
 }
 
-/// Audit logging middleware — logs all state-modifying requests (POST, PUT, DELETE).
+/// Audit logging middleware - logs all state-modifying requests (POST, PUT, DELETE).
 pub async fn audit_middleware(
     request: Request,
     next: Next,

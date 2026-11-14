@@ -13,7 +13,7 @@ html {
    skeleton: a product whose whole argument is "one thing, not a stack of
    things" should not be set in two unrelated families.
 
-   The MONO is the instrument voice — every measurement, label, eyebrow and
+   The MONO is the instrument voice - every measurement, label, eyebrow and
    command. The SANS is for prose. That split is the page's structure: if it
    is a number the machine reported, it is set in mono.                    */
 :root {
@@ -21,7 +21,7 @@ html {
   --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
 
   /* Ink. Deliberately narrow: near-black ground, four greys, one white.
-     There is no accent hue on this page — the product has no brand colour
+     There is no accent hue on this page - the product has no brand colour
      to fake, and the restraint is the point. Green appears in exactly one
      place, where the terminal itself reports success. */
   --ink-bg:    #0a0a0b;
@@ -52,7 +52,7 @@ code, pre, .mono {
 .tnum { font-variant-numeric: tabular-nums; }
 
 /* The one structural device on the page: a small mono label, letterspaced,
-   sitting in the left margin. It marks what KIND of thing a section is —
+   sitting in the left margin. It marks what KIND of thing a section is -
    which is information, not decoration. */
 .eyebrow {
   font-family: var(--font-mono);

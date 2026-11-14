@@ -15,7 +15,7 @@ pub async fn run(pool: PgPool, mut shutdown_rx: tokio::sync::broadcast::Receiver
                 // `is_local` is exempt, and the exemption is deliberate rather
                 // than incidental. `last_seen_at` is written only by the
                 // check-in handler, which only a phoning-home MEMBER reaches, so
-                // the local row's value is NULL — and `NULL < …` yields NULL, not
+                // the local row's value is NULL - and `NULL < …` yields NULL, not
                 // true, so this sweep has never matched it. That accident is now
                 // a stated rule, because `status = 'online'` is the predicate of
                 // `AgentRegistry::online_fleet` AND of the alert engine's

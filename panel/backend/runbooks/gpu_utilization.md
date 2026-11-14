@@ -4,7 +4,7 @@ A GPU has been at high utilization (default >90%) for a sustained window.
 
 ## Why this fired
 
-`nvidia-smi --query-gpu=utilization.gpu` reported above-threshold for the configured window. High utilization is normal during active workloads — this alert is a hint that the card is saturated, queueing inference, or another workload is contending.
+`nvidia-smi --query-gpu=utilization.gpu` reported above-threshold for the configured window. High utilization is normal during active workloads - this alert is a hint that the card is saturated, queueing inference, or another workload is contending.
 
 ## First check
 
@@ -18,7 +18,7 @@ A GPU has been at high utilization (default >90%) for a sustained window.
 
 ## Common causes
 
-- Inference workload at capacity — needs scale-out or batch tuning
+- Inference workload at capacity - needs scale-out or batch tuning
 - Training run was scheduled accidentally on a serving GPU
 - Crypto-miner workload (look for unfamiliar process names)
 - Container without a GPU memory limit eating the whole card
@@ -26,4 +26,4 @@ A GPU has been at high utilization (default >90%) for a sustained window.
 
 ## Escalation
 
-This is a warning, not a page (unless paired with `gpu_temperature` — then treat the temperature runbook). Plan capacity tuning during business hours. If utilization is high but customer-facing latency is fine, this is healthy use of paid capacity.
+This is a warning, not a page (unless paired with `gpu_temperature` - then treat the temperature runbook). Plan capacity tuning during business hours. If utilization is high but customer-facing latency is fine, this is healthy use of paid capacity.

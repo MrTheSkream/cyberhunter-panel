@@ -6,8 +6,8 @@ export interface NavItem {
   /** Visible to reseller role (and admin, unless `resellerOnly` says otherwise) */
   resellerVisible?: boolean;
   /**
-   * The page answers only for the caller's OWN reseller tenant, so an admin —
-   * who has no tenant — must NOT see it. `reseller_dashboard.rs:76` refuses them
+   * The page answers only for the caller's OWN reseller tenant, so an admin -
+   * who has no tenant - must NOT see it. `reseller_dashboard.rs:76` refuses them
    * by name, and an admin who followed the sidebar got that refusal rendered as
    * the whole page (issue #112). The admin counterpart is the `/resellers` row.
    *
@@ -30,7 +30,7 @@ export interface NavGroup {
  * The ONE place that decides whether a role may be shown a navigation entry.
  *
  * This lived inline in `useLayoutState` and nowhere else, so the command palette
- * — a second menu over the same pages — simply never asked: Ctrl+K offered
+ * - a second menu over the same pages - simply never asked: Ctrl+K offered
  * /users, /secrets, /security and /settings to every account. Each of those
  * pages guards itself, so nothing leaked; what the palette handed out was a list
  * of doors that refuse, which is the same broken promise as a sidebar entry that
@@ -54,7 +54,7 @@ export function isNavVisible(
 
 /**
  * The nav flags for a route, looked up from the registry above so callers cannot
- * carry their own copy. A path with no nav row is unrestricted — per-site tools
+ * carry their own copy. A path with no nav row is unrestricted - per-site tools
  * (/sites/:id/files, /sites/:id/backups) deliberately have no sidebar entry.
  */
 export function navFlagsFor(
@@ -91,7 +91,7 @@ export const navGroups: NavGroup[] = [
       { to: "/reseller/users", label: "My Users", iconName: "users", resellerVisible: true, resellerOnly: true },
       // The admin's half of this group. Everything an admin can do to a reseller
       // lives behind /api/resellers, which had eight handlers and no screen at
-      // all until v2.118.0 — so the only reseller-shaped control the panel
+      // all until v2.118.0 - so the only reseller-shaped control the panel
       // offered an admin was the role dropdown in Users, which sets the role
       // without creating a profile and produces an account whose own panel
       // answers 404. This row is the door those handlers never had.
@@ -107,7 +107,7 @@ export const navGroups: NavGroup[] = [
       // Unrestricted since v2.103.0, and the flag's absence is the whole point.
       // The backend admits a mail domain to whoever owns the site of the same
       // name on the same server (`MAIL_DOMAIN_CALLER_PREDICATE`, backend
-      // routes/mail.rs), and that test carries NO role term — a `client`, a
+      // routes/mail.rs), and that test carries NO role term - a `client`, a
       // plain `user` and a `reseller` all reach it by the same route. There is
       // no flag here meaning "owner", because the registry only ever sees a
       // role string; ownership is not knowable at nav-render time. Restricting
@@ -145,7 +145,7 @@ export const navGroups: NavGroup[] = [
       // The ONLY entry every role can see, and the reason it exists: password
       // change, 2FA enrolment, passkeys, sessions and API keys all used to live
       // behind the `adminOnly` /settings row above, so a client had no door to
-      // its own account at all. Never mark this `adminOnly` — the 2FA banner in
+      // its own account at all. Never mark this `adminOnly` - the 2FA banner in
       // all four layouts points here, and a non-admin is exactly who it warns.
       { to: "/account", label: "My Account", iconName: "settings" },
     ],

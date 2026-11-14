@@ -17,13 +17,13 @@ use crate::services::activity;
 ///
 /// s386 gave the operator a sentence for a certificate this product must not
 /// touch. It left the commoner failure untouched: a domain that IS ours but
-/// cannot answer the challenge from this box — it points somewhere else, port 80
-/// is closed, the apex of a wildcard lives elsewhere — where the agent runs a
+/// cannot answer the challenge from this box - it points somewhere else, port 80
+/// is closed, the apex of a wildcard lives elsewhere - where the agent runs a
 /// real order, loses it, and the operator gets a reference number after two
 /// minutes of spinner. The reference described nothing; the agent had already
 /// said exactly what went wrong.
 ///
-/// Both doors share this, and provisioning is the one that fires more often —
+/// Both doors share this, and provisioning is the one that fires more often -
 /// the first certificate for a domain that was never pointed here at all. Fixing
 /// only the one the register named would have left the busier half saying
 /// nothing, and the two are one line apart.
@@ -42,7 +42,7 @@ fn acme_failure_or(
         // for an agent nobody has updated recognises a renewal by its wrapper
         // alone, and that wrapper is put on local faults too. So this sentence has
         // to be true when the CA declined a challenge, when it refused a rate-
-        // limited order, and when the agent's own disk filled up — which means it
+        // limited order, and when the agent's own disk filled up - which means it
         // may not name a cause, and must never say "try again": on a rate limit
         // that is the one instruction that makes it worse. The hint below is
         // conditional for the same reason, and describes the commonest case
@@ -65,7 +65,7 @@ fn acme_failure_or(
 ///
 /// The THIRD ACME door, and it must not borrow the sentence the other two share.
 /// That one offers "check that the domain resolves here and that port 80 is
-/// reachable" — advice this door's own button contradicts, because an operator
+/// reachable" - advice this door's own button contradicts, because an operator
 /// chooses DNS-01 precisely WHEN port 80 cannot be reached. Repeating it here
 /// would send somebody to open a port that has nothing to do with the failure.
 ///
@@ -101,7 +101,7 @@ fn dns01_failure_or(
             &format!(
                 "The DNS-01 challenge for {subject} could not be completed: {reason}. If \
                  Cloudflare rejected the change, check that the credentials for the {zone} \
-                 zone may edit its DNS records — a scoped token needs the DNS:Edit permission."
+                 zone may edit its DNS records - a scoped token needs the DNS:Edit permission."
             ),
         );
     }
@@ -152,7 +152,7 @@ async fn put_full_vhost(pool: &sqlx::PgPool, agent: &crate::services::agent::Age
 /// the caller handed in, and `routes/ssl.rs::provision` hardcodes every limit and
 /// every hardening field to `None`. So an SSL write from a door that does not hold
 /// the site's row publishes a vhost with no rate limit, no upload cap, no custom
-/// nginx and no WAF/CSP — and, when that door also *guesses* the runtime, a PHP
+/// nginx and no WAF/CSP - and, when that door also *guesses* the runtime, a PHP
 /// site re-rendered as a static one, which answers 403 to every PHP request while
 /// the panel still shows `runtime = php`.
 ///
@@ -162,7 +162,7 @@ async fn put_full_vhost(pool: &sqlx::PgPool, agent: &crate::services::agent::Age
 ///
 /// ⚠ Resolved by (domain, server_id), NEVER by domain alone: `sites.domain` is
 /// unique only per server (`idx_sites_domain_server`), so a name-only lookup on a
-/// fleet can hand back another host's row — the defect `security_scanner` already
+/// fleet can hand back another host's row - the defect `security_scanner` already
 /// documents for its own sibling read.
 ///
 /// A domain with no site row is not an error: a mail domain need not be a site,
@@ -191,7 +191,7 @@ pub(crate) async fn rebuild_vhost_for_domain(
 }
 
 /// The same compensation as the `AppState`-based sibling below, for a caller that
-/// holds the site id and a pool but no `AppState` — the auto-SSL task spawned by
+/// holds the site id and a pool but no `AppState` - the auto-SSL task spawned by
 /// site creation. Deliberately does NOT promote the canonical URL: that door's own
 /// success path already handles it.
 ///
@@ -231,7 +231,7 @@ pub(crate) async fn rebuild_vhost_after_ssl(
             // This rebuild is the SECOND way a vhost can turn into an HTTPS one.
             // The agent promotes a WordPress site's canonical URL inside
             // `enable_ssl_for_site`, but a WILDCARD certificate never goes
-            // through it — the agent leaves those to be applied per-site from
+            // through it - the agent leaves those to be applied per-site from
             // here. Without this the site would serve HTTPS, redirect to it, and
             // go on telling every visitor to use HTTP. Idempotent: the agent
             // reports `untouched` when there is nothing to move.
@@ -261,12 +261,12 @@ pub struct ProvisionQuery {
     /// The operator's explicit intent to replace a certificate this product
     /// did not issue, after seeing the refusal that names its issuer. Mirrors
     /// the CLI's `--force` and, like it, is the only way past the agent
-    /// writer's foreign-certificate refusal — never a default, never inferred.
+    /// writer's foreign-certificate refusal - never a default, never inferred.
     #[serde(default)]
     pub force: bool,
 }
 
-/// POST /api/sites/{id}/ssl — Provision SSL certificate for a site.
+/// POST /api/sites/{id}/ssl - Provision SSL certificate for a site.
 pub async fn provision(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -315,7 +315,7 @@ pub async fn provision(
         ));
     }
 
-    // DNS pre-flight, via the shared prerequisite checker — the SAME call the
+    // DNS pre-flight, via the shared prerequisite checker - the SAME call the
     // create-site form and the SSL panel use to render their guidance, so what we
     // enforce here and what we advised there can never drift apart.
     //
@@ -326,10 +326,10 @@ pub async fn provision(
     // origin. Such a domain resolves to Cloudflare's addresses, so the old guard
     // would have refused a configuration that demonstrably works. It now warns
     // (rendered as a callout) and lets the order proceed; only a domain that
-    // resolves to nothing at all — where HTTP-01 cannot possibly complete — is
+    // resolves to nothing at all - where HTTP-01 cannot possibly complete - is
     // still refused.
     // Multi-IP: judged against the address THIS site publishes (its own, or its
-    // server's) — not the panel's.
+    // server's) - not the panel's.
     let expected = crate::services::server_ips::site_dns_address(&state.db, site.server_id, site.ip_id)
         .await
         .unwrap_or_default();
@@ -338,7 +338,7 @@ pub async fn provision(
         return Err(err(StatusCode::PRECONDITION_FAILED, &dns.detail));
     }
 
-    // Get admin email for ACME registration. Validated first — an address in a
+    // Get admin email for ACME registration. Validated first - an address in a
     // reserved TLD makes the CA refuse the account contact, and that failure is
     // invisible everywhere downstream (s252 F4).
     let (email,): (String,) =
@@ -407,8 +407,8 @@ pub async fn provision(
         .to_string();
 
     // Update site in DB. The provenance columns are written HERE, at issuance,
-    // beside `ssl_profile` — the tree's existing provision-time provenance
-    // column — because this is the only moment anything knows which challenge
+    // beside `ssl_profile` - the tree's existing provision-time provenance
+    // column - because this is the only moment anything knows which challenge
     // answered. HTTP-01 orders exactly one identifier, so the subject is the
     // site's own domain and the certificate is never a wildcard.
     sqlx::query(
@@ -449,7 +449,7 @@ pub async fn provision(
     })))
 }
 
-/// POST /api/sites/{id}/ssl/dns01 — Provision SSL via DNS-01 challenge (Cloudflare).
+/// POST /api/sites/{id}/ssl/dns01 - Provision SSL via DNS-01 challenge (Cloudflare).
 /// Supports wildcard certificates when wildcard=true.
 pub async fn provision_dns01(
     State(state): State<AppState>,
@@ -466,7 +466,7 @@ pub async fn provision_dns01(
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "Site not found"))?;
 
     // The DNS-01 path issues for this domain and rebuilds its vhost, same as the
-    // HTTP-01 one above — so it needs the same host, from the same row.
+    // HTTP-01 one above - so it needs the same host, from the same row.
     let agent =
         crate::helpers::agent_for_site_server(&state, site.server_id, &site.domain).await?;
 
@@ -497,7 +497,7 @@ pub async fn provision_dns01(
 
     let wildcard = body.get("wildcard").and_then(|v| v.as_bool()).unwrap_or(false);
     // The operator's explicit intent to replace a certificate this product did
-    // not issue — see `ProvisionQuery::force` on the HTTP-01 sibling above.
+    // not issue - see `ProvisionQuery::force` on the HTTP-01 sibling above.
     let force = body.get("force").and_then(|v| v.as_bool()).unwrap_or(false);
 
     // Find the matching Cloudflare DNS zone for this domain.
@@ -524,7 +524,7 @@ pub async fn provision_dns01(
         .ok_or_else(|| err(StatusCode::PRECONDITION_FAILED, "Zone has no Cloudflare zone ID"))?;
     let cf_api_token_enc = zone.cf_api_token.as_deref()
         .ok_or_else(|| err(StatusCode::PRECONDITION_FAILED, "Zone has no Cloudflare API token"))?;
-    // Decrypt the at-rest token before handing it to the agent for the DNS-01 challenge —
+    // Decrypt the at-rest token before handing it to the agent for the DNS-01 challenge -
     // this consumer serialises the token into the agent request body, not via cf_headers.
     let cf_api_token = crate::services::secrets_crypto::decrypt_credential_or_legacy(
         cf_api_token_enc, &state.config.jwt_secret,
@@ -565,13 +565,13 @@ pub async fn provision_dns01(
     }
 
     // ⛔ THE SAME BUDGET AS EVERY OTHER DNS-01 DOOR. This is the door that ISSUES
-    // a wildcard — the exact order `DNS01_ORDER_TIMEOUT_SECS` derives its 300s
+    // a wildcard - the exact order `DNS01_ORDER_TIMEOUT_SECS` derives its 300s
     // from (two 10s propagation sleeps for `{d}` and `*.{d}`, then two 120s
-    // polls ≈ 260s) — and it was the one caller still passing a bare literal 180.
+    // polls ≈ 260s) - and it was the one caller still passing a bare literal 180.
     // v2.145.0 gave the three RENEWAL doors the shared budget and left issuance
     // short, so issuing a wildcard could report a false failure while the agent
     // went on to succeed. A budget below the agent's own wait is not a timeout,
-    // it is a guaranteed false failure — which is what that constant already says.
+    // it is a guaranteed false failure - which is what that constant already says.
     let result = agent
         .post_long(
             &format!("/ssl/provision-dns01/{provision_domain}"),
@@ -590,7 +590,7 @@ pub async fn provision_dns01(
     let cert_path = result.get("cert_path").and_then(|v| v.as_str()).unwrap_or("").to_string();
     let key_path = result.get("key_path").and_then(|v| v.as_str()).unwrap_or("").to_string();
 
-    // Update site in DB. `provision_domain` — NOT `site.domain` — is what was
+    // Update site in DB. `provision_domain` - NOT `site.domain` - is what was
     // ordered: for a wildcard it is the Cloudflare ZONE, and the certificate
     // covers `{zone}` and `*.{zone}`. Recording the zone ROW as well as its name
     // means the renewal reaches for the credential that issued this certificate
@@ -641,7 +641,7 @@ pub struct PreflightQuery {
     pub domain: String,
 }
 
-/// GET /api/preflight/dns?domain=… — Evaluate the DNS prerequisite for a domain.
+/// GET /api/preflight/dns?domain=… - Evaluate the DNS prerequisite for a domain.
 ///
 /// The create-site form calls this before the user commits, and the SSL panel
 /// calls it to explain a gated button. Same checker the provision guard below
@@ -653,7 +653,7 @@ pub async fn preflight_dns(
     Json(crate::services::prerequisites::check_dns_points_here(&q.domain).await)
 }
 
-/// GET /api/sites/{id}/preflight — Evaluate an existing site's prerequisites.
+/// GET /api/sites/{id}/preflight - Evaluate an existing site's prerequisites.
 pub async fn preflight_site(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -684,7 +684,7 @@ pub async fn preflight_site(
     })))
 }
 
-/// GET /api/sites/{id}/ssl — Get SSL status for a site.
+/// GET /api/sites/{id}/ssl - Get SSL status for a site.
 pub async fn status(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -698,7 +698,7 @@ pub async fn status(
         .map_err(|e| internal_error("status", e))?
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "Site not found"))?;
 
-    // A read, so a wrong host is not destructive — but it is still dishonest: asking
+    // A read, so a wrong host is not destructive - but it is still dishonest: asking
     // this box about a certificate that lives on another one returns "no certificate"
     // for a site that has a perfectly good one. `.ok()` below would swallow that into
     // a null rather than an error, which is the shape nobody notices.
@@ -710,25 +710,25 @@ pub async fn status(
     let agent_status = agent.get(&agent_path).await.ok();
 
     // ⚠ `agent_status` asks the agent about `{SSL_DIR}/{site.domain}/`, so for a
-    // site served by a zone WILDCARD it reports `has_cert: false` — the
+    // site served by a zone WILDCARD it reports `has_cert: false` - the
     // certificate is real and is installed under the zone's name, not this
     // site's. The provenance below is what tells those two cases apart, and it
     // is the only place the panel says what the certificate actually covers.
 
-    // WHO ISSUED IT, decided ONCE, here — not re-derived by every display.
+    // WHO ISSUED IT, decided ONCE, here - not re-derived by every display.
     //
     // The renewal doors have been able to answer this since `foreign_cert_issuer`
     // shipped; nothing ever told the operator. So the site detail page asserted
     // "Enabled (Let's Encrypt)" over every enabled certificate, including one the
     // operator uploaded from a commercial CA, and the panel that had just DECLINED
-    // to renew it — correctly, and with a sentence naming the issuer — went on
+    // to renew it - correctly, and with a sentence naming the issuer - went on
     // describing it as its own.
     //
     // ⛔ This is derived from the `agent_status` ALREADY IN HAND, so the honesty
     // costs no extra round trip. And it is computed HERE rather than shipped as a
     // raw issuer string for the client to match on, because "does this issuer
     // string mean Let's Encrypt" is the same question `foreign_cert_issuer` asks
-    // for renewal — two spellings of the apostrophe included. A second copy of
+    // for renewal - two spellings of the apostrophe included. A second copy of
     // that test in TypeScript is a severed pair from the day it lands.
     //
     // `unknown` is a first-class answer and MUST NOT be rendered as a CA name:
@@ -761,15 +761,15 @@ pub async fn status(
 /// How long a DNS-01 order may take, at every layer, in seconds.
 ///
 /// Derived from the agent's own arithmetic rather than guessed: `provision_cert_dns01`
-/// sleeps 10s per authorization for DNS propagation — TWO of them for a wildcard,
-/// which orders `{subject}` and `*.{subject}` — then polls readiness on a 120s
+/// sleeps 10s per authorization for DNS propagation - TWO of them for a wildcard,
+/// which orders `{subject}` and `*.{subject}` - then polls readiness on a 120s
 /// retry policy and polls for the certificate on another 120s. That is ~260s of
 /// budgeted waiting before any slack.
 ///
 /// ⛔ Every caller must use THIS constant. The three renewal doors disagreed:
 /// `auto_healer` used plain `post` (a hard 60s cap in `AgentHandle::request`),
 /// `security_scanner` the same, and the interactive Renew button
-/// `post_long(.., 120)` — so a DNS-01 renewal timed out at every door while the
+/// `post_long(.., 120)` - so a DNS-01 renewal timed out at every door while the
 /// agent went on to succeed, and the panel recorded a failure, skipped the
 /// expiry write and wrote a cooldown row. A budget below the agent's own wait is
 /// not a timeout, it is a guaranteed false failure.
@@ -782,7 +782,7 @@ pub(crate) const DNS01_ORDER_TIMEOUT_SECS: u64 = 300;
 /// since v2.6.7: it orders `{domain}` (+ `*.{domain}` when `wildcard`), and
 /// `provision_cert_dns01` does `create_dir_all` then `write`, which over an
 /// existing directory is exactly a re-issue in place. It also deliberately skips
-/// the vhost enable for a wildcard, leaving that to the panel — which is what
+/// the vhost enable for a wildcard, leaving that to the panel - which is what
 /// this door needs. Reusing it is why this fix reaches every installed agent as
 /// it stands instead of waiting for a fleet-wide upgrade; `error.rs` states that
 /// doctrine outright: "an agent is only updated when somebody updates it, so a
@@ -824,7 +824,7 @@ pub(crate) async fn renew_over_dns01(
         crate::services::secrets_crypto::decrypt_credential_or_legacy(cf_api_token_enc, jwt_secret);
 
     // The ACME contact belongs to the site's OWNER, not to whoever triggered
-    // this — the unattended doors have no one to attribute it to, and the
+    // this - the unattended doors have no one to attribute it to, and the
     // interactive one is reachable by an administrator acting on another
     // account's site.
     let owner_email: String = sqlx::query_scalar("SELECT email FROM users WHERE id = $1")
@@ -856,7 +856,7 @@ pub(crate) async fn renew_over_dns01(
         // s388's three-party classification, reused: name Cloudflare or the CA
         // when either of them is what refused, and stay this machine's fault
         // otherwise. ⛔ Deliberately NOT `acme_failure_or`, whose sentence tells
-        // the operator to check port 80 — on the door reached precisely because
+        // the operator to check port 80 - on the door reached precisely because
         // port 80 cannot work.
         .map_err(|e| {
             crate::error::dns_provider_failure(&e)
@@ -869,16 +869,16 @@ pub(crate) async fn renew_over_dns01(
 ///
 /// Two of the four plans change what is true about the row and must say so:
 ///
-/// - `Http01 { record_challenge: true }` — nothing was recorded, this pass was
+/// - `Http01 { record_challenge: true }` - nothing was recorded, this pass was
 ///   the one degraded attempt, and it succeeded. Recording it here is what makes
 ///   the rule terminate instead of degrading for ever.
-/// - `LastResortHttp01` — a DNS-01 certificate we could not re-order over
+/// - `LastResortHttp01` - a DNS-01 certificate we could not re-order over
 ///   DNS-01, downgraded on purpose inside its last week. The installed
 ///   certificate really is single-name HTTP-01 now, so the row has to agree, or
 ///   the next cycle branches to DNS-01 for a certificate that is not one.
 ///
 /// ⚠ Called only after success. A FAILED HTTP-01 attempt on an unrecorded row
-/// must leave it unrecorded — the likeliest reason it failed is that the site
+/// must leave it unrecorded - the likeliest reason it failed is that the site
 /// cannot answer HTTP-01, which is exactly the case that made DNS-01 the right
 /// door, and recording `http-01` there would pin the wrong answer for ever.
 pub(crate) async fn record_renewal_provenance(
@@ -890,15 +890,15 @@ pub(crate) async fn record_renewal_provenance(
     // ⛔ TWO DIFFERENT QUESTIONS, and an earlier draft of this fix conflated them.
     // "Does this renewal change what is RECORDED about provenance?" is true for
     // only two plans. "Did this renewal install a certificate at the site's OWN
-    // directory?" is true for ALL THREE HTTP-01 plans — including the ordinary
+    // directory?" is true for ALL THREE HTTP-01 plans - including the ordinary
     // recorded one, which is by far the commonest.
     //
     // Gating the path on the provenance question left the biggest population
     // uncovered: a row ALREADY stamped `http-01` whose stored path still names
     // somewhere else renews for ever, gets a fresh certificate at its own name
     // every time, and has its vhost re-rendered from the stale path every time.
-    // v2.145.0 manufactured exactly that shape — it stamped `http-01` on
-    // unrecorded rows without touching the path — so those rows would have been
+    // v2.145.0 manufactured exactly that shape - it stamped `http-01` on
+    // unrecorded rows without touching the path - so those rows would have been
     // permanently uncorrectable. Found by driving a real box, not by reading.
     //
     // `Dns01` still returns: a wildcard's path names the ZONE, which is correct,
@@ -911,14 +911,14 @@ pub(crate) async fn record_renewal_provenance(
     };
 
     // ⭐ THE PATH FOLLOWS THE CERTIFICATE, and it is the half v2.145.0 left open.
-    // No renewal door writes `ssl_cert_path` — 0 occurrences in `auto_healer.rs`
+    // No renewal door writes `ssl_cert_path` - 0 occurrences in `auto_healer.rs`
     // and `security_scanner.rs` (both DO write `SET ssl_expiry`, so that is a
-    // measurement, not a missing grep) — yet every door re-renders the vhost from
+    // measurement, not a missing grep) - yet every door re-renders the vhost from
     // that column moments later. Both plans reaching this point ordered HTTP-01
     // for `domain`, so the agent wrote `/etc/dockpanel/ssl/{domain}/`.
     //
-    // For a row whose stored path names a DIFFERENT directory — a wildcard child
-    // whose path names the zone — the panel therefore renewed the certificate and
+    // For a row whose stored path names a DIFFERENT directory - a wildcard child
+    // whose path names the zone - the panel therefore renewed the certificate and
     // then pointed nginx back at the un-renewed wildcard, while stamping the NEW
     // certificate's expiry on the row. The 45-day window never reopened and the
     // site went dark at the wildcard's real expiry, behind a panel reporting a
@@ -954,12 +954,12 @@ pub(crate) async fn record_renewal_provenance(
 
     if let Some(losing) = losing {
         // Say exactly what was lost. The defect this ship removes was never the
-        // downgrade itself — it was that the downgrade happened in silence and
+        // downgrade itself - it was that the downgrade happened in silence and
         // the panel then reported a successful renewal.
         crate::services::system_log::log_event(
             pool,
-            // ⚠ "warning", not "warn". The readers — the Warnings tile, the level
-            // filter and the badge — all spell it long, and a short spelling is a
+            // ⚠ "warning", not "warn". The readers - the Warnings tile, the level
+            // filter and the badge - all spell it long, and a short spelling is a
             // row nothing can count, filter or colour. `system-logs-scope` S8
             // exists for exactly this and caught this line.
             "warning",
@@ -977,7 +977,7 @@ pub(crate) async fn record_renewal_provenance(
     }
 }
 
-/// POST /api/ssl/{id}/renew — Force-renew SSL certificate (admin only).
+/// POST /api/ssl/{id}/renew - Force-renew SSL certificate (admin only).
 pub async fn renew(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -985,9 +985,9 @@ pub async fn renew(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     // ⚠ This read used to be `WHERE id = $1` with no caller and no server term,
     // while `provision`, `provision_dns01` and `status` in this same file all went
-    // through the shared predicate. `AdminUser` is not a superuser here — an
+    // through the shared predicate. `AdminUser` is not a superuser here - an
     // administrator's reach stops at the local box and the machines they registered
-    // themselves — so the only thing keeping this handler inside that boundary was
+    // themselves - so the only thing keeping this handler inside that boundary was
     // the scope extractor's check on a header, which is not an authorisation the
     // row ever agreed to. Adopting the sibling form makes the row decide, and that
     // is what then makes it safe to take the host from the row as well.
@@ -1033,7 +1033,7 @@ pub(crate) async fn renew_for_site(
 
     // WHICH CHALLENGE ISSUED THIS CERTIFICATE decides which door renews it, and
     // that decision has to come BEFORE the foreign-certificate check below, not
-    // after it — see why there.
+    // after it - see why there.
     let days_remaining = site
         .ssl_expiry
         .map(|e| (e - chrono::Utc::now()).num_days());
@@ -1041,7 +1041,7 @@ pub(crate) async fn renew_for_site(
 
     // ⛔ RENEWING IS REPLACING. `provision_cert` writes the same
     // `fullchain.pem`/`privkey.pem` an uploaded certificate occupies, so "renew"
-    // aimed at a certificate this product did not issue does not refresh it — it
+    // aimed at a certificate this product did not issue does not refresh it - it
     // DESTROYS it and puts a 90-day Let's Encrypt certificate in its place. For a
     // commercial wildcard, a Cloudflare Origin CA certificate or a corporate PKI
     // certificate that is a paid asset replaced without consent, and for a domain
@@ -1050,14 +1050,14 @@ pub(crate) async fn renew_for_site(
     //
     // So the question is asked once, here, where every deliberate renewal passes:
     // the admin Renew button, and the Diagnostics Fix button that reaches this
-    // same function. A positive foreign issuer is a refusal WITH A SENTENCE —
+    // same function. A positive foreign issuer is a refusal WITH A SENTENCE -
     // which is the whole point of the exercise, since the alternative outcome for
     // exactly this case was `Operation failed. Reference: {uuid}` after a wasted
     // ACME order.
     //
     // ⛔ THE NAME CHECKED MUST BE THE NAME THE ORDER IS ABOUT TO OVERWRITE. A
-    // DNS-01 renewal orders against `subject` — the zone apex for a wildcard,
-    // recorded at issuance, never `site.domain` — and `site.domain` typically has
+    // DNS-01 renewal orders against `subject` - the zone apex for a wildcard,
+    // recorded at issuance, never `site.domain` - and `site.domain` typically has
     // no certificate directory of its own in that case (the agent resolves
     // `/ssl/status/{domain}` to a literal `/etc/dockpanel/ssl/{domain}/`), so
     // checking `site.domain` always answered "no certificate here" regardless of
@@ -1072,7 +1072,7 @@ pub(crate) async fn renew_for_site(
             return Err(err(
                 StatusCode::UNPROCESSABLE_ENTITY,
                 &format!(
-                    "The certificate on {} was not issued by DockPanel (issuer: {}). DockPanel \
+                    "The certificate on {} was not issued by CyberHunter - Panel (issuer: {}). CyberHunter - Panel \
                      renews only the Let's Encrypt certificates it issued itself, and renewing \
                      this one would replace it. Install a replacement under the site's SSL tab \
                      instead, or renew it wherever it was issued.",
@@ -1115,7 +1115,7 @@ pub(crate) async fn renew_for_site(
     let result = match &plan {
         crate::helpers::RenewalPlan::Refuse { reason } => {
             // The idiom this file already uses for a precondition that is not an
-            // agent failure — the three sibling refusals in `provision_dns01` are
+            // agent failure - the three sibling refusals in `provision_dns01` are
             // PRECONDITION_FAILED with a plain sentence. `dns01_failure_or` is an
             // AgentError translator and cannot be reached from here at all: no
             // agent has been called yet.
@@ -1150,7 +1150,7 @@ pub(crate) async fn renew_for_site(
     //
     // ⚠ The provenance columns move WITH the certificate. A last-resort
     // downgrade really does leave an HTTP-01 single-name certificate installed,
-    // so the row must say so — otherwise the next cycle would branch to DNS-01
+    // so the row must say so - otherwise the next cycle would branch to DNS-01
     // for a certificate that is no longer one. And an unrecorded row records
     // itself here, which is what makes the whole rule converge: an unknown row
     // behaves as it does today exactly once, and is known ever after.
@@ -1180,7 +1180,7 @@ pub(crate) async fn renew_for_site(
     Ok(Json(serde_json::json!({ "ok": true, "domain": site.domain })))
 }
 
-/// DELETE /api/ssl/{id} — Revoke and delete SSL certificate (admin only).
+/// DELETE /api/ssl/{id} - Revoke and delete SSL certificate (admin only).
 pub async fn revoke(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -1232,7 +1232,7 @@ pub async fn revoke(
 
     // ⛔ AFTER the clear, never before. The agent's teardown removes
     // `/etc/dockpanel/ssl/{domain}/` while `/etc/nginx/sites-enabled/{domain}.conf`
-    // still carries `ssl_certificate` naming it — and `nginx -t` is WHOLE-SERVER,
+    // still carries `ssl_certificate` naming it - and `nginx -t` is WHOLE-SERVER,
     // so from that moment every site edit on the box fails and the next restart
     // leaves nginx down for every tenant. The agent's shared-directory guard does
     // not save this door: `ownership.rs` skips the site's OWN vhost, so a solo
@@ -1241,7 +1241,7 @@ pub async fn revoke(
     //
     // Placement is load-bearing. `build_nginx_body` emits the certificate keys
     // only under `if site.ssl_enabled`, which the statement above has just made
-    // false, and this helper re-reads the row — so it now writes a plain HTTP
+    // false, and this helper re-reads the row - so it now writes a plain HTTP
     // vhost. Called BEFORE the clear it would write the HTTPS config back,
     // naming the deleted directory, fail `nginx -t` and be rolled back: a silent
     // no-op that satisfies any arm merely asserting the call exists.
@@ -1272,7 +1272,7 @@ pub async fn revoke(
 
 // ── ACME profile + default-profile admin surface ─────────────────────────
 
-/// GET /api/ssl/profiles — List ACME profiles advertised by the CA.
+/// GET /api/ssl/profiles - List ACME profiles advertised by the CA.
 ///
 /// Requires an admin (the ACME account is a panel-wide resource). Returns
 /// the server directory's profile list plus the currently configured
@@ -1307,7 +1307,7 @@ pub async fn profiles(
     .map_err(|e| internal_error("read acme contact", e))?;
 
     // Tell the operator, up front, which address will actually reach the CA and
-    // whether their own is usable — the whole point of F4 is that this was
+    // whether their own is usable - the whole point of F4 is that this was
     // invisible until every certificate had already failed.
     let effective = resolve_acme_contact(&state.db, &claims.email).await;
 
@@ -1322,11 +1322,11 @@ pub async fn profiles(
     })))
 }
 
-/// GET /api/ssl/contact-email — Report the ACME contact situation.
+/// GET /api/ssl/contact-email - Report the ACME contact situation.
 ///
 /// Deliberately does NOT touch the agent, unlike `profiles` above. The whole
 /// point of this surface is to be readable when issuance is broken, and a bad
-/// contact is one of the reasons the agent's ACME directory call fails — putting
+/// contact is one of the reasons the agent's ACME directory call fails - putting
 /// it behind that call would hide it exactly when it is needed.
 pub async fn get_contact_email(
     State(state): State<AppState>,
@@ -1355,7 +1355,7 @@ pub struct ContactEmailReq {
     pub email: Option<String>,
 }
 
-/// POST /api/ssl/contact-email — Set the panel-wide fallback ACME contact.
+/// POST /api/ssl/contact-email - Set the panel-wide fallback ACME contact.
 ///
 /// Used when the operator's own login address cannot be a Let's Encrypt contact
 /// (a reserved TLD, a typo). Pass `{"email": null}` to clear it.
@@ -1403,7 +1403,7 @@ pub struct DefaultProfileReq {
     pub profile: Option<String>,
 }
 
-/// POST /api/ssl/default-profile — Set the panel-wide default ACME profile.
+/// POST /api/ssl/default-profile - Set the panel-wide default ACME profile.
 /// Pass `{"profile": null}` or omit to reset to CA default.
 pub async fn set_default_profile(
     State(state): State<AppState>,
@@ -1455,7 +1455,7 @@ const NON_PUBLIC_TLDS: &[&str] = &[
 
 /// Check that an address is usable as an ACME account contact.
 ///
-/// This is deliberately not a general-purpose email validator — it only rejects
+/// This is deliberately not a general-purpose email validator - it only rejects
 /// what Let's Encrypt itself rejects, so we never refuse an address the CA would
 /// have accepted.
 pub(crate) fn validate_acme_contact(email: &str) -> Result<(), String> {
@@ -1473,14 +1473,14 @@ pub(crate) fn validate_acme_contact(email: &str) -> Result<(), String> {
 
     if !domain.contains('.') || domain.starts_with('.') || domain.ends_with('.') {
         return Err(format!(
-            "\"{email}\" has no valid public domain — Let's Encrypt will reject it as a contact address"
+            "\"{email}\" has no valid public domain - Let's Encrypt will reject it as a contact address"
         ));
     }
 
     let tld = domain.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
     if tld.len() < 2 || !tld.chars().all(|c| c.is_ascii_alphabetic()) {
         return Err(format!(
-            "\"{email}\" has no valid public domain — Let's Encrypt will reject it as a contact address"
+            "\"{email}\" has no valid public domain - Let's Encrypt will reject it as a contact address"
         ));
     }
     if NON_PUBLIC_TLDS.contains(&tld.as_str()) {
@@ -1497,7 +1497,7 @@ pub(crate) fn validate_acme_contact(email: &str) -> Result<(), String> {
 /// The panel used to hand `claims.email` straight to the agent, unvalidated. An
 /// operator who registered the panel with e.g. `admin@dockpanel.test` therefore
 /// had EVERY certificate fail at the CA with a contact-validation error that
-/// surfaced neither in the UI nor in `journalctl` — four silent retries, then a
+/// surfaced neither in the UI nor in `journalctl` - four silent retries, then a
 /// permanent give-up (s252 F4).
 ///
 /// Order: the user's own address when it is usable, otherwise the panel-wide
@@ -1556,7 +1556,7 @@ pub(crate) async fn resolve_profile(
 // PIN SUITES. `ssl-correctness-pin-e2e.sh`'s `prod_lines` blanks from the first
 // test marker to EOF and never resumes, so a `prod_*` arm cannot see production
 // code placed after one. `resolve_profile` had drifted below it and was blinded
-// at v2.144.0 — the second instance of lesson #669, which was written when a
+// at v2.144.0 - the second instance of lesson #669, which was written when a
 // test module placed mid-file hid ~60% of this file. Production items go ABOVE
 // this line; test modules go at the END.
 
@@ -1602,7 +1602,7 @@ mod acme_contact_tests {
         assert!(validate_acme_contact("admin@example.").is_err());
     }
 
-    /// The guard must not be stricter than the CA — these all issue fine today.
+    /// The guard must not be stricter than the CA - these all issue fine today.
     #[test]
     fn accepts_real_addresses() {
         for addr in [
@@ -1638,7 +1638,7 @@ mod dns01_message_tests {
     fn a_provider_refusal_names_the_token_and_never_port_80() {
         // ⚠ A SUBDOMAIN site, deliberately. The zone lookup exists to match a site
         // against a PARENT zone, so site == zone is the case that cannot see a
-        // site/zone confusion at all — every fixture here keeps them distinct.
+        // site/zone confusion at all - every fixture here keeps them distinct.
         let e = dns01_failure_or(
             "blog.example.com",
             "example.com",
@@ -1648,7 +1648,7 @@ mod dns01_message_tests {
         assert_eq!(e.0.as_u16(), 422);
         let m = message(e);
         assert!(m.contains("DNS:Edit"), "{m}");
-        // The zone the operator actually has in Cloudflare — never the site FQDN,
+        // The zone the operator actually has in Cloudflare - never the site FQDN,
         // which is not a zone and will not be found by anyone who goes looking.
         assert!(m.contains("the example.com zone"), "{m}");
         assert!(!m.contains("the blog.example.com zone"), "{m}");
@@ -1674,7 +1674,7 @@ mod dns01_message_tests {
         assert!(m.contains("the example.com zone"), "{m}");
         assert!(!m.contains("the blog.example.com zone"), "{m}");
         // #663: this branch also fires on a rate limit, where publishing a TXT
-        // record fixes nothing — so the advice must stay conditional.
+        // record fixes nothing - so the advice must stay conditional.
         assert!(m.contains("If that is a validation failure"), "{m}");
         assert!(!m.contains("port 80"), "{m}");
         assert!(!m.contains("try again"), "{m}");
@@ -1713,7 +1713,7 @@ mod dns01_message_tests {
 
     #[test]
     fn an_unlabelled_fault_keeps_its_incident_id() {
-        // Neither label, so neither sentence — this is a 502 with a reference,
+        // Neither label, so neither sentence - this is a 502 with a reference,
         // which is what an unwritable directory is.
         let e = dns01_failure_or(
             "blog.example.com",

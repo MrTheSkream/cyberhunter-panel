@@ -39,16 +39,16 @@ const INTEGRITY_FILES: &[&str] = &[
 
 /// Common malware patterns in PHP files.
 const MALWARE_PATTERNS: &[(&str, &str)] = &[
-    (r"eval\s*\(\s*base64_decode", "eval(base64_decode()) — obfuscated code execution"),
-    (r"eval\s*\(\s*gzinflate", "eval(gzinflate()) — compressed payload execution"),
-    (r"eval\s*\(\s*str_rot13", "eval(str_rot13()) — obfuscated code"),
-    (r"eval\s*\(\s*\$_(?:GET|POST|REQUEST|COOKIE)", "eval() with user input — remote code execution"),
-    (r"preg_replace\s*\(.*/e", "preg_replace with /e modifier — code execution"),
-    (r"assert\s*\(\s*\$_", "assert() with user input — code injection"),
-    (r"system\s*\(\s*\$_", "system() with user input — command injection"),
-    (r"passthru\s*\(\s*\$_", "passthru() with user input — command injection"),
-    (r"shell_exec\s*\(\s*\$_", "shell_exec() with user input — command injection"),
-    (r"exec\s*\(\s*\$_", "exec() with user input — command injection"),
+    (r"eval\s*\(\s*base64_decode", "eval(base64_decode()) - obfuscated code execution"),
+    (r"eval\s*\(\s*gzinflate", "eval(gzinflate()) - compressed payload execution"),
+    (r"eval\s*\(\s*str_rot13", "eval(str_rot13()) - obfuscated code"),
+    (r"eval\s*\(\s*\$_(?:GET|POST|REQUEST|COOKIE)", "eval() with user input - remote code execution"),
+    (r"preg_replace\s*\(.*/e", "preg_replace with /e modifier - code execution"),
+    (r"assert\s*\(\s*\$_", "assert() with user input - code injection"),
+    (r"system\s*\(\s*\$_", "system() with user input - command injection"),
+    (r"passthru\s*\(\s*\$_", "passthru() with user input - command injection"),
+    (r"shell_exec\s*\(\s*\$_", "shell_exec() with user input - command injection"),
+    (r"exec\s*\(\s*\$_", "exec() with user input - command injection"),
 ];
 
 /// Suspicious filenames that indicate web shells.
@@ -59,9 +59,9 @@ const SUSPICIOUS_FILES: &[&str] = &[
 ];
 
 /// A hardcoded-secret detection pattern for [`scan_secrets`]. `pattern` is a POSIX ERE
-/// (matched by `grep -E`, whose DFA engine has no backtracking — so no ReDoS risk even on
+/// (matched by `grep -E`, whose DFA engine has no backtracking - so no ReDoS risk even on
 /// adversarial input); `ci` runs it case-insensitively. The matched secret VALUE is
-/// deliberately never copied into a Finding — only the file, line, and label are recorded —
+/// deliberately never copied into a Finding - only the file, line, and label are recorded -
 /// so a scan result cannot itself leak (or, once backed up, archive) a live credential.
 struct SecretPattern {
     pattern: &'static str,
@@ -87,23 +87,23 @@ const SECRET_PATTERNS: &[SecretPattern] = &[
     SecretPattern { pattern: r#"(api[_-]?key|api[_-]?secret|secret[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret|passwd|password)['"]?[[:space:]]*(=>?|:)[[:space:]]*['"][A-Za-z0-9_./+=-]{8,}['"]"#, label: "hardcoded credential assignment", severity: "warning", ci: true },
 ];
 
-/// File types scanned for secrets — source + config where credentials get hardcoded.
+/// File types scanned for secrets - source + config where credentials get hardcoded.
 /// `.env*` is deliberately NOT included: an env file is the CORRECT home for a secret (and
-/// DockPanel's nginx blocks dotfiles from being served), so flagging one would be pure noise.
+/// CyberHunter - Panel's nginx blocks dotfiles from being served), so flagging one would be pure noise.
 const SECRET_INCLUDE_GLOBS: &[&str] = &[
     "*.php", "*.js", "*.jsx", "*.ts", "*.tsx", "*.mjs", "*.cjs", "*.py", "*.rb",
     "*.go", "*.java", "*.cs", "*.yml", "*.yaml", "*.json", "*.xml", "*.ini",
     "*.conf", "*.properties", "*.sh", "*.inc", "*.pem", "*.key",
 ];
 
-/// Directories skipped when scanning for secrets — third-party code (not the tenant's own
+/// Directories skipped when scanning for secrets - third-party code (not the tenant's own
 /// secrets, and huge) plus VCS/build/cache noise.
 const SECRET_EXCLUDE_DIRS: &[&str] = &[
     "node_modules", "vendor", ".git", ".svn", "bower_components",
     "cache", ".cache", "dist", "build",
 ];
 
-/// Individual files skipped — machine-generated lockfiles and minified bundles: large and
+/// Individual files skipped - machine-generated lockfiles and minified bundles: large and
 /// only ever a source of false positives.
 const SECRET_EXCLUDE_FILES: &[&str] = &[
     "package-lock.json", "yarn.lock", "composer.lock", "*.min.js", "*.min.css",
@@ -236,12 +236,12 @@ async fn scan_open_ports() -> Vec<Finding> {
     let mut findings = Vec::new();
     let mut seen_ports = std::collections::HashSet::new();
 
-    // Expected ports on a web/panel server. This list means "ports DockPanel
+    // Expected ports on a web/panel server. This list means "ports CyberHunter - Panel
     // itself puts here", so an entry outlives its listener as a blind spot:
     // 9090 was dropped in s305 with the loopback command-forwarding listener
     // that bound it. Anything answering on 9090 now is genuinely not ours and
     // gets the warning it should. (Upgrade impact: a box running something else
-    // there — Prometheus and Cockpit both default to 9090 — will see one new
+    // there - Prometheus and Cockpit both default to 9090 - will see one new
     // "Unexpected open port" finding. That is the scanner working, not a false
     // positive.)
     let expected_ports: &[u16] = &[22, 25, 80, 443, 993, 995, 3080, 5432, 5450];
@@ -405,7 +405,7 @@ async fn scan_container_vulnerabilities() -> Vec<Finding> {
         Err(_) => return Vec::new(),
     };
 
-    // List DockPanel-managed containers
+    // List CyberHunter - Panel-managed containers
     let containers = docker
         .list_containers(Some(bollard::container::ListContainersOptions::<String> {
             all: false,
@@ -624,11 +624,11 @@ async fn scan_secrets_in(roots: &[&str]) -> Vec<Finding> {
 
         for pat in SECRET_PATTERNS {
             let mut cmd = safe_command("grep");
-            // `-m 1`: stop after the FIRST match per file — one match is enough to flag the
+            // `-m 1`: stop after the FIRST match per file - one match is enough to flag the
             // file, and it caps grep's buffered stdout so a tenant-controlled file with millions
             // of matching lines can't balloon the root agent's memory (matches `scan_malware`'s
             // bounded `-l` profile). `kill_on_drop`: kill a timed-out grep when the future is
-            // dropped, since `safe_command` sets none (Lesson #76 — no orphaned child on timeout).
+            // dropped, since `safe_command` sets none (Lesson #76 - no orphaned child on timeout).
             cmd.args(["-rnE", "-m", "1"]);
             cmd.kill_on_drop(true);
             if pat.ci {
@@ -654,7 +654,7 @@ async fn scan_secrets_in(roots: &[&str]) -> Vec<Finding> {
             .await
             {
                 Ok(Ok(o)) => o,
-                _ => continue, // timed out, grep missing, or spawn failure — skip this pattern
+                _ => continue, // timed out, grep missing, or spawn failure - skip this pattern
             };
 
             // grep exits 1 on "no matches" (empty stdout) and 2 on error; both yield nothing
@@ -677,7 +677,7 @@ async fn scan_secrets_in(roots: &[&str]) -> Vec<Finding> {
                         file_path: Some(file),
                         remediation: Some(
                             "Move the secret out of the webroot into an environment variable \
-                             (a .env file is not served by DockPanel's nginx) and rotate the \
+                             (a .env file is not served by CyberHunter - Panel's nginx) and rotate the \
                              exposed credential."
                                 .into(),
                         ),
@@ -703,7 +703,7 @@ fn parse_grep_match(line: &str) -> Option<(String, u32)> {
         if digit_len > 0 && after[digit_len..].starts_with(':') {
             // This IS grep's `PATH:LINENO:` separator (the leftmost `:<digits>:` boundary is
             // always at or before the true separator, so `line[..colon]` is always a prefix of
-            // the path — never CONTENT). COMMIT to it and stop: never continue scanning past a
+            // the path - never CONTENT). COMMIT to it and stop: never continue scanning past a
             // real separator, or a `:<digits>:` inside CONTENT could pull the matched secret
             // into the returned path. An overflowing line number saturates rather than making
             // the parse "fail" and skip forward (the redaction-leak fix).
@@ -725,7 +725,7 @@ mod secret_scan_tests {
             parse_grep_match("/var/www/a.php:42:$key = \"AKIA...\";"),
             Some(("/var/www/a.php".to_string(), 42))
         );
-        // Content after the line number may itself contain colons — still parsed correctly.
+        // Content after the line number may itself contain colons - still parsed correctly.
         assert_eq!(
             parse_grep_match("/var/www/b.js:7:const u = \"redis://x:y@h\";"),
             Some(("/var/www/b.js".to_string(), 7))
@@ -734,7 +734,7 @@ mod secret_scan_tests {
         assert_eq!(parse_grep_match("no separator here"), None);
         assert_eq!(parse_grep_match("/path/no/lineno:notdigits:x"), None);
         // REDACTION REGRESSION: an overflowing line number (>u32::MAX, i.e. a >4GB file) must
-        // NOT make the parser skip the true separator and walk into CONTENT — that would pull
+        // NOT make the parser skip the true separator and walk into CONTENT - that would pull
         // the matched secret into the returned "path". It must saturate and stop.
         let overflow =
             parse_grep_match("/var/www/a.php:4294967296:$k=\"AKIA1234567890ABCDEF\":1:x");
@@ -743,7 +743,7 @@ mod secret_scan_tests {
             !overflow.unwrap().0.contains("AKIA"),
             "a secret value must never appear in the parsed path"
         );
-        // A colon INSIDE the path is handled — the separator is the first `:<digits>:`.
+        // A colon INSIDE the path is handled - the separator is the first `:<digits>:`.
         assert_eq!(
             parse_grep_match("/var/www/od:d.php:12:secret"),
             Some(("/var/www/od:d.php".to_string(), 12))
@@ -752,7 +752,7 @@ mod secret_scan_tests {
 
     #[tokio::test]
     async fn scan_secrets_flags_and_redacts() {
-        // Secret VALUES planted in the fixture — every one must be ABSENT from the findings.
+        // Secret VALUES planted in the fixture - every one must be ABSENT from the findings.
         const AWS_ID: &str = "AKIA1234567890ABCDEF";
         const PW_VAL: &str = "Sup3rSecretValue123";
 
@@ -773,9 +773,9 @@ mod secret_scan_tests {
             ),
         )
         .unwrap();
-        // A .env file is the CORRECT home for a secret — must NOT be scanned.
+        // A .env file is the CORRECT home for a secret - must NOT be scanned.
         std::fs::write(format!("{site}/.env"), format!("AWS_KEY={AWS_ID}\n")).unwrap();
-        // Third-party code under node_modules — must be skipped by --exclude-dir.
+        // Third-party code under node_modules - must be skipped by --exclude-dir.
         std::fs::write(format!("{node_modules}/evil.php"), format!("<?php $k=\"{AWS_ID}\";")).unwrap();
 
         let findings = scan_secrets_in(&[site.as_str()]).await;

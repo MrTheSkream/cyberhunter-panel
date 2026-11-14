@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# container-identity-pin-e2e.sh — s297 / v2.55.0
+# container-identity-pin-e2e.sh - s297 / v2.55.0
 #
 # A container name is not a key anybody owns.
 #
 # `dockpanel-git-{X}` is written for a deployment called X. It was ALSO written
-# for a preview of config C on branch B whenever `{C}-pr-{slug(B)}` spelled X —
+# for a preview of config C on branch B whenever `{C}-pr-{slug(B)}` spelled X -
 # and `is_valid_name` accepts that name, so an admin creates it by ordinary
 # means while the branch half is chosen by whoever can push to C's repo. The
 # agent resolved the container by NAME ALONE, then blue-greened it: it read the
 # domain off the container it had just found, swapped THAT domain's vhost to the
 # pushed build, and force-removed the container behind it. The v2.53.0 ownership
-# guard authorised the vhost write, correctly — the victim's container really
+# guard authorised the vhost write, correctly - the victim's container really
 # was the one behind the victim's vhost. `services::ownership` had five
 # primitives and every one of them read a file; the largest thing the agent
 # destroys had none.
@@ -19,7 +19,7 @@
 #       character `is_valid_name` rejects, so no deployment can spell one. The
 #       arm that fails if the whole separation is undone.
 #   §B  A CONTAINER PROVES IT IS THE ONE ASKED FOR. Not "a container with this
-#       name exists" — who does it say it belongs to, and does the answer permit
+#       name exists" - who does it say it belongs to, and does the answer permit
 #       what is about to happen to it.
 #   §C  THE STAND-IN SPACE IS NOT A REAL NAME EITHER. `{name}-blue` is a name
 #       `is_valid_name` accepts, and the swap force-removed whatever held it.
@@ -41,7 +41,7 @@
 #
 # NO PIPES INTO `grep -q`. Under `set -o pipefail` grep -q closes the pipe on its
 # first match, the upstream dies of SIGPIPE (141), and pipefail reports the whole
-# pipeline failed — so an arm goes red on correct code, non-deterministically.
+# pipeline failed - so an arm goes red on correct code, non-deterministically.
 # Every arm here feeds grep a here-string.
 
 set -uo pipefail
@@ -109,7 +109,7 @@ count() { grep -cE -- "$2" <<< "$1" || true; }
 # how the earlier suites spell it. `git_build.rs` carries an auto-generated
 # Dockerfile as a string literal containing `collectstatic --noinput || true`, so
 # a whole-subject liveness test reads the ENTIRE FILE as dead and every arm over
-# it goes red on correct code — permanently, which means those arms could never
+# it goes red on correct code - permanently, which means those arms could never
 # report a real catch either. Same family as the stripper that ate code (#136)
 # and the arm that matched the prose narrating a check (#149): a harness rule
 # that matched a string literal. Judge the lines that matched, plus a little
@@ -138,7 +138,7 @@ derives() {
 }
 
 # First 1-indexed line of $2 within $1, or 0. Used where the DEFECT IS THE
-# ORDER — a pin that only checks both statements exist passes on the bug.
+# ORDER - a pin that only checks both statements exist passes on the bug.
 lineof() {
   local n
   n=$(grep -nE -- "$2" <<< "$1" | head -1 | cut -d: -f1)
@@ -173,7 +173,7 @@ AM=$(subj "$AMOD") || AM=""
 TSX=$(subj "$APPS_TSX") || TSX=""
 
 echo
-echo "container-identity-pin-e2e — a container name is not a key anybody owns"
+echo "container-identity-pin-e2e - a container name is not a key anybody owns"
 echo
 
 # ── stripper self-check ────────────────────────────────────────────────
@@ -184,7 +184,7 @@ stripper_self_check "$OWN" "$GB" "$GBR" "$DA" "$DAR" "$NGX" "$APROC" "$GD" "$PCL
 echo
 echo "§A a preview and a deployment cannot spell the same container name"
 if [ -z "$O" ] || [ -z "$M" ] || [ -z "$AM" ]; then
-  skip "§A — a subject could not be read"
+  skip "§A - a subject could not be read"
 else
   SCOPED=$(fnbody "$O" "scoped")
   # The separation rests entirely on the scope using a character the name
@@ -193,7 +193,7 @@ else
   if derives "$SCOPED" 'GitScope::Preview[[:space:]]*=>[[:space:]]*format!'; then
     ok "A1 the preview space is composed by a scope function, not by the bare name"
   else
-    bad "A1 previews are not scoped — a pushed branch names a deployment's container again"
+    bad "A1 previews are not scoped - a pushed branch names a deployment's container again"
   fi
   # ⚠ THE ARM THAT MATTERS MOST, and the one a future change is most likely to
   # break without noticing: BOTH validators must keep rejecting whatever
@@ -202,7 +202,7 @@ else
   MARK=$(sed -n 's/.*GitScope::Preview => format!("\(.*\){name}").*/\1/p' "$OWN" | head -1)
   MARK=${MARK:-$(sed -n 's/.*GitScope::Preview => format!("\([^{]*\){name}.*/\1/p' "$OWN" | head -1)}
   if [ -z "$MARK" ]; then
-    bad "A2 could not read the preview scope marker out of $OWN — the arm below cannot be trusted"
+    bad "A2 could not read the preview scope marker out of $OWN - the arm below cannot be trusted"
   else
     # Both validators must still be the alphanumeric+underscore+hyphen set…
     BE_OK=1; AG_OK=1
@@ -216,7 +216,7 @@ else
     if [ "$BE_OK" = 1 ] && [ "$AG_OK" = 1 ] && [ -n "$OUTSIDE" ]; then
       ok "A2 both validators reject '$OUTSIDE', so no deployment can be named into the '$MARK' space"
     else
-      bad "A2 the scope marker '$MARK' is not provably rejected by both validators (backend=$BE_OK agent=$AG_OK outside-chars='$OUTSIDE') — the two spaces can intersect again"
+      bad "A2 the scope marker '$MARK' is not provably rejected by both validators (backend=$BE_OK agent=$AG_OK outside-chars='$OUTSIDE') - the two spaces can intersect again"
     fi
   fi
   # Cross-tree: the panel must agree with the agent about what a preview is
@@ -224,7 +224,7 @@ else
   if derives "$B" 'PREVIEW_SCOPE_PREFIX'; then
     ok "A3 the panel names the preview space explicitly rather than assembling it inline"
   else
-    bad "A3 the panel has no preview-space constant — the two trees can drift apart"
+    bad "A3 the panel has no preview-space constant - the two trees can drift apart"
   fi
 fi
 
@@ -232,7 +232,7 @@ fi
 echo
 echo "§A' every call the panel makes into the git subsystem says which space it means"
 if [ -z "$B" ] || [ -z "$GR" ]; then
-  skip "§A' — a subject could not be read"
+  skip "§A' - a subject could not be read"
 else
   # `scope` must be a REQUIRED field on the deploy body. A defaulted one is how
   # a preview came to be able to name a deployment's container: nobody has to
@@ -241,7 +241,7 @@ else
   if derives "$DB" 'pub scope: &.a str'; then
     ok "A'1 the deploy body declares a scope, so a call site cannot omit it"
   else
-    bad "A'1 DeployBody has no required scope field — an omitted scope is the original defect"
+    bad "A'1 DeployBody has no required scope field - an omitted scope is the original defect"
   fi
   BDB=$(fnbody "$B" "build_deploy_body")
   if derives "$BDB" '"scope":[[:space:]]*b\.scope'; then
@@ -251,8 +251,8 @@ else
   fi
   # Every construction names one. A count arm, because the failure mode is ONE
   # forgotten site, not zero.
-  # ⚠ NON-EMPTY, not merely present. `scope: ""` deserialises to the default —
-  # which is `deploy` — so a field present and blank puts a preview back in the
+  # ⚠ NON-EMPTY, not merely present. `scope: ""` deserialises to the default -
+  # which is `deploy` - so a field present and blank puts a preview back in the
   # deployment's name space while satisfying any arm that only looks for the
   # key. Field-present-but-empty beat the s295 pin and the s296 pin; it is
   # assumed here rather than discovered again (lesson #149).
@@ -272,7 +272,7 @@ else
   else
     bad "A'4 the preview clone/build still share the deployment's checkout and image repository"
   fi
-  # And the preview's own deploy body names the preview space by that name —
+  # And the preview's own deploy body names the preview space by that name -
   # the arm above counts every construction, this one names the one that matters.
   if derives "$HPD" '^[[:space:]]*scope: "preview",'; then
     ok "A'4b the preview deploy body asks for the preview space specifically"
@@ -294,12 +294,12 @@ fi
 echo
 echo "§B a container is asked who it belongs to, and the answer is honoured"
 if [ -z "$O" ] || [ -z "$G" ]; then
-  skip "§B — a subject could not be read"
+  skip "§B - a subject could not be read"
 else
   if derives "$O" 'pub fn git_container\('; then
     ok "B1 ownership has a container primitive at all"
   else
-    bad "B1 ownership.rs still judges only files — the largest thing the agent destroys has no primitive"
+    bad "B1 ownership.rs still judges only files - the largest thing the agent destroys has no primitive"
   fi
   FC=$(fnbody "$G" "find_container")
   if derives "$FC" 'ownership::git_container\('; then
@@ -307,7 +307,7 @@ else
   else
     bad "B2 find_container matches on name alone again"
   fi
-  # THE HEADLINE ARM. Not "the guard is called" — the guard's answer must ABORT.
+  # THE HEADLINE ARM. Not "the guard is called" - the guard's answer must ABORT.
   # `let _ = guard(..)` satisfied the s294 and s295 pins and arrived again at
   # s296, so this keys on the refusal returning out of the function.
   DOU=$(fnbody "$G" "deploy_or_update")
@@ -331,14 +331,14 @@ else
     bad "B4 the teardown removes first and asks afterwards, or not at all (ask@$CGUARD remove@$CREMOVE)"
   fi
   # ⚠ THE TRAP INSIDE THE FIX. The compatibility path reaches the OLD shared
-  # space, where every container predating this build is unlabelled — including
+  # space, where every container predating this build is unlabelled - including
   # the victim's. Answering Ours on the label alone carries the original
   # unattended delete straight through the remedy.
   GC=$(fnbody "$O" "git_container")
   if derives "$GC" 'GitScope::PreviewLegacy, None\)[[:space:]]*=>[[:space:]]*match \(expected_port, actual_port\)'; then
     ok "B5 the legacy space demands positive evidence, not the absence of a label"
   else
-    bad "B5 an unlabelled container in the legacy space is treated as the caller's — every pre-upgrade deploy is unlabelled"
+    bad "B5 an unlabelled container in the legacy space is treated as the caller's - every pre-upgrade deploy is unlabelled"
   fi
   # A container may only be judged later if it was marked earlier.
   DOU_LABELS=$(fnbody "$G" "deploy_or_update")
@@ -353,12 +353,12 @@ fi
 echo
 echo "§C the blue-green stand-in is not standing on a name a deployment can hold"
 if [ -z "$G" ] || [ -z "$D" ] || [ -z "$O" ]; then
-  skip "§C — a subject could not be read"
+  skip "§C - a subject could not be read"
 else
   # ABSENCE ARM over BOTH twins. Non-vacuity is established by the subj()/SKIP
   # guard above plus the stripper self-check: these subjects were really read.
   # ⚠ THE PROPERTY, NOT THE SPELLING. An absence arm over the two twins alone is
-  # satisfied by moving the suffix into the shared helper — which is exactly
+  # satisfied by moving the suffix into the shared helper - which is exactly
   # what this release did, so the arm would have measured nothing. Read the
   # constant and require it to contain a character the name validator rejects,
   # the same test §A applies to the preview scope.
@@ -367,12 +367,12 @@ else
   if [ -n "$SUF" ] && [ -n "$SUF_OUTSIDE" ] && ! has "$G" '\-blue' && ! has "$D" '\-blue'; then
     ok "C1 the stand-in space is marked by '$SUF_OUTSIDE', which no deployment name may contain"
   else
-    bad "C1 the stand-in suffix '$SUF' is spellable as a deployment name (outside-chars='$SUF_OUTSIDE') — 'api-blue' is a name is_valid_name accepts"
+    bad "C1 the stand-in suffix '$SUF' is spellable as a deployment name (outside-chars='$SUF_OUTSIDE') - 'api-blue' is a name is_valid_name accepts"
   fi
   if derives "$G" 'ownership::blue_name\(' && derives "$D" 'ownership::blue_name\('; then
     ok "C2 both twins compose the stand-in through the one function that owns the rule"
   else
-    bad "C2 a twin builds the stand-in name itself — that is how the two drifted before"
+    bad "C2 a twin builds the stand-in name itself - that is how the two drifted before"
   fi
   # And what is standing there is asked before it is destroyed, in BOTH twins.
   CBL=$(fnbody "$G" "clear_blue_leftover")
@@ -396,7 +396,7 @@ fi
 echo
 echo "§D a swap frees the name before it destroys anything, and says when it could not"
 if [ -z "$G" ]; then
-  skip "§D — $GB could not be read"
+  skip "§D - $GB could not be read"
 else
   BG=$(fnbody "$G" "blue_green_update")
   # THE DEFECT IS THE ORDER. A pin that only checks both statements exist passes
@@ -416,7 +416,7 @@ else
   #
   # A rename that is error-checked at all: v2.54.0 has `.rename_container(..)
   # .await.ok()` and nothing else.
-  # BOTH promotion renames — freeing the name and installing the new one — must
+  # BOTH promotion renames - freeing the name and installing the new one - must
   # be checked. An arm satisfied by ONE of them passes while the second is
   # best-effort, which is the half-swapped state this whole section is about.
   # The rollback rename inside the failure branches is deliberately `.ok()`, so
@@ -425,7 +425,7 @@ else
   if [ "${CHECKED:-0}" -ge 2 ]; then
     ok "D2 both promotion renames are error-checked, not best-effort ($CHECKED)"
   else
-    bad "D2 only ${CHECKED:-0} of the two promotion renames is checked — the other returns Ok over a half-swapped host"
+    bad "D2 only ${CHECKED:-0} of the two promotion renames is checked - the other returns Ok over a half-swapped host"
   fi
   # A failed promotion must put traffic back. Rollbacks existed before; what did
   # not exist is one AFTER the promotion begins, which is the only place the
@@ -438,16 +438,16 @@ else
     bad "D3 every rollback happens before the promotion starts, so a half-swapped host stays that way (rename@$FIRST_RENAME rollback@$LAST_ROLLBACK)"
   fi
 
-  # The docker-app twin got the IDENTICAL fix (s471) — it shared the v2.54.0
+  # The docker-app twin got the IDENTICAL fix (s471) - it shared the v2.54.0
   # defect via `find_free_port`/`health_check_port`/`swap_nginx_proxy_port` but
   # never received the v2.55.0 repair, until now. Same three arms, D4-D6.
   #
   # Sliced from `retired_name = format!` onward (a real identifier, not a
-  # comment — `code()` already stripped comments out of `$D`, so a marker like
+  # comment - `code()` already stripped comments out of `$D`, so a marker like
   # "Promote it" would match nothing). The rest of the function's body has
   # several pre-existing rollback removes on the create/health-check/nginx-swap
   # failure paths, all textually BEFORE this point and all legitimately
-  # best-effort since nothing has been promoted yet — keying on the whole body
+  # best-effort since nothing has been promoted yet - keying on the whole body
   # would find one of those first and fail this arm for the wrong reason.
   if [ -n "$D" ]; then
     # Recomputed rather than reused from §C: §C's guard also requires `$G`
@@ -466,7 +466,7 @@ else
     if [ "${CHECKED_D:-0}" -ge 2 ]; then
       ok "D5 the docker-app twin ALSO error-checks both promotion renames ($CHECKED_D)"
     else
-      bad "D5 only ${CHECKED_D:-0} of the docker-app twin's two promotion renames is checked — the other returns Ok over a half-swapped host"
+      bad "D5 only ${CHECKED_D:-0} of the docker-app twin's two promotion renames is checked - the other returns Ok over a half-swapped host"
     fi
     FIRST_RENAME_D=$(lineof "$BGD_COMMIT" 'rename_container\(')
     LAST_ROLLBACK_D=$(lastlineof "$BGD_COMMIT" 'swap_nginx_proxy_port\(domain, temp_port, old_port\)')
@@ -476,7 +476,7 @@ else
       bad "D6 a docker-app promotion failure does not roll the vhost back (rename@$FIRST_RENAME_D rollback@$LAST_ROLLBACK_D)"
     fi
   else
-    skip "§D docker-app twin — $DA could not be read"
+    skip "§D docker-app twin - $DA could not be read"
   fi
 fi
 
@@ -484,7 +484,7 @@ fi
 echo
 echo "§E the mask a read substitutes cannot be written back as the secret"
 if [ -z "$D" ] || [ -z "$DR" ]; then
-  skip "§E — a subject could not be read"
+  skip "§E - a subject could not be read"
 else
   # Caller-reaches-helper (lesson #150): a merge nothing calls satisfies "the
   # helper exists" while the secret is still destroyed.
@@ -492,7 +492,7 @@ else
   if derives "$UE" 'merge_env_preserving_masked\('; then
     ok "E1 update_env goes through the merge"
   else
-    bad "E1 update_env builds the environment itself again — the mask is written back as the value"
+    bad "E1 update_env builds the environment itself again - the mask is written back as the value"
   fi
   ME=$(fnbody "$D" "merge_env_preserving_masked")
   if derives "$ME" 'ENV_MASK' && derives "$ME" 'existing\.get\('; then
@@ -501,7 +501,7 @@ else
     bad "E2 the merge does not consult the container it is about to replace"
   fi
   # The read side must consult the catalogue rather than masking every name that
-  # merely CONTAINS a sensitive word — three shipped variables are hostnames and
+  # merely CONTAINS a sensitive word - three shipped variables are hostnames and
   # usernames.
   GE=$(fnbody "$DR" "get_env")
   if derives "$GE" 'catalogue_non_secret_env\(' && derives "$GE" 'docker_apps::ENV_MASK'; then
@@ -522,7 +522,7 @@ else
       bad "E5 the frontend open-codes the mask"
     fi
   else
-    skip "E5 — $APPS_TSX could not be read"
+    skip "E5 - $APPS_TSX could not be read"
   fi
 fi
 
@@ -530,7 +530,7 @@ fi
 echo
 echo "§F the ownership guard reaches rename and the lifecycle callers, not only create and delete"
 if [ -z "$N" ] || [ -z "$AP" ]; then
-  skip "§F — a subject could not be read"
+  skip "§F - a subject could not be read"
 else
   RS=$(fnbody "$N" "rename_site")
   if derives "$RS" 'cert_dir_in_use_elsewhere\('; then
@@ -548,7 +548,7 @@ else
   if derives "$AP" 'pub fn owned_service_name\('; then
     ok "F3 there is one answer to 'which unit may I act on for this domain'"
   else
-    bad "F3 no owned-unit resolver — the lifecycle callers derive the unit name themselves"
+    bad "F3 no owned-unit resolver - the lifecycle callers derive the unit name themselves"
   fi
   # The three callers that stop and restart another tenant's app process.
   USES=$(count "$N" 'owned_service_name\(&domain\)')
@@ -556,7 +556,7 @@ else
   if [ "$USES" -ge 3 ] && [ "$RAW" -eq 0 ]; then
     ok "F4 all three lifecycle callers resolve an owned unit, and none derives the name itself"
   else
-    bad "F4 $USES guarded callers and $RAW raw derivations — a tenant can stop a neighbour's app"
+    bad "F4 $USES guarded callers and $RAW raw derivations - a tenant can stop a neighbour's app"
   fi
 fi
 
@@ -564,7 +564,7 @@ fi
 echo
 echo "§G the sweep keeps the only record of anything it could not tear down"
 if [ -z "$P" ] || [ -z "$B" ]; then
-  skip "§G — a subject could not be read"
+  skip "§G - a subject could not be read"
 else
   CEP=$(fnbody "$P" "cleanup_expired_previews")
   # Two loops, and BOTH must bail rather than delete the row anyway. A count arm
@@ -589,7 +589,7 @@ else
     bad "G3 preview teardown is assembled per call site again ($DOORS through the door, $RAWPOSTS raw posts)"
   fi
   # Deleting the parent must tear the children down while the rows still name
-  # them — the FK cascade is about to remove every one.
+  # them - the FK cascade is about to remove every one.
   RM=$(fnbody "$B" "remove")
   PREV=$(lineof "$RM" 'FROM git_previews')
   CASCADE=$(lineof "$RM" 'DELETE FROM git_deploys')
@@ -604,7 +604,7 @@ else
   if derives "$PCB" '"domain"' && derives "$PCB" '"host_port"'; then
     ok "G5 the teardown carries the row's own domain and port, so a crashed preview's vhost is still released"
   else
-    bad "G5 the teardown tells the agent only a name — a missing container means an orphaned vhost forever"
+    bad "G5 the teardown tells the agent only a name - a missing container means an orphaned vhost forever"
   fi
 fi
 
@@ -612,14 +612,14 @@ fi
 #
 # G3 above counts the call sites that go through `preview_cleanup_body` and
 # passes at four or more. It passed for months while FOUR of the six doors threw
-# the teardown's result away and deleted the row regardless — because a count is
+# the teardown's result away and deleted the row regardless - because a count is
 # satisfied by the defect: two guarded plus four unguarded is still six. §G
 # asserted the two SWEEPS keep the row; nothing asked how many callers existed.
 # That is lesson #558 exactly, and this section is the membership test G3 is not:
 # every member of a DERIVED population must individually comply.
 #
-# The population is derived from the operation's own syntax — every post to
-# `/git/cleanup` in the panel — and each call site is flattened to one line whose
+# The population is derived from the operation's own syntax - every post to
+# `/git/cleanup` in the panel - and each call site is flattened to one line whose
 # bounds come from the code's punctuation, never a fixed `-A n` window (#172).
 echo
 echo "§H every preview teardown door checks whether the teardown happened"
@@ -647,7 +647,7 @@ cleanup_stmts() {
 }
 
 if [ -z "$P" ] || [ -z "$B" ]; then
-  skip "§H — a subject could not be read"
+  skip "§H - a subject could not be read"
 else
   STMTS=$(printf '%s\n%s\n' "$(cleanup_stmts "$B")" "$(cleanup_stmts "$P")" | grep -E '.' || true)
   DOORS_H=$(count "$STMTS" '"/git/cleanup"')

@@ -1,4 +1,4 @@
-//! The Docker-apps vertical — "can this container actually start like this?"
+//! The Docker-apps vertical - "can this container actually start like this?"
 //!
 //! The app templates are the most-used surface in the product and their failures
 //! are the least self-explanatory: the deploy runs for as long as it takes to
@@ -10,7 +10,7 @@
 //! # Why the checks are pure and the I/O is not
 //!
 //! Each `check_*` takes facts and returns a verdict. Gathering the facts (three
-//! agent calls and a query) lives in the route. That split is deliberate — it is
+//! agent calls and a query) lives in the route. That split is deliberate - it is
 //! what makes the interesting cases testable without a Docker daemon, and lesson
 //! #79f is the reason: the SSL ladder was untestable for exactly as long as its
 //! decision stayed inside an async DB loop.
@@ -58,12 +58,12 @@ pub struct PortHolder {
 #[derive(Debug, Clone, Default)]
 pub struct HostFacts {
     pub used_ports: Vec<PortHolder>,
-    /// Names of containers DockPanel already manages.
+    /// Names of containers CyberHunter - Panel already manages.
     pub taken_names: Vec<String>,
     pub mem_total_mb: Option<u64>,
     pub mem_used_mb: Option<u64>,
     /// The agent's bind probe for the requested port. `None` when we couldn't ask
-    /// — an older fleet agent has no `/system/port-check`, and a check we cannot
+    /// - an older fleet agent has no `/system/port-check`, and a check we cannot
     /// run must degrade to `unknown`, never to a refusal.
     pub port_probe_free: Option<bool>,
 }
@@ -77,7 +77,7 @@ impl HostFacts {
     ///
     /// Deliberately deterministic: the preflight re-runs as the user types, and a
     /// suggestion that changed each time would be worse than none. Only consults
-    /// what we know — the agent probe covers a single port, so a suggestion is a
+    /// what we know - the agent probe covers a single port, so a suggestion is a
     /// starting point, not a promise.
     fn next_free_port(&self, from: u16) -> Option<u16> {
         (from.max(1024)..=65000).find(|p| self.holder_of(*p).is_none())
@@ -87,14 +87,14 @@ impl HostFacts {
 /// Check: every environment variable the template *requires* has a value.
 ///
 /// This is the highest-yield check in the vertical. 104 of the shipped templates
-/// declare at least one variable that is `required` with no default — the
+/// declare at least one variable that is `required` with no default - the
 /// database passwords, `SECRET_KEY_BASE`, `MEILI_MASTER_KEY`, and so on. The
 /// deploy form marks them with a red asterisk and then lets you submit anyway:
 /// the button is gated only on the app name being non-empty.
 ///
 /// What happens next is the part worth blocking. The agent resolves each variable
 /// as `env.get(name).unwrap_or(default)` and then **drops it entirely if the
-/// result is empty** — so the variable is not passed as blank, it is not passed at
+/// result is empty** - so the variable is not passed as blank, it is not passed at
 /// all. `postgres` refuses to initialise, `grafana` silently keeps its built-in
 /// password, and the user finds out after the pull, from container logs.
 ///
@@ -156,7 +156,7 @@ pub fn check_required_env(intent: &AppDeployIntent, specs: &[AppEnvSpec]) -> Pre
 /// equivalent, so a collision surfaces as a Docker error after the pull.
 ///
 /// Three sources, in order of authority: the host's own bind probe, then the
-/// containers DockPanel manages, then the sites it proxies.
+/// containers CyberHunter - Panel manages, then the sites it proxies.
 pub fn check_port_available(intent: &AppDeployIntent, facts: &HostFacts) -> PrereqResult {
     let port = intent.port;
 
@@ -172,7 +172,7 @@ pub fn check_port_available(intent: &AppDeployIntent, facts: &HostFacts) -> Prer
         secret: false,
     });
 
-    // Something DockPanel knows about holds it — we can name what.
+    // Something CyberHunter - Panel knows about holds it - we can name what.
     if let Some(holder) = facts.holder_of(port) {
         let mut r = APPS_PORT_CHECK
             .result(
@@ -189,8 +189,8 @@ pub fn check_port_available(intent: &AppDeployIntent, facts: &HostFacts) -> Prer
     match facts.port_probe_free {
         Some(true) => APPS_PORT_CHECK.result(&APPS_PORT_FREE, &[("port", port_str.as_str())]),
         Some(false) => {
-            // Nothing of ours holds it, yet the bind failed — so something outside
-            // DockPanel does. We can't name it, but the consequence is identical.
+            // Nothing of ours holds it, yet the bind failed - so something outside
+            // CyberHunter - Panel does. We can't name it, but the consequence is identical.
             let mut r = APPS_PORT_CHECK
                 .result(&APPS_PORT_HELD_BY_UNKNOWN, &[("port", port_str.as_str())]);
             if let Some(s) = suggestion {
@@ -205,7 +205,7 @@ pub fn check_port_available(intent: &AppDeployIntent, facts: &HostFacts) -> Prer
 /// Check: is the app name already taken?
 ///
 /// Container names are unique per host, and the deploy form pre-fills the name
-/// with the template id — so deploying a second Postgres collides by default.
+/// with the template id - so deploying a second Postgres collides by default.
 pub fn check_name_available(intent: &AppDeployIntent, facts: &HostFacts) -> PrereqResult {
     let name = intent.name.trim();
 
@@ -365,14 +365,14 @@ mod tests {
         assert!(matches!(r.remediation, Some(Remediation::Value { .. })));
     }
 
-    /// Nothing of ours holds it, but the host says the bind fails — still fatal,
+    /// Nothing of ours holds it, but the host says the bind fails - still fatal,
     /// we just can't say who.
     #[test]
     fn a_port_held_by_something_unmanaged_still_blocks() {
         let facts = HostFacts { port_probe_free: Some(false), ..Default::default() };
         let r = check_port_available(&intent(), &facts);
         assert!(r.blocks());
-        assert!(r.detail.contains("managed by DockPanel"));
+        assert!(r.detail.contains("managed by CyberHunter - Panel"));
         assert!(r.observed.is_empty(), "we cannot name a holder we don't manage");
     }
 
@@ -446,7 +446,7 @@ mod tests {
     ///
     /// The agent lists containers as `dockpanel-app-<name>`; the form submits
     /// `<name>`. Feeding the prefixed form in here compares two things that can
-    /// never be equal, and the check reports every colliding name as available —
+    /// never be equal, and the check reports every colliding name as available -
     /// which is what a fresh box caught v2.29.0 doing. The stripping lives in
     /// `routes::docker_apps::gather_app_facts`; this pins the contract it must
     /// satisfy.
@@ -458,7 +458,7 @@ mod tests {
         };
         assert!(
             !check_name_available(&intent(), &prefixed).blocks(),
-            "sanity: a prefixed name cannot match — which is exactly why the caller must strip it"
+            "sanity: a prefixed name cannot match - which is exactly why the caller must strip it"
         );
 
         let stripped = HostFacts { taken_names: vec!["postgres".into()], ..Default::default() };
@@ -521,7 +521,7 @@ mod tests {
     /// The registry's own tests prove each template can be filled from its
     /// declared vars; this proves the *callers* actually pass them. The two are
     /// not the same guarantee, and only this one covers a check that forgets an
-    /// argument — `Prereq::result`'s assertion is a `debug_assert`, and the
+    /// argument - `Prereq::result`'s assertion is a `debug_assert`, and the
     /// release builds we ship and test compile it out.
     #[test]
     fn no_app_check_leaks_an_unfilled_placeholder() {

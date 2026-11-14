@@ -34,7 +34,7 @@ const TIME_RANGES = [
 // Every source the backend writes, derived from the writers rather than from
 // memory: nine `system_log::log_event` call sites plus one direct INSERT in
 // `services/backup_policy_executor.rs`. This list previously held seven, and the
-// three it omitted included `backup_storage` — which is ~99.98% of the table, so
+// three it omitted included `backup_storage` - which is ~99.98% of the table, so
 // the one source an operator most needed to name was the one absent from the
 // menu built to name sources.
 //

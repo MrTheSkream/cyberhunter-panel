@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ownership-delete-pin-e2e.sh — s295 / v2.53.0
+# ownership-delete-pin-e2e.sh - s295 / v2.53.0
 #
 # v2.52.0 pinned the question "may this domain be CLAIMED?". This pins the one
 # that comes after it: "is this thing I am about to DESTROY actually mine?"
@@ -7,14 +7,14 @@
 # Nothing owned that question, so every removal named its target by a key it had
 # never checked, and the key lied in two different ways.
 #
-#   §A  the shared answer exists, and it FAILS CLOSED. `Owner::Unknown` — the
-#       file could not be read, or carries no marker — must not permit a delete.
+#   §A  the shared answer exists, and it FAILS CLOSED. `Owner::Unknown` - the
+#       file could not be read, or carries no marker - must not permit a delete.
 #   §B  EVERY destructive path asks it. The arm that matters, and the one the
 #       v2.52.0 sweep is a lesson about: a shared helper is worth nothing until
 #       the call sites are counted.
 #   §C  /etc/letsencrypt is NOT the panel's namespace. Neither tree issues
 #       through certbot, so every lineage those deletes could name belonged to
-#       the operator — including the one `mail.rs` points Postfix and Dovecot at.
+#       the operator - including the one `mail.rs` points Postfix and Dovecot at.
 #   §D  a cron sync owns only the lines it was SENT, and a crontab it could not
 #       READ is never treated as an empty one.
 #   §E  the status-page cleanup is tenant-scoped.
@@ -30,7 +30,7 @@
 #
 # NO PIPES INTO `grep -q`. Under `set -o pipefail` grep -q closes the pipe on its
 # first match, the upstream dies of SIGPIPE (141), and pipefail reports the whole
-# pipeline failed — so an arm goes red on correct code, non-deterministically.
+# pipeline failed - so an arm goes red on correct code, non-deterministically.
 # Every arm here feeds grep a here-string.
 
 set -uo pipefail
@@ -53,7 +53,7 @@ CRONS_AGENT=panel/agent/src/routes/crons.rs
 # s323: read_crontab/write_crontab moved OUT of routes/crons.rs into a shared
 # service, because the WordPress auto-update twin needed them and private
 # helpers cannot be shared. Extracting a helper moves the subject of every pin
-# that measured it — D2 below went red for exactly that reason, not for a
+# that measured it - D2 below went red for exactly that reason, not for a
 # regression, and repointing it is the fix rather than relaxing it.
 CRONTAB_SVC=panel/agent/src/services/crontab.rs
 CRONS_BE=panel/backend/src/routes/crons.rs
@@ -73,7 +73,7 @@ done
 # The obvious `s{/\*.*?\*/}{}gs` shipped in four suites before s294 and was
 # DELETING CODE: `/*` occurs inside string literals (a Dockerfile's
 # `COPY --from=builder /app/target/release/*`), so it opened a "block comment"
-# that ran to the next `*/`. A truncated subject makes an ABSENCE arm — §C here —
+# that ran to the next `*/`. A truncated subject makes an ABSENCE arm - §C here -
 # pass on code the stripper merely removed, which is the worst way for a pin to
 # be wrong. So a block comment is recognised only where one is actually written:
 # opening at the start of a line, closing at the end of one.
@@ -111,7 +111,7 @@ count() { grep -cE -- "$2" <<< "$1" || true; }
 
 # Only DEAD-CODE markers belong here. An earlier suite also forbade `let _ =` and
 # `return false;` and immediately reded three arms on code verified by hand
-# minutes earlier — both are ordinary Rust (lesson #133).
+# minutes earlier - both are ordinary Rust (lesson #133).
 live() {
   ! grep -qE -- '(if false|&& false|\|\| true|let _unused)' <<< "$1"
 }
@@ -135,7 +135,7 @@ derives() {
 }
 
 echo
-echo "ownership-delete-pin-e2e — a delete must prove it owns what it deletes"
+echo "ownership-delete-pin-e2e - a delete must prove it owns what it deletes"
 echo
 
 # ── stripper self-check ────────────────────────────────────────────────
@@ -147,18 +147,18 @@ stripper_self_check "$APPS_ROUTE" "$APPS_SVC" "$TRAEFIK" "$GIT_BUILD" "$APP_PROC
 echo
 echo "§A the ownership question has ONE owner, and Unknown is not a maybe"
 if [ ! -f "$OWN" ]; then
-  skip "§A — $OWN absent (that absence is what §B reds on, not this)"
+  skip "§A - $OWN absent (that absence is what §B reds on, not this)"
 else
   O=$(subj "$OWN") || O=""
   if [ -z "$O" ]; then
-    skip "§A — $OWN produced no code after stripping"
+    skip "§A - $OWN produced no code after stripping"
   else
     # Three states, and Unknown must be one of them: a resource that cannot be
     # read has to be distinguishable from one that answered "not mine".
     if has "$O" 'enum Owner' && has "$O" '\bOurs\b' && has "$O" '\bTheirs\b' && has "$O" '\bUnknown\b'; then
       ok "A1 Owner distinguishes Ours / Theirs / Unknown"
     else
-      bad "A1 Owner must have three states — an unreadable resource is not 'not mine'"
+      bad "A1 Owner must have three states - an unreadable resource is not 'not mine'"
     fi
 
     # THE fail-closed arm, keyed on the property rather than the spelling:
@@ -167,7 +167,7 @@ else
     if [ -n "$MD" ] && has "$MD" 'Ours' && ! has "$MD" 'Theirs' && ! has "$MD" 'Unknown'; then
       ok "A2 may_delete permits Ours and nothing else (fails closed)"
     else
-      bad "A2 may_delete must permit ONLY Owner::Ours — Unknown must not delete"
+      bad "A2 may_delete must permit ONLY Owner::Ours - Unknown must not delete"
     fi
 
     # Whole-line equality, not `contains`: every marker embeds a domain, and a
@@ -176,7 +176,7 @@ else
     if derives "$OBL" '\.trim\(\) *== *m|line\.trim\(\)'; then
       ok "A3 markers are compared whole-line, not by substring"
     else
-      bad "A3 marker comparison must be whole-line — 'contains' lets example.com match example.community"
+      bad "A3 marker comparison must be whole-line - 'contains' lets example.com match example.community"
     fi
 
     MISSING=""
@@ -190,10 +190,10 @@ else
     fi
 
     # A cert directory whose neighbours cannot be enumerated must be assumed
-    # shared — refusing to delete is recoverable, deleting is not.
+    # shared - refusing to delete is recoverable, deleting is not.
     # Scoped to the read_dir failure BRANCH. The first draft only asked that
-    # `return true` appear somewhere in the body — and it does, on the
-    # found-a-reference path — so inverting the failure branch to `return false`
+    # `return true` appear somewhere in the body - and it does, on the
+    # found-a-reference path - so inverting the failure branch to `return false`
     # sailed through.
     CDU=$(fnbody "$O" "cert_dir_in_use_elsewhere")
     CDU_FAIL=$(grep -A3 -E 'read_dir' <<< "$CDU" || true)
@@ -203,7 +203,7 @@ else
       bad "A5 an unreadable sites-enabled must mean 'shared', not 'free to delete'"
     fi
 
-    # app_vhost with no port knows nothing — it must not answer Ours.
+    # app_vhost with no port knows nothing - it must not answer Ours.
     # Scoped to the no-port BRANCH, for the same reason as A5: `Owner::Unknown`
     # also appears on the unreadable-file path, so a body-wide test let the
     # no-port branch be flipped to `Owner::Ours` unnoticed.
@@ -221,7 +221,7 @@ fi
 echo
 echo "§B EVERY destructive path asks before it destroys"
 
-# B1 — the regression v2.52.0 shipped. `route_key` doubles a literal '-', so for
+# B1 - the regression v2.52.0 shipped. `route_key` doubles a literal '-', so for
 # any domain without one it AGREES with the pre-fix mangle: legacy("a-b.com") is
 # route_key("a.b.com"), the live file of a different app. Fires on a fresh
 # install and never expires.
@@ -230,12 +230,12 @@ RRC=$(fnbody "$T" "remove_route_config")
 if derives "$RRC" 'ownership::traefik_route'; then
   ok "B1 traefik legacy-name cleanup checks the file's own Host rule first"
 else
-  bad "B1 remove_route_config deletes the legacy name unguarded — that name is another live domain's file"
+  bad "B1 remove_route_config deletes the legacy name unguarded - that name is another live domain's file"
 fi
 
-# B2/B3 — app removal.
+# B2/B3 - app removal.
 AR=$(subj "$APPS_ROUTE") || AR=""
-# The handler is `remove`, not `remove_app` — `remove_app` is the SERVICE call it
+# The handler is `remove`, not `remove_app` - `remove_app` is the SERVICE call it
 # makes. Naming the wrong function gives fnbody an empty window, and `derives`
 # treats an empty window as a failure, so the arm reds rather than greening on a
 # body it never read (lesson #131).
@@ -248,7 +248,7 @@ RA=$(fnbody "$AR" "remove")
 RA_VHOST="$RA"
 if [ -n "$AR" ] && ! grep -qE 'ownership::app_vhost' <<< "$RA"; then
   RA_HELPER=$(fnbody "$AR" "unexpose_domain")
-  # Only accept the helper if `remove` actually reaches it — otherwise the
+  # Only accept the helper if `remove` actually reaches it - otherwise the
   # teardown has simply been deleted and the arm must red.
   if grep -qE 'unexpose_domain' <<< "$RA" && [ -n "$RA_HELPER" ]; then
     RA_VHOST="$RA_HELPER"
@@ -263,7 +263,7 @@ else
   bad "B2 app removal deletes the vhost without the guard's answer reaching the branch"
 fi
 # The handler used to gate on the BOOLEAN and then delete a path it rebuilt from
-# the name label — so it asked the right question and acted on the wrong answer.
+# the name label - so it asked the right question and acted on the wrong answer.
 # That is how a data directory the migration had written under the CONTAINER name
 # survived its own app's deletion, silently. The arm follows the value that is
 # actually deleted: the directory the container's own binds proved.
@@ -273,9 +273,9 @@ else
   bad "B3 app removal deletes /var/lib/dockpanel/apps/{name} on an unvalidated label"
 fi
 
-# B2c/B2d — s417: stack removal used to derive its ownership proof from
+# B2c/B2d - s417: stack removal used to derive its ownership proof from
 # `DeployedApp.port` (`list_deployed_apps`'s own field), read from Docker's
-# LIVE container listing — empty for a STOPPED ("parked") container, so a
+# LIVE container listing - empty for a STOPPED ("parked") container, so a
 # parked-then-removed stack could never prove its vhost was its own, and the
 # vhost + certificate were stranded forever, unrecoverable by any later panel
 # action (the container that would have proven it is by then gone too).
@@ -286,7 +286,7 @@ SA=$(fnbody "$AR" "stack_action")
 if derives "$SA" 'inspect_host_port'; then
   ok "B2c stack removal derives its port proof from inspect_container's HostConfig, not the live listing"
 else
-  bad "B2c stack removal cannot prove ownership of a parked (stopped) stack's vhost — it is stranded forever"
+  bad "B2c stack removal cannot prove ownership of a parked (stopped) stack's vhost - it is stranded forever"
 fi
 if derives "$SA" 'unexpose_domain\([^;]*stack_port'; then
   ok "B2d that proof actually reaches the vhost-deletion call, not dropped on the floor"
@@ -300,7 +300,7 @@ RI=$(fnbody "$AS" "removal_identity")
 # Keyed on the ASSIGNMENT, not on the word `binds` appearing somewhere in the
 # body: the first draft still saw `binds` in the destructuring `let` after the
 # value had been replaced with a constant, and passed.
-# Repointed from `owns_app_dir` onto the field that now carries the evidence —
+# Repointed from `owns_app_dir` onto the field that now carries the evidence -
 # the boolean is derived FROM it, so keying on the boolean would measure a line
 # that no longer reads the mounts at all. Extracting a helper moves the subject
 # of every pin that measured it (the same note as CRONTAB_SVC above); the
@@ -311,14 +311,14 @@ OAD_ASSIGN=$(grep -E 'id\.app_dir *=' <<< "$RI" || true)
 if [ -n "$OAD_ASSIGN" ] && has "$OAD_ASSIGN" 'binds' && live "$RI"; then
   ok "B4 owns_app_dir is ASSIGNED from the container's bind mounts"
 else
-  bad "B4 owns_app_dir must be assigned from binds — a name label is not ownership"
+  bad "B4 owns_app_dir must be assigned from binds - a name label is not ownership"
 fi
 
-# B5 — the unattended one.
+# B5 - the unattended one.
 #
 # ⚠ These arms USED to read `cleanup_container`'s own body. The teardown was
 # extracted to `release_domain_artifacts` so the DELETE path and the RENAME path
-# could not answer the ownership question differently — and that extraction reds
+# could not answer the ownership question differently - and that extraction reds
 # an arm scoped to the old home, correctly. Repointed, and SPLIT: the checks are
 # pinned where they now live, AND the delete path is pinned to route through
 # them. A helper's own arm never pins its call site (lesson #732); asserting
@@ -327,7 +327,7 @@ GB=$(subj "$GIT_BUILD") || GB=""
 RDA=$(fnbody "$GB" "release_domain_artifacts")
 CC=$(fnbody "$GB" "cleanup_container")
 if [ "$(wc -l <<< "$RDA")" -lt 5 ]; then
-  bad "B5 release_domain_artifacts body resolved ($(wc -l <<< "$RDA") lines — subject lost)"
+  bad "B5 release_domain_artifacts body resolved ($(wc -l <<< "$RDA") lines - subject lost)"
 elif derives "$RDA" 'ownership::app_vhost'; then
   ok "B5 the git domain teardown proves the vhost is still its own"
 else
@@ -341,10 +341,10 @@ fi
 if derives "$CC" 'release_domain_artifacts'; then
   ok "B6b cleanup_container routes its teardown through the guarded helper"
 else
-  bad "B6b cleanup_container no longer calls release_domain_artifacts — the guard is bypassed"
+  bad "B6b cleanup_container no longer calls release_domain_artifacts - the guard is bypassed"
 fi
 
-# B7/B8 — the non-injective systemd unit name. '.'->'-' is not injective because
+# B7/B8 - the non-injective systemd unit name. '.'->'-' is not injective because
 # '-' is legal in a domain label, so a.b.com and a-b.com share one unit file.
 AP=$(subj "$APP_PROC") || AP=""
 RAS=$(fnbody "$AP" "remove_app_service")
@@ -360,7 +360,7 @@ else
   bad "B8 create_app_service silently replaces the colliding domain's unit"
 fi
 
-# B9/B10 — the Fail2Ban jail, same mangle, both directions.
+# B9/B10 - the Fail2Ban jail, same mangle, both directions.
 NR=$(subj "$NGINX_ROUTE") || NR=""
 DS=$(fnbody "$NR" "delete_site")
 if derives "$DS" 'ownership::fail2ban_jail'; then
@@ -375,7 +375,7 @@ else
   bad "B10 put_site overwrites a colliding jail, silently unprotecting the other site"
 fi
 
-# B11/B12 — the shared wildcard cert directory.
+# B11/B12 - the shared wildcard cert directory.
 if derives "$DS" 'ownership::cert_dir_in_use_elsewhere'; then
   ok "B11 site deletion leaves a wildcard directory its siblings still point at"
 else
@@ -396,14 +396,14 @@ echo "§C /etc/letsencrypt belongs to the operator, and the panel never wrote it
 # ABSENCE arms. These are the ones a truncated subject would falsely green, which
 # is why §0 measures the stripper first.
 # Enumerate with `find`, not `git ls-files`. The first draft used git, which
-# returns NOTHING outside a checkout — so both absence arms below passed
+# returns NOTHING outside a checkout - so both absence arms below passed
 # vacuously, green, having examined zero files. That is #136's failure direction
 # with a different cause: not a truncated subject, an empty subject LIST. The
 # count is asserted before the arms are allowed to mean anything.
 RS_FILES=$(find panel/agent/src panel/backend/src -name '*.rs' -type f 2>/dev/null | sort)
 RS_COUNT=$(printf '%s\n' "$RS_FILES" | grep -c '\.rs$' || true)
 if [ "${RS_COUNT:-0}" -lt 50 ]; then
-  bad "C0 only $RS_COUNT Rust files enumerated — the absence arms below cannot mean anything"
+  bad "C0 only $RS_COUNT Rust files enumerated - the absence arms below cannot mean anything"
 else
   ok "C0 $RS_COUNT Rust source files enumerated for the absence arms"
 fi
@@ -439,7 +439,7 @@ else
   bad "C2 \`certbot delete\` destroys a lineage and ALL its SANs:$CB_WHERE"
 fi
 
-# The reader that made this matter must still be there — if mail stops reading
+# The reader that made this matter must still be there - if mail stops reading
 # the lineage the blast radius changes and this section wants revisiting.
 MAIL=panel/agent/src/routes/mail.rs
 if [ -f "$MAIL" ]; then
@@ -447,7 +447,7 @@ if [ -f "$MAIL" ]; then
   if has "$MC" '/etc/letsencrypt/live'; then
     ok "C3 mail.rs still READS the panel host's lineage (why C1/C2 matter)"
   else
-    skip "C3 mail.rs no longer reads /etc/letsencrypt — re-derive C1/C2's blast radius"
+    skip "C3 mail.rs no longer reads /etc/letsencrypt - re-derive C1/C2's blast radius"
   fi
 fi
 
@@ -461,7 +461,7 @@ SC=$(fnbody "$CA" "sync_crons")
 if [ -n "$SC" ] && has "$SC" 'owned' && ! has "$SC" 'filter\(\|line\| *!line\.contains\(CRONTAB_MARKER\)\)'; then
   ok "D1 sync strips only the ids it was sent, not every dockpanel line on the box"
 else
-  bad "D1 sync_crons strips every '# dockpanel:' line — every other tenant's jobs with it"
+  bad "D1 sync_crons strips every '# dockpanel:' line - every other tenant's jobs with it"
 fi
 
 RC=$(fnbody "$(subj "$CRONTAB_SVC")" "read_crontab")
@@ -473,10 +473,10 @@ RC_EMPTIES=$(count "$RC" 'Ok\(String::new\(\)\)')
 if [ "$RC_EMPTIES" = "1" ] && has "$RC" 'no crontab for' && live "$RC"; then
   ok "D2 read_crontab returns an empty crontab only when there genuinely is none"
 else
-  bad "D2 read_crontab has $RC_EMPTIES ways to return '' — a timeout must not be one of them"
+  bad "D2 read_crontab has $RC_EMPTIES ways to return '' - a timeout must not be one of them"
 fi
 # Scoped to the READ statement itself. The first draft of this arm allowed a
-# bare `map_err` anywhere in the body and so went GREEN against v2.52.0 — it was
+# bare `map_err` anywhere in the body and so went GREEN against v2.52.0 - it was
 # matching the WRITE call's error handling, which was never in question. An arm
 # that passes on the defect it names is worse than no arm (lesson #141).
 RC_STMT=$(grep -A3 -E 'read_crontab\(\)' <<< "$SC" || true)
@@ -509,12 +509,12 @@ SCOPED_UPD=$(count "$SB" 'UPDATE status_page_components SET name = \$1 WHERE nam
 if [ "$SCOPED_DEL" != "0" ]; then
   ok "E1 the status-page DELETE is scoped to the acting account"
 else
-  bad "E1 DELETE FROM status_page_components has no user_id — it deletes other accounts' rows"
+  bad "E1 DELETE FROM status_page_components has no user_id - it deletes other accounts' rows"
 fi
 if [ "$SCOPED_UPD" != "0" ]; then
   ok "E2 the status-page UPDATE (rename twin) is scoped to the acting account"
 else
-  bad "E2 UPDATE status_page_components has no user_id — a rename renames other accounts' rows"
+  bad "E2 UPDATE status_page_components has no user_id - a rename renames other accounts' rows"
 fi
 
 # ── §F rename_site snapshots what it displaces ─────────────────────────
@@ -529,7 +529,7 @@ fi
 # Keyed on the PROPERTY, not the spelling `new_conf`: a delete reached through a
 # renamed variable (`let doomed = new_conf.clone()`) is the other evasion that
 # beat the s294 pin. Every destructive call in this function may name only the
-# OLD path it is moving away from — that file the function read itself.
+# OLD path it is moving away from - that file the function read itself.
 RS_DELETES=$(grep -oE 'remove_(file|dir_all)\(&[A-Za-z_][A-Za-z0-9_]*' <<< "$RS" | sed 's/.*&//' || true)
 RS_BADDEL=""
 for v in $RS_DELETES; do
@@ -585,7 +585,7 @@ echo "== §H  a RENAME releases the domain it walked away from =="
 if GBE=$(subj "$GIT_BE"); then
   UPD=$(fnbody "$GBE" "update")
   if [ "$(wc -l <<< "$UPD")" -lt 20 ]; then
-    bad "H1 git_deploys::update body resolved ($(wc -l <<< "$UPD") lines — subject lost)"
+    bad "H1 git_deploys::update body resolved ($(wc -l <<< "$UPD") lines - subject lost)"
   else
     if has "$UPD" '/git/release-domain'; then
       ok "H1 a rename asks the host to release the old domain"
@@ -594,7 +594,7 @@ if GBE=$(subj "$GIT_BE"); then
     fi
 
     # It must send the OLD domain. Sending the new one would tear down the vhost
-    # the rename just created — the failure mode is louder but it is still a fix
+    # the rename just created - the failure mode is louder but it is still a fix
     # that deletes the wrong thing, so pin the argument, not just the call.
     if has "$UPD" 'domain.*:.*old_domain'; then
       ok "H2 the release names the OLD domain"
@@ -603,12 +603,12 @@ if GBE=$(subj "$GIT_BE"); then
     fi
 
     # Without the port, ownership::app_vhost cannot tell "still ours" from
-    # "re-claimed since" — and it fails CLOSED, so omitting it makes H1 inert
+    # "re-claimed since" - and it fails CLOSED, so omitting it makes H1 inert
     # while leaving every arm above green.
     if has "$UPD" 'host_port'; then
       ok "H3 the release carries the port that proves the vhost is still this deploy's"
     else
-      bad "H3 the release omits host_port — the ownership gate then fails closed and H1 is inert"
+      bad "H3 the release omits host_port - the ownership gate then fails closed and H1 is inert"
     fi
   fi
 else
@@ -618,7 +618,7 @@ fi
 if GR=$(subj "$GIT_ROUTE"); then
   RD=$(fnbody "$GR" "release_domain")
   if [ "$(wc -l <<< "$RD")" -lt 5 ]; then
-    bad "H4 agent release_domain body resolved ($(wc -l <<< "$RD") lines — subject lost)"
+    bad "H4 agent release_domain body resolved ($(wc -l <<< "$RD") lines - subject lost)"
   elif derives "$RD" 'is_safe_nginx_domain'; then
     ok "H4 the agent validates the domain before touching a path built from it"
   else

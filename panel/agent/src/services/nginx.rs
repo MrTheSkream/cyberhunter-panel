@@ -17,7 +17,7 @@ pub struct CmdOutput {
 /// itself. It lives here because two callers need the same answer and used to
 /// disagree: `put_site` created the `public` subdirectory, while the migration
 /// importer copied the imported site's files one level above it and then
-/// deleted `public` on its way past — so every import produced a vhost whose
+/// deleted `public` on its way past - so every import produced a vhost whose
 /// document root did not exist.
 /// The one sentence that identifies the filler page as ours.
 ///
@@ -61,17 +61,17 @@ pub fn document_root_for(site_dir: &str, runtime: &str) -> String {
 ///
 /// Debian/Ubuntu's nginx package ships `sites-available`/`sites-enabled`, and
 /// `nginx.conf` includes only the latter. The RHEL family's nginx package has
-/// **neither directory** — its `nginx.conf` includes `conf.d/*.conf` instead —
+/// **neither directory** - its `nginx.conf` includes `conf.d/*.conf` instead -
 /// which `setup.sh::configure_nginx` already detects (`[ -d
 /// /etc/nginx/sites-enabled ]`) when it places the PANEL's own vhost. Every
 /// SITE vhost writer used to hardcode the Debian path independently instead of
 /// sharing that same detection, so on a real RHEL box `/etc/nginx/sites-enabled`
-/// never existed and every write failed `ENOENT` — no site of any runtime had
+/// never existed and every write failed `ENOENT` - no site of any runtime had
 /// ever been creatable there.
 ///
 /// Split from [`sites_dir`] the same way [`vhost_target_between`] is split
 /// from [`vhost_target`]: the decision itself takes a plain bool, so a test
-/// can exercise both conventions without needing nginx installed at all — a
+/// can exercise both conventions without needing nginx installed at all - a
 /// bare `cargo test` runner has neither directory, which would make a version
 /// that probed the filesystem directly pass or fail by accident of the
 /// environment rather than by the code being right.
@@ -89,7 +89,7 @@ pub fn sites_dir() -> &'static str {
 }
 
 /// The directory a parked (disabled) site's vhost lives in, apart from the
-/// live one — or the SAME directory as [`sites_dir_for`] when this box's
+/// live one - or the SAME directory as [`sites_dir_for`] when this box's
 /// nginx has no separate one (the RHEL family). A caller scanning both
 /// directories for a reference must skip the second scan when this returns
 /// the same path as `sites_dir_for`, or it double-counts every match.
@@ -112,7 +112,7 @@ pub fn parked_dir() -> &'static str {
 /// monitor URLs on that assumption. That is wrong in two ordinary situations:
 /// an operator terminating TLS at an external reverse proxy, whose origin
 /// serves plain HTTP (issue #96), and any app or site whose certificate step
-/// was skipped — including one where the deploy said so on screen.
+/// was skipped - including one where the deploy said so on screen.
 ///
 /// The answer is not a guess. The agent wrote the vhost, and its own template
 /// emits a `listen …443 ssl` line only when a certificate is in place, so the
@@ -156,7 +156,7 @@ impl VhostTarget {
         }
     }
 
-    /// True when the write reaches nginx — so a config test and a reload are
+    /// True when the write reaches nginx - so a config test and a reload are
     /// owed, and only then may the caller say the site was configured.
     pub fn is_live(&self) -> bool {
         matches!(self, VhostTarget::Live(_))
@@ -168,7 +168,7 @@ impl VhostTarget {
 ///
 /// **The defect this closes, and it is the whole feature.** The maintenance
 /// response written when a site is disabled hardcoded `listen 80;`, while every
-/// template binds the server's own address whenever the panel knows it —
+/// template binds the server's own address whenever the panel knows it -
 /// `listen 203.0.113.10:80;`. nginx attaches each server block to the listening
 /// socket its directives name, and selects a name among the servers attached to
 /// the socket a connection actually arrived on. So the maintenance block sat on
@@ -179,7 +179,7 @@ impl VhostTarget {
 /// Copying the addresses out of the body being parked, rather than naming them
 /// here, means the response answers on exactly what the site answered on and
 /// keeps doing so when the templates change. The certificate lines come too,
-/// because a `listen …443 ssl` without them is a configuration nginx refuses —
+/// because a `listen …443 ssl` without them is a configuration nginx refuses -
 /// and a site with a certificate has to be able to say it is disabled over
 /// HTTPS, which is the only scheme its visitors are redirected to.
 pub fn listener_lines(vhost: &str) -> String {
@@ -207,9 +207,9 @@ pub fn listener_lines(vhost: &str) -> String {
 /// filesystem question it exists to ask.
 ///
 /// **The defect this closes.** Five writers rendered a complete vhost and each
-/// named the in-service path directly. So an ordinary settings change — PHP
+/// named the in-service path directly. So an ordinary settings change - PHP
 /// version, WAF mode, CSP, cache toggle, custom nginx, a git deploy, exposing a
-/// container, provisioning a certificate — replaced the stub with a working
+/// container, provisioning a certificate - replaced the stub with a working
 /// vhost and reloaded, putting a site the operator had deliberately taken
 /// offline back on the internet, while the panel went on displaying it as
 /// disabled. The unattended certificate-renewal loop did the same with nobody
@@ -218,7 +218,7 @@ pub fn listener_lines(vhost: &str) -> String {
 ///
 /// It also repairs a second defect by construction. Re-enabling restores the
 /// body frozen at the moment the site went offline, so every setting changed in
-/// between was silently reverted — and a site that gained a certificate while
+/// between was silently reverted - and a site that gained a certificate while
 /// offline came back on plain HTTP, because the frozen body has no TLS listener.
 /// Keeping the parked copy current means what comes back is the site as it is.
 pub fn vhost_target_between(in_service: &str, parked: &str) -> VhostTarget {
@@ -236,7 +236,7 @@ pub fn vhost_target_between(in_service: &str, parked: &str) -> VhostTarget {
 /// The parked path only has to satisfy one property: nginx must never include
 /// it. On Debian that's `sites-available` (nginx only reads `sites-enabled`);
 /// the RHEL family has no such second directory, so the live and parked paths
-/// share `conf.d`, distinguished by the `.disabled` suffix — nginx's own
+/// share `conf.d`, distinguished by the `.disabled` suffix - nginx's own
 /// `include conf.d/*.conf` cannot match a name ending in `.disabled`.
 pub fn vhost_paths_for(domain: &str, uses_sites_enabled: bool) -> (String, String) {
     let dir = sites_dir_for(uses_sites_enabled);
@@ -272,7 +272,7 @@ pub fn vhost_target(domain: &str) -> VhostTarget {
 ///
 /// Every writer that replaces `/etc/nginx/sites-enabled/{domain}.conf` and then
 /// validates must funnel its failure path through here. A bare `remove_file` is
-/// only correct when the writer knows the path held nothing beforehand — and none
+/// only correct when the writer knows the path held nothing beforehand - and none
 /// of the three writers knew that. `nginx -t` is a whole-server check, so an
 /// unrelated broken vhost anywhere on the box fails it, and the site being edited
 /// paid for it with its own configuration file.
@@ -289,7 +289,7 @@ pub fn restore_or_remove(config_path: &str, previous: Option<&str>) -> bool {
                 std::fs::remove_file(&tmp_path).ok();
                 tracing::error!(
                     "Failed to restore the previous nginx config at {config_path} \
-                     ({} bytes) — this domain may now have no vhost",
+                     ({} bytes) - this domain may now have no vhost",
                     prev.len()
                 );
             }
@@ -363,7 +363,7 @@ const STATIC_DENIES: &[(&str, &str)] = &[
 ///
 /// Pure, so the decision is testable without a box: the caller does the I/O and
 /// the `nginx -t` gate. A vhost qualifies when it renders the STATIC branch and
-/// carries no FastCGI handler — a php vhost already has these denies inside its
+/// carries no FastCGI handler - a php vhost already has these denies inside its
 /// preset branch. Returns `None` when nothing is missing, which is what makes the
 /// migration idempotent.
 ///
@@ -371,7 +371,7 @@ const STATIC_DENIES: &[(&str, &str)] = &[
 /// not: candidacy asked `body.contains(STATIC_INDEX)` (a substring, anywhere) and
 /// insertion asked `line.trim() == STATIC_INDEX` (a whole line). An index line
 /// carrying a trailing comment satisfied the first and never the second, so the
-/// file was rewritten with zero denies added — and the caller, which keys its
+/// file was rewritten with zero denies added - and the caller, which keys its
 /// success log on the write rather than on the content, reported that vhost as
 /// retrofitted. A false green on an unprotected site, repeating every restart.
 pub fn patch_static_vhost(body: &str) -> Option<String> {
@@ -403,12 +403,12 @@ pub fn patch_static_vhost(body: &str) -> Option<String> {
 /// Retrofit the static branch's denies onto site vhosts already on disk.
 ///
 /// v2.68.0 fixed the TEMPLATE. A template reaches a site only when something
-/// re-renders its vhost, and nothing re-renders on upgrade — so a site already
+/// re-renders its vhost, and nothing re-renders on upgrade - so a site already
 /// switched from php to static keeps serving `wp-config.php`, `.env` and
 /// `.git/config` as plain text after its operator has updated. v2.68.1 put the
 /// retrofit in `scripts/update.sh`, and that reaches the PANEL host only: the
 /// script's own header records that an agent-only box never runs it (it syncs a
-/// git repo, dumps a postgres container, replaces the API — an agent box has
+/// git repo, dumps a postgres container, replaces the API - an agent box has
 /// none of that), so a fleet member's sites stayed exposed. The agent owns
 /// `/etc/nginx/sites-enabled` on every box it runs on, panel and member alike,
 /// which makes this the only place the fix reaches the whole population.
@@ -416,7 +416,7 @@ pub fn patch_static_vhost(body: &str) -> Option<String> {
 /// Scoped by what the vhost IS: the static branch's `index index.html
 /// index.htm;` and no FastCGI handler. A php vhost already carries these denies
 /// inside its preset branch. Idempotent, and it declines to run at all if the
-/// server's config is ALREADY failing `nginx -t` — that check is whole-server,
+/// server's config is ALREADY failing `nginx -t` - that check is whole-server,
 /// so one unrelated broken vhost would otherwise make this revert edits it made
 /// correctly and blame itself for a fault it did not cause.
 pub async fn retrofit_static_denies() {
@@ -489,7 +489,7 @@ pub async fn retrofit_static_denies() {
                 restore_or_remove(&path.to_string_lossy(), Some(previous));
             }
             tracing::error!(
-                "nginx -t rejected the static-vhost deny retrofit — all {} file(s) reverted, \
+                "nginx -t rejected the static-vhost deny retrofit - all {} file(s) reverted, \
                  sites untouched",
                 written.len()
             );
@@ -529,7 +529,7 @@ pub fn validate_bind_ip(value: &str) -> Result<Option<std::net::Ipv4Addr>, Strin
         .map_err(|_| format!("bind_ip must be an IPv4 address or \"primary\", got {value:?}"))
 }
 
-/// The explicit IPv4 an existing vhost listens on, if any — the first
+/// The explicit IPv4 an existing vhost listens on, if any - the first
 /// `listen A.B.C.D:port` line. `[::]:80`, bare `listen 80;` and the like are
 /// not an explicit IPv4 and are skipped. Reads through [`listener_lines`] so
 /// it sees exactly the lines the disable/enable path copies.
@@ -546,8 +546,8 @@ pub fn vhost_bind_ip(vhost: &str) -> Option<std::net::Ipv4Addr> {
 ///
 /// 1. `requested` = an IPv4 → it; = `"primary"` → `detected`;
 /// 2. `requested` absent → the IP already written in the existing vhost, if
-///    it is still in `assigned` (internal re-renders — certificate upload,
-///    renewal, Docker app, git deploy — must not move a site back to the
+///    it is still in `assigned` (internal re-renders - certificate upload,
+///    renewal, Docker app, git deploy - must not move a site back to the
 ///    primary IP);
 /// 3. otherwise `detected` (empty string = wildcard `listen 80`).
 pub fn resolve_bind_ip(
@@ -569,7 +569,7 @@ pub fn resolve_bind_ip(
 
 /// [`resolve_bind_ip`] with the system lookups filled in. The host's
 /// addresses are only enumerated when the existing vhost names an IP other
-/// than the detected one — the common case costs no extra process.
+/// than the detected one - the common case costs no extra process.
 fn bind_ip_for(domain: &str, config: &SiteConfig) -> String {
     let detected = detect_bind_ip();
     if config.bind_ip.is_some() {
@@ -580,7 +580,7 @@ fn bind_ip_for(domain: &str, config: &SiteConfig) -> String {
         Some(ip) if ip.to_string() != detected => crate::services::server_ips::host_addrs_sync()
             .map(|a| a.into_iter().map(|a| a.ip).collect())
             .unwrap_or_else(|e| {
-                tracing::warn!("{e} — {domain} falls back to the primary IP");
+                tracing::warn!("{e} - {domain} falls back to the primary IP");
                 Vec::new()
             }),
         _ => Vec::new(),
@@ -727,7 +727,7 @@ fn validate_custom_nginx(custom: &str) -> Result<(), String> {
                 .map(|(_, reason)| *reason)
             {
                 return Err(format!(
-                    "The site's own configuration already sets '{directive}' — nginx refuses a \
+                    "The site's own configuration already sets '{directive}' - nginx refuses a \
                      duplicate and the whole site would fail to load. {reason}"
                 ));
             }
@@ -741,7 +741,7 @@ fn validate_custom_nginx(custom: &str) -> Result<(), String> {
 /// refuses to see twice in one context.
 ///
 /// The custom block is injected into that same `server { … }`, so accepting one
-/// of these produced a configuration nginx rejects — the save came back as a
+/// of these produced a configuration nginx rejects - the save came back as a
 /// bare `nginx -t` error naming a duplicate the operator could not see, on the
 /// most obvious thing anyone types into this box. Worse, a unit test asserted
 /// that `client_max_body_size 20m;` was valid input, so the validator was
@@ -750,12 +750,12 @@ fn validate_custom_nginx(custom: &str) -> Result<(), String> {
 /// Derived rather than guessed, and the derivation matters: `add_header` and
 /// `gzip_types` are also emitted there and do NOT collide (nginx appends both),
 /// and `expires` is emitted only inside `location` blocks, which is a different
-/// context. Measured against a real nginx — see the tests below, which assert
+/// context. Measured against a real nginx - see the tests below, which assert
 /// the whole set both ways.
 const ALREADY_SET_BY_THE_TEMPLATE: &[(&str, &str)] = &[
     (
         "client_max_body_size",
-        "Change the site's maximum upload size instead — that is the control that writes it.",
+        "Change the site's maximum upload size instead - that is the control that writes it.",
     ),
     ("gzip", "Compression is already enabled for every site."),
     (
@@ -768,7 +768,7 @@ const ALREADY_SET_BY_THE_TEMPLATE: &[(&str, &str)] = &[
 /// `add_header Name "<value>" always;` directive. The backend already rejects
 /// these (routes/mod.rs::is_safe_header_value), but the agent renders the value
 /// into a root-owned nginx config, so it sanitizes again at this render choke
-/// point — any future/legacy caller that forwards an unvalidated CSP /
+/// point - any future/legacy caller that forwards an unvalidated CSP /
 /// Permissions-Policy value cannot inject nginx directives.
 fn sanitize_header_value(v: &str) -> String {
     v.chars()
@@ -830,7 +830,7 @@ pub fn render_site_config(
     let max_upload_mb = config.max_upload_mb.unwrap_or(64);
     ctx.insert("max_upload_mb", &max_upload_mb);
 
-    // Custom nginx directives — validate before inserting
+    // Custom nginx directives - validate before inserting
     if let Some(ref custom) = config.custom_nginx {
         validate_custom_nginx(custom).map_err(tera::Error::msg)?;
     }
@@ -851,7 +851,7 @@ pub fn render_site_config(
     ctx.insert("waf_mode", &config.waf_mode.as_deref().unwrap_or("detection"));
 
     // CSP and security headers
-    // Rendered verbatim into `add_header ... "<value>" always;` — sanitize so a
+    // Rendered verbatim into `add_header ... "<value>" always;` - sanitize so a
     // stray `"`/`\`/brace cannot break out of the quoted argument and inject
     // directives (backend also validates via is_safe_header_value).
     let csp_safe = sanitize_header_value(config.csp_policy.as_deref().unwrap_or(""));
@@ -933,7 +933,7 @@ pub fn render_site_config(
 
 /// Write a per-site PHP-FPM pool config with resource limits.
 ///
-/// Debian-shaped layout only (`/etc/php/{version}/fpm/pool.d`) — the RHEL
+/// Debian-shaped layout only (`/etc/php/{version}/fpm/pool.d`) - the RHEL
 /// family has no per-version pool directory to write into (one `php-fpm`
 /// package serves whichever stream is active), so this never runs there in
 /// practice: `nginx.rs::put_site()` only calls it for a socket path that
@@ -949,7 +949,7 @@ pub fn write_php_pool_config(
 ) -> Result<(), String> {
     let pool_dir = format!("/etc/php/{php_version}/fpm/pool.d");
     if !std::path::Path::new(&pool_dir).exists() {
-        return Ok(()); // Debian pool.d tree absent (RHEL, or PHP not installed) — skip silently
+        return Ok(()); // Debian pool.d tree absent (RHEL, or PHP not installed) - skip silently
     }
 
     // Sanitize domain for use as pool name (replace dots with underscores)
@@ -957,7 +957,7 @@ pub fn write_php_pool_config(
 
     // SFTP-enabled sites own their content under their own uid/gid (see
     // `services::sftp_accounts`), so the pool that reads/writes it must run as
-    // that same identity — `www-data` would lose write access the moment the
+    // that same identity - `www-data` would lose write access the moment the
     // site's directory is re-chowned. `None` (every non-SFTP site, the common
     // case) keeps the original shared identity.
     let (user, group) = pool_owner.unwrap_or(("www-data", "www-data"));
@@ -1022,7 +1022,7 @@ pub async fn reload_php_fpm(php_version: &str) -> Result<(), String> {
         Ok(())
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        // Not fatal — pool config will apply on next restart
+        // Not fatal - pool config will apply on next restart
         tracing::warn!("{service} reload failed (will apply on restart): {stderr}");
         Ok(())
     }
@@ -1068,7 +1068,7 @@ pub async fn reload() -> Result<(), String> {
 mod tests {
     use super::*;
 
-    // ── where a rendered vhost lands — s317 / v2.74.0 ───────────────────
+    // ── where a rendered vhost lands - s317 / v2.74.0 ───────────────────
     //
     // These exercise the DECISION, not the two names it chooses between. It was
     // extracted precisely so it could be reached from here: while it lived
@@ -1191,12 +1191,12 @@ mod tests {
         assert!(!parked.ends_with(".conf"), "the parked name must fall outside nginx's own glob");
     }
 
-    // ── static-vhost deny retrofit — s311 / v2.68.2 ─────────────────────
+    // ── static-vhost deny retrofit - s311 / v2.68.2 ─────────────────────
     //
     // The defect these guard against is not "the denies are missing from the
     // template" (v2.68.0 fixed that and a pin suite covers it). It is that a
     // template fix does not reach a vhost already written, and the site that
-    // most needs it — one switched from php to static — is exactly a vhost
+    // most needs it - one switched from php to static - is exactly a vhost
     // already written.
 
     const STATIC_VHOST: &str = "server {\n    listen 80;\n    server_name a.example;\n    root /var/www/a.example/public;\n    index index.html index.htm;\n\n    location / {\n        try_files $uri $uri/ =404;\n    }\n}\n";
@@ -1210,7 +1210,7 @@ mod tests {
         // The site must keep working: the original serving block survives.
         assert!(patched.contains("try_files $uri $uri/ =404;"));
         assert!(patched.contains("root /var/www/a.example/public;"));
-        // Idempotent — a second pass is not a candidate at all.
+        // Idempotent - a second pass is not a candidate at all.
         assert!(patch_static_vhost(&patched).is_none());
         // Exactly one insertion, not one per line.
         assert_eq!(patched.matches("deny all;").count(), 3);
@@ -1220,7 +1220,7 @@ mod tests {
     fn retrofit_adds_only_the_deny_an_earlier_version_missed() {
         // The reach question asked of this function's OWN prior output. A box
         // patched by v2.68.2 carries two denies; v2.68.3 adds a third. It must
-        // gain exactly that one and duplicate neither of the others — the shape
+        // gain exactly that one and duplicate neither of the others - the shape
         // that made a template fix, then a panel-only fix, each reach the wrong
         // population.
         let v2682 = patch_static_vhost(STATIC_VHOST).expect("candidate");
@@ -1253,7 +1253,7 @@ mod tests {
         assert!(commented.contains("index index.html index.htm;"), "substring still present");
         assert!(
             !commented.lines().any(|l| l.trim() == "index index.html index.htm;"),
-            "…but no whole line matches — the two predicates disagree on this input",
+            "…but no whole line matches - the two predicates disagree on this input",
         );
 
         // Whatever the verdict, it may never be "changed, with nothing added".
@@ -1270,7 +1270,7 @@ mod tests {
     #[test]
     fn retrofit_skips_a_php_vhost() {
         // A php vhost carries the denies in its preset branch already, and its
-        // `.php` location is a HANDLER — denying it would stop the site dead.
+        // `.php` location is a HANDLER - denying it would stop the site dead.
         let php = "server {\n    index index.html index.htm;\n    location ~ \\.php$ {\n        fastcgi_pass unix:/run/php/php8.3-fpm.sock;\n    }\n}\n";
         assert!(patch_static_vhost(php).is_none());
     }
@@ -1282,7 +1282,7 @@ mod tests {
         assert!(patch_static_vhost(proxy).is_none());
     }
 
-    // ── custom_nginx per-statement validation — s241 C2 ─────────────────
+    // ── custom_nginx per-statement validation - s241 C2 ─────────────────
 
     #[test]
     fn custom_nginx_blocks_semicolon_chained_directive() {
@@ -1305,8 +1305,8 @@ mod tests {
         assert!(validate_custom_nginx("# sneaky").is_err());
     }
 
-    /// This test used to assert the OPPOSITE — that `client_max_body_size 20m;`
-    /// is valid input — which pinned the validator accepting the single most
+    /// This test used to assert the OPPOSITE - that `client_max_body_size 20m;`
+    /// is valid input - which pinned the validator accepting the single most
     /// obvious thing an operator types here, and nginx then refused the whole
     /// site with `"client_max_body_size" directive is duplicate`. The site
     /// template writes it at server level and the custom block lands in that
@@ -1329,7 +1329,7 @@ mod tests {
 
     /// The other half, and the reason the list is three names rather than the
     /// six the template emits: these ARE written by the template too, and nginx
-    /// accepts them a second time — `add_header` and `gzip_types` append, and
+    /// accepts them a second time - `add_header` and `gzip_types` append, and
     /// `expires` appears only inside `location` blocks, a different context.
     /// Refusing them would take away working configuration.
     #[test]
@@ -1339,7 +1339,7 @@ mod tests {
         assert!(validate_custom_nginx("expires 1d;").is_ok());
     }
 
-    // ── header-value sanitization — s241 C1 (agent defense-in-depth) ────
+    // ── header-value sanitization - s241 C1 (agent defense-in-depth) ────
 
     #[test]
     fn header_sanitize_strips_breakout_chars() {

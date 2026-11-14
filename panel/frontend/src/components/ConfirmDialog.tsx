@@ -6,7 +6,7 @@ import { createPortal } from "react-dom";
  *
  * ── Why this exists ─────────────────────────────────────────────────────────
  * Issue #120: clicking "nginx" to switch the reverse proxy back "appears to do
- * nothing at all". It did arm a confirmation — the bar just rendered at the top
+ * nothing at all". It did arm a confirmation - the bar just rendered at the top
  * of Settings while the control that armed it sits near the bottom, so on any
  * normal viewport the operator was looking at an unchanged screen. He concluded
  * the panel was refusing the switch, and found the Confirm button by reading our
@@ -17,17 +17,17 @@ import { createPortal } from "react-dom";
  * 23 are detached banners rendered high in the subtree with their triggers
  * scattered below. NONE of the 23 carried `sticky`, `scrollIntoView`,
  * `role="alert"`, `aria-live` or `autoFocus`, and there is no toast system in
- * this SPA — so arming produced no scroll, no focus and no announcement, only a
+ * this SPA - so arming produced no scroll, no focus and no announcement, only a
  * layout shift that pushed the button DOWN, out from under the cursor that had
  * just clicked it. The instances cluster because a correct one was awkward to
  * write, not because thirteen authors were careless.
  *
  * ── Why a portal, and not a sticky bar ──────────────────────────────────────
- * The obvious repair — make the bar `sticky top-20` — is worse than it looks.
+ * The obvious repair - make the bar `sticky top-20` - is worse than it looks.
  * Every one of those bars is `bg-*-500/5`: five percent alpha over nothing. The
  * page header only survives being sticky because index.css paints it an opaque
  * `--color-dark-900`. Sticking a transparent bar makes the prompt VISIBLE and
- * ILLEGIBLE, with the page scrolling through the text — and a reviewer checking
+ * ILLEGIBLE, with the page scrolling through the text - and a reviewer checking
  * "did something appear?" would pass it. The offset is unfixable too: the page
  * header wraps at tablet width, and GlassLayout and CommandLayout each render a
  * `sticky top-0` mobile header INSIDE the same `<main>` scroll container, so the
@@ -39,8 +39,8 @@ import { createPortal } from "react-dom";
  *
  * ── Two deliberate details ──────────────────────────────────────────────────
  *  - Focus goes to CANCEL, never to Confirm. Auto-focusing the confirm button
- *    would leave a destructive action — uninstall Traefik, revoke every session,
- *    purge an entire Cloudflare zone — one Enter keypress away from an operator
+ *    would leave a destructive action - uninstall Traefik, revoke every session,
+ *    purge an entire Cloudflare zone - one Enter keypress away from an operator
  *    who has not read the sentence yet.
  *  - `role="alertdialog"` with `aria-modal`, because this genuinely is modal:
  *    the overlay blocks the page. That is the one ARIA role that matches, and it

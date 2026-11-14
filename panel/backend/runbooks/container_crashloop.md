@@ -4,7 +4,7 @@ A Docker container has restarted ≥3 times in the last 5 minutes. It is failing
 
 ## Why this fired
 
-The auto-healer checks each managed container's restart count. Three or more restarts in a short window means the process inside is exiting almost immediately on boot — usually a config error, missing dependency, or unhandled startup exception.
+The auto-healer checks each managed container's restart count. Three or more restarts in a short window means the process inside is exiting almost immediately on boot - usually a config error, missing dependency, or unhandled startup exception.
 
 ## First check
 
@@ -15,13 +15,13 @@ The auto-healer checks each managed container's restart count. Three or more res
    docker logs --tail 200 <container>
    docker inspect <container> --format '{{.State.ExitCode}} {{.State.Error}}'
    ```
-3. If the exit code is 137, the kernel OOM-killed it — increase the memory limit in **Apps → app → Resources**.
+3. If the exit code is 137, the kernel OOM-killed it - increase the memory limit in **Apps → app → Resources**.
 
 ## Common causes
 
 - Config file or env var missing/wrong (most common)
 - Database the app depends on isn't reachable yet (startup order)
-- Image was pulled with a broken tag — pin to a known-good digest
+- Image was pulled with a broken tag - pin to a known-good digest
 - Volume permission issue (UID mismatch between host and container)
 - Memory limit too low → OOM kill on first allocation
 - Healthcheck fails immediately and restart policy is `on-failure`

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression pins for the s363 fix to GitHub #111 — a template's URL-shaped env
+# Regression pins for the s363 fix to GitHub #111 - a template's URL-shaped env
 # vars are filled in from the domain the operator claimed, and the Apps env
 # editor can compose an arbitrary key.
 #
@@ -14,7 +14,7 @@ cd "$(dirname "$0")/.." || exit 1
 
 PASS=0; FAIL=0
 ok()   { printf '\033[32m✓\033[0m %s\n' "$1"; PASS=$((PASS+1)); }
-bad()  { printf '\033[31m✗\033[0m %s — %s\n' "$1" "$2"; FAIL=$((FAIL+1)); }
+bad()  { printf '\033[31m✗\033[0m %s - %s\n' "$1" "$2"; FAIL=$((FAIL+1)); }
 eq()   { [ "$2" = "$3" ] && ok "$1" || bad "$1" "expected '$3', got '$2'"; }
 
 # ugrep's --ignore-files shim honours .gitignore, so every count below uses the
@@ -34,12 +34,12 @@ echo "── A. The catalogue mechanism ─────────────�
 
 # A1 is an ENUMERATION arm, so it asserts its own subject list first: a census
 # that silently reads zero rows prints green (lesson #143).
-# Matches the tuple opener at top-level indent in BOTH shapes rustfmt produces —
+# Matches the tuple opener at top-level indent in BOTH shapes rustfmt produces -
 # inline `("ghost", &[...])` and the split form whose id is on the next line.
 # Inner pairs are indented deeper, so they cannot inflate this.
 ENTRIES=$($G -c '^    (' <<<"$(sed -n '/^static TEMPLATE_DOMAIN_ENV/,/^];/p' "$AGENT")")
 [ "${ENTRIES:-0}" -ge 6 ] && ok "A1 TEMPLATE_DOMAIN_ENV enumerates $ENTRIES templates" \
-  || bad "A1" "expected >=6 keyed templates, extracted $ENTRIES — the window read nothing"
+  || bad "A1" "expected >=6 keyed templates, extracted $ENTRIES - the window read nothing"
 
 # A2: n8n is the reason the derived-append loop exists. If its row ever declares
 # env vars, the vars stop flowing through that branch and the unit test that
@@ -53,7 +53,7 @@ for v in N8N_HOST N8N_PROTOCOL WEBHOOK_URL N8N_PROXY_HOPS; do
   eq "A3 $v keyed once" "$N" "1"
 done
 
-# A4: a derived value must never carry the container port — through nginx the
+# A4: a derived value must never carry the container port - through nginx the
 # public URL has none, and shipping one recreates the very defect being fixed.
 PORTED=$(sed -n '/^fn domain_env_for/,/^}/p' "$AGENT" | $G -cE 'https://\{domain\}:[0-9]')
 eq "A4 no derived URL template carries a port" "$PORTED" "0"
@@ -61,7 +61,7 @@ eq "A4 no derived URL template carries a port" "$PORTED" "0"
 # elsewhere, or the zero above proves only that the pattern never runs.
 CTL=$($G -cE 'http://localhost:[0-9]+' "$AGENT")
 [ "$CTL" -gt 0 ] && ok "A4-control ported-URL pattern matches $CTL real literals" \
-  || bad "A4-control" "pattern matched nothing anywhere — A4's zero is vacuous"
+  || bad "A4-control" "pattern matched nothing anywhere - A4's zero is vacuous"
 
 echo "── B. The deploy path actually consults it ────────────────────────────"
 
@@ -72,7 +72,7 @@ eq "B1 deploy_app derives from the claimed domain" \
    "$(sed -n '/^pub async fn deploy_app/,/^}/p' "$AGENT" | $G -c 'domain_env_for')" "1"
 
 # B2: the merge helper is reached by deploy_app rather than orphaned by a later
-# refactor (the #150 shape — extracting a helper moves the subject).
+# refactor (the #150 shape - extracting a helper moves the subject).
 eq "B2 deploy_app builds its env through the merge helper" \
    "$(sed -n '/^pub async fn deploy_app/,/^}/p' "$AGENT" | $G -c 'merge_deploy_env(')" "1"
 
@@ -96,14 +96,14 @@ eq "C3 a variable can be removed" \
    "$($G -c 'setEnvEditRows(envEditRows\.filter((_, j) => j !== i))' "$APPS")" "1"
 
 # C4 ABSENCE: the Edit button must not be gated on the container already having
-# variables — that gate is half of why a key could never be added.
+# variables - that gate is half of why a key could never be added.
 GATED=$($G -c '!envEditing && envVars\.length > 0' "$APPS")
 eq "C4 Edit is not gated on existing variables" "$GATED" "0"
 # POSITIVE CONTROL for C4: the emptiness test still exists for the READ view,
 # so the pattern shape is live and the zero above is a real zero.
 EMPTYVIEW=$($G -c 'envVars\.length === 0' "$APPS")
 [ "$EMPTYVIEW" -ge 1 ] && ok "C4-control the empty-state branch is still present ($EMPTYVIEW)" \
-  || bad "C4-control" "no emptiness test anywhere — C4's zero may be vacuous"
+  || bad "C4-control" "no emptiness test anywhere - C4's zero may be vacuous"
 
 # C5: a blank key never reaches the wire.
 eq "C5 blank rows are dropped before sending" \

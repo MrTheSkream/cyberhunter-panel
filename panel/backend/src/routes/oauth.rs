@@ -30,7 +30,7 @@ struct OAuthProvider {
 }
 
 /// The providers this panel can be configured for. Named once so the settings
-/// UI offers exactly the set `get_provider` accepts — a fourth card for a
+/// UI offers exactly the set `get_provider` accepts - a fourth card for a
 /// provider the backend does not know would be a control that cannot work.
 pub const OAUTH_PROVIDERS: &[&str] = &["google", "github", "gitlab"];
 
@@ -50,7 +50,7 @@ pub fn redirect_uri(base_url: &str, provider_name: &str) -> String {
 }
 
 /// `Value::to_string()` serializes a JSON string WITH its surrounding quote
-/// characters — it's `Display` for the JSON representation, not the string's
+/// characters - it's `Display` for the JSON representation, not the string's
 /// own content. A provider's numeric `id` field survives that unqualified
 /// (GitHub/GitLab), but a string field like Google's `sub` does not: it comes
 /// out as `"1234567890"` (14 chars, quotes included) instead of the real id.
@@ -82,14 +82,14 @@ fn get_provider(name: &str) -> Option<OAuthProvider> {
     }
 }
 
-/// GET /api/settings/oauth-redirects — the redirect URIs to register, admin only.
+/// GET /api/settings/oauth-redirects - the redirect URIs to register, admin only.
 ///
 /// Deliberately returns only what `GET /api/settings` cannot: the client ids and
 /// the masked secrets already come from there, and a second source for them
 /// would be a second thing to keep in step.
 ///
 /// `base_url` is reported so the UI can say *why* when it is empty. BASE_URL is
-/// read with `unwrap_or_default()`, so an unset one is not an error at boot — it
+/// read with `unwrap_or_default()`, so an unset one is not an error at boot - it
 /// silently makes every redirect URI relative, which no provider accepts. The
 /// operator then sees a login button that fails at the provider with a message
 /// about the panel's address, having never been told the panel does not know it.
@@ -111,7 +111,7 @@ pub async fn redirect_uris(
     })))
 }
 
-/// GET /api/auth/oauth/{provider} — Redirect to OAuth provider
+/// GET /api/auth/oauth/{provider} - Redirect to OAuth provider
 pub async fn authorize(
     State(state): State<AppState>,
     Path(provider_name): Path<String>,
@@ -155,13 +155,13 @@ pub async fn authorize(
 
     // Bind `state` to THIS browser via a short-lived cookie, mirroring the value
     // already in `state.oauth_states`. Without this, a valid `state` only proves
-    // "some /authorize call happened" — not that the browser presenting it at
+    // "some /authorize call happened" - not that the browser presenting it at
     // /callback is the one that made it. Login-CSRF: an attacker starts their own
     // OAuth flow, captures the provider's redirect back to this panel (a real
     // code+state pair for the ATTACKER's account) without letting their own
     // browser follow it, then hands that exact callback URL to a victim. The old
-    // code validated `state` purely against the server-side map — which the
-    // attacker's `state` legitimately is a member of — and would have logged the
+    // code validated `state` purely against the server-side map - which the
+    // attacker's `state` legitimately is a member of - and would have logged the
     // victim's browser into the attacker's account. `callback` below now also
     // requires this cookie to be present and to match `query.state`.
     let secure_flag = crate::routes::auth::cookie_secure_flag(&headers);
@@ -178,7 +178,7 @@ pub async fn authorize(
         .into_response())
 }
 
-/// GET /api/auth/oauth/{provider}/callback — Handle OAuth callback
+/// GET /api/auth/oauth/{provider}/callback - Handle OAuth callback
 pub async fn callback(
     State(state): State<AppState>,
     Path(provider_name): Path<String>,
@@ -187,7 +187,7 @@ pub async fn callback(
 ) -> Result<Response, ApiError> {
     // This door mints the same session cookie as the password and passkey doors and
     // owed the same two gates. It had neither: the panel IP allowlist gates the
-    // panel, and lockdown is supposed to hold non-admins out until it expires —
+    // panel, and lockdown is supposed to hold non-admins out until it expires -
     // both were enforced at the other doors and skipped here, so with SSO
     // configured, restricting the panel by IP and putting it into lockdown each
     // left this path open.
@@ -196,7 +196,7 @@ pub async fn callback(
     // Check for OAuth error response from provider
     if let Some(ref error) = query.error {
         let desc = query.error_description.as_deref().unwrap_or("Unknown error");
-        return Err(err(StatusCode::BAD_REQUEST, &format!("OAuth error: {error} — {desc}")));
+        return Err(err(StatusCode::BAD_REQUEST, &format!("OAuth error: {error} - {desc}")));
     }
     let code = query.code.as_ref()
         .ok_or_else(|| err(StatusCode::BAD_REQUEST, "Missing authorization code"))?;
@@ -204,7 +204,7 @@ pub async fn callback(
     let provider = get_provider(&provider_name)
         .ok_or_else(|| err(StatusCode::BAD_REQUEST, "Unknown OAuth provider"))?;
 
-    // Validate CSRF state is a member of the server-side map — proves SOME
+    // Validate CSRF state is a member of the server-side map - proves SOME
     // /authorize call issued it, nothing about WHO is presenting it now.
     //
     // Neither failure branch below (nor the cookie-mismatch one further down)
@@ -212,7 +212,7 @@ pub async fn callback(
     // `passkeys.rs`'s counter-regression check: that function auto-activates
     // system-wide lockdown at five events in ten minutes, and this endpoint is
     // reachable by anyone with no account and no credential at all
-    // (`GET .../callback?state=garbage`) — wiring it in would let any anonymous
+    // (`GET .../callback?state=garbage`) - wiring it in would let any anonymous
     // visitor lock every non-admin out of the panel with five bad requests.
     // `err()` below still logs and returns a 400; that is the right ceiling here.
     {
@@ -225,7 +225,7 @@ pub async fn callback(
     }
 
     // Validate the browser presenting this callback is the one `authorize` set
-    // the csrf cookie for, and that it names the SAME state — this is what turns
+    // the csrf cookie for, and that it names the SAME state - this is what turns
     // the check above from "a valid flow happened" into "this browser's flow".
     // Missing/mismatched cookie means either a non-browser replay of a captured
     // callback URL, or exactly the login-CSRF handoff this cookie exists to stop.
@@ -333,7 +333,7 @@ pub async fn callback(
     let email = email.ok_or_else(|| err(StatusCode::BAD_GATEWAY, "Could not retrieve email from OAuth provider"))?;
 
     // Reject an explicitly-unverified email before it can auto-link to (or
-    // auto-log-into) an existing account by email match alone — the linking
+    // auto-log-into) an existing account by email match alone - the linking
     // logic below trusts `email` completely once we get this far. Absent means
     // allow (`unwrap_or(true)`): GitLab's user endpoint and GitHub's profile-email
     // path don't return this field at all, and treating "field missing" as a
@@ -375,7 +375,7 @@ pub async fn callback(
             // The prior code only tested `oauth_provider.is_none()` on the reject
             // branch, so once ANY provider was linked, a callback from a SECOND,
             // different provider reporting the same email fell through both
-            // branches unchecked and logged straight in — contradicting this
+            // branches unchecked and logged straight in - contradicting this
             // comment's own claim of an "already same provider" check, and
             // bypassing the password-holder protection below it too.
             if u.oauth_provider.is_none() && u.password_hash.is_empty() {
@@ -402,14 +402,14 @@ pub async fn callback(
                      Log in with your existing method and link this one in Settings."));
             } else if u.oauth_id.as_deref() != Some(oauth_id.as_str()) {
                 // The provider NAME matches, but the provider's own permanent
-                // account id does not — `oauth_id` is only ever written
+                // account id does not - `oauth_id` is only ever written
                 // together with `oauth_provider` (the UPDATE above and the
                 // auto-create INSERT below), so a genuine returning login can
                 // never land here; matching on email + provider name alone
                 // was the whole check. The realistic way to reach this branch
                 // is the email changing hands AT THE PROVIDER (a departed
                 // employee's mailbox reassigned to a new hire's fresh
-                // account) — without this, that new person would silently
+                // account) - without this, that new person would silently
                 // inherit the departed employee's dockpanel account and role.
                 return Err(err(StatusCode::CONFLICT,
                     "An account with this email exists, linked to a different sign-in method. \
@@ -424,8 +424,8 @@ pub async fn callback(
             // s275 they disagreed with each other.
             //
             // `self_registration_enabled` (routes/auth.rs) governs password
-            // registration and defaults CLOSED — an absent row means disabled.
-            // `oauth_auto_create` governed this path and defaulted OPEN — an
+            // registration and defaults CLOSED - an absent row means disabled.
+            // `oauth_auto_create` governed this path and defaulted OPEN - an
             // absent row meant allowed. Both rows are absent on a fresh install,
             // so the panel's answer to "is registration open?" depended on which
             // door you knocked on. An operator who turned the visible
@@ -435,7 +435,7 @@ pub async fn callback(
             //
             // So an EXPLICIT `self_registration_enabled=false` now closes this
             // path too: off means off, whichever door. This deliberately reads
-            // the explicit value rather than the effective one — an install that
+            // the explicit value rather than the effective one - an install that
             // never set the row keeps today's behaviour, so no existing OAuth
             // deployment breaks on upgrade; only operators who actually asked
             // for registration to be off get what they asked for.
@@ -463,7 +463,7 @@ pub async fn callback(
             // A THIRD gate, and the same lesson as the two above: `register`
             // (auth.rs:807) marks a new account unapproved when
             // `security_approval_required` is on, and this door omitted the column
-            // entirely — so it fell to its `DEFAULT TRUE` and the account was admitted
+            // entirely - so it fell to its `DEFAULT TRUE` and the account was admitted
             // on the spot. It never surfaced in Security → Approvals either, because
             // that list selects `WHERE approved = FALSE`. An operator who switched
             // approval on got it applied to one of the two ways in, with no sign that
@@ -508,7 +508,7 @@ pub async fn callback(
     };
 
     // Block suspended accounts on the OAuth login path too (parity with password and
-    // passkey login) — otherwise suspension is bypassable by logging in via OAuth.
+    // passkey login) - otherwise suspension is bypassable by logging in via OAuth.
     if user.role == "suspended" {
         return Err(err(StatusCode::FORBIDDEN, "Account suspended"));
     }
@@ -517,7 +517,7 @@ pub async fn callback(
     // password door refuses an unapproved account at auth.rs:305 and the passkey door
     // at passkeys.rs:843, but this one did not check at all. Suspension parity was
     // added here and approval parity was not, so of the three ways in, approval was
-    // enforced at two. COALESCE is copied from the other two deliberately — a row
+    // enforced at two. COALESCE is copied from the other two deliberately - a row
     // predating the column reads as approved, so repairing the gap cannot lock out an
     // account that could sign in yesterday.
     if let Ok(Some((approved,))) = sqlx::query_as::<_, (bool,)>(
@@ -593,7 +593,7 @@ pub async fn callback(
     )
     .map_err(|e| internal_error("oauth session token encode", e))?;
 
-    // Record the session so it is visible to session management AND — critically —
+    // Record the session so it is visible to session management AND - critically -
     // revocable: the DELETE user_sessions RETURNING jti -> blacklist sweeps (logout,
     // admin de-escalation, self-service reset) can only reach a session that has a row.
     let ua = headers.get(header::USER_AGENT).and_then(|v| v.to_str().ok()).map(|s| s.to_string());
@@ -618,8 +618,8 @@ pub async fn callback(
     ).await;
 
     // Set cookie and redirect to dashboard.
-    // Browsers reject Secure cookies on HTTP — only set Secure when the request
-    // actually arrived over HTTPS (#47, v2.8.14; #71 — must NOT key off BASE_URL,
+    // Browsers reject Secure cookies on HTTP - only set Secure when the request
+    // actually arrived over HTTPS (#47, v2.8.14; #71 - must NOT key off BASE_URL,
     // which is https for a domain even while the vhost is served over HTTP).
     let secure_flag = crate::routes::auth::cookie_secure_flag(&headers);
     let cookie = format!(

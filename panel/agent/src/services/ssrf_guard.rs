@@ -1,22 +1,22 @@
 //! SSRF guard for `repo_url` at the point this process actually dials it.
 //!
 //! `panel/backend`'s `validate_repo_url_not_internal` (`helpers.rs`) checks the
-//! same class of URL, but it runs on the PANEL host at write time — a git
+//! same class of URL, but it runs on the PANEL host at write time - a git
 //! deploy's `repo_url` is stored, then dialed later (immediately, on a
 //! scheduled pull, or on a redeploy) by THIS process, on a DIFFERENT host,
 //! via a plain `git clone`/`git fetch` subprocess. A DNS answer that differs
 //! between "how the panel resolved this hostname" and "how this fleet member
 //! resolves it right now" sails straight through the panel's check untouched
-//! — the two checks don't even share a network vantage point, let alone a
+//! - the two checks don't even share a network vantage point, let alone a
 //! moment in time. `helpers.rs`'s `resolve_validated`/`pinned_client` close
 //! this class for `reqwest` call sites by pinning the resolved IP into the
 //! HTTP connection itself; a subprocess `git clone` has no such hook, so the
 //! best available guard is the same resolve-then-check `validate_host_not_internal`
-//! already uses for `check_tcp`/`check_ping` elsewhere in this codebase —
+//! already uses for `check_tcp`/`check_ping` elsewhere in this codebase -
 //! same accepted residual (a same-host, same-instant TOCTOU window is far
 //! narrower than the unbounded cross-host gap this closes).
 //!
-//! Ported (not shared — the agent and backend are separate crates in this
+//! Ported (not shared - the agent and backend are separate crates in this
 //! workspace) from `panel/backend/src/helpers.rs`; keep the two in sync if
 //! the internal-address rule set changes.
 
@@ -115,7 +115,7 @@ async fn validate_host_not_internal(host: &str, port: u16) -> Result<(), String>
 /// Extract `(host, port)` from a `repo_url` in any of the four shapes
 /// `is_valid_repo_url` accepts: `https://`, `http://`, `ssh://`, and the
 /// scp-like `git@host:path` shorthand (no scheme, always user `git`, no
-/// port — matches `panel/backend/src/helpers.rs::repo_url_authority`).
+/// port - matches `panel/backend/src/helpers.rs::repo_url_authority`).
 fn repo_url_authority(url: &str) -> Result<(String, u16), String> {
     let url = url.trim();
     if url.is_empty() {
@@ -148,7 +148,7 @@ fn repo_url_authority(url: &str) -> Result<(String, u16), String> {
 
 /// SSRF guard for a git `repo_url`, at the point THIS process is about to
 /// dial it via a `git clone`/`git fetch` subprocess. Call this immediately
-/// before spawning that subprocess — not earlier, not once at startup — so
+/// before spawning that subprocess - not earlier, not once at startup - so
 /// the resolve is as close to the actual connection as this process can get.
 pub async fn validate_repo_url_not_internal(url: &str) -> Result<(), String> {
     let (host, port) = repo_url_authority(url)?;

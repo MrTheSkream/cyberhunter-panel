@@ -15,7 +15,7 @@ use crate::AppState;
 /// unscoped destination from any authenticated caller, on the stated grounds
 /// that destinations are created and deleted through admin-only routes, so a
 /// site owner can upload to one but never read it. That was the right call and
-/// it shipped — but the only route that could tell a caller WHICH destinations
+/// it shipped - but the only route that could tell a caller WHICH destinations
 /// those are stayed `AdminUser`, so a non-admin's picker was empty and the
 /// permission the writer granted could not be exercised. Reader and writer now
 /// interpolate this one string, the way every site route shares
@@ -27,7 +27,7 @@ pub const DESTINATION_CALLER_PREDICATE: &str = "(bd.server_id IS NULL OR s.user_
 
 /// The subset of a destination a non-admin needs to pick one: enough to choose,
 /// nothing to steal. `config` holds the bucket credentials and is absent from
-/// this struct BY CONSTRUCTION rather than by a masking pass — a field that does
+/// this struct BY CONSTRUCTION rather than by a masking pass - a field that does
 /// not exist cannot be forgotten in a future edit.
 #[derive(serde::Serialize, sqlx::FromRow)]
 pub struct SelectableDestination {
@@ -42,10 +42,10 @@ pub struct SelectableDestination {
 /// CONSTRUCTION, the same defence `SelectableDestination` above uses for `config`.
 /// The design that shipped instead encrypts per-POLICY (`backup_policies.encrypt`)
 /// with one key derived from the process JWT secret
-/// (`backup_policy_executor::derive_backup_encryption_key`) — never per-destination,
+/// (`backup_policy_executor::derive_backup_encryption_key`) - never per-destination,
 /// so neither column was ever wired to anything. `encryption_key`'s deadness was
 /// found and documented at three call sites (v2.24.0, lesson #70); this comment is
-/// `encryption_enabled`'s first documentation anywhere — it had zero readers or
+/// `encryption_enabled`'s first documentation anywhere - it had zero readers or
 /// writers and no comment, and rode along unnoticed through that same fix and a
 /// second pass on this table, because nothing named it as a thing to check.
 #[derive(serde::Serialize, serde::Deserialize, sqlx::FromRow, Clone)]
@@ -67,7 +67,7 @@ pub struct CreateDestinationRequest {
     /// whole fleet.
     ///
     /// The column has been nullable since the multi-server migration, on the
-    /// stated grounds that a destination "can be shared" — but nothing ever wrote
+    /// stated grounds that a destination "can be shared" - but nothing ever wrote
     /// it, so NULL was the default for every row rather than a declaration, and a
     /// reader could not tell "shared" from "never answered". That ambiguity is
     /// what left `test_connection` with no way to know which host to ask.
@@ -84,14 +84,14 @@ pub struct UpdateDestinationRequest {
     pub config: Option<serde_json::Value>,
 }
 
-/// GET /api/backup-destinations — List all backup destinations (admin).
+/// GET /api/backup-destinations - List all backup destinations (admin).
 pub async fn list(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
 ) -> Result<Json<Vec<BackupDestination>>, ApiError> {
 
     // Scoped the same way `create` below already scopes a destination's `server_id`
-    // (`is_local OR user_id = caller`) — before this fix it was a bare, unscoped
+    // (`is_local OR user_id = caller`) - before this fix it was a bare, unscoped
     // `SELECT *`, handing every admin account the name/type/server of every OTHER
     // admin's destinations, the discovery channel for the (also fixed this session)
     // unscoped `update`/`remove`/`test_connection` below.
@@ -117,13 +117,13 @@ pub async fn list(
     Ok(Json(masked))
 }
 
-/// GET /api/backup-destinations/selectable — the destinations this caller may
+/// GET /api/backup-destinations/selectable - the destinations this caller may
 /// schedule a site backup to, id/name/type only.
 ///
 /// `AuthUser`, deliberately: the per-site schedule form is reachable by a site
 /// owner and its writer already admits one, so refusing to name the choices was
 /// the half that had never been connected. An administrator gets the same rows
-/// this returns to anyone else plus their own servers' pinned destinations —
+/// this returns to anyone else plus their own servers' pinned destinations -
 /// the predicate does the deciding, so there is no role branch to keep in step.
 pub async fn selectable(
     State(state): State<AppState>,
@@ -143,7 +143,7 @@ pub async fn selectable(
     Ok(Json(dests))
 }
 
-/// POST /api/backup-destinations — Create a new backup destination.
+/// POST /api/backup-destinations - Create a new backup destination.
 pub async fn create(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -195,7 +195,7 @@ pub async fn create(
     Ok((StatusCode::CREATED, Json(dest)))
 }
 
-/// PUT /api/backup-destinations/{id} — Update a destination.
+/// PUT /api/backup-destinations/{id} - Update a destination.
 pub async fn update(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -203,11 +203,11 @@ pub async fn update(
     Json(body): Json<UpdateDestinationRequest>,
 ) -> Result<Json<BackupDestination>, ApiError> {
 
-    // Ownership check — unlike `create` above, this used to accept a bare `id` with no
+    // Ownership check - unlike `create` above, this used to accept a bare `id` with no
     // scope at all, so a second admin could overwrite ANOTHER admin's destination
     // (bucket, secret_key, password) with their own credentials. The next scheduled
     // backup for any policy pointing at it would then silently upload the target
-    // server's data into the second admin's own bucket — an exfiltration primitive,
+    // server's data into the second admin's own bucket - an exfiltration primitive,
     // not just a read leak, with no activity-log entry on this route to notice it by.
     // Same predicate `create` uses for `server_id`: this machine, or a server the
     // caller registered.
@@ -227,7 +227,7 @@ pub async fn update(
     // ENCRYPT FIRST, THEN carry the masked values across.
     //
     // The order matters and the other one is silently destructive. This used to
-    // merge first — copying the stored, ALREADY-ENCRYPTED secret into the config
+    // merge first - copying the stored, ALREADY-ENCRYPTED secret into the config
     // and then handing the whole object to `encrypt_config_secrets`, which skips
     // only "" and the mask sentinel. A stored ciphertext is neither, so it was
     // encrypted a SECOND time. One decrypt on the way out then yields ciphertext,
@@ -259,7 +259,7 @@ pub async fn update(
                 .unwrap_or_default();
 
             // This UPDATE REPLACES the whole config column, and the form sends a
-            // fixed key set per transport — so any stored key the form does not
+            // fixed key set per transport - so any stored key the form does not
             // know about was silently erased by an unrelated edit. `key_path` is
             // the live case: the agent supports it, the panel form has no field
             // for it, and renaming an SFTP destination dropped it.
@@ -299,14 +299,14 @@ pub async fn update(
     Ok(Json(dest))
 }
 
-/// DELETE /api/backup-destinations/{id} — Delete a destination.
+/// DELETE /api/backup-destinations/{id} - Delete a destination.
 pub async fn remove(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
     Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
 
-    // Ownership check — same gap and same fix as `update` above: this machine, or a
+    // Ownership check - same gap and same fix as `update` above: this machine, or a
     // server the caller registered.
     let owned: Option<(Uuid,)> = sqlx::query_as(
         "SELECT bd.id FROM backup_destinations bd LEFT JOIN servers s ON bd.server_id = s.id \
@@ -352,13 +352,13 @@ pub async fn remove(
     Ok(Json(resp))
 }
 
-/// POST /api/backup-destinations/{id}/test — Test connection FROM the host that
+/// POST /api/backup-destinations/{id}/test - Test connection FROM the host that
 /// will actually use this destination.
 ///
 /// This handler is where an operator's confidence in a destination comes from,
-/// and it asked the wrong machine. It posted through `state.agent` — the panel's
+/// and it asked the wrong machine. It posted through `state.agent` - the panel's
 /// own local `AgentClient`, unconditionally, with no header and no row consulted
-/// — so two things were true at once: the DECRYPTED credential (the S3 secret
+/// - so two things were true at once: the DECRYPTED credential (the S3 secret
 /// key, the SFTP password) was handed to the PANEL host for a destination a
 /// fleet member was going to use, and the green "connection OK" was a statement
 /// about the panel's egress rather than the member's. A member behind a
@@ -368,7 +368,7 @@ pub async fn remove(
 /// The SCHEDULED path never had this defect: `backup_policy_executor` resolves
 /// `agents.for_server(...)` per row for sites (:328), databases (:450) and
 /// volumes (:568) alike, and refuses rather than falling back to local. That
-/// asymmetry is the thing to notice — the button an operator PRESSES is the
+/// asymmetry is the thing to notice - the button an operator PRESSES is the
 /// surface that never adopted the rule the background loop was already
 /// following, and it stayed hidden because this handler contains no `ServerScope`
 /// token for a census of header-derived dispatch to match on. It was not using
@@ -384,7 +384,7 @@ pub async fn test_connection(
     // `dtype` + `config` precisely so a caller holding loose columns need not
     // rebuild a row to use it.
     //
-    // Ownership-scoped, same predicate `create`/`update`/`remove` use — this used to be
+    // Ownership-scoped, same predicate `create`/`update`/`remove` use - this used to be
     // a bare `WHERE id = $1`, which handed a caller the DECRYPTED credential (S3 secret
     // key, SFTP password) of a destination another admin created, since the response
     // this handler builds threads `config` straight to the agent unmasked.
@@ -410,14 +410,14 @@ pub async fn test_connection(
     // A NULL `server_id` means "no host has claimed this destination". It does
     // NOT mean "the panel owns it". `20260807000000_sleep_and_destination_server_scope`
     // backfilled every pre-existing row to the local server, so a NULL row today
-    // is one created since — and `create` above still does not set the column, so
+    // is one created since - and `create` above still does not set the column, so
     // NULL is the DEFAULT for every new destination rather than a deliberate
     // declaration that it is shared. Reading it as "test from the panel" would
     // re-spell, for the majority of rows, the exact defect this handler is fixing.
     //
     // So an unclaimed destination is tested from every online member instead. For
-    // one that really is shared that is the honest reading of the question — can
-    // the hosts that will upload to it reach it — and the panel's own box is in
+    // one that really is shared that is the honest reading of the question - can
+    // the hosts that will upload to it reach it - and the panel's own box is in
     // that fleet like any other member, so nothing is lost for a single-server
     // install, where the fleet is exactly one host and the answer is identical to
     // the old one.
@@ -425,12 +425,12 @@ pub async fn test_connection(
         return test_from_whole_fleet(&state, &name, agent_body).await;
     };
 
-    // Refuse rather than substitute — the rule `helpers::agent_for_site_server`
+    // Refuse rather than substitute - the rule `helpers::agent_for_site_server`
     // states for sites. Answering with a different host's reachability is how a
     // destination gets green-lit for a machine nobody asked about.
     let agent = state.agents.for_server(server_id).await.map_err(|e| {
         tracing::warn!(
-            "Refusing to test destination {name}: its server {server_id} is unreachable ({e}) — \
+            "Refusing to test destination {name}: its server {server_id} is unreachable ({e}) - \
              testing from another host would answer a question nobody asked"
         );
         err(
@@ -468,7 +468,7 @@ pub async fn test_connection(
 /// Test an unclaimed destination from every online member, reporting per host.
 ///
 /// Partial stays partial. One member that cannot reach the bucket is a real
-/// problem — its backups will fail nightly — but it does not make the destination
+/// problem - its backups will fail nightly - but it does not make the destination
 /// broken for the hosts that can reach it, and turning the whole button red would
 /// be as false a summary as the panel-only green it replaces. So the request
 /// fails only when NOTHING reached the destination, which preserves what the old
@@ -493,7 +493,7 @@ async fn test_from_whole_fleet(
     // Tracked beside the display strings so a refusal every member agrees on can
     // keep its own status. `unanimous` drops to false the moment one member fails
     // for a reason the operator cannot act on, or for a different one than the
-    // rest — either way there is no single answer left to propagate.
+    // rest - either way there is no single answer left to propagate.
     let mut shared: Option<StatusCode> = None;
     let mut unanimous = true;
     for member in &fleet {
@@ -528,7 +528,7 @@ async fn test_from_whole_fleet(
             .collect::<Vec<_>>()
             .join("; ");
         // Every host refused for the same thing the operator can fix, so answer
-        // with THAT — the single-server path above already does, via
+        // with THAT - the single-server path above already does, via
         // `agent_error`. Flattening it here is what tells somebody their fleet
         // broke while every host in it is working and saying the same actionable
         // sentence. A mixed bag, or any genuine agent fault, still reads 502.
@@ -538,7 +538,7 @@ async fn test_from_whole_fleet(
         };
         return Err(err(
             status,
-            &format!("No server could reach \"{dest_name}\" — {detail}"),
+            &format!("No server could reach \"{dest_name}\" - {detail}"),
         ));
     }
 
@@ -582,7 +582,7 @@ async fn test_from_whole_fleet(
 
     if !parts.is_empty() {
         resp["warning"] = serde_json::json!(format!(
-            "Reached from {} of {} servers — {}.",
+            "Reached from {} of {} servers - {}.",
             reachable.len(),
             reachable.len() + failed.len() + not_asked.len(),
             parts.join("; "),
@@ -596,14 +596,14 @@ async fn test_from_whole_fleet(
 /// config with its secrets decrypted and `type` folded in.
 ///
 /// Everything that hands a destination to the agent must come through here.
-/// Three places built this object and only one of them — `test_connection` —
+/// Three places built this object and only one of them - `test_connection` -
 /// decrypted first. The other two, the per-site scheduler and the policy
 /// executor, cloned the row's `config` straight out of the database and posted
 /// the CIPHERTEXT as the S3 secret key or the SFTP password. The failure is
 /// shaped to survive review: Test Connection uses the decrypting path and
 /// reports success, so a destination verifies green and then every actual upload
 /// authenticates with an encrypted blob. Taking `dtype` and `config` rather than
-/// a `BackupDestination` is deliberate — every caller holds the two columns from
+/// a `BackupDestination` is deliberate - every caller holds the two columns from
 /// a query of its own and would otherwise have kept hand-rolling this. That now
 /// includes `test_connection`, which dropped its `build_agent_destination`
 /// wrapper when it started selecting `server_id` alongside them: reassembling a
@@ -646,7 +646,7 @@ fn carry_masked_secrets(
 ///
 /// The PUT replaces the entire JSONB column, but the edit form only ever sends
 /// the fixed key set for the selected transport. Anything else a destination had
-/// — `key_path` being the real one — vanished on the first unrelated edit. Keys
+/// - `key_path` being the real one - vanished on the first unrelated edit. Keys
 /// the caller DID send win, including one sent as JSON null, so this preserves
 /// without preventing a deliberate change.
 fn carry_unmentioned_keys(cfg: &mut serde_json::Value, existing: &serde_json::Value) {
@@ -663,7 +663,7 @@ fn carry_unmentioned_keys(cfg: &mut serde_json::Value, existing: &serde_json::Va
 /// Sensitive keys within the backup destination config JSON.
 ///
 /// `pub(crate)` so `services::credential_reencrypt` can import this directly
-/// instead of hand-duplicating the list — a duplicate the re-encryption sweep
+/// instead of hand-duplicating the list - a duplicate the re-encryption sweep
 /// used to carry had no test tying it back here, so a third secret key added
 /// to this list alone would have silently stopped being re-keyed on rotation.
 pub(crate) const CONFIG_SENSITIVE_KEYS: &[&str] = &["secret_key", "password"];
@@ -676,7 +676,7 @@ const MASK: &str = "********";
 ///
 /// `list` masks; `create` and `update` returned the row straight from
 /// `RETURNING *`, so a PUT that merely renamed a destination echoed the stored
-/// credential back over the wire — ciphertext on a modern row, and the REAL
+/// credential back over the wire - ciphertext on a modern row, and the REAL
 /// secret on any row created before credential encryption landed, since nothing
 /// backfills that column. An admin who never knew the credential could read it
 /// out of the response to a rename.
@@ -694,7 +694,7 @@ fn mask_config_secrets(dest: &mut BackupDestination) {
 /// Reject an empty string submitted for a secret.
 ///
 /// `encrypt_config_secrets` deliberately skips `""`, and `""` is not the mask,
-/// so `carry_masked_secrets` never sees it either — an empty secret therefore
+/// so `carry_masked_secrets` never sees it either - an empty secret therefore
 /// travelled all the way into the config column and REPLACED a working
 /// credential with nothing. There is no destination for which an empty secret is
 /// valid, so the honest answer is to refuse rather than to guess whether the
@@ -705,7 +705,7 @@ fn reject_empty_secrets(config: &serde_json::Value) -> Result<(), ApiError> {
         if obj.get(*key).and_then(|v| v.as_str()) == Some("") {
             return Err(err(
                 StatusCode::BAD_REQUEST,
-                &format!("{key} cannot be empty — leave the field masked to keep the stored value, or type a new one"),
+                &format!("{key} cannot be empty - leave the field masked to keep the stored value, or type a new one"),
             ));
         }
     }
@@ -757,7 +757,7 @@ mod tests {
     const JWT: &str = "test-jwt-secret-at-least-32-bytes-long-for-hkdf";
 
     /// The shape an edit takes when the operator changed the bucket but left the
-    /// secret masked — which is what the Destinations tab sends for every edit
+    /// secret masked - which is what the Destinations tab sends for every edit
     /// that does not rotate the credential.
     #[test]
     fn a_masked_secret_is_carried_across_not_re_encrypted() {
@@ -815,7 +815,7 @@ mod tests {
     fn the_agent_payload_carries_its_type() {
         // Only the `type` fold is asserted here. The decrypt half reads JWT_SECRET
         // from the process environment, and setting that from a test would race
-        // every other test in the binary — it is covered by the round-trip above
+        // every other test in the binary - it is covered by the round-trip above
         // and by the live drive on a real box.
         let payload = agent_destination_payload("sftp", &serde_json::json!({ "host": "h" }));
         assert_eq!(payload["type"], "sftp");
@@ -852,7 +852,7 @@ mod tests {
     #[test]
     fn create_and_update_do_not_echo_the_stored_secret() {
         // list() masked; create/update returned RETURNING * verbatim, so a rename
-        // handed back the stored credential — plaintext on any row predating
+        // handed back the stored credential - plaintext on any row predating
         // credential encryption, since nothing backfills that column.
         let mut dest = BackupDestination {
             id: Uuid::nil(),
@@ -865,7 +865,7 @@ mod tests {
         mask_config_secrets(&mut dest);
         assert_eq!(dest.config["secret_key"], MASK);
         assert_eq!(dest.config["bucket"], "b");
-        // An empty stored value is left alone — masking it would claim a
+        // An empty stored value is left alone - masking it would claim a
         // credential exists where none does.
         assert_eq!(dest.config["password"], "");
     }

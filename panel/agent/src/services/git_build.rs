@@ -13,7 +13,7 @@ use crate::services::ownership;
 
 const GIT_BASE_DIR: &str = "/var/lib/dockpanel/git";
 
-/// Where a Git Deploy's PERSISTENT VOLUMES live — deliberately separate from
+/// Where a Git Deploy's PERSISTENT VOLUMES live - deliberately separate from
 /// [`GIT_BASE_DIR`], which holds the git checkout/build context and is wiped
 /// and re-cloned on every deploy. Mirrors `docker_apps::APP_DATA_DIR`: a
 /// directory per deploy, named after it, one subdirectory per declared
@@ -41,7 +41,7 @@ pub struct GitDeployResult {
     /// re-renders it (see `blue_green_update`), so whatever certificate story
     /// the domain already had is untouched and there is nothing new to
     /// report. `Some` for a fresh deploy or a stop/recreate that rendered a
-    /// vhost — mirrors `docker_apps::expose_domain`'s response shape so the
+    /// vhost - mirrors `docker_apps::expose_domain`'s response shape so the
     /// panel's existing `provided_tls_refusal`-style check works unchanged.
     pub ssl: Option<bool>,
     pub tls_mode: Option<&'static str>,
@@ -69,8 +69,8 @@ pub async fn clone_or_pull(
     let git_dir = format!("{repo_dir}/.git");
 
     // SSRF: this process is the one that actually dials `repo_url` (the panel's
-    // own check at write time runs on a different host, at a different — often
-    // much earlier — moment). See ssrf_guard's module docs.
+    // own check at write time runs on a different host, at a different - often
+    // much earlier - moment). See ssrf_guard's module docs.
     crate::services::ssrf_guard::validate_repo_url_not_internal(repo_url).await?;
 
     let env_ssh = match key_path {
@@ -88,7 +88,7 @@ pub async fn clone_or_pull(
         }
         // safe_command sets no kill_on_drop, so a timed-out (dropped) future
         // would otherwise leave `git fetch` running in the background,
-        // holding .git/index.lock against every later attempt on this repo —
+        // holding .git/index.lock against every later attempt on this repo -
         // see docker build's identical fix a few functions below, and
         // database.rs:317, migration.rs:91, database_backup.rs:424,
         // security_scanner.rs:633 for the same fix elsewhere in this crate.
@@ -134,7 +134,7 @@ pub async fn clone_or_pull(
         if let Some(ref ssh) = env_ssh {
             cmd.env("GIT_SSH_COMMAND", ssh);
         }
-        // Same orphan-on-timeout leak as the fetch branch above — see its comment.
+        // Same orphan-on-timeout leak as the fetch branch above - see its comment.
         cmd.kill_on_drop(true);
 
         let clone = tokio::time::timeout(
@@ -241,7 +241,7 @@ pub async fn build_image(
     let build = tokio::time::timeout(
         // 900s, not 600s: this build now also carries whatever pre-build
         // install step the operator configured (folded into a RUN line
-        // instead of a separate host-exec step — see auto_generate_dockerfile),
+        // instead of a separate host-exec step - see auto_generate_dockerfile),
         // absorbing that step's old, separate 300s budget.
         std::time::Duration::from_secs(900),
         safe_command("docker")
@@ -250,7 +250,7 @@ pub async fn build_image(
             .current_dir(&deploy_dir)
             // safe_command sets no kill_on_drop, so a timed-out (dropped)
             // future would otherwise leave `docker build` running in the
-            // background — see database.rs:317, migration.rs:91,
+            // background - see database.rs:317, migration.rs:91,
             // database_backup.rs:424, security_scanner.rs:633 for the same fix.
             .kill_on_drop(true)
             .output(),
@@ -282,7 +282,7 @@ pub async fn build_image(
 }
 
 /// Put a domain in front of a git deploy's local port, secured the way `tls`
-/// asks — mirrors `docker_apps::expose_domain`'s `TlsIntent` handling so a git
+/// asks - mirrors `docker_apps::expose_domain`'s `TlsIntent` handling so a git
 /// deploy gets the same guarantee a Docker/Compose deploy already has for the
 /// SAME reason: `Provided` renders straight to HTTPS through the registered
 /// certificate and is the ONLY arm that reads it, `Acme` orders a Let's
@@ -292,15 +292,15 @@ pub async fn build_image(
 /// Unlike `expose_domain`, a refused `Provided` certificate here falls back to
 /// plain HTTP rather than leaving the vhost untouched. `expose_domain` protects
 /// an EXISTING `:443` block from being silently downgraded (the HSTS-outage
-/// trap its own doc comment describes at length) — but both call sites this
+/// trap its own doc comment describes at length) - but both call sites this
 /// function has only reach it when there is nothing to protect: a brand new
 /// container's first vhost, or the stop/recreate path's write of a domain
 /// that just changed (a path that never held THIS domain before). Falling
 /// back leaves the deploy reachable, with the refusal surfaced in
-/// [`TlsOutcome::warning`] rather than swallowed — never a silent downgrade
+/// [`TlsOutcome::warning`] rather than swallowed - never a silent downgrade
 /// of a certificate that was already live, because that case never reaches
 /// this function (blue-green swaps only the backend port on the untouched
-/// existing file — see `blue_green_update`).
+/// existing file - see `blue_green_update`).
 async fn apply_tls(
     templates: &Tera,
     domain: &str,
@@ -331,7 +331,7 @@ async fn apply_tls(
             };
             // Binding point 3 of #104, re-asked here: the panel already checked
             // at claim time, but the pairing on disk may have been replaced
-            // since — the same defence in depth `expose_domain` applies.
+            // since - the same defence in depth `expose_domain` applies.
             if let Err(reason) = crate::services::ssl::cert_covers_domain(&pem, domain) {
                 tracing::warn!(
                     "Git deploy: registered certificate {alias} does not cover {domain}: {reason}"
@@ -348,7 +348,7 @@ async fn apply_tls(
                 });
             }
             // Rendered through the ordinary renderer with the registry paths
-            // named outright — NOT through `enable_ssl_for_site`, which
+            // named outright - NOT through `enable_ssl_for_site`, which
             // hardcodes the per-domain tree and would point the vhost at a
             // directory this certificate is deliberately not in.
             let site_config = crate::routes::nginx::SiteConfig {
@@ -550,7 +550,7 @@ pub async fn deploy_or_update(
     volumes: &[String],
 ) -> Result<GitDeployResult, String> {
     // Held for the whole deploy/update, including the internal blue-green
-    // swap this function may perform — `blue_green_update` is called FROM
+    // swap this function may perform - `blue_green_update` is called FROM
     // here and must never acquire this same key itself (see site_lock's
     // module doc; `tokio::sync::Mutex` is not reentrant).
     let _guard = crate::site_lock::lock_site(&format!("git-deploy:{name}")).await;
@@ -567,7 +567,7 @@ pub async fn deploy_or_update(
         .collect();
 
     // Build labels. `dockpanel.git.kind` is what a later run reads back to tell
-    // a deployment's container from a preview's — the two used to be
+    // a deployment's container from a preview's - the two used to be
     // indistinguishable, and a container is the one thing here with no file to
     // open and ask.
     let mut labels = HashMap::from([
@@ -597,24 +597,24 @@ pub async fn deploy_or_update(
     let mut exposed_ports = HashMap::new();
     exposed_ports.insert(container_port_key, HashMap::new());
 
-    // PERSISTENT VOLUMES (#118). `volumes` is container-path-only — the host side
+    // PERSISTENT VOLUMES (#118). `volumes` is container-path-only - the host side
     // is always `{GIT_DATA_DIR}/{name}{path}`, never operator-supplied, for the
     // same reason `docker_apps::deploy_app` derives it rather than taking
     // `host_path:container_path`: this agent runs under `ProtectSystem=strict`
     // with an explicit `ReadWritePaths`, so most free-form host paths would fail
     // at mkdir anyway, and a bind of `/` or `/etc` would be a container escape.
     // `services::routes::git_build::deploy_container` enforces this is empty for
-    // any scope other than `Deploy` — a preview must never gain durable storage.
+    // any scope other than `Deploy` - a preview must never gain durable storage.
     //
     // The two branches below build `host_config.binds` differently on purpose:
     //   * Fresh deploy (no existing container): every declared path is genuinely
     //     new, so its directory is created and seeded from whatever the image
-    //     ships there — see `build_fresh_volume_binds`.
+    //     ships there - see `build_fresh_volume_binds`.
     //   * Existing container: some paths may already be bound from a PRIOR
-    //     deploy (kept as-is — never re-seeded, which would stomp real data with
+    //     deploy (kept as-is - never re-seeded, which would stomp real data with
     //     the image's shipped defaults) and some may be newly added, in which
     //     case the data already living in the OLD container's writable layer has
-    //     to be rescued via `docker cp` before that container is removed —
+    //     to be rescued via `docker cp` before that container is removed -
     //     `docker_apps::migrate_unmounted_volumes` (generalised for #110)
     //     already does exactly this. See that branch below for why blue-green is
     //     refused whenever `volumes` is non-empty: it would run the old and new
@@ -646,7 +646,7 @@ pub async fn deploy_or_update(
     let existing = find_container(&docker, &container_name, scope).await;
 
     // A container holding this name is not necessarily this deployment's. If it
-    // says it belongs to something else, stop here — every branch below either
+    // says it belongs to something else, stop here - every branch below either
     // force-removes it or repoints ITS domain at our build, and both are
     // irreversible. Refusing costs a failed deploy the operator can read.
     if let Some(ref found) = existing {
@@ -669,8 +669,8 @@ pub async fn deploy_or_update(
             // Does the request still name the domain the running container was
             // built for? If not, blue-green is the wrong tool: it swaps the
             // vhost of the domain read off the OLD container, and there is
-            // exactly one call site for `setup_nginx_proxy` — the fresh-deploy
-            // arm below — so the domain the operator just asked for would never
+            // exactly one call site for `setup_nginx_proxy` - the fresh-deploy
+            // arm below - so the domain the operator just asked for would never
             // get a server block at all, on this deploy or any later one.
             let domain_unchanged = match (domain, existing_domain.as_deref()) {
                 (Some(requested), Some(current)) => requested == current,
@@ -678,12 +678,12 @@ pub async fn deploy_or_update(
                 (Some(_), None) => false, // a domain is being added
             };
 
-            // Container exists — check if blue-green is possible. `volumes.is_empty()`
+            // Container exists - check if blue-green is possible. `volumes.is_empty()`
             // is the persistent-state guard: blue-green runs the old and new
             // containers against the SAME host paths for the length of the health
             // check (up to 30s plus an nginx test and reload), which is harmless for
-            // a container whose only state is its own writable layer — the
-            // replacement gets a fresh one — and is silent data corruption for a
+            // a container whose only state is its own writable layer - the
+            // replacement gets a fresh one - and is silent data corruption for a
             // single-writer database like SQLite sitting in a bind mount. There is no
             // way to ask an image whether it tolerates two writers, so ANY declared
             // volume forces the slower stop/recreate path below, exactly as
@@ -728,7 +728,7 @@ pub async fn deploy_or_update(
                 );
             }
 
-            // No usable vhost to swap, or volumes forced stop/start — recreate on
+            // No usable vhost to swap, or volumes forced stop/start - recreate on
             // the port the panel allocated.
             tracing::info!(
                 "Replacing git container {container_name} (stop/start; domain_unchanged={domain_unchanged})"
@@ -742,13 +742,13 @@ pub async fn deploy_or_update(
             // Stopped, so the app has flushed; not yet removed, so anything a newly
             // declared volume path needs rescued from the writable layer is still
             // reachable. This is the only window in which it can be, and a failure
-            // here MUST abort before the remove below — the whole point is to not
+            // here MUST abort before the remove below - the whole point is to not
             // destroy what we came to save (#118, mirroring #110's exact fix shape).
             //
             // Paths already bound in the OLD container are kept exactly as they are
-            // — filtered down to whatever is STILL declared, so clearing the field
+            // - filtered down to whatever is STILL declared, so clearing the field
             // un-mounts a path from the next container without deleting the data
-            // already on disk — and are never re-seeded from the image, which would
+            // already on disk - and are never re-seeded from the image, which would
             // stomp real data with the image's shipped defaults. Only a path that is
             // newly added and not yet mounted goes through migration.
             let existing_binds: Vec<String> = docker
@@ -762,11 +762,11 @@ pub async fn deploy_or_update(
             let mut kept_binds: Vec<String> = existing_binds
                 .into_iter()
                 .filter(|b| {
-                    // `.nth(1)` rather than `split_once` — Docker's bind format is
+                    // `.nth(1)` rather than `split_once` - Docker's bind format is
                     // `host:container[:mode]`, and this agent never writes a 3-segment git
                     // deploy bind today, but a mode suffix bleeding into the comparison would
                     // silently drop an otherwise-correct bind as "unmounted" (re-migrated via
-                    // a no-op `docker cp` next deploy — not data loss, but pointless churn).
+                    // a no-op `docker cp` next deploy - not data loss, but pointless churn).
                     b.split(':')
                         .nth(1)
                         .map(|dest| declared.contains(&dest))
@@ -843,7 +843,7 @@ pub async fn deploy_or_update(
 
             // The requested domain gets its server block here too, not only on a
             // first deploy. Adding or changing a git app's domain used to write
-            // the new value into the container's label and stop — the panel
+            // the new value into the container's label and stop - the panel
             // reported success and the hostname served nothing, permanently,
             // because every later deploy took this same branch.
             //
@@ -855,7 +855,7 @@ pub async fn deploy_or_update(
             // ⛔ But "it is stale, not dangerous" was WRONG, and this comment
             // said it for five months. The container keeps its host port across
             // a rename, so the old vhost went on proxying to a LIVE app with a
-            // certificate that went on renewing — while the panel released the
+            // certificate that went on renewing - while the panel released the
             // claim on that name, leaving it claimable by another tenant who
             // would then be answered by the previous tenant's application.
             //
@@ -868,9 +868,9 @@ pub async fn deploy_or_update(
                 let config_path = format!("{}/{d}.conf", super::nginx::sites_dir());
                 if !domain_unchanged || !std::path::Path::new(&config_path).exists() {
                     // Neither trigger can name a path that was already
-                    // serving THIS domain's HTTPS — a changed domain has
+                    // serving THIS domain's HTTPS - a changed domain has
                     // never had a vhost at its new path, and a missing config
-                    // means nothing is being served at all right now — so
+                    // means nothing is being served at all right now - so
                     // `apply_tls`'s plain-HTTP fallback on a `Provided`
                     // refusal has nothing live to downgrade here.
                     tls_outcome = Some(apply_tls(templates, d, host_port, tls).await?);
@@ -908,7 +908,7 @@ pub async fn deploy_or_update(
             )
             .await?;
 
-            // Set up nginx reverse proxy — and secure it the way `tls` asks —
+            // Set up nginx reverse proxy - and secure it the way `tls` asks -
             // if a domain is provided. A brand new container's vhost has
             // nothing to downgrade, so `apply_tls`'s plain-HTTP fallback on a
             // `Provided` refusal simply leaves the deploy reachable.
@@ -929,7 +929,7 @@ pub async fn deploy_or_update(
     }
 }
 
-/// Build bind mounts for a BRAND NEW git-deployed container — one directory per
+/// Build bind mounts for a BRAND NEW git-deployed container - one directory per
 /// declared container path under [`GIT_DATA_DIR`], seeded from whatever the
 /// image ships there and chowned to whatever non-root user it runs as.
 ///
@@ -941,7 +941,7 @@ pub async fn deploy_or_update(
 /// `docker_apps::migrate_unmounted_volumes` already does for the same steps) is
 /// safer than risking a regression in it to thread a new base directory through.
 ///
-/// Only ever called for a FRESH deploy — an existing container's already-mounted
+/// Only ever called for a FRESH deploy - an existing container's already-mounted
 /// paths are kept as-is and never re-seeded, since seeding stomps real data with
 /// the image's shipped defaults. See the caller for why that split matters.
 async fn build_fresh_volume_binds(
@@ -956,7 +956,7 @@ async fn build_fresh_volume_binds(
         let host_dir = format!("{GIT_DATA_DIR}/{name}{vol}");
         std::fs::create_dir_all(&host_dir)
             .map_err(|e| format!("Failed to create {host_dir}: {e}"))?;
-        // Canonicalize then re-check the prefix — the check is what proves the
+        // Canonicalize then re-check the prefix - the check is what proves the
         // path is one of ours, and it has to happen after symlinks are resolved.
         let resolved = std::fs::canonicalize(&host_dir)
             .map_err(|e| format!("Volume path {host_dir} inaccessible: {e}"))?;
@@ -966,7 +966,7 @@ async fn build_fresh_volume_binds(
                 "Volume path {host_dir} escapes allowed prefix after canonicalization"
             ));
         }
-        // Only ever seeds an empty directory — see `seed_volume_from_image`'s own
+        // Only ever seeds an empty directory - see `seed_volume_from_image`'s own
         // doc comment. AFTER the prefix check, for the same reason the chown below
         // is: the check is what proves the path is one of ours.
         super::docker_apps::seed_volume_from_image(docker, image, vol, &resolved_str).await;
@@ -989,8 +989,8 @@ async fn build_fresh_volume_binds(
 /// Extracted from [`cleanup_container`] so the DELETE path and the RENAME path
 /// cannot drift: both must answer the same ownership question, and it is the
 /// question `services::ownership` exists to ask. A vhost that no longer proxies
-/// to this port has been re-claimed by something else since — a site, another
-/// deploy — and removing it would be an outage for a third party.
+/// to this port has been re-claimed by something else since - a site, another
+/// deploy - and removing it would be an outage for a third party.
 ///
 /// ⚠ Deliberately infallible: every caller is finishing an operation the
 /// operator already asked for, and failing their rename because a config file
@@ -1014,13 +1014,13 @@ pub async fn release_domain_artifacts(domain: &str, host_port: Option<u16>) {
             tracing::warn!(
                 "Leaving {config_path} in place: it does not proxy to this \
                  container's port, so {domain} is now served by something else. \
-                 This runs unattended — taking that down would be an outage \
+                 This runs unattended - taking that down would be an outage \
                  nobody was present for."
             );
         }
     }
 
-    // SSL certificates — not if a wildcard is shared across the zone.
+    // SSL certificates - not if a wildcard is shared across the zone.
     let ssl_dir = format!("/etc/dockpanel/ssl/{domain}");
     if std::path::Path::new(&ssl_dir).exists() {
         if crate::services::ownership::cert_dir_in_use_elsewhere(domain) {
@@ -1045,7 +1045,7 @@ pub async fn cleanup_container(
     known_domain: Option<&str>,
     known_port: Option<u16>,
 ) -> Result<(), String> {
-    // Same key namespace as `deploy_or_update` — see that function and
+    // Same key namespace as `deploy_or_update` - see that function and
     // site_lock's module doc.
     let _guard = crate::site_lock::lock_site(&format!("git-deploy:{name}")).await;
 
@@ -1060,13 +1060,13 @@ pub async fn cleanup_container(
     // label alone is not proof: a preview holding `feature.example.com` is
     // invisible to `domain_claim::find_occupant` (it queries sites, git_deploys
     // and the agent's /apps, and a preview container is in none of them), so a
-    // real site can be created on that exact domain and pass every check — and
+    // real site can be created on that exact domain and pass every check - and
     // then this cleanup, running unattended on TTL expiry, deletes the site's
     // vhost and certificates five minutes later.
     let (domain, host_port, git_data_dir) = match docker.inspect_container(&container_name, None).await {
         Ok(info) => {
             // Who does it say it is? A TTL sweep runs with nobody watching, and
-            // the legacy preview space is shared with real deployments — so
+            // the legacy preview space is shared with real deployments - so
             // there the caller's own recorded port has to agree as well.
             let live_port = info
                 .host_config
@@ -1082,7 +1082,7 @@ pub async fn cleanup_container(
                 tracing::warn!(
                     "Refusing to clean up {container_name}: it reports {owner:?} for this \
                      {scope:?} request. Leaving the container, its vhost, its certificates and \
-                     its checkout in place — a stale preview is untidy, and removing a running \
+                     its checkout in place - a stale preview is untidy, and removing a running \
                      deployment is an outage nobody was present for."
                 );
                 return Ok(());
@@ -1096,7 +1096,7 @@ pub async fn cleanup_container(
                     .as_ref()
                     .and_then(crate::services::docker_apps::extract_host_port),
                 // Ownership of the persistent-volume directory is decided by the
-                // container's OWN binds, never by its name — the same reasoning
+                // container's OWN binds, never by its name - the same reasoning
                 // `docker_apps::owned_app_dir` documents. Read in this SAME
                 // inspect because after the remove below there is nothing left
                 // to ask: capturing it any later is the #118 constraint that
@@ -1108,14 +1108,14 @@ pub async fn cleanup_container(
             )
         }
         // The container is already gone. That used to end the vhost and
-        // certificate cleanup here — `domain` was `None`, and everything below
-        // hangs off `if let Some(d)` — so the crashed preview's server block and
+        // certificate cleanup here - `domain` was `None`, and everything below
+        // hangs off `if let Some(d)` - so the crashed preview's server block and
         // its certificate outlived every record that named them. The caller
         // knows both from its own row; the port still has to match the vhost
         // before anything is removed, so this widens what can be tidied, not
         // what can be destroyed.
         //
-        // No binds to read means no proof of a volume directory either — left
+        // No binds to read means no proof of a volume directory either - left
         // alone rather than guessed at from the name, exactly like the domain
         // and port above. A deploy that only ever had none loses nothing; one
         // that had real data orphans it rather than risking a wrong delete
@@ -1148,7 +1148,7 @@ pub async fn cleanup_container(
 
     tracing::info!("Removed git container: {container_name}");
 
-    // Remove nginx config + certs — only while they are still THIS container's.
+    // Remove nginx config + certs - only while they are still THIS container's.
     if let Some(ref d) = domain {
         release_domain_artifacts(d, host_port).await;
     }
@@ -1162,7 +1162,7 @@ pub async fn cleanup_container(
         tracing::info!("Removed git repo dir: {repo_dir}");
     }
 
-    // Remove persistent volume data — only when the container's OWN binds proved
+    // Remove persistent volume data - only when the container's OWN binds proved
     // it (see above). `GIT_DATA_DIR/{name}` is never touched on a bare name match:
     // a preview never has one (previews are refused a `volumes` list entirely),
     // and a deploy whose container could not be inspected leaves it in place
@@ -1178,7 +1178,7 @@ pub async fn cleanup_container(
 }
 
 /// Which directory under [`GIT_DATA_DIR`] does this container's own binds prove
-/// it owns? Mirrors `docker_apps::owned_app_dir` — only ONE spelling is checked
+/// it owns? Mirrors `docker_apps::owned_app_dir` - only ONE spelling is checked
 /// (git deploys have no naming-migration history the way Docker Apps do), and a
 /// bind outside `GIT_DATA_DIR` (there is only ever one: the checkout itself is
 /// never bind-mounted) yields `None`, which refuses to delete rather than guess.
@@ -1301,19 +1301,19 @@ fn pip_install_run(pre_build_override: Option<&str>, default: &str) -> (String, 
 /// Auto-detect language and generate a Dockerfile if none exists, optionally
 /// splicing a whitelisted install command into it as a RUN line. This is the
 /// only place `pre_build_override` (already validated against
-/// `ALLOWED_PRE_BUILD` by the route) is used — it only ever becomes text
+/// `ALLOWED_PRE_BUILD` by the route) is used - it only ever becomes text
 /// written into a Dockerfile that `docker build` later executes; it never
 /// reaches a host shell.
 ///
 /// Returns `(dockerfile_path, pre_build_applied, pre_build_note)`:
 /// - `dockerfile_path` is the path to use (the existing one, or "Dockerfile"
-///   for a generated one) — unchanged in meaning from before this signature
+///   for a generated one) - unchanged in meaning from before this signature
 ///   grew a 4th parameter.
 /// - `pre_build_applied` is true only when `pre_build_override` was supplied
 ///   AND matched the detected language's install step.
 /// - `pre_build_note` explains a non-applied override (repo already has a
 ///   Dockerfile; override doesn't match the detected language; detected
-///   language has no install step at all) — `None` when there was nothing to
+///   language has no install step at all) - `None` when there was nothing to
 ///   explain (no override supplied, or it applied cleanly).
 pub fn auto_generate_dockerfile(
     name: &str,
@@ -1326,11 +1326,11 @@ pub fn auto_generate_dockerfile(
     let df_path = std::path::Path::new(&context_dir).join(dockerfile_path);
 
     // If Dockerfile exists, use it as-is. Never auto-splice a RUN line into a
-    // Dockerfile this function doesn't own — it has no way to know where an
+    // Dockerfile this function doesn't own - it has no way to know where an
     // install step belongs relative to that file's own COPY instructions.
     if df_path.exists() {
         let note = pre_build_override
-            .map(|_| "repo already has a Dockerfile — add the install step as a RUN line there".to_string());
+            .map(|_| "repo already has a Dockerfile - add the install step as a RUN line there".to_string());
         return Ok((dockerfile_path.to_string(), false, note));
     }
 
@@ -1384,14 +1384,14 @@ pub fn auto_generate_dockerfile(
             format!("FROM python:3.12-slim\nWORKDIR /app\nCOPY requirements.txt .\n{install}\nCOPY . .\nEXPOSE 8000\nCMD [\"python\", \"app.py\"]\n")
         }
     } else if std::path::Path::new(&context_dir).join("go.mod").exists() {
-        // Go — no ALLOWED_PRE_BUILD entry maps to this toolchain (module
+        // Go - no ALLOWED_PRE_BUILD entry maps to this toolchain (module
         // fetch is `go mod download`, not a package-manager install command).
         if let Some(cmd) = pre_build_override {
-            note = Some(format!("'{cmd}' has no matching install step for a Go project — ignored"));
+            note = Some(format!("'{cmd}' has no matching install step for a Go project - ignored"));
         }
         "FROM golang:1.24-alpine AS builder\nWORKDIR /app\nCOPY go.mod go.sum ./\nRUN go mod download\nCOPY . .\nRUN CGO_ENABLED=0 go build -o server .\n\nFROM alpine:3.20\nWORKDIR /app\nCOPY --from=builder /app/server .\nEXPOSE 8080\nCMD [\"./server\"]\n".to_string()
     } else if std::path::Path::new(&context_dir).join("Cargo.toml").exists() {
-        // Rust — the default already IS the whitelisted command.
+        // Rust - the default already IS the whitelisted command.
         applied = pre_build_override == Some("cargo build --release");
         "FROM rust:1.94-slim AS builder\nWORKDIR /app\nCOPY . .\nRUN cargo build --release\n\nFROM debian:bookworm-slim\nCOPY --from=builder /app/target/release/* /usr/local/bin/\nEXPOSE 8080\nCMD [\"app\"]\n".to_string()
     } else if std::path::Path::new(&context_dir).join("composer.json").exists() {
@@ -1416,9 +1416,9 @@ pub fn auto_generate_dockerfile(
         applied = ok;
         format!("FROM ruby:3.3-slim\nWORKDIR /app\nCOPY Gemfile Gemfile.lock ./\n{install}\nCOPY . .\nEXPOSE 3000\nCMD [\"bundle\", \"exec\", \"rails\", \"server\", \"-b\", \"0.0.0.0\"]\n")
     } else if std::path::Path::new(&context_dir).join("index.html").exists() {
-        // Static site — nginx just serves files, no install step exists.
+        // Static site - nginx just serves files, no install step exists.
         if let Some(cmd) = pre_build_override {
-            note = Some(format!("'{cmd}' has no matching install step for a static site — ignored"));
+            note = Some(format!("'{cmd}' has no matching install step for a static site - ignored"));
         }
         "FROM nginx:alpine\nCOPY . /usr/share/nginx/html\nEXPOSE 80\n".to_string()
     } else {
@@ -1431,7 +1431,7 @@ pub fn auto_generate_dockerfile(
     // specific one.
     if let Some(cmd) = pre_build_override {
         if !applied && note.is_none() {
-            note = Some(format!("'{cmd}' doesn't apply to this project type — using the default install step"));
+            note = Some(format!("'{cmd}' doesn't apply to this project type - using the default install step"));
         }
     }
 
@@ -1449,7 +1449,7 @@ pub fn auto_generate_dockerfile(
 // ---------------------------------------------------------------------------
 
 /// What `find_container` found: its id, the domain it claims, its published
-/// port, and — the field that was missing — who it says it belongs to.
+/// port, and - the field that was missing - who it says it belongs to.
 struct Found {
     id: String,
     domain: Option<String>,
@@ -1505,7 +1505,7 @@ async fn find_container(
 
     // A deploy is judged by its label alone: its name is unique per server and
     // nothing else writes into that space any more. The port arguments exist
-    // for the legacy-preview space, which `deploy_or_update` never addresses —
+    // for the legacy-preview space, which `deploy_or_update` never addresses -
     // nothing may CREATE there.
     let owner = ownership::git_container(container.labels.as_ref(), scope, None, host_port);
 
@@ -1525,7 +1525,7 @@ async fn clear_blue_leftover(docker: &Docker, blue_name: &str) -> Result<(), Str
     let owner = ownership::blue_leftover(info.config.as_ref().and_then(|c| c.labels.as_ref()));
     if !owner.may_delete() {
         return Err(format!(
-            "A container named {blue_name} exists and is not managed by DockPanel ({owner:?}); \
+            "A container named {blue_name} exists and is not managed by CyberHunter - Panel ({owner:?}); \
              refusing to force-remove it to make room for a blue-green swap"
         ));
     }
@@ -1651,7 +1651,7 @@ async fn setup_nginx_proxy(
     // enables it.
     let target = crate::services::nginx::vhost_target(domain);
     let config_path = target.path().to_string();
-    // Snapshot first — a preview deploy synthesises `{branch}.{domain}` from a
+    // Snapshot first - a preview deploy synthesises `{branch}.{domain}` from a
     // pushed branch name, so this path can already belong to somebody else, and
     // `nginx -t` is a whole-server check an unrelated broken vhost can fail.
     let previous = std::fs::read_to_string(&config_path).ok();
@@ -1720,7 +1720,7 @@ async fn blue_green_update(
 
     let blue_name = ownership::blue_name(container_name);
 
-    // Clean up the leftover of a failed previous attempt — if it is ours.
+    // Clean up the leftover of a failed previous attempt - if it is ours.
     clear_blue_leftover(docker, &blue_name).await?;
 
     // Build port bindings for the temp port
@@ -1824,7 +1824,7 @@ async fn blue_green_update(
     //
     // ORDER MATTERS, and the old order was destroy-then-rename with both
     // results discarded by `.ok()`. When the removal failed the rename could not
-    // possibly succeed — the name was still taken — and the function returned
+    // possibly succeed - the name was still taken - and the function returned
     // `Ok` over a half-swapped host: the old container alive under the real
     // name, the new one alive as the stand-in, and nginx pointing at the stand-
     // in. The next deploy then resolved the OLD container, cleared the
@@ -1847,7 +1847,7 @@ async fn blue_green_update(
         crate::services::nginx::reload().await.ok();
         cleanup_blue(docker, &new_container.id).await;
         return Err(format!(
-            "Could not free the container name for promotion: {e}. Rolled back — the previous \
+            "Could not free the container name for promotion: {e}. Rolled back - the previous \
              container is still serving {domain}."
         ));
     }
@@ -1871,7 +1871,7 @@ async fn blue_green_update(
         crate::services::nginx::reload().await.ok();
         cleanup_blue(docker, &new_container.id).await;
         return Err(format!(
-            "Could not promote the new container: {e}. Rolled back — the previous container is \
+            "Could not promote the new container: {e}. Rolled back - the previous container is \
              still serving {domain}."
         ));
     }
@@ -1907,7 +1907,7 @@ async fn blue_green_update(
     Ok(GitDeployResult {
         container_id: new_container.id,
         blue_green: true,
-        // Only the backend port changed — the vhost's certificate story,
+        // Only the backend port changed - the vhost's certificate story,
         // whatever it is, was never touched. Nothing new to report.
         ssl: None,
         tls_mode: None,
@@ -2105,7 +2105,7 @@ mod volume_tests {
     use super::{owned_git_data_dir, GIT_DATA_DIR};
 
     /// A neighbour's directory is not this deploy's, and a prefix that stops
-    /// mid-segment must not match — the same shadow `docker_apps::owned_app_dir`
+    /// mid-segment must not match - the same shadow `docker_apps::owned_app_dir`
     /// guards against, checked here for the git-deploy spelling.
     #[test]
     fn cleanup_only_deletes_what_this_deploys_own_binds_prove() {
@@ -2116,7 +2116,7 @@ mod volume_tests {
         let neighbour = vec![format!("{GIT_DATA_DIR}/myapp-staging/data:/data")];
         assert_eq!(owned_git_data_dir("myapp", &neighbour), None);
 
-        // No binds at all — the common case for a deploy with no declared volumes,
+        // No binds at all - the common case for a deploy with no declared volumes,
         // and the ONLY safe answer when the container could not be inspected.
         assert_eq!(owned_git_data_dir("myapp", &[]), None);
 

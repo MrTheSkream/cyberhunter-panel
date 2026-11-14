@@ -26,7 +26,7 @@ interface BackupHealth {
   verifications_passed: number;
   verifications_failed: number;
   oldest_unverified_days: number | null;
-  // last_backup/days_since are null when the resource has never been backed up —
+  // last_backup/days_since are null when the resource has never been backed up -
   // the worst case this list reports, and the one it used to be unable to encode.
   stale_backups: { resource_type: string; resource_name: string; last_backup: string | null; days_since: number | null }[];
   sla_window: number;
@@ -37,7 +37,7 @@ interface BackupHealth {
   verify_lag_p95_hours: number | null;
   per_server_sla: ServerSla[];
   // True when the SLA figures could not be computed at all. Distinguishes
-  // "nothing to measure" from "not measured" — they used to render identically.
+  // "nothing to measure" from "not measured" - they used to render identically.
   sla_unavailable: boolean;
   drills_passed_30d: number;
   drills_failed_30d: number;
@@ -129,10 +129,10 @@ interface Destination {
 /**
  * `POST /backup-destinations/{id}/test`, in either of its two shapes.
  *
- * Server-owned destination: `{ ok, success, message, server }` — one host was
+ * Server-owned destination: `{ ok, success, message, server }` - one host was
  * asked and `server` names it (null only if its row could not be read back).
  * Unclaimed destination: `{ ok, shared, reachable, failed, not_asked, warning }`
- * — every online member was asked, `ok` is FALSE on a partial even though the
+ * - every online member was asked, `ok` is FALSE on a partial even though the
  * status is 200, and `warning` is the API's own sentence naming who missed.
  * Nothing reached it at all is a 502, which `api.ts` throws.
  */
@@ -210,7 +210,7 @@ interface PolicyForm {
   retention_count: number;
   encrypt: boolean;
   verify_after_backup: boolean;
-  // Only editable on an existing policy — a new one is always created enabled.
+  // Only editable on an existing policy - a new one is always created enabled.
   // Nothing could flip it before, though the table has always rendered the word
   // "Paused" for the state that produced it.
   enabled: boolean;
@@ -372,7 +372,7 @@ export default function BackupOrchestrator() {
   // Create OR save, depending on whether a policy is loaded into the form. The
   // PUT endpoint existed and was correct from the start; nothing in the browser
   // had ever called it, so schedule, scope, retention, destination, encryption,
-  // verification and enabled were all create-once — while the preflight warning
+  // verification and enabled were all create-once - while the preflight warning
   // told the operator to "edit the policy and pick a destination".
   //
   // Every field is sent on save, not a partial body: `destination_id: null` is
@@ -425,7 +425,7 @@ export default function BackupOrchestrator() {
     setProtectAllBusy(true);
     try {
       await api.post("/backup-orchestrator/policies/protect-all");
-      setMessage({ text: "Protect Everything policy created — nightly at 2 AM, keeping 7", type: "success" });
+      setMessage({ text: "Protect Everything policy created - nightly at 2 AM, keeping 7", type: "success" });
       loadAll();
     } catch (e) {
       // The handler answers 409 when the preset already exists; its message
@@ -532,14 +532,14 @@ export default function BackupOrchestrator() {
       // Two shapes, because two different questions were asked. A destination
       // that belongs to one server is tested from that server and the answer
       // names it. An unclaimed destination is tested from EVERY online member,
-      // and then a 2xx does not mean "it works" — it means at least one host
+      // and then a 2xx does not mean "it works" - it means at least one host
       // reached it. The hosts that could not, and the ones that were never
       // asked, arrive in `warning`; a 502 (thrown) means nothing reached it.
       const res = await api.post<DestTestResult>(`/backup-destinations/${d.id}/test`);
       if (res?.warning) {
         const reached = res.reachable ?? [];
         setMessage({
-          text: `"${d.name}" — ${res.warning}${reached.length > 0 ? ` Succeeded from: ${reached.join(", ")}.` : ""}`,
+          text: `"${d.name}" - ${res.warning}${reached.length > 0 ? ` Succeeded from: ${reached.join(", ")}.` : ""}`,
           type: "warning",
         });
       } else if (res?.reachable) {
@@ -548,7 +548,7 @@ export default function BackupOrchestrator() {
           type: "success",
         });
       } else {
-        // Single-server destination. Say WHICH host answered — an unattributed
+        // Single-server destination. Say WHICH host answered - an unattributed
         // "connection succeeded" is how one box's result came to stand for the
         // whole fleet's.
         setMessage({
@@ -566,13 +566,13 @@ export default function BackupOrchestrator() {
   const deleteDest = async (d: Destination) => {
     setPendingDeleteDestId(null);
     try {
-      // The API answers with a warning when schedules referenced it — those rows
+      // The API answers with a warning when schedules referenced it - those rows
       // are not deleted, their destination is nulled, so they silently become
       // local-only. Surfacing that is the whole point of showing it.
       const res = await api.delete<{ ok: boolean; warning?: string }>(`/backup-destinations/${d.id}`);
       setDestinations(destinations.filter(x => x.id !== d.id));
       setMessage({
-        text: res?.warning ? `Destination "${d.name}" deleted — ${res.warning}` : `Destination "${d.name}" deleted`,
+        text: res?.warning ? `Destination "${d.name}" deleted - ${res.warning}` : `Destination "${d.name}" deleted`,
         type: res?.warning ? "error" : "success",
       });
       if (res?.warning) loadAll();
@@ -604,7 +604,7 @@ export default function BackupOrchestrator() {
 
   // Restore and delete: the three doors this page listed backups behind and never
   // opened. `restore_db_backup`, `restore_volume_backup` and `delete_db_backup` have
-  // been complete, ownership-scoped and server-pinned for months with zero callers —
+  // been complete, ownership-scoped and server-pinned for months with zero callers -
   // so the page could prove a backup restorable with a drill and still leave the
   // operator no way to actually restore it. A drill restores into a scratch
   // container; these overwrite the live database or volume, which is why both sit
@@ -633,7 +633,7 @@ export default function BackupOrchestrator() {
     }
   };
 
-  // Delete exists for database backups only — there is no volume-backup delete
+  // Delete exists for database backups only - there is no volume-backup delete
   // endpoint, so the volume table deliberately offers no delete button rather than
   // a control that would 404.
   const deleteDbBackup = async (b: DatabaseBackup) => {
@@ -653,10 +653,10 @@ export default function BackupOrchestrator() {
       await api.post("/backup-orchestrator/drill", { backup_type: backupType, backup_id: backupId });
       const msg =
         backupType === "site"
-          ? "Site drill started — restoring into a scratch container, this can take 30s"
+          ? "Site drill started - restoring into a scratch container, this can take 30s"
         : backupType === "database"
-          ? "Database drill started — booting scratch engine + restoring + counting rows, this can take 60s"
-          : "Volume drill started — restoring into a scratch volume + read-testing through a probe container, this can take 60s";
+          ? "Database drill started - booting scratch engine + restoring + counting rows, this can take 60s"
+          : "Volume drill started - restoring into a scratch volume + read-testing through a probe container, this can take 60s";
       setMessage({ text: msg, type: "success" });
       setTimeout(loadAll, 8000);
       setTimeout(loadAll, 30000);
@@ -886,7 +886,7 @@ function OverviewTab({ health }: { health: BackupHealth }) {
 }
 
 function formatLagHours(h: number | null): string {
-  if (h === null || h === undefined || !isFinite(h)) return "—";
+  if (h === null || h === undefined || !isFinite(h)) return "-";
   if (h < 1) return `${Math.round(h * 60)}m`;
   if (h < 48) return `${h.toFixed(1)}h`;
   return `${(h / 24).toFixed(1)}d`;
@@ -917,7 +917,7 @@ function SlaCard({ health }: { health: BackupHealth }) {
         <div className="px-5 py-8 text-center">
           <p className="text-sm text-warn-400 font-mono">Restore confidence could not be measured</p>
           <p className="text-xs text-dark-300 font-mono mt-1">
-            The verification query failed — see the dockpanel-api service log. This is not a report that your backups are unverified.
+            The verification query failed - see the dockpanel-api service log. This is not a report that your backups are unverified.
           </p>
         </div>
       ) : total === 0 ? (
@@ -944,7 +944,7 @@ function SlaCard({ health }: { health: BackupHealth }) {
           <SlaStat label="p95 lag" value={formatLagHours(health.verify_lag_p95_hours)} />
           <SlaStat
             label="oldest unverified"
-            value={health.oldest_unverified_days === null ? "—" : `${health.oldest_unverified_days}d`}
+            value={health.oldest_unverified_days === null ? "-" : `${health.oldest_unverified_days}d`}
             tone={health.oldest_unverified_days !== null && health.oldest_unverified_days > 7 ? "warn" : undefined}
           />
         </div>
@@ -1160,7 +1160,7 @@ function AllBackupsTab({
                         <div className="inline-flex items-center gap-1.5">
                           <span
                             className="inline-flex items-center rounded border border-dark-500 overflow-hidden"
-                            title="Chain-of-trust report: this backup's full provenance — integrity hashes, every verification, every restore drill"
+                            title="Chain-of-trust report: this backup's full provenance - integrity hashes, every verification, every restore drill"
                           >
                             <span className="px-2 py-1 text-[10px] font-mono uppercase tracking-wider bg-dark-800 text-dark-300 border-r border-dark-500">
                               Report
@@ -1184,10 +1184,10 @@ function AllBackupsTab({
                             className="px-2.5 py-1 text-[10px] font-mono uppercase tracking-wider bg-dark-700 hover:bg-dark-600 text-rust-400 border border-rust-500/30 rounded"
                             title={
                               row.kind === "site"
-                                ? "Restore into a scratch nginx and probe HTTP — proves the backup is actually deployable"
+                                ? "Restore into a scratch nginx and probe HTTP - proves the backup is actually deployable"
                               : row.kind === "database"
-                                ? "Boot a scratch engine, restore the dump, count rows — proves the backup is actually queryable"
-                                : "Restore into a scratch Docker volume + read-test through a probe container — proves the backup is actually mountable"
+                                ? "Boot a scratch engine, restore the dump, count rows - proves the backup is actually queryable"
+                                : "Restore into a scratch Docker volume + read-test through a probe container - proves the backup is actually mountable"
                             }
                           >
                             Drill
@@ -1231,7 +1231,7 @@ function AllBackupsTab({
 //
 // This is where a destination is created, edited and deleted. It reads as new
 // UI and is not: the form below was written in March, in Settings, and was
-// switched off by the commit that moved this tab here (fd44a31) — which brought
+// switched off by the commit that moved this tab here (fd44a31) - which brought
 // across the list and the Test button and left the three mutating endpoints with
 // no caller in the panel at all. What the empty state then told operators to do,
 // "add one via Settings", was the one place the control had just been taken from
@@ -1301,7 +1301,7 @@ function DestinationsTab({
               </select>
               {editingId !== null && (
                 <p className="text-[10px] text-dark-300 mt-1 font-mono">
-                  Type cannot change — delete and re-add to switch transport
+                  Type cannot change - delete and re-add to switch transport
                 </p>
               )}
             </div>
@@ -1351,7 +1351,7 @@ function DestinationsTab({
             </button>
           </div>
           <p className="text-[10px] text-dark-300 font-mono">
-            Credentials are encrypted before they are stored. Use Test after saving — nothing is
+            Credentials are encrypted before they are stored. Use Test after saving - nothing is
             verified at save time.
           </p>
         </div>
@@ -1534,7 +1534,7 @@ function PoliciesTab({
             <p className="text-[11px] text-warn-400 font-mono">
               Encryption covers database dumps only. This policy also backs up{" "}
               {[form.backup_sites && "sites", form.backup_volumes && "volumes"].filter(Boolean).join(" and ")}
-              , and those archives are written and uploaded unencrypted — a site archive contains its webroot,
+              , and those archives are written and uploaded unencrypted - a site archive contains its webroot,
               including configuration files and any database credentials in them.
             </p>
           )}
@@ -1866,13 +1866,13 @@ function httpTone(code: number): string {
 
 function ResultCell({ drill }: { drill: Drill }) {
   if (drill.backup_type === "site") {
-    if (drill.http_status == null) return <span className="text-dark-300">—</span>;
+    if (drill.http_status == null) return <span className="text-dark-300">-</span>;
     return <span className={`font-mono ${httpTone(drill.http_status)}`}>HTTP {drill.http_status}</span>;
   }
   // database + volume: body_excerpt holds the row/table or file/byte summary
   return (
     <span className="text-dark-100 font-mono">
-      {drill.body_excerpt ?? <span className="text-dark-300">—</span>}
+      {drill.body_excerpt ?? <span className="text-dark-300">-</span>}
     </span>
   );
 }
@@ -1953,8 +1953,8 @@ function DrillsTab({
                 <td className="px-5 py-4 text-sm truncate max-w-[260px]" title={d.body_excerpt ?? ""}>
                   <ResultCell drill={d} />
                 </td>
-                <td className="px-5 py-4 text-sm text-dark-200 font-mono">{d.duration_ms ? `${(d.duration_ms / 1000).toFixed(1)}s` : "—"}</td>
-                <td className="px-5 py-4 text-xs text-danger-400 font-mono truncate max-w-[240px]" title={d.error_message ?? ""}>{d.error_message || "—"}</td>
+                <td className="px-5 py-4 text-sm text-dark-200 font-mono">{d.duration_ms ? `${(d.duration_ms / 1000).toFixed(1)}s` : "-"}</td>
+                <td className="px-5 py-4 text-xs text-danger-400 font-mono truncate max-w-[240px]" title={d.error_message ?? ""}>{d.error_message || "-"}</td>
                 <td className="px-5 py-4 text-xs text-dark-300 font-mono" title={formatDate(d.created_at)}>{timeAgo(d.created_at)}</td>
               </tr>
             ))}

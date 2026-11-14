@@ -1,4 +1,4 @@
-# Réglages PHP — contrats d'interface (figés pour l'implémentation)
+# Réglages PHP - contrats d'interface (figés pour l'implémentation)
 
 Référence : `conception/02-php-par-domaine.md` (décisions D1–D3 au §6). Formats échangés entre
 **agent** (`panel/agent`), **API** (`panel/backend`) et **frontend** (`panel/frontend`).
@@ -6,7 +6,7 @@ Dossier d'un site : `/var/www/<domaine>` (docroot `.../public`, déjà en place)
 
 ## A. Agent ← API
 
-### A1. `PUT /nginx/sites/{domain}` — `SiteConfig` gagne `php_pool: Option<PhpPool>`
+### A1. `PUT /nginx/sites/{domain}` - `SiteConfig` gagne `php_pool: Option<PhpPool>`
 ```json
 "php_pool": {
   "values":  { "memory_limit": "256M", "upload_max_filesize": "128M", "post_max_size": "136M",
@@ -56,9 +56,9 @@ Dossier d'un site : `/var/www/<domaine>` (docroot `.../public`, déjà en place)
 - `values` = lecture des 8 clés : memory_limit, max_execution_time, max_input_time,
   upload_max_filesize, post_max_size, display_errors, error_reporting, date.timezone (null si absente/commentée).
 
-### A3. `PUT /php/ini/{version}` — `{ "content": "..." }` **ou** `{ "values": { "memory_limit": "512M" } }`
-- `values` : remplace la ligne active de la clé (ou décommente / ajoute en fin de section `[PHP]`)
-  — fonction **pure** testée `set_ini_values(content, map) -> String` ; mêmes règles de caractères que A1,
+### A3. `PUT /php/ini/{version}` - `{ "content": "..." }` **ou** `{ "values": { "memory_limit": "512M" } }`
+- `values` : remplace la ligne active de la clé (ou décommente / ajoute en fin de section `[PHP]`) -
+  fonction **pure** testée `set_ini_values(content, map) -> String` ; mêmes règles de caractères que A1,
   clés limitées aux 8 de A2.
 - `content` : ≤ 512 Kio, UTF-8.
 - Séquence : copie `php.ini.dockpanel.bak` → écriture atomique → `php-fpm<ver> -t` → restart
@@ -115,7 +115,7 @@ max_requests 4000, idle 10, terminate = max_execution_time effectif + 30.
 - Appliqué tout de suite (vhost + pool). Échec agent (dont 400 de `-t`) → base inchangée
   (transaction), erreur relayée. Réponse : `PhpSettingsResponse` à jour. Journal d'activité.
 
-### B3. Admin — php.ini global
+### B3. Admin - php.ini global
 - `GET /api/php/ini/{version}` → format A2.
 - `PUT /api/php/ini/{version}` → corps A3, réponse A2 ; erreurs agent relayées (400 lisible).
 
@@ -134,7 +134,7 @@ ALTER TABLE sites ALTER COLUMN php_disable_shell SET DEFAULT true;
 ```
 `php_settings` = `{ "values": {...}, "pool": {...}, "extra": [[k,v],...] }` (surcharges seulement).
 **Tout** envoi de `SiteConfig` pour un site PHP (création, changement de version, SSL, IP, limites…)
-passe `php_pool` construit depuis ces colonnes — un seul constructeur côté API.
+passe `php_pool` construit depuis ces colonnes - un seul constructeur côté API.
 
 ### C bis (ajouté à l'implémentation)
 La migration enregistre, pour chaque site PHP existant, les valeurs de l'ancien pool comme
@@ -156,6 +156,6 @@ sites. Pour une ligne `legacy` :
   que `memory_limit` (remettre une autre clé « au défaut » = la ré-hériter du php.ini).
 - **B2** : le drapeau est conservé à chaque PUT (propriétaire comme admin) ; le propriétaire ne peut
   pas le modifier (`legacy` présent → 403). Admin : `{ "legacy": false }` (« Utiliser les défauts du
-  panel ») retire le drapeau — les surcharges stockées restent, les autres clés prennent les défauts
+  panel ») retire le drapeau - les surcharges stockées restent, les autres clés prennent les défauts
   B1. Toute autre valeur (`true`, non booléen) → 400 `field: "legacy"` ; le drapeau ne se pose jamais
   par l'API. Contrôle post ≥ upload : ignoré si l'upload est hérité (inconnu).

@@ -52,7 +52,7 @@ pub struct PruneRequest {
     pub retention: usize,
 }
 
-/// POST /backups/upload — Upload a local backup file to a remote destination.
+/// POST /backups/upload - Upload a local backup file to a remote destination.
 async fn upload(
     Json(body): Json<UploadRequest>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
@@ -128,7 +128,7 @@ async fn upload(
     }
 }
 
-/// POST /backups/test-destination — Test connection to a remote destination.
+/// POST /backups/test-destination - Test connection to a remote destination.
 async fn test_destination(
     Json(body): Json<TestRequest>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
@@ -188,12 +188,12 @@ async fn test_destination(
     }
 }
 
-/// POST /backups/prune — Delete old remote backups, keep N newest.
+/// POST /backups/prune - Delete old remote backups, keep N newest.
 async fn prune(
     Json(body): Json<PruneRequest>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
     if body.destination.dtype != "s3" {
-        // SFTP pruning requires an SSH client to list+delete remote files — not yet implemented.
+        // SFTP pruning requires an SSH client to list+delete remote files - not yet implemented.
         // Old SFTP backups must be pruned manually or via a cron job on the remote server.
         tracing::warn!(
             "Backup pruning skipped for {} destination (domain: {}). Only S3/R2 pruning is supported. \

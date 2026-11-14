@@ -4,7 +4,7 @@ use crate::safe_cmd::safe_command;
 /// Named so the route can match it instead of guessing at its wording.
 ///
 /// Both firewall handlers used to sort their errors with an ad-hoc substring
-/// test — one looked for "Invalid", the other for "must be" — so this sentence,
+/// test - one looked for "Invalid", the other for "must be" - so this sentence,
 /// which neither author had in mind, fell to the 5xx arm and was replaced by an
 /// incident id before the operator saw it. It is reachable on every RHEL-family
 /// box: the Firewall page lists rules read from firewalld, and every one of them
@@ -62,7 +62,7 @@ pub struct SecurityOverview {
 }
 
 /// Which `firewall-cmd` removal this entry needs, so `remove_firewall_rule`
-/// can resolve a bare display number back to the right command — firewalld
+/// can resolve a bare display number back to the right command - firewalld
 /// has no ufw-style numbered-rule identity of its own.
 enum FirewalldKind {
     Service(String),
@@ -79,7 +79,7 @@ struct FirewalldEntry {
 
 /// Services, ports, AND rich rules (deny/source-restricted entries this
 /// file's own `add_firewall_rule` writes), in one continuously-numbered
-/// list — the numbers the Security page shows must be the same numbers
+/// list - the numbers the Security page shows must be the same numbers
 /// `remove_firewall_rule` resolves, or "delete rule 3" deletes the wrong
 /// thing the moment a rich rule exists.
 async fn firewalld_entries() -> Vec<FirewalldEntry> {
@@ -128,7 +128,7 @@ async fn firewalld_entries() -> Vec<FirewalldEntry> {
 }
 
 /// Display-friendly (to, action, from) for one `--list-rich-rules` line.
-/// Not a general rich-rule parser — only understands the port+protocol(+
+/// Not a general rich-rule parser - only understands the port+protocol(+
 /// source) shape `add_firewall_rule` itself ever writes via `rich_rule_spec`.
 fn parse_rich_rule_display(line: &str) -> (String, String, String) {
     let action = if line.contains("reject") || line.contains(" drop") || line.ends_with("drop") {
@@ -162,7 +162,7 @@ async fn firewalld_status() -> Result<FirewallStatus, String> {
     Ok(FirewallStatus {
         active: true,
         default_policy: format!(
-            "{} (incoming), allow (outgoing) — firewalld zone '{zone}'",
+            "{} (incoming), allow (outgoing) - firewalld zone '{zone}'",
             if target.eq_ignore_ascii_case("ACCEPT") { "allow" } else { "deny" }
         ),
         rules,
@@ -183,8 +183,8 @@ async fn fw_out(args: &[&str]) -> String {
 
 /// Firewall state for the Security page.
 ///
-/// This only ever ran `ufw status verbose`, so on the RHEL family — where
-/// firewalld is the running firewall — it reported `active: false` and zero
+/// This only ever ran `ufw status verbose`, so on the RHEL family - where
+/// firewalld is the running firewall - it reported `active: false` and zero
 /// rules for a box that was firewalled correctly, and the overview card said
 /// the server had no firewall at all (s265).
 pub async fn get_firewall_status() -> Result<FirewallStatus, String> {
@@ -200,7 +200,7 @@ pub async fn get_firewall_status() -> Result<FirewallStatus, String> {
     {
         Ok(Ok(o)) => o,
         _ => {
-            // ufw not installed, timed out, or errored — return inactive status
+            // ufw not installed, timed out, or errored - return inactive status
             return Ok(FirewallStatus {
                 active: false,
                 default_policy: String::new(),
@@ -214,14 +214,14 @@ pub async fn get_firewall_status() -> Result<FirewallStatus, String> {
     // Check if active
     let active = stdout.contains("Status: active");
 
-    // Parse default policy — line like "Default: deny (incoming), allow (outgoing), disabled (routed)"
+    // Parse default policy - line like "Default: deny (incoming), allow (outgoing), disabled (routed)"
     let default_policy = stdout
         .lines()
         .find(|l| l.starts_with("Default:"))
         .map(|l| l.trim_start_matches("Default:").trim().to_string())
         .unwrap_or_default();
 
-    // Parse rules — they appear after the "---" separator line
+    // Parse rules - they appear after the "---" separator line
     let mut rules = Vec::new();
     let mut in_rules = false;
     let mut rule_num: usize = 0;
@@ -240,7 +240,7 @@ pub async fn get_firewall_status() -> Result<FirewallStatus, String> {
             continue;
         }
 
-        // Skip "(v6)" duplicate lines — IPv6 rules
+        // Skip "(v6)" duplicate lines - IPv6 rules
         if trimmed.contains("(v6)") {
             continue;
         }
@@ -312,7 +312,7 @@ pub async fn add_firewall_rule(
         return Err(format!("Invalid protocol '{proto}': must be 'tcp' or 'udp'"));
     }
 
-    // Validate source IP — basic check for alphanumeric, dots, colons, slashes
+    // Validate source IP - basic check for alphanumeric, dots, colons, slashes
     if let Some(source) = from {
         if source.is_empty()
             || !source
@@ -324,7 +324,7 @@ pub async fn add_firewall_rule(
     }
 
     // This used to always shell to `ufw`, which isn't installed anywhere in
-    // the RHEL family — `setup.sh` targets it as a first-class platform, and
+    // the RHEL family - `setup.sh` targets it as a first-class platform, and
     // every one of these mutating actions 424'd there while the read-only
     // status view above already spoke firewalld correctly (same s265 split
     // `get_firewall_status`/`change_ssh_port` were already fixed for).
@@ -374,7 +374,7 @@ pub async fn add_firewall_rule(
     Ok(())
 }
 
-/// Delete a firewall rule by its display number — the same number
+/// Delete a firewall rule by its display number - the same number
 /// `get_firewall_status`/`firewalld_status` reported it as.
 pub async fn remove_firewall_rule(rule_num: usize) -> Result<(), String> {
     if rule_num == 0 {
@@ -494,7 +494,7 @@ pub async fn get_fail2ban_status() -> Result<Fail2banStatus, String> {
 }
 
 /// Expand one `Include` argument (a single path, or a glob with one `*`) to
-/// the files it matches, sorted lexically — the order OpenSSH itself
+/// the files it matches, sorted lexically - the order OpenSSH itself
 /// processes a glob's matches in.
 async fn expand_include_arg(dir: &std::path::Path, arg: &str) -> Vec<std::path::PathBuf> {
     let path = if arg.starts_with('/') {
@@ -532,13 +532,13 @@ async fn expand_include_arg(dir: &std::path::Path, arg: &str) -> Vec<std::path::
 }
 
 /// `sshd_config` and its `Include`d drop-ins, linearized into the order
-/// sshd itself evaluates directives in — each `Include` line is spliced in
+/// sshd itself evaluates directives in - each `Include` line is spliced in
 /// place with the lines of every file it matches, one level deep (the
 /// stock `Include /etc/ssh/sshd_config.d/*.conf` never nests further in
 /// practice; a deeper Include inside a drop-in falls through as an
 /// unrecognized line, same as any other keyword this parser doesn't know).
 /// OpenSSH's own rule is "the first obtained value wins", so callers must
-/// scan this in order and stop at the first match per keyword — reading
+/// scan this in order and stop at the first match per keyword - reading
 /// only `/etc/ssh/sshd_config` silently ignores every drop-in that
 /// overrides it, which is exactly what a distro cloud-init image and this
 /// project's own `port.conf`-style admin drop-ins both do.
@@ -694,13 +694,13 @@ pub async fn change_ssh_port(port: u16) -> Result<(), String> {
         return Err("Invalid port".into());
     }
     modify_sshd_config("Port", &port.to_string()).await?;
-    // Add a firewall rule for the new port before restarting sshd — in
+    // Add a firewall rule for the new port before restarting sshd - in
     // whichever firewall is running. This used to be a discarded `ufw allow`,
     // so on a firewalld box it changed nothing and the next SSH connection
     // had nowhere to land.
     if !crate::services::firewall::allow_tcp(&port.to_string()).await {
         return Err(format!(
-            "Could not open port {port} in the firewall — refusing to move SSH there, \
+            "Could not open port {port} in the firewall - refusing to move SSH there, \
              it would lock you out. Open it manually, then retry."
         ));
     }
@@ -713,10 +713,10 @@ pub async fn change_ssh_port(port: u16) -> Result<(), String> {
 /// replace it in the file that actually governs it. Otherwise append to the
 /// main file.
 ///
-/// Writing to the main file unconditionally — the old behavior — could
+/// Writing to the main file unconditionally - the old behavior - could
 /// report success while sshd kept the old value: OpenSSH's `Include` is
 /// processed inline, at the point it appears, and "the first obtained value
-/// wins" — so a drop-in matched by `Include /etc/ssh/sshd_config.d/*.conf`
+/// wins" - so a drop-in matched by `Include /etc/ssh/sshd_config.d/*.conf`
 /// (which every stock sshd_config ships near the top) overrides anything the
 /// main file sets afterward. Live on this exact box: `Port` in
 /// `sshd_config.d/port.conf` and `PasswordAuthentication` in
@@ -734,7 +734,7 @@ async fn modify_sshd_config_at(main_path: &std::path::Path, key: &str, value: &s
     }
 
     // The file that governs `key` today: the first one, in sshd's own
-    // Include-resolution order, with an active directive for it — falling
+    // Include-resolution order, with an active directive for it - falling
     // back to the first with a commented one if none is active anywhere.
     let mut target: Option<std::path::PathBuf> = None;
     for (path, line) in &lines {
@@ -889,7 +889,7 @@ pub async fn fail2ban_banned_ips(jail: &str) -> Result<Vec<String>, String> {
 /// Parse recent SSH login attempts from /var/log/auth.log.
 pub async fn get_login_audit() -> Result<Vec<LoginEntry>, String> {
     // RHEL-family boxes (a first-class `setup.sh` target) log the same
-    // sshd events to `/var/log/secure`, not `/var/log/auth.log` — reading
+    // sshd events to `/var/log/secure`, not `/var/log/auth.log` - reading
     // only the latter and swallowing the read error into an empty Vec
     // (the old behavior) made a RHEL host indistinguishable from a
     // genuinely quiet one: both reported HTTP 200 with zero entries. A
@@ -973,7 +973,7 @@ pub async fn get_login_audit() -> Result<Vec<LoginEntry>, String> {
     Ok(entries)
 }
 
-/// Create a Fail2Ban jail for the DockPanel panel login endpoint.
+/// Create a Fail2Ban jail for the CyberHunter - Panel panel login endpoint.
 /// Monitors nginx access log for repeated 401 responses to /api/auth/login.
 pub async fn setup_panel_jail() -> Result<(), String> {
     // 1. Create filter file
@@ -1011,11 +1011,11 @@ bantime = 3600
         return Err(format!("fail2ban restart failed: {stderr}"));
     }
 
-    tracing::info!("DockPanel Fail2Ban jail created and activated");
+    tracing::info!("CyberHunter - Panel Fail2Ban jail created and activated");
     Ok(())
 }
 
-/// Check if the DockPanel Fail2Ban jail is configured.
+/// Check if the CyberHunter - Panel Fail2Ban jail is configured.
 pub async fn panel_jail_status() -> bool {
     std::path::Path::new("/etc/fail2ban/jail.d/dockpanel.conf").exists()
 }
@@ -1038,7 +1038,7 @@ pub async fn apply_fix(fix_type: &str, target: &str) -> Result<String, String> {
             Ok("SSH root login disabled".into())
         }
         "remove_file" => {
-            // Remove a suspicious file (malware) — canonicalize to prevent symlink attacks
+            // Remove a suspicious file (malware) - canonicalize to prevent symlink attacks
             let canonical = std::fs::canonicalize(target)
                 .map_err(|e| format!("Cannot resolve path {target}: {e}"))?;
             let canonical_str = canonical.to_string_lossy();
@@ -1106,7 +1106,7 @@ mod tests {
     /// Reproduces the exact live-box shape found by s454's fan-out:
     /// `Include` appears BEFORE the main file's own commented `#Port 22`
     /// default, and a drop-in sets the real value. OpenSSH's rule is "the
-    /// first obtained value wins" — reading only the main file reported 22
+    /// first obtained value wins" - reading only the main file reported 22
     /// on a box that was actually listening on 1571.
     #[tokio::test]
     async fn parse_ssh_config_include_drop_in_wins_over_later_main_default() {
@@ -1149,7 +1149,7 @@ mod tests {
     /// The write-side counterpart of the Include-blindness bug: editing only
     /// ever touched the main file, so on this exact box a `Port`/
     /// `PasswordAuthentication` change via the panel would report success
-    /// while sshd — governed by the drop-in — kept the old value.
+    /// while sshd - governed by the drop-in - kept the old value.
     #[tokio::test]
     async fn modify_sshd_config_writes_to_the_file_that_actually_governs_the_key() {
         let dir = scratch_dir("write-governs");
@@ -1165,7 +1165,7 @@ mod tests {
         let port_conf_content = std::fs::read_to_string(&port_conf).unwrap();
         assert!(port_conf_content.contains("Port 2022"), "must edit the governing drop-in, got: {port_conf_content}");
         let main_content = std::fs::read_to_string(&main).unwrap();
-        assert!(main_content.contains("#Port 22"), "the main file's own commented default must be left untouched — editing THAT would silently do nothing, since the drop-in still wins");
+        assert!(main_content.contains("#Port 22"), "the main file's own commented default must be left untouched - editing THAT would silently do nothing, since the drop-in still wins");
 
         let (port, _, _) = parse_ssh_config_at(&main).await;
         assert_eq!(port, 2022, "the reported effective port must reflect the write");
@@ -1187,7 +1187,7 @@ mod tests {
 
     #[tokio::test]
     async fn modify_sshd_config_replaces_active_directive_in_governing_file_not_main() {
-        // No comment anywhere — an ACTIVE directive in the drop-in, nothing
+        // No comment anywhere - an ACTIVE directive in the drop-in, nothing
         // in main at all. Must still resolve to the drop-in, not append to main.
         let dir = scratch_dir("active-governs");
         let dropdir = dir.join("sshd_config.d");

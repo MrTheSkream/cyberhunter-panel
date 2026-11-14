@@ -161,7 +161,7 @@ interface SslCountdown {
   days_left: number;
   severity: string;
   // Present (non-null) when this row is a Docker Compose stack's certificate
-  // rather than a site's — same convention as the certificates page.
+  // rather than a site's - same convention as the certificates page.
   stack_id?: string | null;
 }
 
@@ -270,7 +270,7 @@ export default function Dashboard() {
   // every account lands after signing in. Without the role it asked the
   // whole system surface as anybody, and a non-admin's first screen was the
   // refusal: `/system/info` is admin-gated, its catch below surfaced the API's
-  // own words, and the poll re-issued it every 5s — so a client saw a red
+  // own words, and the poll re-issued it every 5s - so a client saw a red
   // "Admin access required" over a heading stuck on "Loading...", which is
   // indistinguishable from having no access to their own site. Reported that
   // way on #51, twice, by an operator who was testing a client account.
@@ -302,10 +302,10 @@ export default function Dashboard() {
   const [dockerInfo, setDockerInfo] = useState<{ total: number; running: number; stopped: number } | null>(null);
   // Feature #2: Recent activity feed
   const [recentActivity, setRecentActivity] = useState<ActivityItem[]>([]);
-  // GET /api/dashboard/timeline — unified deploy/backup/incident/alert/security
+  // GET /api/dashboard/timeline - unified deploy/backup/incident/alert/security
   // feed, tenant-scoped server-side; had zero frontend caller until now.
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
-  // GET /api/dashboard/fleet — admin-only cross-server health; same gap.
+  // GET /api/dashboard/fleet - admin-only cross-server health; same gap.
   const [fleetOverview, setFleetOverview] = useState<FleetOverview | null>(null);
   // Feature #6: Bandwidth usage summary
   const [bandwidthTotal, setBandwidthTotal] = useState({ rx: 0, tx: 0 });
@@ -365,7 +365,7 @@ export default function Dashboard() {
       .get<Intelligence>("/dashboard/intelligence")
       .then(setIntel)
       .catch(() => setError("Failed to load dashboard intelligence"));
-    // Any authenticated user — this is the one on-call surface that isn't
+    // Any authenticated user - this is the one on-call surface that isn't
     // admin-gated, built specifically so a non-admin operator can self-check
     // without seeing the schedule layout.
     api
@@ -373,7 +373,7 @@ export default function Dashboard() {
       .then(setOnCallSchedules)
       .catch(() => {});
     // Every handler in `routes/docker_apps.rs` calls `require_admin`, this one
-    // included — containers on the box belong to nobody in particular, so there is
+    // included - containers on the box belong to nobody in particular, so there is
     // no tenant view of them to ask for. Same reasoning as the reads below.
     if (isAdmin) {
       api
@@ -402,7 +402,7 @@ export default function Dashboard() {
       .then(setBackupSetup)
       .catch(() => {});
     // Feature #1: Docker container overview. Admin-gated in the backend since
-    // v2.77.0 — it asks the agent for the same `/apps` the list above does.
+    // v2.77.0 - it asks the agent for the same `/apps` the list above does.
     if (isAdmin) {
       api
         .get<{ total: number; running: number; stopped: number }>("/dashboard/docker")
@@ -418,20 +418,20 @@ export default function Dashboard() {
         .then(setRecentActivity)
         .catch(() => {});
     }
-    // Unified timeline — scoped to the caller's own resources server-side
+    // Unified timeline - scoped to the caller's own resources server-side
     // (AuthUser, not AdminUser), so safe to fetch for every role.
     api
       .get<TimelineEvent[]>("/dashboard/timeline")
       .then(setTimeline)
       .catch(() => {});
-    // Fleet-wide health overview — admin only in the backend (AdminUser).
+    // Fleet-wide health overview - admin only in the backend (AdminUser).
     if (isAdmin) {
       api
         .get<FleetOverview>("/dashboard/fleet")
         .then(setFleetOverview)
         .catch(() => {});
     }
-    // Feature #8: Docker image disk usage — `docker_apps` again, so admin only.
+    // Feature #8: Docker image disk usage - `docker_apps` again, so admin only.
     if (isAdmin) {
       api
         .get<DockerImage[] | DockerImagesResponse>("/apps/images")
@@ -476,7 +476,7 @@ export default function Dashboard() {
   }, [isAdmin]);
 
   // Update check. Refetched every time the tab regains focus, because the row
-  // behind this banner is cleared server-side — on the first boot after an
+  // behind this banner is cleared server-side - on the first boot after an
   // upgrade, and on every poll that finds nothing newer. Without a refetch a
   // dashboard left open kept advertising an update that no longer existed until
   // someone reloaded the page. Focus rather than an interval: a dashboard
@@ -522,13 +522,13 @@ export default function Dashboard() {
       .catch(() => {});
   }, [isAdmin]);
 
-  // WebSocket connection for live metrics — PANEL HOST ONLY, deliberately.
+  // WebSocket connection for live metrics - PANEL HOST ONLY, deliberately.
   //
   // The browser's WebSocket API cannot set request headers, so this socket
   // cannot carry the selected server the way every REST read on this page does
   // (the fetch wrapper in `api.ts` is the only thing in the client that sends
   // that header). The backend's scope extractor therefore resolves this socket
-  // to the LOCAL agent no matter what the picker says — so opening it while a
+  // to the LOCAL agent no matter what the picker says - so opening it while a
   // member is selected streams the PANEL's numbers into `setSystem`,
   // `setProcesses` and `setNetwork`, the same state the server-scoped poll below
   // writes. The two would alternate on the 3s reconnect timer and the tiles
@@ -541,7 +541,7 @@ export default function Dashboard() {
   // tiles CORRECT, not merely honest.
   useEffect(() => {
     if (serversLoading || !isLocal) {
-      // Not an error state — the live-tile poll below owns this case, and it is
+      // Not an error state - the live-tile poll below owns this case, and it is
       // guarded on `wsConnected`, so the flag must be cleared here: the teardown
       // deliberately nulls `onclose` before closing, so nothing else resets it.
       setWsConnected(false);
@@ -586,7 +586,7 @@ export default function Dashboard() {
             }
           }
         } catch {
-          // malformed WS frame — ignore
+          // malformed WS frame - ignore
         }
       };
 
@@ -599,7 +599,7 @@ export default function Dashboard() {
       if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
       const ws = wsRef.current;
       if (ws) {
-        // Prevent reconnect on intentional close — null handlers before close
+        // Prevent reconnect on intentional close - null handlers before close
         ws.onclose = null;
         ws.onerror = null;
         ws.onmessage = null;
@@ -615,7 +615,7 @@ export default function Dashboard() {
     };
   }, [isLocal, serversLoading]);
 
-  // Slow data — always 15s, whatever the socket is doing.
+  // Slow data - always 15s, whatever the socket is doing.
   //
   // These two cadences used to share one timer, so the interval that exists to
   // make the LIVE tiles keep up (5s, whenever the socket is not supplying them)
@@ -626,7 +626,7 @@ export default function Dashboard() {
   // panel-to-agent hop, for values that change on the order of minutes.
   //
   // `activeServerId` is a dependency because every read resolves the host at
-  // call time from the stored selection — without it a server switch would
+  // call time from the stored selection - without it a server switch would
   // leave the previous machine's numbers on screen until the next tick.
   useEffect(() => {
     fetchSlowData();
@@ -634,7 +634,7 @@ export default function Dashboard() {
     return () => clearInterval(slow);
   }, [activeServerId, fetchSlowData]);
 
-  // Live tiles — 5s, and only when the socket is not already supplying them.
+  // Live tiles - 5s, and only when the socket is not already supplying them.
   useEffect(() => {
     if (wsConnected) return;
     fetchRealtimeData();
@@ -665,7 +665,7 @@ export default function Dashboard() {
   //
   // The destination follows the REASON the pill is showing, which it did not
   // used to: every state linked to a bare `/monitoring`, and that resolves to the
-  // Monitors tab. So "System Issues Detected" — which is raised by firing alerts —
+  // Monitors tab. So "System Issues Detected" - which is raised by firing alerts -
   // took you to a list of uptime monitors, and on an install with no monitors
   // configured that is an empty screen while alerts are firing. This page already
   // knew the right answer: `REC_ACTION_ROUTES.alerts` is `/monitoring?tab=alerts`
@@ -678,18 +678,18 @@ export default function Dashboard() {
       return {
         label: "System Issues Detected",
         to: REC_ACTION_ROUTES.alerts,
-        title: `${alertCount} firing alert${alertCount === 1 ? "" : "s"} — open the Alerts tab`,
+        title: `${alertCount} firing alert${alertCount === 1 ? "" : "s"} - open the Alerts tab`,
         color: "bg-danger-500/10 border-danger-500/20 text-danger-400",
         dot: "bg-danger-400",
       };
     // No alert is firing, so the score is what is low. That is a property of the
     // server rather than of a monitor, and the Monitors tab is where the server's
-    // own checks live — the default destination is right for this branch only.
+    // own checks live - the default destination is right for this branch only.
     if (healthScore < 50)
       return {
         label: "System Issues Detected",
         to: "/monitoring",
-        title: `Health score ${healthScore} — open monitoring`,
+        title: `Health score ${healthScore} - open monitoring`,
         color: "bg-danger-500/10 border-danger-500/20 text-danger-400",
         dot: "bg-danger-400",
       };
@@ -697,7 +697,7 @@ export default function Dashboard() {
       return {
         label: "Degraded Performance",
         to: "/monitoring",
-        title: `Health score ${healthScore} — open monitoring`,
+        title: `Health score ${healthScore} - open monitoring`,
         color: "bg-warn-500/10 border-warn-500/20 text-warn-400",
         dot: "bg-warn-500",
       };
@@ -726,7 +726,7 @@ export default function Dashboard() {
           <div>
             <h1 className="page-header-title">Dashboard</h1>
             {/* `system` is an admin-only read, so for anybody else it never
-                arrives — and "Loading..." that never resolves is the visible
+                arrives - and "Loading..." that never resolves is the visible
                 half of the same defect as the refusal banner. Say what this
                 account is instead. */}
             <p className="text-xs text-dark-400 mt-0.5">
@@ -740,7 +740,7 @@ export default function Dashboard() {
                 ? "Receiving live metrics via WebSocket"
                 : isLocal
                   ? "Polling metrics via HTTP"
-                  : `Polling ${activeServer?.name ?? "this server"} over HTTP every 5s — the live socket reads the panel host only, so it is not used for a remote server`
+                  : `Polling ${activeServer?.name ?? "this server"} over HTTP every 5s - the live socket reads the panel host only, so it is not used for a remote server`
             }
           >
             <span className={`w-1.5 h-1.5 rounded-full ${wsConnected ? "bg-rust-500 animate-pulse" : "bg-dark-400"}`} />
@@ -768,8 +768,8 @@ export default function Dashboard() {
                 On call: {onCallSchedules.map(s => s.schedule_name).join(", ")}
               </Link>
             ) : (
-              // Non-admins have no page to land on — Alerts.tsx's OnCallTab is
-              // admin-only — so this is informational only, not a link.
+              // Non-admins have no page to land on - Alerts.tsx's OnCallTab is
+              // admin-only - so this is informational only, not a link.
               <span
                 title="You're currently the on-call responder for this schedule"
                 className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-medium bg-rust-500/10 border-rust-500/20 text-rust-400"
@@ -799,7 +799,7 @@ export default function Dashboard() {
             </Link>
           )}
           {/* A `client` cannot bring a new domain into service by any route, so
-              offering it the shortcut named for exactly that is a dead end —
+              offering it the shortcut named for exactly that is a dead end -
               it lands on the one refusal the role is defined by. */}
           {user?.role !== "client" && (
             <Link to="/sites" className="px-3 py-1.5 bg-dark-800 text-dark-300 hover:bg-dark-700 hover:text-dark-100 border border-dark-600 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-colors">
@@ -813,7 +813,7 @@ export default function Dashboard() {
               Diagnostics
             </Link>
           )}
-          {/* Feature #4: Quick Server Actions — hidden on mobile.
+          {/* Feature #4: Quick Server Actions - hidden on mobile.
               Shown only once there is something to restart. On a brand-new box
               these sat next to "Add Site" as the first thing an operator met,
               three server-level destructive verbs offered before a single site
@@ -847,7 +847,7 @@ export default function Dashboard() {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
             {/* `hostOnly` marks a widget fed by an admin-only read. Offering a
                 client a checkbox for a panel that can never draw is the same
-                empty promise as a menu entry that refuses — eight of these
+                empty promise as a menu entry that refuses - eight of these
                 fourteen were exactly that. */}
             {[
               { id: "metrics", label: "CPU / Memory / Disk", hostOnly: true },
@@ -887,7 +887,7 @@ export default function Dashboard() {
           <div className="flex items-center gap-3">
             <svg className="w-5 h-5 text-rust-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
             <span className="text-sm text-rust-300">
-              <strong>DockPanel v{updateInfo.update_available_version}</strong> is available
+              <strong>CyberHunter - Panel v{updateInfo.update_available_version}</strong> is available
               <span className="text-dark-400 ml-1">(current: v{updateInfo.current_version})</span>
             </span>
           </div>
@@ -924,9 +924,9 @@ export default function Dashboard() {
                   setTimeout(() => setActionMessage(null), 3000);
                 }
               } catch (err) {
-                // The agent authors a real sentence for these — nginx's own
+                // The agent authors a real sentence for these - nginx's own
                 // "[emerg] invalid parameter" is what tells the operator which
-                // line of which vhost to fix — and `error.rs::agent_error`
+                // line of which vhost to fix - and `error.rs::agent_error`
                 // passes a 4xx through intact precisely so it survives. Bare
                 // catching it here deleted the useful half and left "Failed to
                 // restart Nginx", which is the #90/#91/#92 class all over again.
@@ -975,13 +975,13 @@ export default function Dashboard() {
       {/* Getting Started. Explicitly admin-only: it is titled "set up your server"
           and four of its five steps land on pages a client cannot open (/apps,
           /settings, /backup-orchestrator are all adminOnly). It used to be gated
-          on `system` being loaded, which hid it from clients by accident — the
+          on `system` being loaded, which hid it from clients by accident - the
           right outcome for the wrong reason, and it broke the moment the body
           below stopped being keyed on `system`. */}
       {isAdmin && isVisible("onboarding") && !dismissed && system && (() => {
         // Every check must be able to come back FALSE. "Run diagnostics" used to
         // sit here with `check: () => true`, so a box where nothing had been done
-        // still reported 1/5 — a checklist that counts a step nobody performed
+        // still reported 1/5 - a checklist that counts a step nobody performed
         // teaches the operator not to trust the other four.
         const steps: OnboardingStep[] = [
           { id: "site", label: "Create your first site", description: "Set up a website with Nginx, PHP, or reverse proxy", link: "/sites", check: () => sites.total > 0 },
@@ -1023,7 +1023,7 @@ export default function Dashboard() {
         return (
           <div className="mb-6 bg-dark-800 border border-dark-500 rounded-lg p-5 animate-fade-up">
             <div className="flex items-center justify-between mb-1">
-              <h3 className="text-sm font-bold text-dark-50 typewriter inline-block">Welcome to DockPanel</h3>
+              <h3 className="text-sm font-bold text-dark-50 typewriter inline-block">Welcome to CyberHunter - Panel</h3>
               <div className="flex items-center gap-3">
                 <button onClick={toggleCollapse} className="text-dark-300 hover:text-dark-200 text-xs shrink-0">Collapse</button>
                 <button onClick={dismissOnboarding} className="text-dark-300 hover:text-dark-200 text-xs shrink-0">Dismiss</button>
@@ -1064,7 +1064,7 @@ export default function Dashboard() {
         );
       })()}
 
-      {/* `system` is an admin-only read — `fetchRealtimeData` returns early for
+      {/* `system` is an admin-only read - `fetchRealtimeData` returns early for
           anybody else and the metrics socket 403s them (ws_metrics.rs), so there
           are exactly two writers and both are gated. Keying the WHOLE body on it
           therefore meant a client sat in this skeleton for ever: not "six missing
@@ -1084,7 +1084,7 @@ export default function Dashboard() {
         </div>
       ) : (
         <>
-          {/* System Information — host-level, so `system &&` rather than relying
+          {/* System Information - host-level, so `system &&` rather than relying
               on the outer gate that used to supply it. */}
           {system && isVisible("system_info") && <div className="hidden sm:grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-px bg-dark-600 border border-dark-500 rounded-lg overflow-hidden mb-6">
             {[
@@ -1102,7 +1102,7 @@ export default function Dashboard() {
             ))}
           </div>}
 
-          {/* Resource Metrics — 3 column. Host CPU/memory/disk: admin-only data. */}
+          {/* Resource Metrics - 3 column. Host CPU/memory/disk: admin-only data. */}
           {system && isVisible("metrics") && <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6 stagger-children">
             {[
               { label: "CPU Usage", pct: system.cpu_usage, type: "cpu" as const, detail: `${system.cpu_count} cores${system.load_avg_1 !== undefined ? ` · Load ${system.load_avg_1?.toFixed(2)}` : ""}`,
@@ -1158,7 +1158,7 @@ export default function Dashboard() {
             </div>
           )}
 
-          {/* Status Bar — grid of stat cells */}
+          {/* Status Bar - grid of stat cells */}
           {isVisible("status_bar") && <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-px bg-dark-600 border border-dark-600 rounded-lg overflow-hidden mb-6 shadow-sm shadow-black/5 stagger-children">
             {/* The one host-derived cell in an otherwise tenant-safe grid, which is
                 why this bar could not simply be shown or hidden as a whole. */}
@@ -1179,7 +1179,7 @@ export default function Dashboard() {
             {/* Feature #1: Docker container overview. Admin-only both ways: the
                 count comes from an admin endpoint, and the cell links to a page
                 that redirects anybody else. Rendered ungated it read "0/0 running"
-                to a client — a number, not a blank, and a false one. */}
+                to a client - a number, not a blank, and a false one. */}
             {isAdmin && (
               <Link to="/apps" className="bg-dark-800 px-4 py-3 flex flex-col card-interactive">
                 <span className="text-[10px] text-dark-300 uppercase tracking-widest mb-1">Docker</span>
@@ -1264,7 +1264,7 @@ export default function Dashboard() {
               </div>
             </>}
             {/* Feature #6: Bandwidth usage summary. Derived from `network`, which
-                `fetchRealtimeData` only fetches for an admin \u2014 so this read
+                `fetchRealtimeData` only fetches for an admin - so this read
                 "0 B / 0 B" to everybody else, host traffic reported as none. */}
             {isAdmin && (
               <div className="bg-dark-800 px-4 py-3 flex flex-col card-interactive">
@@ -1276,7 +1276,7 @@ export default function Dashboard() {
               </div>
             )}
             {/* Feature #9: Mail queue widget. `/mail/queue` is admin-gated, so the
-                same false zero \u2014 and mail is admin-only end to end anyway. */}
+                same false zero - and mail is admin-only end to end anyway. */}
             {isAdmin && (
               <div className="bg-dark-800 px-4 py-3 flex flex-col card-interactive">
                 <span className="text-[10px] text-dark-300 uppercase tracking-widest mb-1">Mail Queue</span>
@@ -1301,7 +1301,7 @@ export default function Dashboard() {
             </div>
           )}
 
-          {/* Fleet Health — cross-server overview for admins. GET /api/dashboard/fleet
+          {/* Fleet Health - cross-server overview for admins. GET /api/dashboard/fleet
               was fully built and hardened (v2.185.0/v2.188.0) but had zero frontend
               caller; a single-server install has nothing this adds over the rest of
               the page, so it only renders once there's an actual fleet to show. */}
@@ -1380,7 +1380,7 @@ export default function Dashboard() {
             </div>
           )}
 
-          {/* Timeline — unified deploy/backup/incident/alert/security feed. Scoped
+          {/* Timeline - unified deploy/backup/incident/alert/security feed. Scoped
               server-side to the caller's own resources, so (unlike Recent Activity
               above) it renders for every role, not just admins. GET
               /api/dashboard/timeline was fully built and hardened but had zero
@@ -1410,10 +1410,10 @@ export default function Dashboard() {
             </div>
           )}
 
-          {/* Active Issues + SSL — side by side when both have content; a solo
+          {/* Active Issues + SSL - side by side when both have content; a solo
               panel spans the full row instead of sitting at half width in an
               empty 2-col grid (the "Active Issues looks narrower than Recent
-              Activity/Recommendations" report — it only IS narrower than its
+              Activity/Recommendations" report - it only IS narrower than its
               full-width siblings when SSL has nothing to show beside it). */}
           {intel && (() => {
             const showIssues = isVisible("issues") && intel.top_issues.length > 0;
@@ -1480,7 +1480,7 @@ export default function Dashboard() {
               <div className="divide-y divide-dark-600">
                 {intel.recommendations.map((rec, i) => {
                   // The recommendation itself is worth showing to whoever it is
-                  // about — a client whose own site has no recent backup should
+                  // about - a client whose own site has no recent backup should
                   // hear that. Its ACTION is a different question: three of these
                   // six routes are administrator-only, and a chevron into one of
                   // them lands the caller straight back on this page with nothing
@@ -1525,7 +1525,7 @@ export default function Dashboard() {
             </div>
           )}
 
-          {/* System Information — moved to above metrics */}
+          {/* System Information - moved to above metrics */}
 
           {/* Feature #12: Quick Links / Bookmarks */}
           {(bookmarks.length > 0 || showAddBookmark) && isVisible("bookmarks") && (

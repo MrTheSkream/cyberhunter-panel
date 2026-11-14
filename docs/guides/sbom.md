@@ -1,27 +1,27 @@
 ## SBOMs (Software Bill of Materials)
 
-DockPanel can generate an SPDX 2.3 JSON SBOM for any deployed Docker app's image, listing every package present in the container. This is the **composition** companion to image vulnerability scanning, which reports **risk**.
+CyberHunter - Panel can generate an SPDX 2.3 JSON SBOM for any deployed Docker app's image, listing every package present in the container. This is the **composition** companion to image vulnerability scanning, which reports **risk**.
 
 SBOMs are useful for:
 
-- **Compliance** — the EU Cyber Resilience Act (CRA) requires SBOMs for software placed on the EU market by September 2026.
-- **Supply-chain auditing** — answer "what's actually inside this image?" without trusting the registry's metadata.
-- **Vulnerability triage** — feed the SBOM into other scanners (Grype, Trivy, Dependency-Track) for a second opinion or richer reporting.
+- **Compliance** - the EU Cyber Resilience Act (CRA) requires SBOMs for software placed on the EU market by September 2026.
+- **Supply-chain auditing** - answer "what's actually inside this image?" without trusting the registry's metadata.
+- **Vulnerability triage** - feed the SBOM into other scanners (Grype, Trivy, Dependency-Track) for a second opinion or richer reporting.
 
-SBOM generation is **disabled by default** — admins opt in from the Settings UI.
+SBOM generation is **disabled by default** - admins opt in from the Settings UI.
 
 ## Enable
 
 1. Go to **Settings → Services → SBOM Generation**.
-2. Click **Install Generator**. DockPanel downloads [syft](https://github.com/anchore/syft) (~80 MB) into `/var/lib/dockpanel/scanners/`. Self-contained — nothing is written to `/usr/local/bin`, and it lives entirely inside the agent's hardened sandbox.
+2. Click **Install Generator**. CyberHunter - Panel downloads [syft](https://github.com/anchore/syft) (~80 MB) into `/var/lib/dockpanel/scanners/`. Self-contained - nothing is written to `/usr/local/bin`, and it lives entirely inside the agent's hardened sandbox.
 
-That's the whole setup. SBOMs are generated on demand — there is no scheduled sweep.
+That's the whole setup. SBOMs are generated on demand - there is no scheduled sweep.
 
 ## Download an SBOM for a deployed app
 
 1. On the **Apps** page, click the row of any running app to open its scan drawer.
-2. Click **Download SBOM**. The first time, DockPanel runs syft against the app's image (2 – 4 minutes), persists the result, and triggers a browser download of `<app>.spdx.json`. On every later click it serves that persisted document immediately — no re-scan.
-3. Click **Regenerate** instead to force a fresh syft scan, bypassing the persisted document. Do this after redeploying under a mutable tag (e.g. `:latest`) — the SBOM is keyed by the image reference string, so a rebuild that keeps the same tag won't be noticed automatically.
+2. Click **Download SBOM**. The first time, CyberHunter - Panel runs syft against the app's image (2 – 4 minutes), persists the result, and triggers a browser download of `<app>.spdx.json`. On every later click it serves that persisted document immediately - no re-scan.
+3. Click **Regenerate** instead to force a fresh syft scan, bypassing the persisted document. Do this after redeploying under a mutable tag (e.g. `:latest`) - the SBOM is keyed by the image reference string, so a rebuild that keeps the same tag won't be noticed automatically.
 
 ## Verify the SBOM matches the binary you're auditing
 
@@ -44,9 +44,9 @@ The SBOM also pairs cleanly with `grype` to repeat the vulnerability assessment 
 grype sbom:./my-app.spdx.json
 ```
 
-## Verifying DockPanel's own release SBOMs
+## Verifying CyberHunter - Panel's own release SBOMs
 
-Since v2.7.10, DockPanel itself ships SPDX SBOMs for `dockpanel-agent`, `dockpanel-api`, and `dockpanel` (CLI), all signed with cosign keyless via Sigstore. See [SECURITY.md](https://github.com/ovexro/dockpanel/blob/main/SECURITY.md#verifying-release-signatures) for the full verification snippet — short version:
+Since v2.7.10, CyberHunter - Panel itself ships SPDX SBOMs for `dockpanel-agent`, `dockpanel-api`, and `dockpanel` (CLI), all signed with cosign keyless via Sigstore. See [SECURITY.md](https://github.com/ovexro/dockpanel/blob/main/SECURITY.md#verifying-release-signatures) for the full verification snippet - short version:
 
 ```bash
 cosign verify-blob \
@@ -75,15 +75,15 @@ All endpoints require admin auth.
 
 ## Storage
 
-SBOMs live in the `image_sbom` table — one row per image, overwritten on regeneration. Stored as `JSONB` so the API serves the SPDX document directly without re-parsing on the agent.
+SBOMs live in the `image_sbom` table - one row per image, overwritten on regeneration. Stored as `JSONB` so the API serves the SPDX document directly without re-parsing on the agent.
 
 The syft binary lives at `/var/lib/dockpanel/scanners/syft`. Uninstalling from the UI removes it.
 
 ## Relationship to image vulnerability scanning
 
-Image scanning (grype) and SBOM generation (syft) are siblings — both share the install pattern, both target the same images, but they answer different questions:
+Image scanning (grype) and SBOM generation (syft) are siblings - both share the install pattern, both target the same images, but they answer different questions:
 
-- **Image Vulnerability Scanning (grype)** — *what's broken?* Per-app CVE counts, deploy gating, scheduled rescans.
-- **SBOM Generation (syft)** — *what's in there?* On-demand SPDX export per image, suitable for compliance and external tooling.
+- **Image Vulnerability Scanning (grype)** - *what's broken?* Per-app CVE counts, deploy gating, scheduled rescans.
+- **SBOM Generation (syft)** - *what's in there?* On-demand SPDX export per image, suitable for compliance and external tooling.
 
 Operators who care about supply-chain provenance should enable both.

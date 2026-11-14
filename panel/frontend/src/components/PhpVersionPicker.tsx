@@ -14,7 +14,7 @@ interface Props {
   /**
    * Called with the chosen version and whether this server can actually serve
    * it. `ready` is false for a version that is not installed, or is installed
-   * with its FPM socket absent — the two states the agent refuses a PHP vhost
+   * with its FPM socket absent - the two states the agent refuses a PHP vhost
    * for. Callers that act immediately on a change should act only when it is
    * true; the picker offers the install itself and calls back with `true` once
    * the version really is usable.
@@ -34,7 +34,7 @@ interface Props {
  * Both pickers used to be a hardcoded list of five options and no idea which of
  * them existed, so choosing an uninstalled version failed at the agent with
  * "PHP 8.3 is not installed…" and a pointer to a Settings page whose PHP tile
- * has no version on it and — on any box that already has some PHP — no install
+ * has no version on it and - on any box that already has some PHP - no install
  * button at all. The install has existed end to end since v2.8: agent route,
  * repo configuration for Debian and Ubuntu, RHEL module streams, backend proxy.
  * Nothing in the browser had ever called it.
@@ -55,7 +55,7 @@ export default function PhpVersionPicker({
 
   // Returns null for "could not ask", which is not the same answer as "asked and
   // there is nothing". Conflating them made a fetch hiccup immediately after a
-  // successful install read as a failed install — and made an agent that answered
+  // successful install read as a failed install - and made an agent that answered
   // with an empty list read as every version being present.
   const load = useCallback(async (): Promise<PhpVersion[] | null> => {
     try {
@@ -66,7 +66,7 @@ export default function PhpVersionPicker({
       return list;
     } catch {
       // An agent that cannot be reached, or one a release behind that has no
-      // such route, must not take the picker with it — fall back to offering
+      // such route, must not take the picker with it - fall back to offering
       // every version unannotated, which is exactly the old behaviour.
       setLoadFailed(true);
       return null;
@@ -81,7 +81,7 @@ export default function PhpVersionPicker({
   //
   // ProvisionLog only calls `onComplete` on a stream error when it has rendered
   // NOTHING, and this install always emits a step before the agent is even
-  // called — so any error after that point (the panel restarting, a proxy
+  // called - so any error after that point (the panel restarting, a proxy
   // dropping a long-lived SSE connection, the log channel being reclaimed)
   // leaves the spinner turning with nothing left to end it. The install itself
   // is unaffected: it runs on the server. So while one is in flight, ask the
@@ -115,7 +115,7 @@ export default function PhpVersionPicker({
     const found = known(v);
     // Unknown means unknowable, not missing: with no list, every version is
     // offered as before and the server stays the authority. This is why an empty
-    // response counts as a failed load rather than as an answer — otherwise a
+    // response counts as a failed load rather than as an answer - otherwise a
     // server that listed nothing would be read as a server that has everything.
     return found ? found.installed && found.fpm_running : true;
   };
@@ -137,13 +137,13 @@ export default function PhpVersionPicker({
 
   const handleInstalled = async () => {
     const fresh = await load();
-    // Could not ask. Say nothing rather than the wrong thing — the poll above is
+    // Could not ask. Say nothing rather than the wrong thing - the poll above is
     // still running and will settle this as soon as the server answers again.
     if (fresh === null) return;
     const now = fresh.find((x) => x.version === installing);
     // The verdict comes from re-reading the server, not from the log ending.
-    // ProvisionLog calls this both when the run reports "complete" — whatever its
-    // status — and when the stream simply dies with nothing rendered, so the log
+    // ProvisionLog calls this both when the run reports "complete" - whatever its
+    // status - and when the stream simply dies with nothing rendered, so the log
     // finishing says only that it stopped.
     const ok = !!now && now.installed && now.fpm_running;
     const version = installing;
@@ -153,22 +153,22 @@ export default function PhpVersionPicker({
       if (version) onChange(version, true);
       return;
     }
-    // Leave the log up. It is holding the only account of what went wrong —
-    // apt's own error, or the agent saying FPM never opened its socket — and
+    // Leave the log up. It is holding the only account of what went wrong -
+    // apt's own error, or the agent saying FPM never opened its socket - and
     // clearing it here would take that off the screen two seconds after it
     // arrived. Clearing `installing` is enough to bring the button back for a
     // retry beside it.
   };
 
   const label = (v: PhpVersion) => {
-    if (!v.installed) return `PHP ${v.version} — not installed`;
-    if (!v.fpm_running) return `PHP ${v.version} — installed, FPM stopped`;
+    if (!v.installed) return `PHP ${v.version} - not installed`;
+    if (!v.fpm_running) return `PHP ${v.version} - installed, FPM stopped`;
     return `PHP ${v.version}`;
   };
 
   // Whatever the server offers, plus the current value if the server does not
-  // list it. A site created before a version left the allow-list — or by an API
-  // caller, which does not validate `php_version` — would otherwise select
+  // list it. A site created before a version left the allow-list - or by an API
+  // caller, which does not validate `php_version` - would otherwise select
   // nothing at all and the control would render blank over a site that is
   // running something.
   const base: PhpVersion[] = loadFailed
@@ -233,7 +233,7 @@ export default function PhpVersionPicker({
           {installing && (
             <p className="text-xs text-dark-300 mb-2">
               Installing PHP {installing}. This adds the packages and, on some distributions, a
-              PHP repository first — a few minutes is normal. It runs on the server, so leaving
+              PHP repository first - a few minutes is normal. It runs on the server, so leaving
               this page will not stop it.
             </p>
           )}

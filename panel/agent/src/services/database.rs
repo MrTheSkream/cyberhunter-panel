@@ -21,8 +21,8 @@ pub struct DbContainer {
 ///
 /// `stack_id`, when set (GH #64: standalone DB provisioning for a Docker Stack
 /// instead of a Site), puts the container on that stack's OWN private bridge
-/// network — the same one `compose::deploy_stack` already gives the stack's other
-/// containers, which is how they reach each other by name — instead of the shared,
+/// network - the same one `compose::deploy_stack` already gives the stack's other
+/// containers, which is how they reach each other by name - instead of the shared,
 /// ICC-disabled `dockpanel-db` bridge every site-owned database joins. Mirrors
 /// `app_sidecar.rs`'s own design: host-port publishing does not care which
 /// bridge-driver network a container is on, so the existing `127.0.0.1:{port}`
@@ -31,7 +31,7 @@ pub struct DbContainer {
 /// (never a TCP connection to that published port), which is unaffected by
 /// network membership too. A stack's network is single-tenant by construction
 /// (one `user_id` owns the stack), so this introduces no new cross-tenant
-/// exposure — it simply swaps one single-purpose bridge for another.
+/// exposure - it simply swaps one single-purpose bridge for another.
 pub async fn create_database(
     name: &str,
     engine: &str,
@@ -59,7 +59,7 @@ pub async fn create_database(
 
     // M1: for postgres the container's bootstrap superuser (`postgres`) gets a
     // random, immediately-discarded password. The tenant NEVER connects as the
-    // superuser — a separate NON-superuser owner role (named {name}) is provisioned
+    // superuser - a separate NON-superuser owner role (named {name}) is provisioned
     // after start. Unused for MariaDB (which is already DB-scoped/non-root).
     let admin_password = uuid::Uuid::new_v4().to_string().replace('-', "");
 
@@ -78,7 +78,7 @@ pub async fn create_database(
             "postgres:16-alpine",
             vec![
                 format!("POSTGRES_DB={name}"),
-                // NOTE: POSTGRES_USER is deliberately NOT set to {name} anymore — that
+                // NOTE: POSTGRES_USER is deliberately NOT set to {name} anymore - that
                 // bootstrapped the tenant as the cluster SUPERUSER (M1: COPY..TO PROGRAM
                 // in-container RCE foothold). The image default superuser `postgres` is
                 // kept with this random, discarded password; the real tenant role is
@@ -147,7 +147,7 @@ pub async fn create_database(
                 ("dockpanel.db.name".to_string(), name.to_string()),
                 ("dockpanel.db.engine".to_string(), engine.to_string()),
             ]);
-            // This label does NOT make stack teardown find this container — it is
+            // This label does NOT make stack teardown find this container - it is
             // deliberately absent from `list_deployed_apps()` (no `dockpanel.app.*`
             // labels, same "operator manages exactly one thing" exclusion
             // `app_sidecar.rs`'s sidecar containers use), so the backend's own
@@ -180,7 +180,7 @@ pub async fn create_database(
     {
         // This engine declares its data directory as an image VOLUME and the panel
         // binds nothing here, so the container carries an anonymous volume. It never
-        // started, so that volume is empty — and the sibling teardown a few lines
+        // started, so that volume is empty - and the sibling teardown a few lines
         // below (role provisioning failed) already takes it. Match it.
         let _ = docker
             .remove_container(
@@ -198,7 +198,7 @@ pub async fn create_database(
     // M1: postgres tenant now runs as a NON-superuser owner. Provision that role now
     // that the container is up. If it fails the container has no usable tenant login,
     // so tear it down and surface the error (backend create() then deletes its row +
-    // releases the reseller slot). MariaDB is already DB-scoped/non-root — skip.
+    // releases the reseller slot). MariaDB is already DB-scoped/non-root - skip.
     if !matches!(engine, "mysql" | "mariadb") {
         if let Err(e) =
             provision_postgres_tenant_role(&container_name, name, &admin_password, password).await
@@ -235,7 +235,7 @@ pub async fn remove_database(container_id: &str) -> Result<(), String> {
 
     // Refuse to act on a container this module didn't create. The backend only ever
     // sources `container_id` from its own DB row (written once, from this module's own
-    // create response), so this is defense-in-depth, not a live-reachable gap — but every
+    // create response), so this is defense-in-depth, not a live-reachable gap - but every
     // OTHER destructive-by-id surface (docker_apps.rs's require_managed(), v2.15.0) already
     // carries this same `dockpanel.managed=true` boundary, and this module never did. A
     // stray unmanaged container sharing this exact id would otherwise be force-removed
@@ -277,7 +277,7 @@ pub async fn remove_database(container_id: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// List all DockPanel-managed database containers.
+/// List all CyberHunter - Panel-managed database containers.
 pub async fn list_databases() -> Result<Vec<DbContainer>, String> {
     let docker =
         Docker::connect_with_local_defaults().map_err(|e| format!("Docker connect failed: {e}"))?;
@@ -361,7 +361,7 @@ pub async fn execute_query(
     // The credential goes in via `--env-file`, NOT `-e KEY=value`: a `-e`
     // argument is literal `docker` argv, world-readable via `ps`/`/proc/<pid>/
     // cmdline` for the life of the child (no `hidepid=` assumed). See
-    // `DockerEnvFile` — `dockpanel-fanout` s445 completeness critic.
+    // `DockerEnvFile` - `dockpanel-fanout` s445 completeness critic.
     let env_file = match engine {
         "mysql" | "mariadb" => DockerEnvFile::new(&[("MYSQL_PWD", password)]),
         _ => DockerEnvFile::new(&[("PGPASSWORD", password)]),
@@ -551,7 +551,7 @@ fn parse_csv(output: &str) -> (Vec<String>, Vec<Vec<String>>) {
     }
 
     // Check if the output is a PostgreSQL command tag (INSERT/UPDATE/DELETE/etc.)
-    // rather than actual CSV data — these have no commas and a single "column"
+    // rather than actual CSV data - these have no commas and a single "column"
     if records.len() == 1 && records[0].len() == 1 {
         let tag = &records[0][0];
         if tag.starts_with("INSERT")
@@ -621,7 +621,7 @@ pub async fn reset_password(
     let output = match engine {
         "mysql" | "mariadb" => {
             // `SET PASSWORD` with no FOR clause targets CURRENT_USER(), which is the
-            // account we authenticated as — the same `'{user}'@'%'` row the old
+            // account we authenticated as - the same `'{user}'@'%'` row the old
             // ALTER USER named. Verified: a socket connection reports `user@localhost`
             // for USER() while CURRENT_USER() resolves to `user@%`.
             let sql = format!(
@@ -653,7 +653,7 @@ pub async fn reset_password(
             //
             // ⚠ Honest scope limit, measured rather than assumed: the official
             // `postgres:16-alpine` image ships a pg_hba.conf whose `local`, `127.0.0.1/32`
-            // and `::1/128` lines are all `trust` — only non-loopback hosts reach the
+            // and `::1/128` lines are all `trust` - only non-loopback hosts reach the
             // `scram-sha-256` line. Since this runs INSIDE the container, PGPASSWORD is
             // accepted but never checked. So `old_password` is real authority on the
             // MariaDB arm and decorative on this one. It is deliberately NOT "fixed" by
@@ -661,7 +661,7 @@ pub async fn reset_password(
             // the panel's ownership check in `databases::reset_password`, and making the
             // agent enforce it here would turn a working feature into one that breaks
             // permanently the moment a tenant changes their own password through the SQL
-            // console (the panel has no recovery path — the bootstrap superuser password
+            // console (the panel has no recovery path - the bootstrap superuser password
             // is random and discarded by `create_database`).
             let sql = format!(
                 "ALTER USER \"{}\" WITH PASSWORD '{}';",
@@ -703,7 +703,7 @@ pub async fn reset_password(
         let stderr = stderr.trim();
         // Name the one failure an operator cannot otherwise diagnose. The reset now
         // authenticates as the tenant, so a rejected login means the panel's stored
-        // credential is no longer the database's real one — which a tenant can cause
+        // credential is no longer the database's real one - which a tenant can cause
         // themselves by running SET PASSWORD/ALTER USER in the SQL console. The generic
         // "Access denied" gives no hint that the panel, not the request, is the stale party.
         if stderr.contains("Access denied") || stderr.contains("password authentication failed") {
@@ -794,7 +794,7 @@ async fn provision_postgres_tenant_role(
 
 /// The three statements that hand a fresh postgres DB to a NON-superuser tenant owner
 /// named `db_name`: create the role (NOSUPERUSER so it cannot COPY..TO PROGRAM /
-/// pg_read_server_files — the M1 RCE foothold), give it the database, and give it the
+/// pg_read_server_files - the M1 RCE foothold), give it the database, and give it the
 /// `public` schema (PG15+ no longer grants PUBLIC CREATE, so DB ownership alone would
 /// not let the tenant create tables). Run as the admin superuser, connected to the DB.
 fn tenant_role_sql(db_name: &str, password: &str) -> [String; 3] {
@@ -812,11 +812,11 @@ fn tenant_role_sql(db_name: &str, password: &str) -> [String; 3] {
 
 /// Ensure the shared `dockpanel-db` bridge exists AND has inter-container communication
 /// disabled. No consumer connects to a managed DB over this network (every consumer uses
-/// the 127.0.0.1-published host port), so ICC can be off — which blocks a compromised
+/// the 127.0.0.1-published host port), so ICC can be off - which blocks a compromised
 /// tenant DB container from reaching sibling tenants' DB containers (H2 lateral movement).
 ///
 /// s242 set `enable_icc=false` only when the network was FIRST created, so installs whose
-/// `dockpanel-db` predates that keep ICC on (and even NEW DBs there join the ICC-on net) —
+/// `dockpanel-db` predates that keep ICC on (and even NEW DBs there join the ICC-on net) -
 /// the gap that made the s242 mitigation partial. This reconciles a legacy ICC-on network
 /// to ICC=false (one-time, idempotent) since ICC is a create-time, in-place-immutable option.
 async fn ensure_network(docker: &Docker) -> Result<(), String> {
@@ -896,14 +896,14 @@ async fn reconcile_network_icc_at(
 
     // Best-effort, not abort-on-first-failure: the network was already torn
     // down and recreated above, so a container this loop never REACHES has
-    // ZERO network attachment — its published port stops routing, a silent
+    // ZERO network attachment - its published port stops routing, a silent
     // live outage for whichever tenant owns it, who may have nothing to do
     // with the request that triggered this reconcile. The old `?` here
     // meant the first Docker-daemon hiccup left every LATER container in
     // `attached` orphaned with no record of which ones. Known residual
     // limitation, not fixed here: once this function returns (however many
     // reconnects failed), `ensure_network`'s `icc_off` check short-circuits
-    // true on every future call — a container that failed to reconnect has
+    // true on every future call - a container that failed to reconnect has
     // no automatic retry and needs the manual command below.
     let mut failed: Vec<String> = Vec::new();
     for cid in attached {
@@ -950,7 +950,7 @@ mod tests {
         assert!(sql[0].contains("NOSUPERUSER"));
         assert!(sql[0].contains("NOCREATEDB"));
         assert!(sql[0].contains("NOCREATEROLE"));
-        // Must NOT grant superuser — the space-prefixed token excludes NOSUPERUSER.
+        // Must NOT grant superuser - the space-prefixed token excludes NOSUPERUSER.
         assert!(!sql[0].contains(" SUPERUSER"));
         assert!(sql[0].contains("CREATE ROLE \"blog_db\""));
         assert!(sql[1].contains("ALTER DATABASE \"blog_db\" OWNER TO \"blog_db\""));
@@ -964,7 +964,7 @@ mod tests {
     }
 
     /// s455: `reconcile_network_icc_at` used to abort on the FIRST reconnect
-    /// failure, silently orphaning every container later in `attached` — its
+    /// failure, silently orphaning every container later in `attached` - its
     /// network was already torn down, so a container the loop never reached
     /// had ZERO attachment. Proven against a REAL, fully disposable Docker
     /// network (never the real `dockpanel-db`, so this cannot touch
@@ -1002,7 +1002,7 @@ mod tests {
 
         // `reconcile_network_icc_at` mirrors the real `ensure_network` flow,
         // which only ever calls it when the network ALREADY exists (just
-        // with the wrong ICC setting) — set that up for real here too.
+        // with the wrong ICC setting) - set that up for real here too.
         docker
             .create_network(CreateNetworkOptions {
                 name: network.as_str(),
@@ -1021,7 +1021,7 @@ mod tests {
                 .expect("attach test container to disposable network");
         }
 
-        // Cannot possibly exist — forces connect_network to fail for exactly
+        // Cannot possibly exist - forces connect_network to fail for exactly
         // this one entry, in the MIDDLE of the batch, so an abort-on-first-
         // failure loop would silently orphan name_b.
         let fake_id = format!("dp-test-nonexistent-{tag}");
@@ -1044,7 +1044,7 @@ mod tests {
             }
         }
 
-        // Cleanup runs regardless of what the assertions below find — this
+        // Cleanup runs regardless of what the assertions below find - this
         // must never leave a disposable test container/network OR its
         // anonymous volume behind, so `v: true` is explicit here.
         for name in [&name_a, &name_b] {
@@ -1068,7 +1068,7 @@ mod tests {
         assert!(!msg.contains(&name_b), "must not blame a container that actually succeeded: {msg}");
         assert!(
             orphaned.is_empty(),
-            "these real containers — on either side of the bad id in the same batch — were \
+            "these real containers - on either side of the bad id in the same batch - were \
              never reconnected: {orphaned:?} (an abort-on-first-failure loop is back)"
         );
     }

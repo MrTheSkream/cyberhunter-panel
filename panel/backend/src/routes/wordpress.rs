@@ -14,7 +14,7 @@ use crate::AppState;
 
 // ── Vulnerability-scan settings ────────────────────────────────────────────
 // Companion to image_scans' settings pair (read_settings/get_settings/
-// update_settings) — same shape, same "off by default" posture, distinct
+// update_settings) - same shape, same "off by default" posture, distinct
 // keys because this schedule sweeps WordPress sites, not Docker images.
 
 #[derive(serde::Serialize)]
@@ -89,7 +89,7 @@ pub async fn update_scan_settings(
 }
 
 /// The `state_key` a site's WordPress vulnerability alert fires and resolves
-/// under. Mirrors `image_scans::image_scan_state_key` — `alerts.state_key` is
+/// under. Mirrors `image_scans::image_scan_state_key` - `alerts.state_key` is
 /// `VARCHAR(100)` and a domain, while normally well under that, is not a
 /// validated field, so the same truncate-then-hash shape applies rather than
 /// let a long domain silently fail the INSERT and swallow the alert.
@@ -109,7 +109,7 @@ fn wp_vuln_state_key(domain: &str) -> String {
 
 /// Run a WordPress vulnerability scan via the agent, persist it, and fire or
 /// resolve the alert it implies. Public so the manual endpoint below and the
-/// background sweep (`services::wp_vuln_scanner`) share one path — before
+/// background sweep (`services::wp_vuln_scanner`) share one path - before
 /// this, only the manual button existed, so a critical CVE in a plugin nobody
 /// happened to click Scan on stayed invisible forever.
 pub async fn scan_and_store(
@@ -145,7 +145,7 @@ pub async fn scan_and_store(
     // Resolve-then-fire, mirroring `image_scans::scan_and_store`: every scan
     // of this site first clears whatever alert the LAST scan of it raised,
     // then raises a new one only if THIS scan is still dirty. To the site's
-    // OWNER, not "every admin" — unlike a shared Docker image, a WordPress
+    // OWNER, not "every admin" - unlike a shared Docker image, a WordPress
     // site belongs to one user, and `resolve_ssl_renewal_failure`'s own
     // convention for a per-site alert is the site's `user_id`.
     let state_key = wp_vuln_state_key(domain);
@@ -158,7 +158,7 @@ pub async fn scan_and_store(
         &state_key,
         &format!("WordPress vulnerability alert resolved: {domain}"),
         &format!(
-            "A later scan of {domain} found no critical or high severity plugin vulnerability — the earlier alert no longer applies."
+            "A later scan of {domain} found no critical or high severity plugin vulnerability - the earlier alert no longer applies."
         ),
     )
     .await;
@@ -178,7 +178,7 @@ pub async fn scan_and_store(
 }
 
 
-/// GET /api/sites/{id}/wordpress — Detect WP + get info + auto-update status.
+/// GET /api/sites/{id}/wordpress - Detect WP + get info + auto-update status.
 pub async fn info(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -206,7 +206,7 @@ pub async fn info(
     Ok(Json(result))
 }
 
-/// POST /api/sites/{id}/wordpress/install — Install WordPress.
+/// POST /api/sites/{id}/wordpress/install - Install WordPress.
 pub async fn install(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -236,7 +236,7 @@ pub async fn install(
     Ok((StatusCode::CREATED, Json(resp)))
 }
 
-/// GET /api/sites/{id}/wordpress/plugins — List plugins.
+/// GET /api/sites/{id}/wordpress/plugins - List plugins.
 pub async fn plugins(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -252,7 +252,7 @@ pub async fn plugins(
     Ok(Json(resp))
 }
 
-/// GET /api/sites/{id}/wordpress/themes — List themes.
+/// GET /api/sites/{id}/wordpress/themes - List themes.
 pub async fn themes(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -268,7 +268,7 @@ pub async fn themes(
     Ok(Json(resp))
 }
 
-/// POST /api/sites/{id}/wordpress/update/{target} — Update core/plugins/themes.
+/// POST /api/sites/{id}/wordpress/update/{target} - Update core/plugins/themes.
 pub async fn update(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -304,7 +304,7 @@ pub async fn update(
     Ok(Json(resp))
 }
 
-/// POST /api/sites/{id}/wordpress/plugin/{action} — Plugin action.
+/// POST /api/sites/{id}/wordpress/plugin/{action} - Plugin action.
 pub async fn plugin_action(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -329,7 +329,7 @@ pub async fn plugin_action(
     Ok(Json(resp))
 }
 
-/// POST /api/sites/{id}/wordpress/theme/{action} — Theme action.
+/// POST /api/sites/{id}/wordpress/theme/{action} - Theme action.
 pub async fn theme_action(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -354,7 +354,7 @@ pub async fn theme_action(
     Ok(Json(resp))
 }
 
-/// POST /api/sites/{id}/wordpress/auto-update — Toggle auto-updates.
+/// POST /api/sites/{id}/wordpress/auto-update - Toggle auto-updates.
 pub async fn set_auto_update(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -375,13 +375,13 @@ pub async fn set_auto_update(
 // WordPress Toolkit endpoints
 // ---------------------------------------------------------------------------
 
-/// GET /api/wordpress/sites — List all WordPress sites with overview info.
+/// GET /api/wordpress/sites - List all WordPress sites with overview info.
 pub async fn all_wp_sites(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
     ServerScope(server_id, agent): ServerScope,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    // No admin check — query already filters by user_id so owners only see their own sites
+    // No admin check - query already filters by user_id so owners only see their own sites
 
     // Get all sites for this server
     let sites: Vec<(Uuid, String)> = sqlx::query_as(
@@ -446,7 +446,7 @@ pub struct BulkUpdateRequest {
     pub target: String,
 }
 
-/// POST /api/wordpress/bulk-update — Bulk update plugins/themes across sites.
+/// POST /api/wordpress/bulk-update - Bulk update plugins/themes across sites.
 pub async fn bulk_update(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -508,7 +508,7 @@ pub async fn bulk_update(
     Ok(Json(serde_json::json!({ "results": results })))
 }
 
-/// POST /api/sites/{id}/wordpress/vuln-scan — Scan a site for vulnerabilities.
+/// POST /api/sites/{id}/wordpress/vuln-scan - Scan a site for vulnerabilities.
 pub async fn vuln_scan(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -533,7 +533,7 @@ pub async fn vuln_scan(
     Ok(Json(result))
 }
 
-/// GET /api/sites/{id}/wordpress/security-check — Check security hardening.
+/// GET /api/sites/{id}/wordpress/security-check - Check security hardening.
 pub async fn security_check(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -554,7 +554,7 @@ pub async fn security_check(
         .map_err(|e| agent_error("Security check", e))?;
 
     // Persist one row per check, matching the sibling `wp_vuln_scans` table
-    // this migration created alongside `wp_hardening` — that one gets written
+    // this migration created alongside `wp_hardening` - that one gets written
     // from `vuln_scan` below; this table never got its own writer, so every
     // hardening check has always been a pure live round-trip with no history:
     // refresh the page, restart the backend, or come back next week and there
@@ -589,11 +589,11 @@ pub async fn security_check(
     Ok(Json(result))
 }
 
-/// GET /api/sites/{id}/wordpress/hardening-history — Last persisted result
+/// GET /api/sites/{id}/wordpress/hardening-history - Last persisted result
 /// per check, from `wp_hardening`.
 ///
 /// `security_check` above has written this table on every run since the
-/// migration that created it (2026-03-19) — but nothing ever read it back.
+/// migration that created it (2026-03-19) - but nothing ever read it back.
 /// The symptom the write path's own code comment describes ("refresh the
 /// page, restart the backend, or come back next week and there is no record
 /// of what a site's hardening status was or when it was last checked") was
@@ -632,7 +632,7 @@ pub async fn hardening_history(
     Ok(Json(rows))
 }
 
-/// POST /api/sites/{id}/wordpress/harden — Apply security fixes.
+/// POST /api/sites/{id}/wordpress/harden - Apply security fixes.
 pub async fn wp_harden(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -669,7 +669,7 @@ pub async fn wp_harden(
     Ok(Json(result))
 }
 
-/// POST /api/sites/{id}/wordpress/update-safe — Update WP with snapshot + auto-rollback.
+/// POST /api/sites/{id}/wordpress/update-safe - Update WP with snapshot + auto-rollback.
 pub async fn update_safe(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,

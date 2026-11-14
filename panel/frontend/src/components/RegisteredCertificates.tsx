@@ -4,7 +4,7 @@ import { STATUS_STYLES } from "../pages/Certificates";
 
 /**
  * A certificate registered once, by name, and referenced by that name when a
- * stack claims a domain (#104). Metadata only — the PEM pair lives on the
+ * stack claims a domain (#104). Metadata only - the PEM pair lives on the
  * server's disk and never comes back through the API.
  */
 interface RegisteredCertificate {
@@ -17,7 +17,7 @@ interface RegisteredCertificate {
   fingerprint_sha256: string | null;
   /** null when the panel does not know this certificate's expiry. */
   days_left: number | null;
-  /** The same vocabulary the site table paints — one map, one ladder. */
+  /** The same vocabulary the site table paints - one map, one ladder. */
   status: string;
   /** The stacks whose vhost is written against this pair; delete is refused while non-empty. */
   in_use_by: { id: string; name: string; domain: string | null }[];
@@ -25,7 +25,7 @@ interface RegisteredCertificate {
   updated_at: string;
 }
 
-// The same grammar the backend and agent validate — a DNS-label shape, 1–64
+// The same grammar the backend and agent validate - a DNS-label shape, 1–64
 // chars, because the alias becomes a directory name on the agent. Checked
 // here only so an obvious slip is named before a round trip, never instead of
 // the server's own check.
@@ -46,7 +46,7 @@ function daysLeftClass(days: number | null): string {
 }
 
 function daysLeftText(days: number | null): string {
-  return days === null ? "—" : days < 0 ? `${Math.abs(days)}d overdue` : `${days}d`;
+  return days === null ? "-" : days < 0 ? `${Math.abs(days)}d overdue` : `${days}d`;
 }
 
 export default function RegisteredCertificates() {
@@ -223,9 +223,9 @@ export default function RegisteredCertificates() {
                       {row.alias}
                     </td>
                     <td className="px-4 py-3 font-mono text-dark-200 break-all">
-                      {row.dns_names.length > 0 ? row.dns_names.join(", ") : <span className="text-dark-300">—</span>}
+                      {row.dns_names.length > 0 ? row.dns_names.join(", ") : <span className="text-dark-300">-</span>}
                     </td>
-                    <td className="px-4 py-3 text-dark-200">{row.issuer ?? <span className="text-dark-300">—</span>}</td>
+                    <td className="px-4 py-3 text-dark-200">{row.issuer ?? <span className="text-dark-300">-</span>}</td>
                     <td className="px-4 py-3 text-dark-200 font-mono">
                       {row.not_after ? new Date(row.not_after).toLocaleDateString() : "Unknown"}
                     </td>

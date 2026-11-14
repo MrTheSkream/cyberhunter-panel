@@ -2,11 +2,11 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300..700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
 /* ═══════════════════════════════════════════════════════
-   BASE THEME (Terminal) — @theme defines Tailwind utilities
+   BASE THEME (Terminal) - @theme defines Tailwind utilities
    ═══════════════════════════════════════════════════════ */
 
 @theme {
-  /* Harmonized green — 500 and 600 clear WCAG AA against white text */
+  /* Harmonized green - 500 and 600 clear WCAG AA against white text */
   --color-rust-50:  #f0fdf6;
   --color-rust-100: #d6fce4;
   --color-rust-200: #a8f8c4;
@@ -18,12 +18,12 @@
   --color-rust-800: #0b411f;
   --color-rust-900: #093117;
 
-  /* Harmonized amber — matched to green at S:71 L:45 / S:81 L:60 */
+  /* Harmonized amber - matched to green at S:71 L:45 / S:81 L:60 */
   --color-warn-400: #ecaf46;
   --color-warn-500: #c48821;
   --color-warn-600: #a37019;
 
-  /* Harmonized red — matched to green at S:71 L:45 / S:81 L:60.
+  /* Harmonized red - matched to green at S:71 L:45 / S:81 L:60.
      300 and 700 are hover partners of 400 and 600; both were consumed while
      defined nowhere, so those 19 call sites emitted no colour at all. */
   --color-danger-300: #f36f6f;
@@ -32,7 +32,7 @@
   --color-danger-600: #a31b1b;
   --color-danger-700: #821515;
 
-  /* Interactive accent — buttons, links, focus rings */
+  /* Interactive accent - buttons, links, focus rings */
   --color-accent-50:  #eef2ff;
   --color-accent-100: #e0e7ff;
   --color-accent-200: #c7d2fe;
@@ -44,7 +44,7 @@
   --color-accent-800: #3730a3;
   --color-accent-900: #312e81;
 
-  /* Dark surfaces — Zinc-tinted for depth and separation */
+  /* Dark surfaces - Zinc-tinted for depth and separation */
   --color-dark-950: #09090b;
   --color-dark-900: #111113;
   --color-dark-800: #18181b;
@@ -57,11 +57,11 @@
   --color-dark-100: #e4e4e7;
   --color-dark-50:  #fafafa;
 
-  /* Typography — all mono */
+  /* Typography - all mono */
   --font-sans: 'JetBrains Mono', ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, monospace;
   --font-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, monospace;
 
-  /* Square corners — terminal aesthetic */
+  /* Square corners - terminal aesthetic */
   --radius-xs: 0px;
   --radius-sm: 0px;
   --radius: 0px;
@@ -72,14 +72,14 @@
   --radius-3xl: 0px;
 }
 
-/* Base styles — use CSS variables so themes take over */
+/* Base styles - use CSS variables so themes take over */
 body {
   background-color: var(--color-dark-900);
   color: var(--color-dark-50);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  /* CRT scanline effect — Terminal only (overridden by other themes) */
+  /* CRT scanline effect - Terminal only (overridden by other themes) */
   background-image: linear-gradient(rgba(255, 255, 255, 0.015) 1px, transparent 1px);
   background-size: 100% 3px;
 }
@@ -92,8 +92,8 @@ body {
 
 /* The data-color-scheme attribute has had four writers and no reader since it
    was introduced. Undeclared, the used value is "light", so on the four dark
-   themes every UA-painted control — autofill, date pickers, native selects,
-   checkboxes, Firefox scrollbars — rendered light-scheme against a dark form.
+   themes every UA-painted control - autofill, date pickers, native selects,
+   checkboxes, Firefox scrollbars - rendered light-scheme against a dark form.
    Do NOT add a <meta name="color-scheme">: it would fight the attribute. */
 :root[data-color-scheme="light"] {
   color-scheme: light;
@@ -104,11 +104,11 @@ body {
 
 
 /* ═══════════════════════════════════════════════════════
-   THEME: MIDNIGHT — Deep navy, electric blue, modern SaaS
+   THEME: MIDNIGHT - Deep navy, electric blue, modern SaaS
    ═══════════════════════════════════════════════════════ */
 
 [data-theme="midnight"] {
-  /* Status red — the base ramp is tuned for terminal's near-black ground and
+  /* Status red - the base ramp is tuned for terminal's near-black ground and
      lands at 4.33 on this theme's card, under AA on every danger ink site */
   --color-danger-400: #f36f6f;
 
@@ -125,7 +125,7 @@ body {
   --color-dark-100: #dae6f4;
   --color-dark-50:  #f0f5fb;
 
-  /* Electric blue accent — 500 and 600 clear WCAG AA against white text */
+  /* Electric blue accent - 500 and 600 clear WCAG AA against white text */
   --color-rust-50:  #eff6ff;
   --color-rust-100: #dbeafe;
   --color-rust-200: #bfdbfe;
@@ -177,7 +177,7 @@ body {
 
 
 /* ═══════════════════════════════════════════════════════
-   THEME: ARCTIC — Clean white, teal accent, minimal
+   THEME: ARCTIC - Clean white, teal accent, minimal
    ═══════════════════════════════════════════════════════ */
 
 [data-theme="arctic"] {
@@ -194,7 +194,7 @@ body {
   --color-dark-100: #172030;
   --color-dark-50:  #0b1220;
 
-  /* Teal accent — tuned for ink on a white ground, so the ramp runs dark.
+  /* Teal accent - tuned for ink on a white ground, so the ramp runs dark.
      The 300 step is deliberately DARKER than 400: it is the hover partner of
      the 400 step at 42 of 50 sites, and on a light ground a hover must darken.
      Every step below is measured against #ffffff, the page and the dark-800
@@ -210,7 +210,7 @@ body {
   --color-rust-800: #134e4a;
   --color-rust-900: #042f2e;
 
-  /* Sky accent — same treatment, same reason */
+  /* Sky accent - same treatment, same reason */
   --color-accent-50:  #f0f9ff;
   --color-accent-100: #e0f2fe;
   --color-accent-200: #bae6fd;
@@ -222,7 +222,7 @@ body {
   --color-accent-800: #04405e;
   --color-accent-900: #033249;
 
-  /* Adjusted status colors for light bg — 300 and 700 run DARKER than the
+  /* Adjusted status colors for light bg - 300 and 700 run DARKER than the
      steps they hover, for the same reason the rust and accent ramps do. */
   --color-warn-400: #a14a08;
   --color-warn-500: #b45309;
@@ -293,11 +293,11 @@ body {
 
 
 /* ═══════════════════════════════════════════════════════
-   THEME: EMBER — Warm stone, orange accent, premium
+   THEME: EMBER - Warm stone, orange accent, premium
    ═══════════════════════════════════════════════════════ */
 
 [data-theme="ember"] {
-  /* Status red — the base ramp lands at 4.00 on this theme's warm stone card */
+  /* Status red - the base ramp lands at 4.00 on this theme's warm stone card */
   --color-danger-400: #f36f6f;
 
   /* Warm stone surfaces */
@@ -313,7 +313,7 @@ body {
   --color-dark-100: #ebe2d9;
   --color-dark-50:  #faf7f5;
 
-  /* Orange accent — the 500 fill keeps ember's signature and takes DARK ink
+  /* Orange accent - the 500 fill keeps ember's signature and takes DARK ink
      (5.41:1); no orange clears 4.5 against white above L* 49.6. The 600/700
      hover steps darken and hand the text back to white. */
   --color-rust-50:  #fff7ed;
@@ -364,7 +364,7 @@ body {
 
 /* The 500 fill stays ember's signature #ea580c, which cannot carry white text
    (3.56:1). It carries dark ink instead at 5.41:1. The compound class selector
-   is exact — bg-rust-500 and bg-rust-500/10 are different class tokens — so it
+   is exact - bg-rust-500 and bg-rust-500/10 are different class tokens - so it
    cannot leak onto the tinted chips. When a hover darkens the fill past where
    dark ink works, the label is handed back to white. */
 [data-theme="ember"] .bg-rust-500.text-white {
@@ -385,7 +385,7 @@ body {
 
 
 /* ═══════════════════════════════════════════════════════
-   THEME: NEXUS — Light SaaS, blue accent, Inter font
+   THEME: NEXUS - Light SaaS, blue accent, Inter font
    ═══════════════════════════════════════════════════════ */
 
 [data-theme="clean"] {
@@ -402,7 +402,7 @@ body {
   --color-dark-100: #1e293b;
   --color-dark-50:  #0f172a;
 
-  /* Blue accent — matches NexusCP sidebar */
+  /* Blue accent - matches NexusCP sidebar */
   --color-rust-50:  #eff6ff;
   --color-rust-100: #dbeafe;
   --color-rust-200: #bfdbfe;
@@ -426,7 +426,7 @@ body {
   --color-accent-800: #1e3a8a;
   --color-accent-900: #172554;
 
-  /* Adjusted status colors for light bg — 300 and 700 run DARKER than the
+  /* Adjusted status colors for light bg - 300 and 700 run DARKER than the
      steps they hover, for the same reason the rust and accent ramps do. */
   --color-warn-400: #a14a08;
   --color-warn-500: #b45309;
@@ -438,7 +438,7 @@ body {
   --color-danger-600: #991b1b;
   --color-danger-700: #661414;
 
-  /* Inter font — clean SaaS look */
+  /* Inter font - clean SaaS look */
   --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 
   /* Rounded corners */
@@ -499,7 +499,7 @@ body {
   animation: none;
 }
 
-/* Scrollbar — light style */
+/* Scrollbar - light style */
 [data-theme="clean"] ::-webkit-scrollbar-track {
   background: #f9fafb;
   border-left: 1px solid #e5e7eb;
@@ -536,13 +536,13 @@ body {
   background-color: rgba(37, 99, 235, 0.08) !important;
 }
 
-/* Selection — indigo */
+/* Selection - indigo */
 [data-theme="clean"] ::selection {
   background: rgba(37, 99, 235, 0.2);
   color: #1f2937;
 }
 
-/* Focus rings — indigo */
+/* Focus rings - indigo */
 [data-theme="clean"] *:focus-visible {
   outline-color: #2563eb;
 }
@@ -553,7 +553,7 @@ body {
   outline-color: #2563eb;
 }
 
-/* Form elements — light */
+/* Form elements - light */
 [data-theme="clean"] input,
 [data-theme="clean"] select,
 [data-theme="clean"] textarea {
@@ -574,7 +574,7 @@ body {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3E%3Cpath stroke='%239ca3af' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3E%3C/svg%3E");
 }
 
-/* Hover lift — softer shadow for light bg */
+/* Hover lift - softer shadow for light bg */
 [data-theme="clean"] .hover-lift:hover {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
 }
@@ -603,7 +603,7 @@ body {
   border-radius: var(--radius-lg);
 }
 
-/* ── Nexus: Modal overrides — fixed overlays inside <main> need proper contrast ── */
+/* ── Nexus: Modal overrides - fixed overlays inside <main> need proper contrast ── */
 [data-theme="clean"] .dp-modal {
   background-color: #ffffff !important;
   border: 1px solid #d1d5db !important;
@@ -677,7 +677,7 @@ body {
   border-radius: var(--radius-lg);
 }
 
-/* Table headers — clean light style */
+/* Table headers - clean light style */
 [data-theme="clean"] thead {
   background-color: #f9fafb !important;
 }
@@ -689,17 +689,17 @@ body {
   letter-spacing: 0 !important;
 }
 
-/* Table row dividers — softer */
+/* Table row dividers - softer */
 [data-theme="clean"] tbody tr {
   border-color: #f3f4f6 !important;
 }
 
-/* Table row hover — light indigo tint */
+/* Table row hover - light indigo tint */
 [data-theme="clean"] tbody tr:hover {
   background-color: #eff6ff !important;
 }
 
-/* Status badges & tinted backgrounds — Nexus style (softer blue tint) */
+/* Status badges & tinted backgrounds - Nexus style (softer blue tint) */
 [data-theme="clean"] [class*="bg-rust-500/15"],
 [data-theme="clean"] [class*="bg-rust-500/10"],
 [data-theme="clean"] [class*="bg-rust-500/20"],
@@ -707,7 +707,7 @@ body {
   background-color: rgba(37, 99, 235, 0.08) !important;
 }
 
-/* Buttons — indigo primary, clean secondary.
+/* Buttons - indigo primary, clean secondary.
    IMPORTANT: This also matches tinted classes (bg-rust-500/10 contains "bg-rust-500").
    The tinted override rules below MUST come after this rule. */
 [data-theme="clean"] button[class*="bg-rust-500"],
@@ -723,7 +723,7 @@ body {
   background-color: #1d4ed8 !important;
 }
 
-/* Tinted selection buttons — override solid button rule above.
+/* Tinted selection buttons - override solid button rule above.
    bg-rust-500/10, /15, /20 are light tints, NOT solid backgrounds.
    Re-apply tint styling with same specificity (last rule wins). */
 [data-theme="clean"] button[class*="bg-rust-500/10"],
@@ -753,14 +753,14 @@ body {
   color: #6b7280 !important;
 }
 
-/* Tinted anchor links (non-button) — same treatment */
+/* Tinted anchor links (non-button) - same treatment */
 [data-theme="clean"] a[class*="bg-rust-500/10"],
 [data-theme="clean"] a[class*="bg-rust-500/15"] {
   background-color: rgba(37, 99, 235, 0.08) !important;
   color: #1e40af !important;
 }
 
-/* Accent-tinted toggles — ensure readable in Nexus */
+/* Accent-tinted toggles - ensure readable in Nexus */
 [data-theme="clean"] [class*="bg-accent-500/15"],
 [data-theme="clean"] [class*="bg-accent-500/10"] {
   background-color: rgba(37, 99, 235, 0.08) !important;
@@ -802,7 +802,7 @@ body {
   border-radius: var(--radius-md) !important;
 }
 
-/* Progress bars — blue (catch all thin bar variants) */
+/* Progress bars - blue (catch all thin bar variants) */
 [data-theme="clean"] [class*="bg-rust-500"][class*="h-2"],
 [data-theme="clean"] [class*="bg-rust-500"][class*="h-1"],
 [data-theme="clean"] [class*="bg-dark-100"][class*="h-2"],
@@ -810,7 +810,7 @@ body {
   background-color: #2563eb !important;
 }
 
-/* Text links that use rust color — make blue */
+/* Text links that use rust color - make blue */
 [data-theme="clean"] [class*="text-rust-400"],
 [data-theme="clean"] [class*="text-rust-500"],
 [data-theme="clean"] a[class*="text-rust-"] {
@@ -821,19 +821,19 @@ body {
   color: #1d4ed8 !important;
 }
 
-/* Active tab underlines — indigo */
+/* Active tab underlines - indigo */
 [data-theme="clean"] [class*="border-rust-500"] {
   border-color: #2563eb !important;
 }
 
-/* Warning progress bars — softer amber */
+/* Warning progress bars - softer amber */
 [data-theme="clean"] [class*="bg-warn-500"][class*="h-2"],
 [data-theme="clean"] [class*="bg-warn-500"][class*="h-1"],
 [data-theme="clean"] [class*="bg-warn-400"][class*="h-2"] {
   background-color: #f59e0b !important;
 }
 
-/* Activity badges — softer */
+/* Activity badges - softer */
 [data-theme="clean"] [class*="bg-danger-500\\/15"] {
   background-color: rgba(220, 38, 38, 0.08) !important;
 }
@@ -842,18 +842,18 @@ body {
   background-color: rgba(217, 119, 6, 0.08) !important;
 }
 
-/* Sparkline chart containers — white bg */
+/* Sparkline chart containers - white bg */
 [data-theme="clean"] svg[class*="sparkline"],
 [data-theme="clean"] [class*="h-\\["] svg {
   background-color: transparent !important;
 }
 
-/* "All Systems Operational" banner — softer indigo tint */
+/* "All Systems Operational" banner - softer indigo tint */
 [data-theme="clean"] [class*="bg-rust-500\\/5"] {
   background-color: rgba(37, 99, 235, 0.06) !important;
 }
 
-/* Stat grid (Uptime, Sites, Databases, etc.) — add subtle card styling */
+/* Stat grid (Uptime, Sites, Databases, etc.) - add subtle card styling */
 [data-theme="clean"] [class*="grid"] > [class*="text-center"] {
   background-color: #ffffff;
   border-radius: var(--radius-md);
@@ -861,28 +861,28 @@ body {
   border: 1px solid #f3f4f6;
 }
 
-/* Nexus: onboarding completed steps — no opacity wash */
+/* Nexus: onboarding completed steps - no opacity wash */
 [data-theme="clean"] main [class*="opacity-60"] {
   opacity: 0.5;
 }
 
-/* Nexus: status bar cells — light gray bg */
+/* Nexus: status bar cells - light gray bg */
 [data-theme="clean"] [class*="gap-px"] > [class*="bg-dark-800"] {
   background-color: #ffffff !important;
 }
 
-/* Nexus: progress bar track — light gray */
+/* Nexus: progress bar track - light gray */
 [data-theme="clean"] [class*="bg-dark-700"][class*="rounded-full"][class*="overflow-hidden"] {
   background-color: #e2e8f0 !important;
 }
 
-/* Tracking wider — remove for Nexus (terminal artifact) */
+/* Tracking wider - remove for Nexus (terminal artifact) */
 [data-theme="clean"] [class*="tracking-wider"],
 [data-theme="clean"] [class*="tracking-widest"] {
   letter-spacing: normal !important;
 }
 
-/* Code/mono blocks in content — light bg */
+/* Code/mono blocks in content - light bg */
 [data-theme="clean"] code,
 [data-theme="clean"] pre {
   background-color: #f3f4f6 !important;
@@ -890,7 +890,7 @@ body {
   border-radius: var(--radius-sm);
 }
 
-/* Toggle switches — indigo when active */
+/* Toggle switches - indigo when active */
 [data-theme="clean"] [class*="bg-rust-500"][role="switch"],
 [data-theme="clean"] button[class*="bg-rust-500"][class*="rounded-full"] {
   background-color: #2563eb !important;
@@ -898,24 +898,24 @@ body {
 
 
 /* ═══════════════════════════════════════════════════════
-   THEME: NEXUS DARK — Premium dark SaaS, blue accent
+   THEME: NEXUS DARK - Premium dark SaaS, blue accent
    ═══════════════════════════════════════════════════════ */
 
 [data-theme="clean-dark"] {
-  /* GitHub-dark inspired surfaces — clear layering for depth */
+  /* GitHub-dark inspired surfaces - clear layering for depth */
   --color-dark-950: #0d1117;  /* page background (darkest) */
   --color-dark-900: #161b22;  /* sidebar, header, elevated surfaces */
   --color-dark-800: #1c2333;  /* cards, panels (visibly lighter than bg) */
   --color-dark-700: #2d333b;  /* borders, dividers */
   --color-dark-600: #444c56;  /* subtle borders, separators */
   --color-dark-500: #636e7b;  /* muted text, placeholders */
-  --color-dark-400: #9ca5af;  /* secondary text — lightened for WCAG AA */
+  --color-dark-400: #9ca5af;  /* secondary text - lightened for WCAG AA */
   --color-dark-300: #b1bac4;  /* primary secondary text */
   --color-dark-200: #d0d7de;  /* strong secondary text */
   --color-dark-100: #e6edf3;  /* near-white text */
   --color-dark-50:  #f0f6fc;  /* white text */
 
-  /* Blue accent — darkened for WCAG AA contrast with white text */
+  /* Blue accent - darkened for WCAG AA contrast with white text */
   --color-rust-50:  #eff6ff;
   --color-rust-100: #dbeafe;
   --color-rust-200: #bfdbfe;
@@ -939,14 +939,14 @@ body {
   --color-accent-800: #1e40af;
   --color-accent-900: #1e3a8a;
 
-  /* Status colors — the base ramp is tuned for terminal's #111113 and lands at
+  /* Status colors - the base ramp is tuned for terminal's #111113 and lands at
      4.14 on this theme's #1c2333 card, under AA on every text-danger-400 site. */
   --color-danger-400: #f87171;
 
   /* Sans-serif typography */
   --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 
-  /* Rounded corners — matches Nexus light */
+  /* Rounded corners - matches Nexus light */
   --radius-xs: 4px;
   --radius-sm: 6px;
   --radius: 8px;
@@ -996,7 +996,7 @@ body {
   border-radius: var(--radius-lg);
 }
 
-/* Modal — rounded */
+/* Modal - rounded */
 [data-theme="clean-dark"] .dp-modal {
   border-radius: var(--radius-lg) !important;
 }
@@ -1018,7 +1018,7 @@ body {
   border-radius: var(--radius-lg);
 }
 
-/* Table headers — slightly lighter bg for contrast */
+/* Table headers - slightly lighter bg for contrast */
 [data-theme="clean-dark"] thead {
   background-color: var(--color-dark-900) !important;
 }
@@ -1034,7 +1034,7 @@ body {
   background-color: var(--color-dark-800) !important;
 }
 
-/* Buttons — rounded */
+/* Buttons - rounded */
 [data-theme="clean-dark"] button[class*="bg-rust-500"],
 [data-theme="clean-dark"] button[class*="bg-rust-600"],
 [data-theme="clean-dark"] a[class*="bg-rust-500"] {
@@ -1058,17 +1058,17 @@ body {
   border-radius: var(--radius-md) !important;
 }
 
-/* Elevated cards — refined shadow */
+/* Elevated cards - refined shadow */
 [data-theme="clean-dark"] .card-elevated {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3), 0 2px 8px rgba(0, 0, 0, 0.15) !important;
 }
 
-/* Hover lift — refined */
+/* Hover lift - refined */
 [data-theme="clean-dark"] .hover-lift:hover {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
 }
 
-/* Scrollbar — subtle dark */
+/* Scrollbar - subtle dark */
 [data-theme="clean-dark"] ::-webkit-scrollbar-track {
   background: var(--color-dark-950);
   border-left: 1px solid var(--color-dark-700);
@@ -1111,7 +1111,7 @@ body {
   border-radius: var(--radius-sm);
 }
 
-/* Page header — subtle border */
+/* Page header - subtle border */
 [data-theme="clean-dark"] .page-header {
   border-color: var(--color-dark-700);
 }
@@ -1178,7 +1178,7 @@ body {
   font-size: 0.75rem;
 }
 
-/* ── Light theme overrides — table/card/elevation ── */
+/* ── Light theme overrides - table/card/elevation ── */
 
 [data-theme="arctic"] tr.table-row-hover:hover,
 [data-theme="clean"] tr.table-row-hover:hover {
@@ -1200,10 +1200,10 @@ body {
 
 
 /* ═══════════════════════════════════════════════════════
-   SHARED RULES — form elements, scrollbar, focus, etc.
+   SHARED RULES - form elements, scrollbar, focus, etc.
    ═══════════════════════════════════════════════════════ */
 
-/* Form elements — the resting border is the one control users have to find
+/* Form elements - the resting border is the one control users have to find
    before they can type. dark-500 measured 2.56-2.82 against the field in four
    of the six themes, under the 3.0 non-text floor; dark-400 clears it in all
    six. select:focus already used dark-400, i.e. the step was known-good. */
@@ -1238,7 +1238,7 @@ textarea::placeholder {
   color: var(--color-dark-300);
 }
 
-/* Sidebar scroll fade — hints that more items exist below the fold */
+/* Sidebar scroll fade - hints that more items exist below the fold */
 .sidebar-scroll-fade {
   mask-image: linear-gradient(to bottom, black calc(100% - 32px), transparent 100%);
   -webkit-mask-image: linear-gradient(to bottom, black calc(100% - 32px), transparent 100%);
@@ -1312,7 +1312,7 @@ select:focus-visible {
   to { opacity: 1; transform: translateY(0); }
 }
 
-/* Stagger children — add to parent, children get delayed */
+/* Stagger children - add to parent, children get delayed */
 .stagger-children > * {
   animation: fadeUp 0.3s ease-out both;
 }
@@ -1352,12 +1352,12 @@ select:focus-visible {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
 }
 
-/* Elevated card — subtle depth for primary content */
+/* Elevated card - subtle depth for primary content */
 .card-elevated {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3), 0 4px 12px rgba(0, 0, 0, 0.15);
 }
 
-/* Elevation levels — progressive depth */
+/* Elevation levels - progressive depth */
 .elevation-1 {
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15), 0 1px 3px rgba(0, 0, 0, 0.1);
 }
@@ -1394,7 +1394,7 @@ select:focus-visible {
   transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* Progress bar glow — accent-colored shadow on the fill bar */
+/* Progress bar glow - accent-colored shadow on the fill bar */
 [data-theme="terminal"] [class*="rounded-full"][class*="overflow-hidden"] [class*="bg-rust-500"] {
   box-shadow: 0 0 8px rgba(34, 197, 94, 0.3);
 }
@@ -1416,7 +1416,7 @@ select:focus-visible {
 
 /* ── Bolder status indicators ──
    Make status dots larger and add subtle glow */
-/* Status dots — per-theme glow colors */
+/* Status dots - per-theme glow colors */
 [data-theme="terminal"] [class*="rounded-full"][class*="bg-rust-"][class*="w-2"] {
   width: 10px !important;
   height: 10px !important;

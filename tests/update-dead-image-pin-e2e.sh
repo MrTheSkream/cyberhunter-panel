@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression pins for the s364 fix — pressing Update on an app whose image no
+# Regression pins for the s364 fix - pressing Update on an app whose image no
 # longer resolves refuses BEFORE the container is touched, and the panel stops
 # telling the operator the app updated when it did not.
 #
@@ -14,7 +14,7 @@ cd "$(dirname "$0")/.." || exit 1
 
 PASS=0; FAIL=0
 ok()   { printf '\033[32m✓\033[0m %s\n' "$1"; PASS=$((PASS+1)); }
-bad()  { printf '\033[31m✗\033[0m %s — %s\n' "$1" "$2"; FAIL=$((FAIL+1)); }
+bad()  { printf '\033[31m✗\033[0m %s - %s\n' "$1" "$2"; FAIL=$((FAIL+1)); }
 eq()   { [ "$2" = "$3" ] && ok "$1" || bad "$1" "expected '$3', got '$2'"; }
 
 # ugrep's --ignore-files shim honours .gitignore, so every count below uses the
@@ -22,7 +22,7 @@ eq()   { [ "$2" = "$3" ] && ok "$1" || bad "$1" "expected '$3', got '$2'"; }
 G=/usr/bin/grep
 
 # ⚠ THREE files in this repo are named docker_apps.rs. Each is spelled out in
-# full, every time — a basename here is what destroyed two files at s363.
+# full, every time - a basename here is what destroyed two files at s363.
 AGENT=panel/agent/src/services/docker_apps.rs
 API=panel/backend/src/routes/docker_apps.rs
 APPS=panel/frontend/src/pages/Apps.tsx
@@ -41,7 +41,7 @@ UPDATE_BODY=$(fnbody "$AGENT" update_app)
 # the subject is asserted before it is measured (lesson #143).
 UB_LINES=$(printf '%s' "$UPDATE_BODY" | wc -l)
 [ "$UB_LINES" -gt 100 ] && ok "A0 update_app body extracted ($UB_LINES lines)" \
-  || bad "A0 update_app body extracted" "only $UB_LINES lines — §A examined nothing"
+  || bad "A0 update_app body extracted" "only $UB_LINES lines - §A examined nothing"
 
 echo "── A. The refusal happens, and happens before anything is stopped ─────"
 
@@ -66,14 +66,14 @@ fi
 eq "A3 update_app captures the pull error" \
    "$(printf '%s' "$UPDATE_BODY" | $G -c 'pull_error = Some(')" "1"
 
-# A4: ABSENCE arm — the discarded-warning shape is gone from this door.
+# A4: ABSENCE arm - the discarded-warning shape is gone from this door.
 eq "A4 update_app no longer swallows the pull error" \
    "$(printf '%s' "$UPDATE_BODY" | $G -c 'Image pull warning')" "0"
 # POSITIVE CONTROL for A4: the same pattern must still match the other place
 # that shape lives, or A4's zero proves only that the pattern never runs.
 CTL=$($G -c 'Image pull warning' "$AGENT")
 [ "$CTL" -gt 0 ] && ok "A4-control the discarded-warning pattern still matches $CTL site(s) elsewhere" \
-  || bad "A4-control the discarded-warning pattern" "matched nothing — A4's zero is vacuous"
+  || bad "A4-control the discarded-warning pattern" "matched nothing - A4's zero is vacuous"
 
 # A5: both refusals must tell the operator the app survived. An actionable
 # refusal that does not say what state it left behind sends them to a shell.
@@ -93,7 +93,7 @@ eq "A5 both refusals state the app is still running" \
 GUARD=$(printf '%s\n' "$UPDATE_BODY" | sed -n '/^    match pull_verdict(/,/^    }$/p')
 GUARD_LINES=$(printf '%s' "$GUARD" | wc -l)
 [ "$GUARD_LINES" -gt 20 ] && ok "A6-subject the verdict block extracted ($GUARD_LINES lines)" \
-  || bad "A6-subject the verdict block extracted" "only $GUARD_LINES lines — A6 examined nothing"
+  || bad "A6-subject the verdict block extracted" "only $GUARD_LINES lines - A6 examined nothing"
 eq "A6 neither refusal tells the operator to run a shell command" \
    "$(printf '%s' "$GUARD" | $G -c 'docker start')" "0"
 # POSITIVE CONTROL for A6: the pattern still matches the doors that DO print it,
@@ -101,11 +101,11 @@ eq "A6 neither refusal tells the operator to run a shell command" \
 # matches.
 CTL6=$($G -c 'docker start' "$AGENT")
 [ "$CTL6" -gt 0 ] && ok "A6-control the shell-instruction pattern matches $CTL6 site(s) elsewhere" \
-  || bad "A6-control the shell-instruction pattern" "matched nothing — A6's zero is vacuous"
+  || bad "A6-control the shell-instruction pattern" "matched nothing - A6's zero is vacuous"
 
 echo "── B. The panel stops asserting a step it may never have reached ──────"
 
-# B1: ABSENCE arm — the failure arm no longer files every outcome under the
+# B1: ABSENCE arm - the failure arm no longer files every outcome under the
 # step that pulls the image. An operator whose migration aborted was sent to
 # look at the registry.
 eq "B1 the update failure is not reported as a pull failure" \
@@ -115,7 +115,7 @@ eq "B1 the update failure is not reported as a pull failure" \
 eq "B1-control the success path still emits the pull step" \
    "$($G -c 'emit("pull", "Pulling latest image", "done"' "$API")" "1"
 
-# B2: and it emits something in its place — an error with no step at all would
+# B2: and it emits something in its place - an error with no step at all would
 # also satisfy B1.
 eq "B2 the failure arm emits a step that does not name a phase" \
    "$($G -c 'emit("update", "Updating app", "error"' "$API")" "1"
@@ -127,7 +127,7 @@ echo "── C. A failed version check reaches the operator ──────�
 # rendered it, so an app whose tag had been deleted looked identical to one
 # that was up to date.
 # ⚠ Word-bounded on purpose. The first cut of this arm used a plain substring
-# and a mutation renaming the field to `check_errorX` left it GREEN — the arm
+# and a mutation renaming the field to `check_errorX` left it GREEN - the arm
 # could not fail, because the mutated spelling still contains the pattern. Found
 # by the battery, which is the only thing that could have found it.
 eq "C1 the agent still writes the failed-check reason" \

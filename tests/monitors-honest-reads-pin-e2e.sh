@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# monitors-honest-reads-pin-e2e.sh — s407 / v2.159.0
+# monitors-honest-reads-pin-e2e.sh - s407 / v2.159.0
 #
 # Pins two properties of the monitoring routes, both of which had failed in the
 # same direction: the reassuring answer.
@@ -8,8 +8,8 @@
 #       answering it with an empty list. All four discarded the error, so a
 #       failure rendered as an emptiness the operator cannot tell from a real
 #       one: "No SSL certificates found" on the certificate page, a public
-#       status page with no monitors on it, an empty response chart, and — the
-#       consequential one — a maintenance list showing no windows while
+#       status page with no monitors on it, an empty response chart, and - the
+#       consequential one - a maintenance list showing no windows while
 #       `uptime.rs` was still skipping every monitor a live window covers.
 #   §B  the certificate ladder can say RENEWAL FAILED. Every rung was a
 #       function of the clock, so a certificate whose renewal is failing read
@@ -18,12 +18,12 @@
 #       closing it: a failure that is fixed now disappears, and one that is not
 #       had no rung to appear in.
 #   §C  the rung's SOURCE. The keys come from the shared list filtered through
-#       the shared predicate, never re-listed here — a second copy of that
+#       the shared predicate, never re-listed here - a second copy of that
 #       classification is free to drift from the first. Scoped to firing rows
 #       only, because `resolve_alert` clears only firing rows and an
 #       acknowledged alert would pin the rung on for ever.
 #   §D  every ladder call site passes the new argument, including the host-scan
-#       half that must pass `false` — those certificates have no site row, so
+#       half that must pass `false` - those certificates have no site row, so
 #       nothing can raise a renewal alert against them.
 #   §E  the page renders the rung, and stops reporting a failed read as an
 #       empty list.
@@ -31,15 +31,15 @@
 # Pure source analysis: no box, no network, no build.
 #
 # ⚠ EVERY arm reads STRIPPED source. This ship wrote long comments into both
-# subjects, and they name the very literals these arms match — `renewal_failed`,
+# subjects, and they name the very literals these arms match - `renewal_failed`,
 # the firing status, the predicate's own name. Against raw text most of §B and
 # §C would be satisfied by the prose that describes them and would stay green
 # with the code deleted (the trap in feedback_source_pin_prose_trap).
 #
-# NO PIPES INTO `grep -q` — under `set -o pipefail` grep -q closes the pipe on
+# NO PIPES INTO `grep -q` - under `set -o pipefail` grep -q closes the pipe on
 # its first match and the arm goes red on correct code.
 #
-# MUTATION-TESTED at HEAD — see the run recorded in the ship's ledger.
+# MUTATION-TESTED at HEAD - see the run recorded in the ship's ledger.
 
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -106,7 +106,7 @@ A_LINES=$(wc -l <<< "$M")
 if [ "$A_LINES" -ge 600 ]; then
   ok "A-control monitors.rs stripped subject is $A_LINES lines"
 else
-  bad "A-control monitors.rs stripped subject is only $A_LINES lines — subject lost"
+  bad "A-control monitors.rs stripped subject is only $A_LINES lines - subject lost"
 fi
 
 # The four reads, and the distinct context each one reports under. A shared
@@ -121,11 +121,11 @@ do
   B=$(fnbody "$M" "$fn")
   BL=$(wc -l <<< "$B")
   if [ "$BL" -lt 5 ]; then
-    bad "A-body $fn — body extracted as $BL lines, subject lost"
+    bad "A-body $fn - body extracted as $BL lines, subject lost"
     continue
   fi
   # POSITIVE: the body reaches a fallible read AND maps its error under its own
-  # name. Not "does not swallow" — that it REPORTS.
+  # name. Not "does not swallow" - that it REPORTS.
   if grep -qF 'fetch_all' <<< "$B" && grep -qF "internal_error(\"$ctx\"" <<< "$B"; then
     ok "A1 $fn reports a failed read as \"$ctx\" ($BL-line body)"
   else
@@ -134,7 +134,7 @@ do
 done
 
 # REFUSAL, whole-file: the swallow is gone from every read in the file, not just
-# the four above. Whole-file is the strongest form of this one — the literal
+# the four above. Whole-file is the strongest form of this one - the literal
 # must appear nowhere.
 if grep -qF 'unwrap_or_default' <<< "$M"; then
   bad "A2 no read in monitors.rs discards its error"
@@ -148,7 +148,7 @@ A_READS=$(grep -c 'fetch_all\|fetch_optional\|fetch_one' <<< "$M")
 if [ "$A_READS" -ge 10 ]; then
   ok "A2-control monitors.rs still performs $A_READS reads"
 else
-  bad "A2-control monitors.rs performs only $A_READS reads — A2 may be vacuous"
+  bad "A2-control monitors.rs performs only $A_READS reads - A2 may be vacuous"
 fi
 
 echo "== §B  the ladder can say the renewal is failing =="
@@ -158,7 +158,7 @@ LL=$(wc -l <<< "$L")
 if [ "$LL" -ge 6 ] && [ "$LL" -le 40 ]; then
   ok "B-control expiry_status body is $LL lines"
 else
-  bad "B-control expiry_status body is $LL lines — expected a small match block"
+  bad "B-control expiry_status body is $LL lines - expected a small match block"
 fi
 
 # POSITIVE: the ladder takes the second axis at all.
@@ -195,7 +195,7 @@ if [ -n "$P_EXPIRED" ] && [ -n "$P_FLAG" ] && [ -n "$P_UNKNOWN" ] && [ -n "$P_CR
     bad "B4 the renewal rung outranks unknown and the clock rungs"
   fi
 else
-  bad "B3/B4 could not locate all four rungs in the ladder body — refusing to compare"
+  bad "B3/B4 could not locate all four rungs in the ladder body - refusing to compare"
 fi
 
 # POSITIVE, and the compatibility property: the four clock rungs all survive, so
@@ -217,11 +217,11 @@ HL=$(wc -l <<< "$H")
 if [ "$HL" -ge 15 ]; then
   ok "C-control renewal_failing_sites body is $HL lines"
 else
-  bad "C-control renewal_failing_sites body is $HL lines — subject lost"
+  bad "C-control renewal_failing_sites body is $HL lines - subject lost"
 fi
 
 # POSITIVE: the key set is DERIVED from the shared list through the shared
-# predicate. This is the arm that matters — a re-listed literal set here would
+# predicate. This is the arm that matters - a re-listed literal set here would
 # be a second classification of the same six keys, free to drift from the one in
 # notifications.rs the moment a key is added.
 if grep -qF 'ssl_renewal_key::ALL' <<< "$H" && grep -qF 'renewal_success_clears' <<< "$H"; then
@@ -233,7 +233,7 @@ fi
 # REFUSAL + BOUNDARY: the three standing conditions are never named in this
 # file. `DECLINED` is somebody else's certificate, `MAIL_HOST_CONFLICT` is a
 # renewal deliberately refused, `DNS01_DOWNGRADED` is one that succeeded with
-# fewer names — rendering any of them as a failure reports one the panel did not
+# fewer names - rendering any of them as a failure reports one the panel did not
 # have. Naming any key here at all is the drift C1 exists to prevent.
 STANDING=""
 for k in 'DECLINED' 'MAIL_HOST_CONFLICT' 'DNS01_DOWNGRADED' 'dns01_downgraded' 'mail_host_conflict'; do
@@ -255,7 +255,7 @@ else
 fi
 
 # POSITIVE: firing rows only, and by site. `resolve_alert` clears only firing
-# rows, so an acknowledged alert is never resolved by a later success — reading
+# rows, so an acknowledged alert is never resolved by a later success - reading
 # it here would pin the rung on permanently for anyone who acknowledged before
 # fixing the cause.
 if grep -qF "status = 'firing'" <<< "$H"; then
@@ -280,42 +280,42 @@ fi
 
 # ⛔ C6 IS THE ARM THAT SURVIVES THE MUTATION THE REST OF §C SURVIVES. C1-C5 are
 # every one of them still true when this lookup returns an empty set on every
-# path — keys still filtered, rows still firing-scoped, failure still reported —
+# path - keys still filtered, rows still firing-scoped, failure still reported -
 # while the rung becomes unreachable for every certificate in the product.
 # Asserted on the body's LAST expression, so returning an empty set goes red
 # however carefully the query above it is preserved.
 H_LAST=$(grep -v '^[[:space:]]*$' <<< "$H" | tail -2 | head -1)
 if grep -qF 'rows' <<< "$H_LAST"; then
-  ok "C6 the returned set is built from the rows the query read — \"$(sed 's/^ *//' <<< "$H_LAST")\""
+  ok "C6 the returned set is built from the rows the query read - \"$(sed 's/^ *//' <<< "$H_LAST")\""
 else
-  bad "C6 the returned set is built from the rows the query read — got \"$(sed 's/^ *//' <<< "$H_LAST")\""
+  bad "C6 the returned set is built from the rows the query read - got \"$(sed 's/^ *//' <<< "$H_LAST")\""
 fi
 
 echo "== §D  every ladder call site passes the second axis =="
 
-# `calls` prints the ARGUMENT LIST of each occurrence, one per line — and the
+# `calls` prints the ARGUMENT LIST of each occurrence, one per line - and the
 # DECLARATION is an occurrence too. Its parameter list is the one carrying the
 # type annotation, so that is what separates it from the three real call sites.
 # ⚠ The first cut of this section matched on the function NAME and asserted a
-# count of 3; it reported 4 and made D1 and D3 match nothing at all — two
+# count of 3; it reported 4 and made D1 and D3 match nothing at all - two
 # vacuous arms hiding behind a control whose number said so.
 SITES=$(calls "$M" "expiry_status" | grep -vF 'Option<i64>')
 N_SITES=$(grep -c . <<< "$SITES")
 # ⛔ READ THIS NUMBER. Five call sites: the per-caller list's own sites, the
 # admin list's sites, the host-scan half, the OFFLINE half (since v2.162.0,
 # lists a stack's certificate from `docker_stacks.ssl_expiry` when the agent
-# cannot be asked at all), and — since s413 — the per-caller list's own
+# cannot be asked at all), and - since s413 - the per-caller list's own
 # Docker Compose stacks. A count that drifts means a caller was added or
 # lost, and every arm below would still be describing only the ones it can see.
 if [ "$N_SITES" -eq 5 ]; then
   ok "D-control the ladder has $N_SITES call sites"
 else
-  bad "D-control the ladder has $N_SITES call sites — expected 5"
+  bad "D-control the ladder has $N_SITES call sites - expected 5"
 fi
 
 # REFUSAL: no call site takes the clock alone. The compiler already refuses a
 # one-argument call, so this arm's real job is to stay honest about the SHAPE
-# the other §D arms match against — it goes red if `calls` ever stops resolving
+# the other §D arms match against - it goes red if `calls` ever stops resolving
 # argument lists and starts printing something else.
 ONE_ARG=$(grep -cx '(days_left)' <<< "$SITES")
 if [ "$ONE_ARG" -eq 0 ]; then
@@ -329,21 +329,21 @@ N_LOOKUP=$(grep -cx '(days_left, failing.contains(id))' <<< "$SITES")
 if [ "$N_LOOKUP" -eq 2 ]; then
   ok "D2 both site-backed lists consult the lookup ($N_LOOKUP sites)"
 else
-  bad "D2 both site-backed lists consult the lookup — found $N_LOOKUP"
+  bad "D2 both site-backed lists consult the lookup - found $N_LOOKUP"
 fi
 
-# POSITIVE: three of the five are stack-facing — none backed by a `sites` row.
+# POSITIVE: three of the five are stack-facing - none backed by a `sites` row.
 # The host-scan and offline halves used to pass a literal `false` here,
 # unconditionally, for every stack on every host: `ssl_renewal_failure` alerts
 # for a stack carry `site_id = NULL` (there is no sites row to name), the
 # panel's per-site lookup filters `site_id = ANY(...)`, and NULL can never
 # satisfy that, so the rung was unreachable for a stack no matter how long its
 # renewal had been failing (s411's register, closed s412). They now consult
-# their own lookup — `failing_stacks`, queried by server + the same
+# their own lookup - `failing_stacks`, queried by server + the same
 # `stack_renewal_state_key` `security_scanner::renew_stack_certificate` fires
 # the alert under. The per-caller list's own stacks (s413) reuse the identical
 # call shape, scoped by USER instead of server (`renewal_failing_stacks_for_user`
-# — this endpoint has no server scope of its own) — same lookup pattern, same
+# - this endpoint has no server scope of its own) - same lookup pattern, same
 # key function, so the same substring still matches all three. This arm
 # asserts the SUBSTRING rather than `grep -cx` on the whole call: an exact
 # match on a long, wrapped call is a hostage to how rustfmt happens to break
@@ -352,9 +352,9 @@ fi
 N_STACK_LOOKUP=$(grep -c 'failing_stacks\.contains( *&crate::services::security_scanner::stack_renewal_state_key(domain)' <<< "$SITES")
 N_FALSE=$(grep -cx '(days_left, false)' <<< "$SITES")
 if [ "$N_STACK_LOOKUP" -eq 3 ] && [ "$N_FALSE" -eq 0 ]; then
-  ok "D3 all three stack-facing lists consult a real lookup — none still hardcodes false ($N_STACK_LOOKUP sites)"
+  ok "D3 all three stack-facing lists consult a real lookup - none still hardcodes false ($N_STACK_LOOKUP sites)"
 else
-  bad "D3 all three stack-facing lists consult a real lookup, none hardcoded — lookup=$N_STACK_LOOKUP false=$N_FALSE"
+  bad "D3 all three stack-facing lists consult a real lookup, none hardcoded - lookup=$N_STACK_LOOKUP false=$N_FALSE"
 fi
 # The offline half's OWN arm. `stale` is the one thing that row carries and no
 # other row does, and it is the honest half of the bargain: a row assembled from
@@ -362,7 +362,7 @@ fi
 if [ "$(printf '%s' "$M" | /usr/bin/grep -oF '"stale": true,' | wc -l | tr -d ' ')" -eq 1 ]; then
   ok "D3b the offline half marks its rows as the panel's record, not a live read"
 else
-  bad "D3b the offline half does not mark its rows stale — an operator cannot tell a stored date from a fresh one"
+  bad "D3b the offline half does not mark its rows stale - an operator cannot tell a stored date from a fresh one"
 fi
 
 # POSITIVE: the two site-backed lists actually CALL the lookup, so D2's value
@@ -373,12 +373,12 @@ N_CALLS=$(grep -c . <<< "$LOOKUPS")
 if [ "$N_CALLS" -eq 2 ]; then
   ok "D4 both lists call the lookup ($N_CALLS call sites)"
 else
-  bad "D4 both lists call the lookup — found $N_CALLS"
+  bad "D4 both lists call the lookup - found $N_CALLS"
 fi
 
 # POSITIVE, same shape as D4 for the s413 user-scoped stack sibling: one
 # declaration plus exactly one real call (`certificate_dashboard` is its only
-# caller — `certificate_dashboard_for_admin` has its own inline, server-scoped
+# caller - `certificate_dashboard_for_admin` has its own inline, server-scoped
 # lookup instead, by design, since it has a server to scope by and this
 # function does not).
 STACK_LOOKUPS=$(calls "$M" "renewal_failing_stacks_for_user" | grep -vF '&[String]')
@@ -386,7 +386,7 @@ N_STACK_CALLS=$(grep -c . <<< "$STACK_LOOKUPS")
 if [ "$N_STACK_CALLS" -eq 1 ]; then
   ok "D5 the user-scoped stack lookup is declared once and called once ($N_STACK_CALLS call site)"
 else
-  bad "D5 the user-scoped stack lookup is declared once and called once — found $N_STACK_CALLS"
+  bad "D5 the user-scoped stack lookup is declared once and called once - found $N_STACK_CALLS"
 fi
 
 echo "== §E  the page shows the rung, and stops calling a failure an emptiness =="
@@ -395,11 +395,11 @@ E_LINES=$(wc -l <<< "$C")
 if [ "$E_LINES" -ge 150 ]; then
   ok "E-control Certificates.tsx stripped subject is $E_LINES lines"
 else
-  bad "E-control Certificates.tsx stripped subject is only $E_LINES lines — subject lost"
+  bad "E-control Certificates.tsx stripped subject is only $E_LINES lines - subject lost"
 fi
 
 # POSITIVE: the rung has a badge. Without this entry the status falls through
-# the map's default and renders as "Unknown" — the page would receive the answer
+# the map's default and renders as "Unknown" - the page would receive the answer
 # and decline to show it.
 if grep -qE 'renewal_failed: \{.*label: "Renewal failed"' <<< "$C"; then
   ok "E1 the page renders a Renewal failed badge"
@@ -408,8 +408,8 @@ else
 fi
 
 # POSITIVE: the count line asks about the error FIRST. On failure the list is
-# still empty, so this line used to answer "No SSL certificates found" — the
-# page's most reassuring sentence — beside the banner saying the read had failed.
+# still empty, so this line used to answer "No SSL certificates found" - the
+# page's most reassuring sentence - beside the banner saying the read had failed.
 if grep -qF 'Certificate list unavailable' <<< "$C"; then
   ok "E2 a failed read is reported as unavailable, not as zero certificates"
 else

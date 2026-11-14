@@ -9,7 +9,7 @@ import { DocSection, DocShell, DocTitle } from './DocChrome';
  * colour. Two copies of a header are two things to remember; when the site was
  * redrawn, both were forgotten, and they kept serving a lucide `Server` glyph
  * in a green square long after that mark had been retired. So the fix was not
- * to restyle two pages — it was to leave them with no chrome of their own to go
+ * to restyle two pages - it was to leave them with no chrome of their own to go
  * stale.
  *
  * The chrome itself now lives one level up, in [[DocChrome]], because the

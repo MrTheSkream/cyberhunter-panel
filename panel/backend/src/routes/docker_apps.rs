@@ -36,13 +36,13 @@ pub struct DeployRequest {
     /// certificate exactly as before.
     ///
     /// A back-compat alias for `tls_mode = "none"`, kept for a caller that
-    /// still sends only this field — an explicit `tls_mode` below wins.
+    /// still sends only this field - an explicit `tls_mode` below wins.
     #[serde(default)]
     pub external_tls: bool,
     /// "none" | "acme" | "provided". Absent = legacy inference from
     /// `ssl_email`/`external_tls`, same as it always was. Added s414: the
     /// agent's own `/apps/deploy` has accepted this (and `tls_certificate`
-    /// below) since `TlsIntent` was built for stacks — the panel simply never
+    /// below) since `TlsIntent` was built for stacks - the panel simply never
     /// sent it for a template app, so `provided` mode could never be
     /// requested here even though the agent fully supports it.
     #[serde(default)]
@@ -56,7 +56,7 @@ pub struct DeployRequest {
     pub gpu_enabled: bool,
 }
 
-/// GET /api/apps/templates — List available app templates.
+/// GET /api/apps/templates - List available app templates.
 pub async fn list_templates(
     State(_state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -72,7 +72,7 @@ pub async fn list_templates(
     Ok(Json(result))
 }
 
-/// POST /api/apps/deploy — Deploy a Docker app from template (async with SSE progress).
+/// POST /api/apps/deploy - Deploy a Docker app from template (async with SSE progress).
 /// Does `image` satisfy one of the comma-separated entries in an
 /// `allowed_images` policy?
 ///
@@ -80,7 +80,7 @@ pub async fn list_templates(
 /// admit `evil/nginx-backdoor`, which is the opposite of what an allow-list is
 /// for. An entry matches when it is the whole reference, when it is the
 /// repository the reference tags or digests, or when it ends in `/*` and names
-/// a repository prefix — `ghcr.io/myorg/*`.
+/// a repository prefix - `ghcr.io/myorg/*`.
 pub fn image_allowed_by(allowed: &str, image: &str) -> bool {
     allowed.split(',').map(str::trim).any(|entry| {
         if entry == "*" {
@@ -107,7 +107,7 @@ pub fn image_allowed_by(allowed: &str, image: &str) -> bool {
 /// The policy is per user and the `allowed_images` half is the only one an
 /// image-taking door can evaluate: the count and resource ceilings are about a
 /// deployment as a whole and are enforced where a deployment is shaped. Doors
-/// that receive an image reference directly — change-image, compose, stacks —
+/// that receive an image reference directly - change-image, compose, stacks -
 /// call this so a restriction the operator set is not simply absent there.
 pub async fn enforce_allowed_images(
     db: &sqlx::PgPool,
@@ -199,7 +199,7 @@ pub async fn deploy(
 
     if let Some((max_containers, max_memory, max_cpu, allowed_images)) = &policy {
         // Check container count via agent (count dockpanel-managed containers
-        // this CALLER owns — every other admin's containers on the same box
+        // this CALLER owns - every other admin's containers on the same box
         // used to count against this one's cap; see count_owned_by).
         // Fail CLOSED on the target: an agent error OR a malformed (non-array)
         // response refuses the deploy instead of silently bypassing the quota.
@@ -215,7 +215,7 @@ pub async fn deploy(
 
         // The quota is per USER, not per machine (mirrors policy_usage's own
         // fleet walk, and the doc line under Info on the Container Policies
-        // page) — fold in the caller's containers on every OTHER online
+        // page) - fold in the caller's containers on every OTHER online
         // server too. Best-effort: an unreachable peer only undercounts here
         // and never blocks this deploy; the target server above is exempt
         // from that leniency because reaching it live is already required to
@@ -246,8 +246,8 @@ pub async fn deploy(
 
         // Check allowed images.
         //
-        // This used to test `template_id.contains(entry)` — the catalogue id,
-        // never an image reference — under a control whose own help text says
+        // This used to test `template_id.contains(entry)` - the catalogue id,
+        // never an image reference - under a control whose own help text says
         // "Restrict which Docker images a user can deploy". A policy naming an
         // image therefore matched nothing on the one door that read it, and the
         // doors that take an image directly did not read it at all.
@@ -294,7 +294,7 @@ pub async fn deploy(
     // The same checks the deploy form ran while it was being filled in. Enforcing
     // by CALLING the checker (rather than re-deriving the conditions here) is what
     // keeps the sentence the user was shown and the sentence they are refused with
-    // identical — the drift this layer exists to prevent. Only `blocking` results
+    // identical - the drift this layer exists to prevent. Only `blocking` results
     // refuse; a warning is the operator's call.
     {
         use crate::services::prerequisites::apps::{AppDeployIntent, evaluate};
@@ -313,13 +313,13 @@ pub async fn deploy(
         if let Some(blocker) = crate::services::prerequisites::first_blocker(&results) {
             return Err(err(
                 StatusCode::PRECONDITION_FAILED,
-                &format!("{} — {}", blocker.title, blocker.detail),
+                &format!("{} - {}", blocker.title, blocker.detail),
             ));
         }
     }
 
     // Image scan deploy gate (no-op unless admin opted in via Settings).
-    // Scoped to the server being deployed TO — the scan that decides has to be
+    // Scoped to the server being deployed TO - the scan that decides has to be
     // a scan of the machine that will run the image.
     crate::routes::image_scans::preflight_gate(&state.db, server_id, &agent, &body.template_id).await?;
 
@@ -344,7 +344,7 @@ pub async fn deploy(
     let db = state.db.clone();
     let user_id = claims.sub;
     // The host this app is being deployed to. A Docker app is genuinely
-    // server-level — it runs on whichever machine the operator selected — but the
+    // server-level - it runs on whichever machine the operator selected - but the
     // A record published for it below must name THAT machine, and it named the
     // panel instead. See `helpers::public_ip_for_server`.
     let dns_server_id = server_id;
@@ -355,7 +355,7 @@ pub async fn deploy(
     // Until now this line WAS the whole of the domain handling: filtered for
     // emptiness and put on the wire. No format check (the agent had one), no
     // reserved-domain block (the agent has never had one), and no conflict query
-    // against `sites` or `git_deploys` — data the panel holds in its own database
+    // against `sites` or `git_deploys` - data the panel holds in its own database
     // and simply never consulted. So an app could be deployed onto a live site's
     // domain and the agent would replace that site's vhost, and onto the panel's
     // own hostname. The check must happen HERE and not later: the spawned task
@@ -375,7 +375,7 @@ pub async fn deploy(
         ),
         None => None,
     };
-    // Requesting a certificate is the right default — most people pointing a
+    // Requesting a certificate is the right default - most people pointing a
     // domain at this box want one, which is why an omitted address falls back to
     // the operator's. But it has to be declinable: behind an upstream TLS
     // terminator this server never holds :80/:443, so every deploy spent an
@@ -396,14 +396,14 @@ pub async fn deploy(
         .map_err(|e| internal_error("docker app reverse proxy setting", e))?;
     let use_traefik = reverse_proxy.map(|(v,)| v == "traefik").unwrap_or(false);
 
-    // The mode is decided once, before any provisioning task starts — mirroring
+    // The mode is decided once, before any provisioning task starts - mirroring
     // stacks::create, whose `requested_tls_mode`/`plan_tls` this reuses so a
     // template app gets the SAME `provided`-mode validation (alias grammar,
     // registry lookup, agent-version gate, SAN-covers check) rather than a
     // second, drifting copy of it.
     //
     // No domain means nothing to secure regardless of what a stored/derived
-    // mode would otherwise say — matching this handler's own prior behaviour,
+    // mode would otherwise say - matching this handler's own prior behaviour,
     // where `ssl_email` was only ever forwarded `if deploy_domain.is_some()`.
     // An explicit `tls_mode` with no domain still reaches `plan_tls` below and
     // is refused there ("a TLS mode needs a domain"), which is new only in the
@@ -541,13 +541,13 @@ pub async fn deploy(
                                         .and_then(|m| m.as_str())
                                         .unwrap_or("Unknown error");
                                     emit("dns", "Creating DNS record", "error",
-                                        Some(format!("DNS failed: {err_msg} — create manually")));
+                                        Some(format!("DNS failed: {err_msg} - create manually")));
                                     tracing::warn!("Auto-DNS failed for {domain}: {err_msg}");
                                 }
                             }
                             Err(e) => {
                                 emit("dns", "Creating DNS record", "error",
-                                    Some(format!("DNS API error: {e} — create manually")));
+                                    Some(format!("DNS API error: {e} - create manually")));
                             }
                         }
                     }
@@ -588,21 +588,21 @@ pub async fn deploy(
                             Ok(resp) => {
                                 let text = resp.text().await.unwrap_or_default();
                                 emit("dns", "Creating DNS record", "error",
-                                    Some(format!("PowerDNS error: {text} — create manually")));
+                                    Some(format!("PowerDNS error: {text} - create manually")));
                             }
                             Err(e) => {
                                 emit("dns", "Creating DNS record", "error",
-                                    Some(format!("PowerDNS API error: {e} — create manually")));
+                                    Some(format!("PowerDNS API error: {e} - create manually")));
                             }
                         }
                     } else {
                         emit("dns", "Creating DNS record", "error",
-                            Some("PowerDNS not configured — create record manually".into()));
+                            Some("PowerDNS not configured - create record manually".into()));
                     }
                 }
             } else {
                 emit("dns", "Creating DNS record", "error",
-                    Some(format!("No DNS zone found for {parent_domain} — create record manually")));
+                    Some(format!("No DNS zone found for {parent_domain} - create record manually")));
             }
         }
 
@@ -625,7 +625,7 @@ pub async fn deploy(
                         emit("ssl", "Provisioning SSL certificate", "done", None);
                     } else if has_proxy {
                         emit("ssl", "SSL certificate", "error",
-                            Some("Skipped — can be provisioned later".into()));
+                            Some("Skipped - can be provisioned later".into()));
                     }
                 }
 
@@ -633,15 +633,15 @@ pub async fn deploy(
                 // live on a domain. The sidecar's docker-socket-proxy
                 // correctly restricts WHAT the app can do to the shared
                 // host's Docker daemon (deny-by-default ACL), but nothing
-                // ever gated WHO can reach the app itself — Dozzle's own
+                // ever gated WHO can reach the app itself - Dozzle's own
                 // real auth needs either a mounted users.yml (bcrypt hash
-                // inside, no pure-env-var equivalent — verified against
+                // inside, no pure-env-var equivalent - verified against
                 // Dozzle's own docs before relying on it) or a forward-proxy
                 // header scheme, neither achievable through this template's
                 // env_vars alone. nginx auth_basic in front of the domain
-                // closes it at the layer DockPanel already controls, reusing
+                // closes it at the layer CyberHunter - Panel already controls, reusing
                 // the same htpasswd mechanism Sites' own password-protect
-                // feature uses (routes/sites.rs::add_password_protect) —
+                // feature uses (routes/sites.rs::add_password_protect) -
                 // called here directly against the agent since a docker app
                 // never gets a `sites` row to key that route on.
                 //
@@ -651,7 +651,7 @@ pub async fn deploy(
                 //
                 // KNOWN GAP: the generated password is shown once (emitted
                 // here + logged to system_logs as a durable backup) with no
-                // self-service view/reset UI yet — that's a tracked fast-follow,
+                // self-service view/reset UI yet - that's a tracked fast-follow,
                 // not a blocker for closing the actual leak.
                 const SIDECAR_TEMPLATES: &[&str] = &["dozzle"];
                 if SIDECAR_TEMPLATES.contains(&template.as_str()) {
@@ -668,8 +668,8 @@ pub async fn deploy(
                         }))).await {
                             Ok(_) => {
                                 let msg = format!(
-                                    "Username: {auth_username} — Password: {auth_password} \
-                                     (shown once here and logged to System Logs — save it now)"
+                                    "Username: {auth_username} - Password: {auth_password} \
+                                     (shown once here and logged to System Logs - save it now)"
                                 );
                                 emit("auth", "Password-protecting the app", "done", Some(msg.clone()));
                                 crate::services::system_log::log_event(
@@ -680,7 +680,7 @@ pub async fn deploy(
                             }
                             Err(e) => {
                                 emit("auth", "Password-protecting the app", "error", Some(format!(
-                                    "Could not password-protect this app: {e} — it is reachable \
+                                    "Could not password-protect this app: {e} - it is reachable \
                                      with NO login until this is fixed by hand"
                                 )));
                                 tracing::error!(
@@ -704,7 +704,7 @@ pub async fn deploy(
                     "name": app_name, "domain": deploy_domain,
                 }));
 
-                // Give the domain an owner row so SSL renewal can find it —
+                // Give the domain an owner row so SSL renewal can find it -
                 // see migration 20260905180000_docker_app_ssl_domains.sql for
                 // why this table exists and what it deliberately does not do.
                 // Written regardless of `tls.mode` (mirrors `docker_stacks`'
@@ -733,9 +733,9 @@ pub async fn deploy(
 
                 // Seed container_sleep_config's gpu_enabled the moment it's
                 // knowable. Nothing else in the panel records whether a
-                // container was deployed with GPU passthrough — `deploy_app`'s
+                // container was deployed with GPU passthrough - `deploy_app`'s
                 // own DeviceRequest is written straight into Docker's HostConfig
-                // and never echoed back by `/apps` — so without this the column
+                // and never echoed back by `/apps` - so without this the column
                 // stays permanently false and auto_sleep_idle_containers cannot
                 // tell a GPU workload from an idle web app. auto_sleep_enabled
                 // and sleep_after_minutes are deliberately NOT in the UPDATE SET:
@@ -762,9 +762,9 @@ pub async fn deploy(
                 // GAP 12: Auto-create monitor for Docker app with domain
                 if let Some(ref domain) = deploy_domain {
                     // Monitor the scheme this deploy actually produced. The agent
-                    // reports `ssl` only when it provisioned a certificate — the
+                    // reports `ssl` only when it provisioned a certificate - the
                     // same value the "SSL certificate" step above was emitted
-                    // from — so a deploy that just told the operator SSL was
+                    // from - so a deploy that just told the operator SSL was
                     // skipped no longer gets a monitor that can only ever fail.
                     let scheme = if result.get("ssl").and_then(|v| v.as_bool()).unwrap_or(false) {
                         "https"
@@ -792,8 +792,8 @@ pub async fn deploy(
             Err(e) => {
                 // The deploy door had the defect the update door was repaired for in
                 // v2.117.0, 480 lines below: this one arm catches every way a deploy
-                // can fail — the image refusing to resolve, the container refusing to
-                // create or start, the proxy, the volume ownership repair — and filed
+                // can fail - the image refusing to resolve, the container refusing to
+                // create or start, the proxy, the volume ownership repair - and filed
                 // all of them under the step that pulls the image. An operator whose
                 // container would not start was told the pull had failed and went to
                 // audit a registry that had answered perfectly.
@@ -863,12 +863,12 @@ async fn gather_app_facts(
 
     let mut facts = HostFacts::default();
 
-    // Containers DockPanel manages: their names and published ports.
+    // Containers CyberHunter - Panel manages: their names and published ports.
     //
     // The agent reports the CONTAINER name, which carries the `dockpanel-app-`
     // prefix the deploy adds (`dockpanel-app-pg-ok`), while the user types the
     // bare app name (`pg-ok`). Comparing the two directly makes the collision
-    // check permanently inert — it was, until a fresh box showed a duplicate name
+    // check permanently inert - it was, until a fresh box showed a duplicate name
     // reported as available. Strip the prefix so both the comparison and the
     // "taken by" sentence speak the user's names.
     if let Ok(apps) = agent.get("/apps").await {
@@ -888,7 +888,7 @@ async fn gather_app_facts(
         }
     }
 
-    // Sites that proxy to a local port hold one too — but only on the host these
+    // Sites that proxy to a local port hold one too - but only on the host these
     // facts describe. The read was fleet-wide, so a port occupied by a site on
     // another machine was reported as taken here: the preflight refused a free
     // port, and did so more often the larger the fleet grew. "Which ports are in
@@ -917,7 +917,7 @@ async fn gather_app_facts(
     }
 
     // The host's own verdict on the port. An agent older than v2.29.0 has no
-    // such route, so this stays `None` and the check degrades to `unknown` —
+    // such route, so this stays `None` and the check degrades to `unknown` -
     // a fleet member we can't interrogate must not be a fleet member we refuse.
     if port > 0 {
         facts.port_probe_free = agent
@@ -991,7 +991,7 @@ fn intent_from_query(q: &AppPreflightQuery) -> crate::services::prerequisites::a
     }
 }
 
-/// GET /api/apps/preflight — Evaluate the prerequisites for an intended deploy.
+/// GET /api/apps/preflight - Evaluate the prerequisites for an intended deploy.
 ///
 /// Called as the deploy form is filled in, so that the conditions which would
 /// otherwise surface as `Deploy failed: …` several minutes into an image pull are
@@ -1014,7 +1014,7 @@ pub async fn preflight(
     Ok(Json(serde_json::json!({ "checks": results, "blocked": blocked })))
 }
 
-/// GET /api/apps/deploy/{deploy_id}/log — SSE stream of deploy progress.
+/// GET /api/apps/deploy/{deploy_id}/log - SSE stream of deploy progress.
 pub async fn deploy_log(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -1022,7 +1022,7 @@ pub async fn deploy_log(
 ) -> Result<Sse<impl futures::Stream<Item = Result<Event, axum::BoxError>>>, ApiError> {
     // The admin exemption is gone. This map is one keyspace shared with site
     // provisioning, whose stream carries a generated CMS password, and `/api/sites`
-    // is user_id-scoped — so "has the admin role" was never a licence to read
+    // is user_id-scoped - so "has the admin role" was never a licence to read
     // another tenant's log through here.
     let (snapshot, rx) = crate::helpers::open_provision_log(
         &state.provision_logs,
@@ -1050,7 +1050,7 @@ pub async fn deploy_log(
     });
 
     // The underlying channel closes (and this stream ends) once the deploy
-    // finishes and its map entry is dropped — but a deploy in progress at
+    // finishes and its map entry is dropped - but a deploy in progress at
     // shutdown time can still run well past the graceful-drain window, so
     // race it against the panel's own shutdown signal too.
     Ok(
@@ -1063,7 +1063,7 @@ pub async fn deploy_log(
     )
 }
 
-/// GET /api/apps — List deployed Docker apps.
+/// GET /api/apps - List deployed Docker apps.
 pub async fn list_apps(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -1081,8 +1081,8 @@ pub async fn list_apps(
     // Carried on this already-server-scoped payload rather than exposed as its
     // own endpoint: `container_expected_stops` is keyed by server, and a
     // separate global listing would have to be scoped from scratch. Without it
-    // the Apps page calls every stopped container "crashed" — including the ones
-    // the panel itself stopped — and after this release that page is the only
+    // the Apps page calls every stopped container "crashed" - including the ones
+    // the panel itself stopped - and after this release that page is the only
     // surface still speaking about them.
     let reasons = expected_stops::reasons_on_server(&state.db, server_id).await;
     if !reasons.is_empty() {
@@ -1117,8 +1117,8 @@ pub async fn list_apps(
 /// Resolve a caller-supplied container id to the name the agent reports.
 ///
 /// `is_valid_container_id` accepts any 1-64 character hex string and Docker
-/// resolves an id PREFIX, so `POST /api/apps/1a2b3c4d5e6f/stop` — the short form
-/// `docker ps` prints — stops the container and returns 200. The alert engine
+/// resolves an id PREFIX, so `POST /api/apps/1a2b3c4d5e6f/stop` - the short form
+/// `docker ps` prints - stops the container and returns 200. The alert engine
 /// keys on the full name the agent reports, so writing the caller's string would
 /// record a row nothing can ever match.
 ///
@@ -1133,7 +1133,7 @@ async fn resolve_container_name(
     let arr = apps.as_array()?;
 
     // An exact id wins outright. Otherwise collect every prefix match and accept
-    // it only if it is UNIQUE — an ambiguous prefix must resolve to nothing
+    // it only if it is UNIQUE - an ambiguous prefix must resolve to nothing
     // rather than to whichever container happens to be listed first.
     let mut prefix_hits: Vec<&str> = Vec::new();
     for app in arr {
@@ -1157,7 +1157,7 @@ async fn resolve_container_name(
     }
 }
 
-/// POST /api/apps/{container_id}/stop — Stop an app.
+/// POST /api/apps/{container_id}/stop - Stop an app.
 pub async fn stop_app(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -1198,7 +1198,7 @@ pub async fn stop_app(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// POST /api/apps/{container_id}/start — Start an app.
+/// POST /api/apps/{container_id}/start - Start an app.
 pub async fn start_app(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -1216,7 +1216,7 @@ pub async fn start_app(
         .await
         .map_err(|e| agent_error("Container start", e))?;
 
-    // Immediacy only — the alert engine clears this from its own observation
+    // Immediacy only - the alert engine clears this from its own observation
     // within a sweep either way. Doing it here as well means the Apps page stops
     // calling the container "stopped intentionally" the moment it is started,
     // rather than up to two minutes later.
@@ -1232,7 +1232,7 @@ pub async fn start_app(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// POST /api/apps/{container_id}/restart — Restart an app.
+/// POST /api/apps/{container_id}/restart - Restart an app.
 pub async fn restart_app(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -1262,7 +1262,7 @@ pub async fn restart_app(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// GET /api/apps/{container_id}/logs — Get app logs.
+/// GET /api/apps/{container_id}/logs - Get app logs.
 pub async fn app_logs(
     State(_state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -1283,7 +1283,7 @@ pub async fn app_logs(
     Ok(Json(result))
 }
 
-/// POST /api/apps/{container_id}/update — Pull latest image and recreate container (async with SSE).
+/// POST /api/apps/{container_id}/update - Pull latest image and recreate container (async with SSE).
 pub async fn update_app(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -1332,7 +1332,7 @@ pub async fn update_app(
         // opposite of stop_app/sleep_container above): the whole point of this
         // call is to interrupt a running container on purpose, via a remove
         // then create the agent performs internally, and the healer's 120s
-        // tick must be blind to that gap from the moment it opens — not after,
+        // tick must be blind to that gap from the moment it opens - not after,
         // by which point it may already have "healed" a container mid-recreate
         // into a torn `docker cp`. Cleared unconditionally once the call
         // returns, success or failure, or a refused/failed update would leave
@@ -1378,7 +1378,7 @@ pub async fn update_app(
                         "Moved app data onto persistent storage",
                         "done",
                         Some(format!(
-                            "This app was deployed before DockPanel gave it a persistent \
+                            "This app was deployed before CyberHunter - Panel gave it a persistent \
                              volume, so its data lived inside the container and would have \
                              been lost on this update. It has been copied to durable storage \
                              and will survive future updates: {}",
@@ -1401,9 +1401,9 @@ pub async fn update_app(
                         "Repaired file ownership on the app's data",
                         "done",
                         Some(format!(
-                            "DockPanel v2.111.0 to v2.113.1 moved this app's data onto \
+                            "CyberHunter - Panel v2.111.0 to v2.113.1 moved this app's data onto \
                              persistent storage but left every file owned by root, so an app \
-                             that does not run as root could not write it — if this one has \
+                             that does not run as root could not write it - if this one has \
                              been failing to start since it was last updated, that is why. \
                              Ownership has been given back to the account the app runs as: {}",
                             repaired.join(", ")
@@ -1432,7 +1432,7 @@ pub async fn update_app(
                 );
             }
             Err(e) => {
-                // This arm catches every way the update can fail — the image
+                // This arm catches every way the update can fail - the image
                 // refusing to resolve, the migration aborting, the remove, the
                 // create, the start. It used to file all of them under the step
                 // that pulls the image, so an operator whose migration aborted
@@ -1447,7 +1447,7 @@ pub async fn update_app(
                 // was emitted `in_progress` before the agent call above and nothing
                 // resolved it on failure, so the operator watched a live spinner sit
                 // under a red "Update failed" for ever. `pending` rather than `error`
-                // for the same reason the label was dropped — pull, recreate and
+                // for the same reason the label was dropped - pull, recreate and
                 // migrate are one agent call, so the panel genuinely does not know
                 // whether the image arrived, and saying so is the honest terminal
                 // state. It is also the only one available: an absence arm forbids
@@ -1459,8 +1459,8 @@ pub async fn update_app(
             }
         }
 
-        // Every exit path above — the call succeeded, or it failed at any
-        // point (pull, migrate, remove, create) — reaches here, so this runs
+        // Every exit path above - the call succeeded, or it failed at any
+        // point (pull, migrate, remove, create) - reaches here, so this runs
         // regardless. See the record() comment above for why that matters.
         if let Some(ref name) = container_name {
             expected_stops::clear(&db, server_id, name).await;
@@ -1476,7 +1476,7 @@ pub async fn update_app(
     }))))
 }
 
-/// GET /api/apps/{container_id}/env — Get container environment variables.
+/// GET /api/apps/{container_id}/env - Get container environment variables.
 pub async fn app_env(
     State(_state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -1497,7 +1497,7 @@ pub async fn app_env(
     Ok(Json(result))
 }
 
-/// PUT /api/apps/{container_id}/env — Update container environment variables.
+/// PUT /api/apps/{container_id}/env - Update container environment variables.
 pub async fn update_env(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -1558,7 +1558,7 @@ pub async fn update_env(
     let key_id = claims.key_id;
     let result = tokio::spawn(async move {
         // Recorded BEFORE the recreate starts and cleared unconditionally
-        // once the call returns, same reasoning as `update_app` above — the
+        // once the call returns, same reasoning as `update_app` above - the
         // healer's 120s tick must be blind to the recreate's own gap from the
         // moment it opens, and a row left behind after a refused/failed call
         // would suppress this container's next genuine crash forever.
@@ -1596,7 +1596,7 @@ pub async fn update_env(
     Ok(Json(result))
 }
 
-/// GET /api/apps/{container_id}/stats — Get container resource stats.
+/// GET /api/apps/{container_id}/stats - Get container resource stats.
 pub async fn container_stats(
     State(_state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -1614,7 +1614,7 @@ pub async fn container_stats(
     Ok(Json(result))
 }
 
-/// PUT /api/apps/{container_id}/image — Change Docker app image tag.
+/// PUT /api/apps/{container_id}/image - Change Docker app image tag.
 pub async fn update_image(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -1642,7 +1642,7 @@ pub async fn update_image(
     }
 
     // The operator is naming an image to run, which is what the deploy gate
-    // exists to judge — the same question `POST /api/apps/deploy` asks, about
+    // exists to judge - the same question `POST /api/apps/deploy` asks, about
     // the same host. Unlike `update_app` below, this is not a re-pull of the
     // reference already running, so the stored scan is a scan of the image
     // being INTRODUCED and gating on it is sound.
@@ -1654,7 +1654,7 @@ pub async fn update_image(
     //
     // Spawned onto its own task, like `update_env` above: this is another
     // recreate-shaped call sitting behind a browser connection Cloudflare will
-    // cut at ~100s, well inside the 900s budget — the drop must not cancel it
+    // cut at ~100s, well inside the 900s budget - the drop must not cancel it
     // mid-recreate.
     let image = image.to_string();
     let agent = agent.clone();
@@ -1709,7 +1709,7 @@ pub async fn update_image(
     Ok(Json(result))
 }
 
-/// PUT /api/apps/{container_id}/limits — Update CPU/memory limits on a running container.
+/// PUT /api/apps/{container_id}/limits - Update CPU/memory limits on a running container.
 pub async fn update_limits(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -1761,7 +1761,7 @@ pub async fn update_limits(
     Ok(Json(result))
 }
 
-/// GET /api/apps/{container_id}/shell-info — Get shell availability.
+/// GET /api/apps/{container_id}/shell-info - Get shell availability.
 ///
 /// Gated on the lockdown for the same reason the exec below is: the agent
 /// answers this by running `docker exec <id> which bash` inside the container,
@@ -1793,20 +1793,20 @@ pub async fn shell_info(
     Ok(Json(result))
 }
 
-/// POST /api/apps/{container_id}/exec — Execute a command inside a container.
+/// POST /api/apps/{container_id}/exec - Execute a command inside a container.
 ///
 /// The panel has two surfaces that hand an operator a live shell, and until
 /// v2.110.0 the lockdown only closed one of them. The Terminal page is refused
-/// at three doors; this one — the Apps console, which posts an arbitrary string
-/// the agent runs as `docker exec <id> sh -c <cmd>` — read no lockdown state at
+/// at three doors; this one - the Apps console, which posts an arbitrary string
+/// the agent runs as `docker exec <id> sh -c <cmd>` - read no lockdown state at
 /// all, and could not have: `State` was bound as `_state`, so the handler was
 /// structurally incapable of asking. Meanwhile `GET /api/security/lockdown`
 /// reported `terminals_blocked: true` to the page, under a comment saying that
 /// field exists so "the page and the gate cannot drift apart".
 ///
 /// `require_admin` is not the mitigation it looks like here. A lockdown is
-/// declared precisely when an admin session is believed compromised — it is
-/// what the suspicious-event threshold detects — so the role gate is the
+/// declared precisely when an admin session is believed compromised - it is
+/// what the suspicious-event threshold detects - so the role gate is the
 /// credential the intruder is assumed to hold. The reasoning is the sibling's,
 /// written at the terminal mint: refusing one live session on the host while
 /// permitting another "would leave the flag half-honoured in the direction that
@@ -1843,7 +1843,7 @@ pub async fn exec_command(
 
 // ─── Ollama Model Management ────────────────────────────────────────────
 
-/// GET /api/apps/{container_id}/ollama/models — List models in an Ollama container.
+/// GET /api/apps/{container_id}/ollama/models - List models in an Ollama container.
 pub async fn ollama_list_models(
     State(_state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -1861,7 +1861,7 @@ pub async fn ollama_list_models(
     Ok(Json(result))
 }
 
-/// POST /api/apps/{container_id}/ollama/pull — Pull a model into an Ollama container.
+/// POST /api/apps/{container_id}/ollama/pull - Pull a model into an Ollama container.
 pub async fn ollama_pull_model(
     State(_state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -1880,7 +1880,7 @@ pub async fn ollama_pull_model(
     Ok(Json(result))
 }
 
-/// POST /api/apps/{container_id}/ollama/delete — Delete a model from an Ollama container.
+/// POST /api/apps/{container_id}/ollama/delete - Delete a model from an Ollama container.
 pub async fn ollama_delete_model(
     State(_state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -1899,7 +1899,7 @@ pub async fn ollama_delete_model(
     Ok(Json(result))
 }
 
-/// GET /api/apps/{container_id}/volumes — Get volume info and sizes.
+/// GET /api/apps/{container_id}/volumes - Get volume info and sizes.
 pub async fn container_volumes(
     State(_state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -1917,7 +1917,7 @@ pub async fn container_volumes(
     Ok(Json(result))
 }
 
-/// POST /api/apps/registry-login — Login to a private Docker registry.
+/// POST /api/apps/registry-login - Login to a private Docker registry.
 pub async fn registry_login(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -1959,7 +1959,7 @@ pub async fn registry_login(
     Ok(Json(result))
 }
 
-/// GET /api/apps/registries — List configured registries.
+/// GET /api/apps/registries - List configured registries.
 pub async fn list_registries(
     State(_state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -1973,7 +1973,7 @@ pub async fn list_registries(
     Ok(Json(result))
 }
 
-/// POST /api/apps/registry-logout — Logout from a registry.
+/// POST /api/apps/registry-logout - Logout from a registry.
 pub async fn registry_logout(
     State(_state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -1988,7 +1988,7 @@ pub async fn registry_logout(
     Ok(Json(result))
 }
 
-/// GET /api/apps/images — List Docker images.
+/// GET /api/apps/images - List Docker images.
 pub async fn list_images(
     State(_state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -2002,7 +2002,7 @@ pub async fn list_images(
     Ok(Json(result))
 }
 
-/// POST /api/apps/images/prune — Remove unused Docker images.
+/// POST /api/apps/images/prune - Remove unused Docker images.
 pub async fn prune_images(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -2020,7 +2020,7 @@ pub async fn prune_images(
     Ok(Json(result))
 }
 
-/// DELETE /api/apps/images/{id} — Remove a specific Docker image.
+/// DELETE /api/apps/images/{id} - Remove a specific Docker image.
 pub async fn remove_image(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -2039,7 +2039,7 @@ pub async fn remove_image(
     Ok(Json(result))
 }
 
-/// POST /api/apps/{container_id}/snapshot — Commit container to image.
+/// POST /api/apps/{container_id}/snapshot - Commit container to image.
 pub async fn snapshot_container(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -2062,7 +2062,7 @@ pub async fn snapshot_container(
     Ok(Json(result))
 }
 
-/// POST /api/apps/compose/validate — Validate compose YAML with detailed feedback.
+/// POST /api/apps/compose/validate - Validate compose YAML with detailed feedback.
 pub async fn compose_validate(
     State(_state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -2087,7 +2087,7 @@ pub async fn compose_validate(
     Ok(Json(result))
 }
 
-/// POST /api/apps/compose/parse — Parse docker-compose.yml and preview services.
+/// POST /api/apps/compose/parse - Parse docker-compose.yml and preview services.
 pub async fn compose_parse(
     State(_state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -2112,7 +2112,7 @@ pub async fn compose_parse(
     Ok(Json(result))
 }
 
-/// POST /api/apps/compose/deploy — Deploy services from docker-compose.yml.
+/// POST /api/apps/compose/deploy - Deploy services from docker-compose.yml.
 pub async fn compose_deploy(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -2155,7 +2155,7 @@ pub async fn compose_deploy(
     Ok((StatusCode::CREATED, Json(result)))
 }
 
-/// DELETE /api/apps/{container_id} — Remove a deployed app.
+/// DELETE /api/apps/{container_id} - Remove a deployed app.
 pub async fn remove_app(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -2172,7 +2172,7 @@ pub async fn remove_app(
     // Resolved BEFORE the removal, because afterwards there is nothing left to
     // inspect: the agent's response carries the domain it freed, never the
     // container's name. A removed container is also never listed again, so the
-    // engine's own observation can never clear its expectation — this is the
+    // engine's own observation can never clear its expectation - this is the
     // one door that can do it without a window.
     let removed_name = resolve_container_name(&agent, &container_id).await;
 
@@ -2210,7 +2210,7 @@ pub async fn remove_app(
         // The host the app was removed FROM. The cleanup below deletes a record
         // only where its content matches this address, so reading the panel's
         // address meant a member's record never matched and outlived the app it
-        // pointed at — a dangling A record, which is a takeover surface rather
+        // pointed at - a dangling A record, which is a takeover surface rather
         // than clutter.
         let dns_server_id = server_id;
         tokio::spawn(async move {
@@ -2236,7 +2236,7 @@ pub async fn remove_app(
                 let Some(server_ip) =
                     crate::helpers::public_ip_for_server(&dns_db, Some(dns_server_id)).await
                 else {
-                    tracing::warn!("Auto-DNS cleanup: could not resolve the public address of the server {dns_domain} was removed from — leaving the record in place rather than deleting one that may belong to another host");
+                    tracing::warn!("Auto-DNS cleanup: could not resolve the public address of the server {dns_domain} was removed from - leaving the record in place rather than deleting one that may belong to another host");
                     return;
                 };
 
@@ -2301,7 +2301,7 @@ pub async fn remove_app(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// GET /api/apps/updates — Check all containers for available image updates.
+/// GET /api/apps/updates - Check all containers for available image updates.
 pub async fn check_updates(
     State(_state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -2315,7 +2315,7 @@ pub async fn check_updates(
     Ok(Json(result))
 }
 
-/// GET /api/apps/gpu-info — Get GPU availability information from the server.
+/// GET /api/apps/gpu-info - Get GPU availability information from the server.
 pub async fn gpu_info(
     State(_state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -2329,13 +2329,13 @@ pub async fn gpu_info(
 
 // ─── Container Isolation Policies (Admin) ──────────────────────
 
-// A container already carries its owner — `deploy_app` stamps the deploying
+// A container already carries its owner - `deploy_app` stamps the deploying
 // admin's id onto the `dockpanel.user.id` label, and `list_deployed_apps`
 // reads it straight back onto `DeployedApp.user_id` for every `/apps`
 // response. Nothing about that primitive was missing; two counters below just
 // summed the whole array instead of consulting it. A container with no label
 // (deployed before this existed, or a malformed one) has no owner here and is
-// excluded from every user's count — not folded into anyone's total.
+// excluded from every user's count - not folded into anyone's total.
 fn app_owner(app: &serde_json::Value) -> Option<Uuid> {
     app.get("user_id")?.as_str().and_then(|s| Uuid::parse_str(s).ok())
 }
@@ -2370,7 +2370,7 @@ async fn fleet_usage_by_user(state: &AppState) -> (HashMap<Uuid, usize>, usize, 
             Err(e) => {
                 unreachable += 1;
                 tracing::warn!(
-                    "Container quota: {} did not answer ({e}) — the usage figures are a floor",
+                    "Container quota: {} did not answer ({e}) - the usage figures are a floor",
                     member.name
                 );
             }
@@ -2386,12 +2386,12 @@ pub struct PolicyRequest {
     pub max_memory_mb: Option<i64>,
     pub max_cpu_percent: Option<i32>,
     // network_isolation removed (s238): the column was written+displayed but read by nothing at
-    // deploy — a false security control. Column left dormant in the DB. An unknown JSON field from
+    // deploy - a false security control. Column left dormant in the DB. An unknown JSON field from
     // a stale frontend is ignored by serde. See CHANGELOG 2.15.0.
     pub allowed_images: Option<String>,
 }
 
-/// GET /api/container-policies — List all container policies.
+/// GET /api/container-policies - List all container policies.
 pub async fn list_policies(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -2408,7 +2408,7 @@ pub async fn list_policies(
         .await
         .map_err(|e| internal_error("list container policies", e))?;
 
-    // One fleet walk for every row on this page, instead of one per policy —
+    // One fleet walk for every row on this page, instead of one per policy -
     // each entry gets its own count from the SAME snapshot (see
     // fleet_usage_by_user's own comment for the unreachable-server posture).
     let (by_user, servers_counted, servers_unreachable, unowned) = fleet_usage_by_user(&state).await;
@@ -2447,7 +2447,7 @@ pub async fn list_policies(
     })))
 }
 
-/// POST /api/container-policies — Create a container policy for a user.
+/// POST /api/container-policies - Create a container policy for a user.
 pub async fn create_policy(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -2509,7 +2509,7 @@ pub async fn create_policy(
     Ok((StatusCode::CREATED, Json(serde_json::json!({ "ok": true, "id": id.0 }))))
 }
 
-/// GET /api/container-policies/{user_id} — Get policy for a specific user.
+/// GET /api/container-policies/{user_id} - Get policy for a specific user.
 pub async fn get_policy(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -2546,7 +2546,7 @@ pub async fn get_policy(
     }
 }
 
-/// PUT /api/container-policies/{user_id} — Update a user's container policy.
+/// PUT /api/container-policies/{user_id} - Update a user's container policy.
 pub async fn update_policy(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -2591,7 +2591,7 @@ pub async fn update_policy(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// DELETE /api/container-policies/{user_id} — Remove a user's container policy (reverts to no limits).
+/// DELETE /api/container-policies/{user_id} - Remove a user's container policy (reverts to no limits).
 pub async fn delete_policy(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -2612,7 +2612,7 @@ pub async fn delete_policy(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// GET /api/container-policies/{user_id}/usage — Get current resource usage vs policy.
+/// GET /api/container-policies/{user_id}/usage - Get current resource usage vs policy.
 pub async fn policy_usage(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -2636,16 +2636,16 @@ pub async fn policy_usage(
     // Count containers across the FLEET, because the quota is per USER and a user
     // is not confined to one machine. Asking only the selected server let the same
     // account run `max_containers` on every host and still read as within quota on
-    // each — the limit was enforced per box while being presented per person.
+    // each - the limit was enforced per box while being presented per person.
     //
-    // AND scoped to the requested user_id — every `/apps` entry already carries
+    // AND scoped to the requested user_id - every `/apps` entry already carries
     // its owner (see app_owner's own comment); this used to sum the whole fleet
     // regardless of whose usage was asked for, so two different users' policies
     // read back the identical fleet-wide count.
     //
     // Still best-effort per host, and deliberately so: unlike deploy, this is a
     // display figure, and a member that will not answer must not blank the number.
-    // But an under-count is now visible rather than silent — `servers_unreachable`
+    // But an under-count is now visible rather than silent - `servers_unreachable`
     // says the total is a floor.
     let (by_user, servers_counted, servers_unreachable, unowned) = fleet_usage_by_user(&state).await;
     let container_count = by_user.get(&user_id).copied().unwrap_or(0);
@@ -2677,7 +2677,7 @@ pub async fn policy_usage(
 // ─── Container Auto-Sleep / Scale to Zero ──────────────────────
 
 /// `update_app`/`update_image`/`update_env` all stop, remove and re-create
-/// the container — minting a NEW Docker container id while keeping the same
+/// the container - minting a NEW Docker container id while keeping the same
 /// name (the same behavior `container_expected_stops`'s own migration
 /// comment names all three functions for, s238/20260822000000). Unlike that
 /// table, `container_sleep_config` is still keyed on `container_id` alone,
@@ -2715,7 +2715,7 @@ pub struct SleepConfigRequest {
     pub sleep_after_minutes: Option<i32>,
 }
 
-/// GET /api/apps/{container_id}/sleep-config — Get sleep configuration for a container.
+/// GET /api/apps/{container_id}/sleep-config - Get sleep configuration for a container.
 pub async fn get_sleep_config(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -2755,7 +2755,7 @@ pub async fn get_sleep_config(
     }
 }
 
-/// PUT /api/apps/{container_id}/sleep-config — Update sleep configuration.
+/// PUT /api/apps/{container_id}/sleep-config - Update sleep configuration.
 pub async fn update_sleep_config(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -2790,7 +2790,7 @@ pub async fn update_sleep_config(
     // ask about idleness and which host to stop the container on. This is the
     // half that is easy to miss and expensive to miss: the migration that added
     // the column backfilled every existing row, so omitting the bind here would
-    // not look broken — it would look FIXED, right up until the first container
+    // not look broken - it would look FIXED, right up until the first container
     // configured after the upgrade, whose row would carry NULL and be skipped by
     // a sleeper that (correctly) refuses to guess a host. That is exactly how
     // `mail_domains.server_id` came to be NULL on every panel-created row for
@@ -2823,7 +2823,7 @@ pub async fn update_sleep_config(
     // The sleeper is a step inside the auto-healer, which is off by default and
     // is configured on a different page entirely. Enabling auto-sleep on a fresh
     // install therefore stored the setting, answered `ok`, and did nothing at
-    // all — for ever, silently. The switch is not wrong to store; it is wrong to
+    // all - for ever, silently. The switch is not wrong to store; it is wrong to
     // report plain success while the thing that acts on it is switched off, so
     // the caller gets told and can say so.
     let auto_heal_enabled: bool = sqlx::query_scalar::<_, String>(
@@ -2842,7 +2842,7 @@ pub async fn update_sleep_config(
     })))
 }
 
-/// POST /api/apps/{container_id}/wake — Wake a sleeping container.
+/// POST /api/apps/{container_id}/wake - Wake a sleeping container.
 pub async fn wake_container(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -2860,7 +2860,7 @@ pub async fn wake_container(
         .map_err(|e| agent_error("Wake container", e))?;
 
     // Update sleep state. The Docker start above already succeeded, so a DB
-    // hiccup here must not fail this request — but a swallowed error used to
+    // hiccup here must not fail this request - but a swallowed error used to
     // leave `is_sleeping` permanently desynced from reality: a container that
     // is actually running would stay marked asleep and be permanently
     // excluded from the auto-sleep sweeper's own reconciliation (it only acts
@@ -2874,7 +2874,7 @@ pub async fn wake_container(
     .bind(&container_id)
     .execute(&state.db)
     .await
-    .map_err(|e| tracing::warn!("Failed to persist wake state for container {container_id}: {e} — is_sleeping may now disagree with reality"))
+    .map_err(|e| tracing::warn!("Failed to persist wake state for container {container_id}: {e} - is_sleeping may now disagree with reality"))
     .ok();
 
     if let Some(name) = resolve_container_name(&agent, &container_id).await {
@@ -2889,7 +2889,7 @@ pub async fn wake_container(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// POST /api/apps/{container_id}/sleep — Manually sleep a container.
+/// POST /api/apps/{container_id}/sleep - Manually sleep a container.
 pub async fn sleep_container(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -2907,7 +2907,7 @@ pub async fn sleep_container(
 
     // Same reasoning as `wake_container` above: the Docker stop already
     // succeeded, so a DB hiccup here must not fail the request, but a
-    // swallowed error used to leave `is_sleeping` desynced — a container
+    // swallowed error used to leave `is_sleeping` desynced - a container
     // that is actually stopped could read as awake, hiding it from any
     // sleeping-containers view. Log it, matching `wake_container`.
     sqlx::query(
@@ -2917,7 +2917,7 @@ pub async fn sleep_container(
     .bind(&container_id)
     .execute(&state.db)
     .await
-    .map_err(|e| tracing::warn!("Failed to persist sleep state for container {container_id}: {e} — is_sleeping may now disagree with reality"))
+    .map_err(|e| tracing::warn!("Failed to persist sleep state for container {container_id}: {e} - is_sleeping may now disagree with reality"))
     .ok();
 
     if let Some(name) = resolve_container_name(&agent, &container_id).await {
@@ -2940,8 +2940,8 @@ pub async fn sleep_container(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// POST /api/apps/{container_id}/activity-ping — Admin-only manual activity bump for a container's
-/// auto-sleep timer. NOTE: this is NOT an nginx keepalive — that would require a JWT nginx cannot
+/// POST /api/apps/{container_id}/activity-ping - Admin-only manual activity bump for a container's
+/// auto-sleep timer. NOTE: this is NOT an nginx keepalive - that would require a JWT nginx cannot
 /// hold; the frontend does not call it either. Admin-gated so a non-admin can't defeat auto-sleep
 /// on an arbitrary container; kept for a future authenticated-panel keepalive.
 pub async fn activity_ping(
@@ -2966,7 +2966,7 @@ pub async fn activity_ping(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// GET /api/apps/sleep-status — List all containers with sleep config (admin overview).
+/// GET /api/apps/sleep-status - List all containers with sleep config (admin overview).
 pub async fn sleep_status_list(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,

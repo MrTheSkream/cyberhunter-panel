@@ -15,19 +15,19 @@ use crate::services::ssl;
 /// said so" and "this machine broke", and label only the first two.
 ///
 /// Both come back from the same call as a 500, and the panel is right to hide a
-/// 500 behind an incident id — an operator can do nothing with an unwritable
+/// 500 behind an incident id - an operator can do nothing with an unwritable
 /// directory. But the commonest failure by far is the CA declining a challenge,
 /// and answering THAT with a reference number throws away the only sentence that
 /// would have helped. The label is how the panel tells them apart without
 /// widening its rule to the status.
 ///
 /// The marker is applied at the arms where the CA actually spoke, so anything
-/// unmarked — including any arm added later — stays an internal fault. That is
+/// unmarked - including any arm added later - stays an internal fault. That is
 /// the safe default: a missing label costs a reference number, a wrong one sends
 /// somebody to check their DNS while their disk is full.
 ///
 /// The DNS-01 door adds a THIRD party. Cloudflare refusing to publish the
-/// challenge record — almost always a token without `DNS:Edit` — is the
+/// challenge record - almost always a token without `DNS:Edit` - is the
 /// operator's to fix and deserves its sentence, but attributing it to the CA
 /// would name the wrong party in a message written to be trusted. It gets its
 /// own marker and its own code, and the panel keeps them apart.
@@ -77,13 +77,13 @@ struct ProvisionRequest {
     #[serde(default)]
     replaces_pem: Option<String>,
     /// Order even over a certificate this product demonstrably did not issue.
-    /// ⛔ Defaults to FALSE, which is what makes an older panel — and any caller
-    /// that never learned to ask — fail closed at the writer.
+    /// ⛔ Defaults to FALSE, which is what makes an older panel - and any caller
+    /// that never learned to ask - fail closed at the writer.
     #[serde(default)]
     force: bool,
 }
 
-/// POST /ssl/provision/{domain} — Provision Let's Encrypt cert and enable SSL.
+/// POST /ssl/provision/{domain} - Provision Let's Encrypt cert and enable SSL.
 async fn provision(
     State(state): State<AppState>,
     Path(domain): Path<String>,
@@ -113,9 +113,9 @@ async fn provision(
         replace_foreign: body.force,
     };
     // Only what the CA actually said is labelled. The panel hides every agent 5xx
-    // behind an incident id — correctly, because this route also fails for reasons
+    // behind an incident id - correctly, because this route also fails for reasons
     // an operator can do nothing about (the account load above, and a full disk or
-    // an unwritable directory inside the call below) — and the label is what lets
+    // an unwritable directory inside the call below) - and the label is what lets
     // it tell those apart WITHOUT widening that rule to the status.
     // ⚠ The panel carries the same literal; they cannot share a constant across
     // crates, so a pin compares both spellings.
@@ -175,17 +175,17 @@ async fn provision(
     })))
 }
 
-/// GET /ssl/certificates — Every certificate on this host.
+/// GET /ssl/certificates - Every certificate on this host.
 ///
 /// Unauthenticated in the same sense every agent route is: the agent listens on
-/// the panel's private channel. It returns expiry metadata only — no key
-/// material, no paths — so it says nothing an operator reading the box could not
+/// the panel's private channel. It returns expiry metadata only - no key
+/// material, no paths - so it says nothing an operator reading the box could not
 /// already see.
 async fn list_certificates() -> Json<Vec<ssl::CertStatus>> {
     Json(ssl::list_cert_status().await)
 }
 
-/// GET /ssl/status/{domain} — Get SSL certificate status.
+/// GET /ssl/status/{domain} - Get SSL certificate status.
 async fn status(
     Path(domain): Path<String>,
 ) -> Result<Json<ssl::CertStatus>, (StatusCode, Json<serde_json::Value>)> {
@@ -210,7 +210,7 @@ struct CustomCertRequest {
     private_key: String,
 }
 
-/// POST /ssl/upload — Upload a custom SSL certificate.
+/// POST /ssl/upload - Upload a custom SSL certificate.
 async fn upload_cert(
     State(state): State<AppState>,
     Json(body): Json<CustomCertRequest>,
@@ -242,7 +242,7 @@ async fn upload_cert(
     // does not compare the certificate against `server_name`), the panel wrote
     // `ssl_enabled = true` and drew a padlock, and only the browser ever said
     // `ERR_CERT_COMMON_NAME_INVALID`. Pasting the wrong `fullchain.pem` is an
-    // ordinary slip, not an attack — this host alone carries 22 of them.
+    // ordinary slip, not an attack - this host alone carries 22 of them.
     //
     // The refusal is deliberately BEFORE the first write, so a refused upload
     // leaves the site byte-identical. The failure path below is not a safe
@@ -278,14 +278,14 @@ async fn upload_cert(
         ))?;
     // Write the private key 0600-at-creation. The previous write-then-async-chmod
     // left the key world/group-readable (0644) for the duration of a chmod
-    // subprocess — a local disclosure race on a shared box.
+    // subprocess - a local disclosure race on a shared box.
     ssl::write_key_file(&key_path, &body.private_key).await
         .map_err(|e| (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": e })),
         ))?;
 
-    // Enable SSL in nginx — read existing config to determine runtime
+    // Enable SSL in nginx - read existing config to determine runtime
     let site_conf = format!("{}/{}.conf", crate::services::nginx::sites_dir(), body.domain);
     let content = tokio::fs::read_to_string(&site_conf).await.unwrap_or_default();
     let is_proxy = content.contains("proxy_pass");
@@ -328,7 +328,7 @@ async fn upload_cert(
     // so an uploaded certificate is visible to the countdown, the expiry ladder
     // and the auto-healer; without it the panel has to ask again in a second
     // round trip that can fail on its own, and a failed read there used to leave
-    // the column NULL — invisible to all three.
+    // the column NULL - invisible to all three.
     let status = ssl::get_cert_status(&body.domain).await;
 
     tracing::info!(
@@ -349,7 +349,7 @@ async fn upload_cert(
 #[derive(Deserialize)]
 struct RenewRequest {
     email: String,
-    /// Absent when the caller has no `SiteConfig` to describe this domain with —
+    /// Absent when the caller has no `SiteConfig` to describe this domain with -
     /// a Compose stack's or a Docker app's certificate, neither of which has a
     /// `sites` row behind it. See `renew` for what its absence means.
     #[serde(default)]
@@ -361,7 +361,7 @@ struct RenewRequest {
     profile: Option<String>,
 }
 
-/// POST /ssl/{domain}/renew — Renew a Let's Encrypt certificate via
+/// POST /ssl/{domain}/renew - Renew a Let's Encrypt certificate via
 /// `instant_acme`, passing the existing cert PEM as the ARI `replaces` hint.
 ///
 /// The prior implementation shelled out to `certbot renew`, which didn't
@@ -389,7 +389,7 @@ async fn renew(
     })?;
 
     // Read the existing cert (if any) so we can send it as the ARI replaces
-    // hint. Missing or unreadable is fine — the renewal just becomes a
+    // hint. Missing or unreadable is fine - the renewal just becomes a
     // fresh issuance from the CA's perspective.
     let cert_path = format!("/etc/dockpanel/ssl/{domain}/fullchain.pem");
     let replaces_pem = tokio::fs::read_to_string(&cert_path).await.ok();
@@ -436,10 +436,10 @@ async fn renew(
     // The renewal itself never needs the rebuild: `provision_cert` overwrites
     // fullchain.pem and privkey.pem inside the same `/etc/dockpanel/ssl/{domain}`
     // the existing vhost already names, so the paths did not move. The rebuild
-    // exists to pick up config changes made since the original provision — which
+    // exists to pick up config changes made since the original provision - which
     // is only meaningful for a domain the panel holds a config FOR.
     //
-    // A Compose stack — or a Docker app — is the domain it isn't. Its acme vhost
+    // A Compose stack - or a Docker app - is the domain it isn't. Its acme vhost
     // is a proxy whose published port is derived HERE, from the compose file or
     // the container, and the panel has no row to send: renewing it from an
     // invented `SiteConfig` would overwrite a working proxy with one carrying
@@ -484,12 +484,12 @@ async fn renew(
             }
         }
         // Nothing was re-rendered, so there is no canonical URL to report having
-        // moved either — `canonical` stays None rather than being invented.
+        // moved either - `canonical` stays None rather than being invented.
         //
         // And a reload that fails is NOT a failed renewal. The certificate is
         // already written; answering with an error would have the panel record
         // the renewal as failed and order a replacement from the CA on its next
-        // scan — burning rate limit every week over an nginx that needs one
+        // scan - burning rate limit every week over an nginx that needs one
         // `reload`, and never fixing the reload. A warning is the whole remedy
         // this door owes.
         None => {
@@ -509,7 +509,7 @@ async fn renew(
     })))
 }
 
-/// GET /ssl/profiles — List ACME profiles advertised by the CA.
+/// GET /ssl/profiles - List ACME profiles advertised by the CA.
 async fn profiles(
     axum::extract::Query(q): axum::extract::Query<ProfilesQuery>,
 ) -> Result<Json<Vec<ssl::ProfileInfo>>, (StatusCode, Json<serde_json::Value>)> {
@@ -532,7 +532,7 @@ struct AriQuery {
     email: String,
 }
 
-/// GET /ssl/{domain}/renewal-info — Fetch the ARI suggestion for a cert.
+/// GET /ssl/{domain}/renewal-info - Fetch the ARI suggestion for a cert.
 /// Always returns JSON. `suggestion: null` means the CA doesn't advertise
 /// ARI or the cert couldn't be located on disk.
 async fn renewal_info(
@@ -558,11 +558,11 @@ async fn renewal_info(
     Ok(Json(serde_json::json!({ "suggestion": suggestion })))
 }
 
-/// DELETE /ssl/{domain} — Delete an SSL certificate from disk.
+/// DELETE /ssl/{domain} - Delete an SSL certificate from disk.
 ///
 /// Certificates issued via instant_acme aren't tracked by certbot, so we do
 /// a pure filesystem teardown. Revocation (ACME revokeCert) isn't performed
-/// — with 45-day and 6-day certs in play, revocation is moot; the cert
+/// - with 45-day and 6-day certs in play, revocation is moot; the cert
 /// expires quickly on its own and stapled OCSP is going away.
 async fn revoke(
     Path(domain): Path<String>,
@@ -583,7 +583,7 @@ async fn revoke(
     if std::path::Path::new(&ssl_dir).exists() {
         if crate::services::ownership::cert_dir_in_use_elsewhere(&domain) {
             tracing::warn!(
-                "Leaving {ssl_dir} in place — another vhost still points at it \
+                "Leaving {ssl_dir} in place - another vhost still points at it \
                  (a shared wildcard). Removing it would make `nginx -t` fail for \
                  that site and leave nginx down at the next restart."
             );
@@ -601,8 +601,8 @@ async fn revoke(
     // --non-interactive`, described as "best-effort cleanup for legacy certs
     // migrated from v2.7.x".
     //
-    // Neither tree issues through certbot at HEAD — provisioning is instant_acme
-    // into /etc/dockpanel/ssl, above — so on any install newer than v2.7.x every
+    // Neither tree issues through certbot at HEAD - provisioning is instant_acme
+    // into /etc/dockpanel/ssl, above - so on any install newer than v2.7.x every
     // lineage this could name was created by the OPERATOR, out of band, and
     // nothing distinguished the two cases. A certbot lineage also carries all
     // its SANs, so deleting the one named `example.com` took `www.` and `mail.`
@@ -613,7 +613,7 @@ async fn revoke(
     if std::path::Path::new(&renewal_conf).exists() {
         tracing::warn!(
             "A certbot lineage named {domain} exists at {renewal_conf} and was NOT \
-             touched — the panel did not issue it. Remove it with `certbot delete \
+             touched - the panel did not issue it. Remove it with `certbot delete \
              --cert-name {domain}` if it really is stale."
         );
     }
@@ -636,13 +636,13 @@ struct Dns01ProvisionRequest {
     #[serde(default)]
     replaces_pem: Option<String>,
     /// Order even over a certificate this product demonstrably did not issue.
-    /// ⛔ Defaults to FALSE, which is what makes an older panel — and any caller
-    /// that never learned to ask — fail closed at the writer.
+    /// ⛔ Defaults to FALSE, which is what makes an older panel - and any caller
+    /// that never learned to ask - fail closed at the writer.
     #[serde(default)]
     force: bool,
 }
 
-/// POST /ssl/provision-dns01/{domain} — Provision cert via DNS-01 (Cloudflare).
+/// POST /ssl/provision-dns01/{domain} - Provision cert via DNS-01 (Cloudflare).
 async fn provision_dns01(
     State(state): State<AppState>,
     Path(domain): Path<String>,
@@ -758,7 +758,7 @@ mod renew_request_tests {
     use super::*;
 
     // The absence of `runtime` is a cross-crate contract, so this is the panel's
-    // stack payload byte for byte — an `email` and nothing else. Written to fail
+    // stack payload byte for byte - an `email` and nothing else. Written to fail
     // if a future edit makes the field required again, which would 422 every
     // stack renewal the scanner attempts, weekly, on every install.
     #[test]
@@ -768,7 +768,7 @@ mod renew_request_tests {
 
         assert_eq!(body.email, "ops@example.com");
         assert!(body.runtime.is_none(), "absent runtime must stay absent");
-        // The rest of the vhost description is absent with it — there is nothing
+        // The rest of the vhost description is absent with it - there is nothing
         // here a SiteConfig could have been built from.
         assert!(body.root.is_none());
         assert!(body.proxy_port.is_none());

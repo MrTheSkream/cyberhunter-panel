@@ -3,15 +3,15 @@ import { FIELD_GUIDANCE, type FieldGuidanceId } from "../content/guidance.genera
 
 // The passive tier of the guidance layer.
 //
-// `Prerequisite.tsx` renders the two loud tiers — the amber callout and the red
-// gate — from PrereqResults the backend computes. This renders the quiet one:
+// `Prerequisite.tsx` renders the two loud tiers - the amber callout and the red
+// gate - from PrereqResults the backend computes. This renders the quiet one:
 // the line under a field, and the longer explanation behind its (i).
 //
 // The three are one content system, not three (brief §3.9). Every string here
 // comes from `content/guidance.generated.ts`, which is emitted from the same
 // Rust registry the callouts are rendered from, so a field's calm explanation
 // and the loud version of the same concern cannot describe different products.
-// That file is generated — edit `services/prerequisites/copy.rs` instead, and a
+// That file is generated - edit `services/prerequisites/copy.rs` instead, and a
 // backend test will fail until it is regenerated.
 
 /**
@@ -42,7 +42,7 @@ export function FieldHelp({ id, className = "" }: { id: FieldGuidanceId; classNa
  * line is rendered by something else.
  *
  * Click, not hover. Hover tooltips are unreachable on a touch screen and
- * unreadable to anyone who needs more than a second with the text — and this
+ * unreadable to anyone who needs more than a second with the text - and this
  * content exists precisely for the person who is not sure.
  */
 export function InfoTip({ id, className = "" }: { id: FieldGuidanceId; className?: string }) {
@@ -57,7 +57,7 @@ export function InfoTip({ id, className = "" }: { id: FieldGuidanceId; className
   //
   // Several of these (i)s sit on the right-hand column of a two-column form or
   // inside a narrow modal, where a fixed left-aligned 18rem panel is simply cut
-  // off — help text the user cannot finish reading is the same defect as help
+  // off - help text the user cannot finish reading is the same defect as help
   // text that isn't there. Measured on open rather than guessed from the layout,
   // because the same component is used in both columns.
   useLayoutEffect(() => {

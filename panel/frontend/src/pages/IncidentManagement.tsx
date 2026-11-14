@@ -356,7 +356,7 @@ export default function IncidentManagement() {
                     <p className="text-sm text-dark-50 font-mono">{inc.title}</p>
                     <p className="text-xs text-dark-300 font-mono mt-1">
                       Started {timeAgo(inc.started_at)}
-                      {inc.resolved_at && <> — resolved {timeAgo(inc.resolved_at)}</>}
+                      {inc.resolved_at && <> - resolved {timeAgo(inc.resolved_at)}</>}
                     </p>
                   </div>
                   <div className="flex gap-2">

@@ -4,7 +4,7 @@ A filesystem is above the configured threshold (default 85%) and trending toward
 
 ## Why this fired
 
-The agent samples `df` every minute. Disk-full is uniquely bad — postgres halts, nginx can't write logs, builds fail, panel can't write its own audit log. Catching it at 85% gives time to remediate before that cascade.
+The agent samples `df` every minute. Disk-full is uniquely bad - postgres halts, nginx can't write logs, builds fail, panel can't write its own audit log. Catching it at 85% gives time to remediate before that cascade.
 
 ## First check
 
@@ -15,7 +15,7 @@ The agent samples `df` every minute. Disk-full is uniquely bad — postgres halt
    du -h --max-depth=1 / 2>/dev/null | sort -h | tail -10
    du -h --max-depth=1 /var | sort -h | tail -10
    ```
-3. The panel auto-healer can clear `/tmp` and rotate logs — check **System → Auto-healer → Recent actions** before manual cleanup.
+3. The panel auto-healer can clear `/tmp` and rotate logs - check **System → Auto-healer → Recent actions** before manual cleanup.
 
 ## Common causes
 
@@ -28,4 +28,4 @@ The agent samples `df` every minute. Disk-full is uniquely bad — postgres halt
 
 ## Escalation
 
-Wake a human at 95% — that's the cliff where postgres refuses writes and the cascade starts. Prefer expanding the volume to deleting customer data. Ad-hoc deletion of files you don't fully understand is how restoration days happen.
+Wake a human at 95% - that's the cliff where postgres refuses writes and the cascade starts. Prefer expanding the volume to deleting customer data. Ad-hoc deletion of files you don't fully understand is how restoration days happen.

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# client-account-door-pin-e2e.sh — s325
+# client-account-door-pin-e2e.sh - s325
 #
 # ONE PROPERTY: a person can reach their own account, whatever their role.
 #
@@ -7,7 +7,7 @@
 #       Password change, 2FA enrolment, passkeys, sessions and API keys all lived
 #       on `/settings`, whose nav row is `adminOnly`, so `user`, `client` and
 #       `reseller` accounts had no entrance to any of them. Every endpoint behind
-#       them was already `AuthUser` and already scoped to the caller's own id —
+#       them was already `AuthUser` and already scoped to the caller's own id -
 #       the capability shipped long ago and was simply unreachable.
 #
 #   §B  THE DOOR OPENS ON ALL SIX SELF-SERVICE SURFACES.
@@ -18,7 +18,7 @@
 #
 #   §D  THE 2FA BANNER LEADS SOMEWHERE THE WARNED ROLE CAN GO.
 #       All four layouts told a non-admin "Two-factor authentication is required"
-#       and linked them to `/settings` — the one page their nav does not carry.
+#       and linked them to `/settings` - the one page their nav does not carry.
 #
 #   §E  A LOST AUTHENTICATOR IS RECOVERABLE.
 #       `twofa_disable` accepted ONLY `check_current`, so the recovery codes let
@@ -28,10 +28,10 @@
 #
 #   §F  A CONTROL A ROLE CANNOT USE IS NOT SHOWN TO IT.
 #       Two rows inside the account tab asserted "admin only" in their own text
-#       with no role check behind it, and Notifications — a page every role sees —
+#       with no role check behind it, and Notifications - a page every role sees -
 #       linked everyone to `/settings`.
 #
-#   §G  CONTEXT — arms that must be green at BOTH tags, so a harness measuring
+#   §G  CONTEXT - arms that must be green at BOTH tags, so a harness measuring
 #       nothing cannot read as a pass. Each owes a mutation (s324 #292).
 #
 # EVERY ARM IN §A–§F WAS RUN AGAINST v2.82.0 AND REQUIRED TO BE RED.
@@ -41,7 +41,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
 echo
 echo "=============================================="
-echo "  client account door — source pins (s325)"
+echo "  client account door - source pins (s325)"
 echo "=============================================="
 echo
 
@@ -50,7 +50,7 @@ ok()  { PASS=$((PASS+1)); printf '  \033[32m✓\033[0m %s\n' "$1"; }
 bad() { FAIL=$((FAIL+1)); printf '  \033[31m✗\033[0m %s\n' "$1"; }
 
 # Strip comments before matching, or every arm can be satisfied by the prose that
-# NARRATES it — and this file's own header spells each defect, as do the comments
+# NARRATES it - and this file's own header spells each defect, as do the comments
 # this ship added to the very files it pins. (s294 stripper: a block comment is
 # recognised only where one is actually written.)
 code() {
@@ -83,11 +83,11 @@ fnbody() {
 }
 
 # A JSX conditional block: from the line matching $2 to the `)}` that closes it.
-# NOT `grep -A n` — a fixed window is the p40 trap and would read the next block.
+# NOT `grep -A n` - a fixed window is the p40 trap and would read the next block.
 # ⚠ Anchor on the RENDER CONDITION (`twoFaEnforced && !`), never the bare name:
 # every one of these layouts also spells `twoFaEnforced` in its `useLayoutState`
 # destructuring ~50 lines earlier, so a bare-name anchor opened the block at the
-# import list and ran to an unrelated `)}`. That is s324 #290 in a JSX costume —
+# import list and ran to an unrelated `)}`. That is s324 #290 in a JSX costume -
 # the first draft of this arm went red on a tree that was already correct.
 jsxblock() {
   awk -v pat="$2" '
@@ -111,7 +111,7 @@ AUTH=panel/backend/src/routes/auth.rs
 
 # Subjects that exist at BOTH tags. If one of these is gone the suite is pointed
 # at something that is not this repo, and every arm below would be vacuous.
-# `$ACCOUNT` and `$CARDS` are deliberately NOT in this list — they are what this
+# `$ACCOUNT` and `$CARDS` are deliberately NOT in this list - they are what this
 # ship adds, and their absence must red an arm rather than abort the run.
 for f in "$NAV" "$MAIN" "$SETTINGS" "$NOTIF" "$PALETTE" "$AUTH"; do
   [ -f "$f" ] || { echo "  MISSING SUBJECT: $f"; exit 1; }
@@ -133,7 +133,7 @@ ROW=$(navrow /account "$NAV_C")
 if [ -n "$ROW" ]; then
   ok "A1 navItems declares a /account row"
 else
-  bad "A1 no /account nav row — the page is unreachable from the sidebar"
+  bad "A1 no /account nav row - the page is unreachable from the sidebar"
 fi
 
 # Read the ROW's own text, not the file's. The file is full of `adminOnly`.
@@ -145,7 +145,7 @@ fi
 if [ -n "$ROW" ] && ! has "$ROW" 'adminOnly' && ! has "$ROW" 'resellerVisible' && ! has "$ROW" 'resellerOnly'; then
   ok "A2 the /account row carries no restriction flag"
 else
-  bad "A2 the /account row is restricted — isNavVisible hides it from the roles it exists for"
+  bad "A2 the /account row is restricted - isNavVisible hides it from the roles it exists for"
 fi
 
 # The control: /settings must STILL be adminOnly, or A2 proves nothing about
@@ -153,13 +153,13 @@ fi
 if has "$(navrow /settings "$NAV_C")" 'adminOnly'; then
   ok "A3 /settings is still adminOnly (so A2 is a real distinction)"
 else
-  bad "A3 /settings is no longer adminOnly — A2 no longer distinguishes anything"
+  bad "A3 /settings is no longer adminOnly - A2 no longer distinguishes anything"
 fi
 
 if has "$(flat "$MAIN_C")" 'path="/account" element=\{<Account'; then
   ok "A4 main.tsx routes /account to the Account page"
 else
-  bad "A4 no /account route — the nav row leads to the catch-all redirect"
+  bad "A4 no /account route - the nav row leads to the catch-all redirect"
 fi
 
 if has "$(flat "$PALETTE_C")" 'path: "/account"'; then
@@ -189,7 +189,7 @@ echo "── §C the Settings tab and the page share ONE implementation ──"
 if has "$(flat "$SETTINGS_C")" 'from "../components/AccountSecurity"'; then
   ok "C1 Settings imports the shared cards"
 else
-  bad "C1 Settings does not import the cards — the account tab is a second copy"
+  bad "C1 Settings does not import the cards - the account tab is a second copy"
 fi
 
 # Per-ENDPOINT, not two file totals. Each self-service call must live in the
@@ -200,7 +200,7 @@ for ep in '/auth/2fa/setup' '/auth/2fa/disable' '/auth/passkey/register/begin' '
   if [ "$in_cards" -ge 1 ] && [ "$in_settings" -eq 0 ]; then
     ok "C-$ep is called once, from the shared card"
   else
-    bad "C-$ep cards=$in_cards settings=$in_settings — duplicated or lost"
+    bad "C-$ep cards=$in_cards settings=$in_settings - duplicated or lost"
   fi
 done
 
@@ -211,7 +211,7 @@ echo "── §D the 2FA banner links to a page a non-admin can open ──"
 for L in CommandLayout GlassLayout AtlasLayout NexusLayout; do
   BLOCK=$(jsxblock "$(code "panel/frontend/src/components/$L.tsx")" 'twoFaEnforced && !')
   if [ -z "$BLOCK" ]; then
-    bad "D-$L has no twoFaEnforced block — the banner is gone, not fixed"
+    bad "D-$L has no twoFaEnforced block - the banner is gone, not fixed"
   elif has "$BLOCK" '/account' && ! has "$BLOCK" '/settings'; then
     ok "D-$L sends 'Set Up 2FA' to /account"
   else
@@ -225,12 +225,12 @@ echo "── §E the recovery codes can actually turn 2FA off ──"
 
 # `try_recovery_code` is ALSO called by the login path, so a file-wide grep
 # passes on a tree where `twofa_disable` never learned about it. Scope to the
-# handler's OWN body — the s324 #292 lesson, applied before it could bite.
+# handler's OWN body - the s324 #292 lesson, applied before it could bite.
 DISABLE_BODY=$(fnbody "$AUTH_C" "twofa_disable")
 if has "$DISABLE_BODY" 'try_recovery_code'; then
   ok "E1 twofa_disable accepts a recovery code"
 else
-  bad "E1 twofa_disable takes only a live TOTP code — a lost device is a dead end"
+  bad "E1 twofa_disable takes only a live TOTP code - a lost device is a dead end"
 fi
 
 # The control for E1: the login path must still have its own call, or `fnbody`
@@ -238,24 +238,24 @@ fi
 if has "$(fnbody "$AUTH_C" "twofa_verify")" 'try_recovery_code'; then
   ok "E2 twofa_verify still accepts one too (fnbody is discriminating)"
 else
-  bad "E2 twofa_verify lost its recovery branch — or fnbody is broken"
+  bad "E2 twofa_verify lost its recovery branch - or fnbody is broken"
 fi
 
 # The UI half: the code field must admit an 8-character hex recovery code.
 #
 # ⚠ Re-anchored at s326. This read `grep -A3` on the STATE NAME, and the field is
-# no longer named for disabling — it now serves the regenerate button as well, and
+# no longer named for disabling - it now serves the regenerate button as well, and
 # a name is spelled at the declaration, at every use site, and in any comment that
 # mentions it, so the slice it opened was never guaranteed to be the input. The
 # property this arm is about lives on exactly one line: the sanitiser in the
 # field's own onChange. Anchor there.
 FIELD_SANITISER=$(flat "$(grep -F 'e.target.value.replace(/[^0-9a-fA-F]/g' <<< "$CARDS_C")")
-# ⚠ `grep -oE '[0-9]+' | head -1` returns the ZERO in `slice(0, …` — the first
+# ⚠ `grep -oE '[0-9]+' | head -1` returns the ZERO in `slice(0, …` - the first
 # draft of this line read a cap of 0 and reported a correct field as too narrow.
 E3_CAP=$(sed -nE 's/.*slice\(0, ([0-9]+)\).*/\1/p' <<< "$FIELD_SANITISER" | head -1)
 # ⚠ The literal width is deliberately NOT asserted here any more. s326 widened
 # recovery codes from 4 to 8 random bytes, so a `slice(0, 8)` assertion would now
-# be pinning the OLD width — an arm demanding the field be too narrow to type the
+# be pinning the OLD width - an arm demanding the field be too narrow to type the
 # code the backend issues, which is the very defect this arm was written against.
 # What belongs here is the property s325 fixed: hex is not stripped and the cap
 # clears a recovery code. Keeping the cap in step with the GENERATOR is a
@@ -263,12 +263,12 @@ E3_CAP=$(sed -nE 's/.*slice\(0, ([0-9]+)\).*/\1/p' <<< "$FIELD_SANITISER" | head
 if [ -n "$E3_CAP" ] && [ "$E3_CAP" -ge 8 ] && ! has "$FIELD_SANITISER" 'replace\(/.D/g'; then
   ok "E3 the code field admits a hex recovery code (cap $E3_CAP)"
 else
-  bad "E3 the code field still strips non-digits or caps too narrow — the code cannot be typed"
+  bad "E3 the code field still strips non-digits or caps too narrow - the code cannot be typed"
 fi
 
 # The recovery codes must render where the user can still SEE them. At v2.82.0
 # the block sat INSIDE the `twoFaSetup ?` branch while the enable handler ran
-# `setTwoFaSetup(null)` in the same breath — so the branch went false and the
+# `setTwoFaSetup(null)` in the same breath - so the branch went false and the
 # codes were never drawn, under a toast reading "2FA enabled! Save your recovery
 # codes." Nobody enrolling ever received the one thing that gets them back in.
 # Structural, not textual: assert the block is NOT inside the enabled/setup
@@ -278,7 +278,7 @@ TERNARY=$(awk '
   s { print; if ($0 ~ /^[[:space:]]{8}\)\}[[:space:]]*$/) exit }
 ' <<< "$CARDS_C")
 if has "$CARDS_C" 'recoveryCodes.length > 0' && ! has "$TERNARY" 'recoveryCodes.length > 0'; then
-  ok "E4 the recovery codes render outside the setup branch — enrolling shows them"
+  ok "E4 the recovery codes render outside the setup branch - enrolling shows them"
 else
   bad "E4 the recovery codes are nested in a branch that is false by the time they exist"
 fi
@@ -291,7 +291,7 @@ echo "── §F no control is offered to a role that cannot use it ──"
 # would be satisfied by the three siblings that were always gated.
 # ⚠ The marker must be unique to the RENDERED block. Keying "Panel-Wide Sessions"
 # on `revoke_sessions` matched the `case "revoke_sessions":` arm in
-# `executeConfirm` ~1100 lines earlier and read a slice with no gate in it — the
+# `executeConfirm` ~1100 lines earlier and read a slice with no gate in it - the
 # arm went red over a block that is correctly gated. Each block's own heading is
 # the one string that names it exactly once.
 for pair in '2FA Enforcement:>2FA Enforcement<' 'Panel-Wide Sessions:>Panel-Wide Sessions<'; do
@@ -313,16 +313,16 @@ fi
 
 # ── §G controls ──────────────────────────────────────────────────────────────
 echo
-echo "── §G context (green at both tags — each owes a mutation) ──"
+echo "── §G context (green at both tags - each owes a mutation) ──"
 
 if [ "$(grep -c 'to: "/' <<< "$NAV_C")" -ge 20 ]; then
-  ok "G1 navItems still parses as a registry ($(grep -c 'to: "/' <<< "$NAV_C") rows) — §A is non-vacuous"
+  ok "G1 navItems still parses as a registry ($(grep -c 'to: "/' <<< "$NAV_C") rows) - §A is non-vacuous"
 else
-  bad "G1 navItems yielded almost no rows — the reader is broken"
+  bad "G1 navItems yielded almost no rows - the reader is broken"
 fi
 
 if [ "${#CARDS_C}" -gt 8000 ]; then
-  ok "G2 the shared card module read $((${#CARDS_C}/1024))KB — §B and §C are non-vacuous"
+  ok "G2 the shared card module read $((${#CARDS_C}/1024))KB - §B and §C are non-vacuous"
 else
   bad "G2 AccountSecurity.tsx is implausibly small (${#CARDS_C} bytes)"
 fi
@@ -333,7 +333,7 @@ fi
 if has "$AUTH_C" 'pub async fn twofa_disable\('; then
   ok "G3 twofa_disable still exists (control for §E)"
 else
-  bad "G3 twofa_disable is gone — §E is measuring nothing"
+  bad "G3 twofa_disable is gone - §E is measuring nothing"
 fi
 
 echo

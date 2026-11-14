@@ -31,7 +31,7 @@ pub struct User {
 
 /// Phase 4 W3: rotation = ordered list of user IDs × cadence_days.
 /// "Who's on-call at time T" is computed via cadence math against
-/// `anchor_at` — no calendar, no per-day overrides.
+/// `anchor_at` - no calendar, no per-day overrides.
 ///
 /// Currently route handlers serialize ad-hoc DTOs that augment this with
 /// resolved-member info, so this struct sits unused until the next caller
@@ -68,10 +68,10 @@ pub struct EscalationPolicy {
 /// when the alert engine evaluates the chain.
 ///
 /// `route` is a discriminated string. Four valid shapes:
-///   - `"on_call_schedule:<uuid>"` — resolve the schedule, page the current on-call user's channels.
-///   - `"user:<uuid>"` — page a specific user's channels regardless of rotation.
-///   - `"all_channels"` — fan out to every channel on the alert's owning `alert_rules` row.
-///   - `"webhook:<url>"` — direct outbound webhook bypass.
+///   - `"on_call_schedule:<uuid>"` - resolve the schedule, page the current on-call user's channels.
+///   - `"user:<uuid>"` - page a specific user's channels regardless of rotation.
+///   - `"all_channels"` - fan out to every channel on the alert's owning `alert_rules` row.
+///   - `"webhook:<url>"` - direct outbound webhook bypass.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EscalationStep {
     pub after_minutes: i32,
@@ -97,13 +97,13 @@ pub struct Site {
     pub ssl_renewal_at: Option<DateTime<Utc>>,
     pub ssl_renewal_checked_at: Option<DateTime<Utc>>,
     /// Which ACME challenge issued the installed certificate: `http-01` or
-    /// `dns-01`. NULL means "not recorded" — a row that predates the provenance
+    /// `dns-01`. NULL means "not recorded" - a row that predates the provenance
     /// migration and that the activity-log backfill could not prove. Renewal
     /// treats NULL as unknown and never as `http-01`; see
     /// [`crate::helpers::renewal_plan`].
     pub ssl_challenge: Option<String>,
     /// The name the certificate was actually ORDERED for. Equal to `domain`
-    /// except for a wildcard, where it is the Cloudflare zone — the certificate
+    /// except for a wildcard, where it is the Cloudflare zone - the certificate
     /// covers `{subject}` and `*.{subject}`, never `*.{domain}`.
     pub ssl_cert_subject: Option<String>,
     /// Three-state on purpose: `Some(true)` wildcard, `Some(false)` not, `None`
@@ -142,9 +142,9 @@ pub struct Site {
     /// disable. Cleared by a manual re-enable, a quota raise/removal, or a new
     /// calendar month.
     pub bandwidth_suspended_at: Option<DateTime<Utc>>,
-    /// Opt-in per site. Enabling it is the one moment DockPanel restructures an
+    /// Opt-in per site. Enabling it is the one moment CyberHunter - Panel restructures an
     /// existing site's docroot (content moves under a writable subdirectory so
-    /// the OpenSSH chroot boundary can stay root-owned) — see
+    /// the OpenSSH chroot boundary can stay root-owned) - see
     /// `services::sftp_accounts` on the agent.
     pub sftp_enabled: bool,
     pub sftp_uid: Option<i32>,
@@ -155,7 +155,7 @@ pub struct Site {
     /// primary address (the agent's `detect_bind_ip`), which is every site that
     /// predates multi-IP.
     pub ip_id: Option<Uuid>,
-    /// The address `ip_id` names, for the API response only — NOT a column, so
+    /// The address `ip_id` names, for the API response only - NOT a column, so
     /// `SELECT *` leaves it `None`. Filled by
     /// [`crate::services::server_ips::fill_bind_ip`] in the handlers that return a
     /// site. The vhost body never reads this field: `build_nginx_body` takes the
@@ -231,7 +231,7 @@ pub struct FleetUpdateRun {
 }
 
 /// Phase 4 W4: update channel selector. Newtype around String so validation
-/// is centralized — match arm rejects any value outside `stable | candidate
+/// is centralized - match arm rejects any value outside `stable | candidate
 /// | hold`. Stored in `settings.update_channel` (single row).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateChannel(pub String);

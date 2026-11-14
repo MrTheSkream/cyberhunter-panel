@@ -15,8 +15,8 @@
 # one whose credentials are on disk.
 #
 # Why these are pins and not only unit tests: the unit tests in
-# `panel/agent/src/services/ssl.rs` cover `persist_account_credentials` — the
-# CROSS-PROCESS half — directly, and 3/3 mutations kill them. They cannot see
+# `panel/agent/src/services/ssl.rs` cover `persist_account_credentials` - the
+# CROSS-PROCESS half - directly, and 3/3 mutations kill them. They cannot see
 # the IN-PROCESS half, because the serialising lock lives in a function whose
 # other half is a round trip to Let's Encrypt. §A is that half.
 #
@@ -24,7 +24,7 @@
 # FLOORED: an `fnbody` whose anchor stops matching yields an EMPTY subject and
 # every `hasnt` beneath it then passes green for a file that no longer contains
 # the code at all. §Z plants each defect back into a copy and asserts the
-# matching arm goes RED — the only execution an arm's failure branch ever gets
+# matching arm goes RED - the only execution an arm's failure branch ever gets
 # before it matters.
 #
 # Static analysis over source text: offline, deterministic, same verdict on an
@@ -35,7 +35,7 @@ cd "$(dirname "$0")/.." || exit 1
 
 PASS=0; FAIL=0
 ok()  { printf '  \033[32m✓\033[0m %s\n' "$1"; PASS=$((PASS+1)); }
-bad() { printf '  \033[31m✗\033[0m %s — %s\n' "$1" "$2"; FAIL=$((FAIL+1)); }
+bad() { printf '  \033[31m✗\033[0m %s - %s\n' "$1" "$2"; FAIL=$((FAIL+1)); }
 eq()  { [ "$2" = "$3" ] && ok "$1" || bad "$1" "expected '$3', got '$2'"; }
 has() { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "missing: $3" ;; esac; }
 hasnt(){ case "$2" in *"$3"*) bad "$1" "present but must not be: $3" ;; *) ok "$1" ;; esac; }
@@ -73,15 +73,15 @@ run_arms() {
   NL_LOAD=$(printf '%s' "$LOAD" | wc -l | tr -d ' ')
   NL_PERSIST=$(printf '%s' "$PERSIST" | wc -l | tr -d ' ')
   if [ "$NL_LOAD" -lt 15 ]; then
-    bad "A0 subject floor" "load_or_create_account body is $NL_LOAD lines — the anchor stopped matching, every arm below is vacuous"
+    bad "A0 subject floor" "load_or_create_account body is $NL_LOAD lines - the anchor stopped matching, every arm below is vacuous"
     return
   fi
-  ok "A0 subject floor — load_or_create_account body is $NL_LOAD lines"
+  ok "A0 subject floor - load_or_create_account body is $NL_LOAD lines"
   if [ "$NL_PERSIST" -lt 10 ]; then
-    bad "B0 subject floor" "persist_account_credentials body is $NL_PERSIST lines — anchor stopped matching"
+    bad "B0 subject floor" "persist_account_credentials body is $NL_PERSIST lines - anchor stopped matching"
     return
   fi
-  ok "B0 subject floor — persist_account_credentials body is $NL_PERSIST lines"
+  ok "B0 subject floor - persist_account_credentials body is $NL_PERSIST lines"
 
   local LOADQ PERSISTQ
   LOADQ=$(printf '%s' "$LOAD" | squash)
@@ -93,7 +93,7 @@ run_arms() {
 
   # A3 is the one that matters most and is the easiest to get wrong: a lock
   # taken AFTER the existence check serialises nothing. Compare POSITIONS, not
-  # presence — presence is A1's claim and passes for the broken ordering too.
+  # presence - presence is A1's claim and passes for the broken ordering too.
   local LOCK_AT READ_AT
   LOCK_AT=$(printf '%s\n' "$LOAD" | $G -n 'ACCOUNT_INIT.lock()' | head -1 | cut -d: -f1)
   READ_AT=$(printf '%s\n' "$LOAD" | $G -n 'stored_account()' | head -1 | cut -d: -f1)
@@ -106,7 +106,7 @@ run_arms() {
   hasnt "A4 the clobbering write is gone from the load path" "$LOADQ" "tokio::fs::write(ACME_ACCOUNT_PATH"
   has   "A5 persistence goes through the atomic writer" "$LOADQ" "persist_account_credentials(ACME_ACCOUNT_PATH"
   # A6: losing the cross-process race must RE-READ. Returning the minted account
-  # is the defect wearing the fix's clothes — it compiles, it logs, and it
+  # is the defect wearing the fix's clothes - it compiles, it logs, and it
   # issues certificates under a key that is nowhere on disk.
   has "A6 losing the race adopts the STORED account, not the minted one" "$LOADQ" "Persisted::Adopted=>{"
   local ADOPT_ARM
@@ -136,8 +136,8 @@ run_arms "$PRODSRC"
 # ── Z: every arm above has now printed its own failure at least once ─────────
 #
 # A green arm is a claim, not a measurement. Each mutation below is the real
-# defect — the shape the code actually had, or the shape a plausible "cleanup"
-# would produce — and the arm named beside it MUST go red. An arm that stays
+# defect - the shape the code actually had, or the shape a plausible "cleanup"
+# would produce - and the arm named beside it MUST go red. An arm that stays
 # green here is decoration and must be deleted or rewritten.
 echo
 echo "── Z: plant each defect back and watch the matching arm go red ──"
@@ -147,13 +147,13 @@ mutate_and_expect() {
   local copy="$TMP/mut.rs"
   "$@" < "$PRODSRC" > "$copy"
   if cmp -s "$copy" "$PRODSRC"; then
-    bad "Z:$label" "the mutation changed NOTHING — the pattern no longer matches, so this check is vacuous"
+    bad "Z:$label" "the mutation changed NOTHING - the pattern no longer matches, so this check is vacuous"
     return
   fi
   local out sp sf
   sp=$PASS; sf=$FAIL
   # ⚠ Strip ANSI before matching. The arms colour the ✗, so a literal "✗ A1"
-  # never matches — the reset sequence sits between the mark and the name. The
+  # never matches - the reset sequence sits between the mark and the name. The
   # first draft of this harness reported all six arms as unfalsifiable when
   # every one of them had fired correctly.
   out=$(PASS=0; FAIL=0; run_arms "$copy" 2>&1 | sed -E 's/\x1b\[[0-9;]*m//g')
@@ -164,9 +164,9 @@ mutate_and_expect() {
   fi
   # ⛔ An arm that goes red whenever ANY sibling does has not been shown to test
   # its own claim. Where a mutation names an arm that must STAY GREEN, assert it
-  # — that is what separates "A3 fired" from "A3 is independent of A1".
+  # - that is what separates "A3 fired" from "A3 is independent of A1".
   if [ -n "${MUST_STAY_GREEN:-}" ] && ! printf '%s' "$out" | $G -qE "✓ ${MUST_STAY_GREEN}( |\$)"; then
-    bad "Z:$label" "$expect_arm went red, but so did ${MUST_STAY_GREEN}, which had to stay green — the mutation is too broad to attribute"
+    bad "Z:$label" "$expect_arm went red, but so did ${MUST_STAY_GREEN}, which had to stay green - the mutation is too broad to attribute"
     return
   fi
   ok "Z:$label → $expect_arm went red${MUST_STAY_GREEN:+, $MUST_STAY_GREEN stayed green}"

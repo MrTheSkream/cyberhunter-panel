@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# DockPanel Quick Installer
+# CyberHunter - Panel Quick Installer
 # Usage: curl -sL https://dockpanel.dev/install.sh | bash
 #
 # Modes:
@@ -18,13 +18,13 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 echo ""
-echo -e "${GREEN}${BOLD}DockPanel Installer${NC}"
+echo -e "${GREEN}${BOLD}CyberHunter - Panel Installer${NC}"
 echo -e "  Free, self-hosted server management panel"
 echo ""
 
 # Check root
 if [ "$EUID" -ne 0 ]; then
-    echo -e "${RED}Error: Run as root — sudo bash or pipe to sudo bash${NC}"
+    echo -e "${RED}Error: Run as root - sudo bash or pipe to sudo bash${NC}"
     exit 1
 fi
 
@@ -58,7 +58,7 @@ if [ -d "$INSTALL_DIR/.git" ]; then
         exit 1
     fi
 else
-    echo -e "${GREEN}[+]${NC} Downloading DockPanel..."
+    echo -e "${GREEN}[+]${NC} Downloading CyberHunter - Panel..."
     rm -rf "$INSTALL_DIR"
     git clone --quiet --depth 1 -b "$VERSION" https://github.com/ovexro/dockpanel.git "$INSTALL_DIR"
 fi

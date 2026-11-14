@@ -1,11 +1,11 @@
-// Same shape as panel/cli/src/backend_client.rs — a second, independent client
+// Same shape as panel/cli/src/backend_client.rs - a second, independent client
 // talking to the panel API over loopback HTTP with a `dp_` key. Deliberately
 // NOT shared as a library between the two crates: they read different token
 // files (an MCP-originated action gets its own mintable, independently
 // revocable key from an operator's actual "MCP client" API key, rather than
 // reusing whatever the CLI happens to hold on the same box), and duplicating
 // ~60 lines is cheaper than introducing a shared internal crate for one
-// function's worth of logic. See routes/api_keys.rs (backend) — a
+// function's worth of logic. See routes/api_keys.rs (backend) - a
 // `dp_`-prefixed key, hashed the same way `agent.token` is, authenticated by
 // auth.rs's `AuthUser` extractor exactly like a session JWT.
 
@@ -23,7 +23,7 @@ pub fn load_token() -> Result<String, String> {
     let raw = std::fs::read_to_string(TOKEN_PATH).map_err(|_| not_configured())?;
     let token = raw.trim().to_string();
     // An empty (or whitespace-only) file reads as "present" to a bare
-    // read_to_string — without this check a leftover file from a reverted
+    // read_to_string - without this check a leftover file from a reverted
     // setup silently routes every tool call into a 401 instead of failing
     // with a clear "not configured" message.
     if token.is_empty() {
@@ -33,7 +33,7 @@ pub fn load_token() -> Result<String, String> {
 }
 
 /// Resolve the panel API's base URL from the SAME `LISTEN_ADDR` its own
-/// systemd unit's `EnvironmentFile=` feeds it — always in sync with what the
+/// systemd unit's `EnvironmentFile=` feeds it - always in sync with what the
 /// backend actually bound, no new operator config for the common single-box
 /// install. Mirrors `panel/cli/src/backend_client.rs::base_url` exactly.
 fn base_url() -> Result<String, String> {
@@ -42,13 +42,13 @@ fn base_url() -> Result<String, String> {
     let addr = env
         .lines()
         .find_map(|l| l.trim().strip_prefix("LISTEN_ADDR="))
-        .ok_or_else(|| format!("{API_ENV_PATH} has no LISTEN_ADDR — cannot reach the panel API"))?
+        .ok_or_else(|| format!("{API_ENV_PATH} has no LISTEN_ADDR - cannot reach the panel API"))?
         .trim();
     Ok(format!("http://{addr}"))
 }
 
 /// GET a panel API path and return the parsed JSON body. Read-only by
-/// construction — this is the only HTTP verb `dockpanel-mcp` v1 ever issues
+/// construction - this is the only HTTP verb `dockpanel-mcp` v1 ever issues
 /// against the panel API (see the design doc §3: zero mutating tools in v1).
 pub async fn get(path: &str, token: &str) -> Result<serde_json::Value, String> {
     let url = format!("{}{path}", base_url()?);

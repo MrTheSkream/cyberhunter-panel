@@ -7,7 +7,7 @@
 #       /etc/ssh/sshd_config, never following an `Include` directive into
 #       /etc/ssh/sshd_config.d/*.conf. OpenSSH's own rule is "the first
 #       obtained value wins", and the stock `Include` line ships BEFORE the
-#       main file's own commented defaults — live-verified on this exact box:
+#       main file's own commented defaults - live-verified on this exact box:
 #       GET /security/overview reported ssh_port:22 while sshd actually
 #       listened on 1571 (port.conf), and 50-cloud-init.conf silently
 #       overrode PasswordAuthentication the same way. A write through the
@@ -16,9 +16,9 @@
 #       to `ufw` unconditionally, even though get_firewall_status and
 #       change_ssh_port had already been fixed (s265) to detect firewalld.
 #       Live-verified 424/UFW_MISSING on this exact box (firewalld active,
-#       ufw not installed) — a first-class setup.sh target (RHEL family).
+#       ufw not installed) - a first-class setup.sh target (RHEL family).
 #   S3  get_login_audit() hardcoded /var/log/auth.log and swallowed a missing
-#       file into an empty Vec (Ok(vec![])) — indistinguishable from a
+#       file into an empty Vec (Ok(vec![])) - indistinguishable from a
 #       genuinely quiet RHEL host, which logs the same events to
 #       /var/log/secure instead. Two sibling hardcodes found in the same
 #       sweep: diagnostics.rs's brute-force scan (silently never fires on
@@ -26,7 +26,7 @@
 #   S4  Completeness critic, off the original menu: is_safe_hook_command
 #       (command_filter.rs, gates git-deploy post_deploy_cmd/pre_build_cmd at
 #       the sh -c sink in routes/git_build.rs::run_hook) was the one function
-#       in this file NOT routed through normalize_for_blocklist — executed
+#       in this file NOT routed through normalize_for_blocklist - executed
 #       proof: is_safe_hook_command("r'm' -rf /") returned true, and `sh -c
 #       "r'm' -rf /"` runs `rm -rf /`. The backend's independent copy,
 #       is_safe_shell_command (routes/mod.rs), had no normalization at all.
@@ -47,7 +47,7 @@ has()   { [ -n "$(code "$1" | grep -F -- "$2")" ]; }
 hasre() { [ -n "$(code "$1" | grep -E -- "$2")" ]; }
 
 # One named function's body, comment-stripped. NEVER pipe this straight into
-# `grep -q` — a producer this long can still be writing when `-q` closes the
+# `grep -q` - a producer this long can still be writing when `-q` closes the
 # read end on its first match, and under `pipefail` that SIGPIPE (not the
 # match) becomes the `if`'s exit status. `bodyhas`/`bodyhasre` avoid it the
 # same way `has`/`hasre` above do: grep without `-q` drains the pipe fully,
@@ -74,7 +74,7 @@ echo "── 1. S1: SSH config parsing/writing follows Include drop-ins ──"
 if has "$SEC_SVC" "fn linearized_sshd_lines"; then
   ok "security.rs linearizes sshd_config + its Includes before parsing/writing"
 else
-  bad "linearized_sshd_lines is gone — Include-blindness may be back"
+  bad "linearized_sshd_lines is gone - Include-blindness may be back"
 fi
 
 if has "$SEC_SVC" "fn parse_ssh_config_at"; then
@@ -86,13 +86,13 @@ fi
 if bodyhas "$SEC_SVC" "fn parse_ssh_config_at" "linearized_sshd_lines"; then
   ok "parse_ssh_config_at reads through the linearized (Include-aware) view"
 else
-  bad "parse_ssh_config_at no longer calls linearized_sshd_lines — regressed to single-file read"
+  bad "parse_ssh_config_at no longer calls linearized_sshd_lines - regressed to single-file read"
 fi
 
 if bodyhas "$SEC_SVC" "fn modify_sshd_config_at" "linearized_sshd_lines"; then
   ok "modify_sshd_config_at resolves the governing file via the linearized view before writing"
 else
-  bad "modify_sshd_config_at no longer resolves an Include-aware target — a write could silently miss the file that actually governs the key"
+  bad "modify_sshd_config_at no longer resolves an Include-aware target - a write could silently miss the file that actually governs the key"
 fi
 
 # The "first obtained value wins" precedence must actually be respected, not
@@ -100,7 +100,7 @@ fi
 if bodyhasre "$SEC_SVC" "fn parse_ssh_config_at" 'if !port_set|if !pw_set|if !root_set'; then
   ok "parse_ssh_config_at stops at the FIRST match per keyword (OpenSSH's own precedence)"
 else
-  bad "parse_ssh_config_at may take the LAST match instead of the first — inverts sshd's own precedence"
+  bad "parse_ssh_config_at may take the LAST match instead of the first - inverts sshd's own precedence"
 fi
 
 echo
@@ -109,7 +109,7 @@ echo "── 2. S2: firewall rule add/remove/block-port speak firewalld too ─�
 if bodyhas "$SEC_SVC" "pub async fn add_firewall_rule" "Firewall::Firewalld"; then
   ok "add_firewall_rule branches on the detected firewall"
 else
-  bad "add_firewall_rule no longer checks for firewalld — back to a ufw-only 424 on RHEL"
+  bad "add_firewall_rule no longer checks for firewalld - back to a ufw-only 424 on RHEL"
 fi
 
 if bodyhas "$SEC_SVC" "pub async fn remove_firewall_rule" "Firewall::Firewalld"; then
@@ -122,14 +122,14 @@ for fn in add_port remove_port remove_service rich_rule_spec add_rich_rule_raw r
   if has "$FIREWALL" "fn $fn"; then
     ok "firewall.rs exposes $fn"
   else
-    bad "firewall.rs is missing $fn — firewalld parity primitive lost"
+    bad "firewall.rs is missing $fn - firewalld parity primitive lost"
   fi
 done
 
 if has "$SEC_SVC" "fn firewalld_entries"; then
   ok "firewalld_status and remove_firewall_rule share one numbered entry list (services+ports+rich rules)"
 else
-  bad "firewalld_entries is gone — the numbers the Security page shows and the ones remove_firewall_rule resolves can drift apart again"
+  bad "firewalld_entries is gone - the numbers the Security page shows and the ones remove_firewall_rule resolves can drift apart again"
 fi
 
 echo
@@ -150,20 +150,20 @@ fi
 if bodyhasre "$SEC_SVC" "pub async fn get_login_audit" '\.map_err\('; then
   ok "get_login_audit propagates a read failure as an Err, not a silent empty Vec"
 else
-  bad "get_login_audit swallows a missing/unreadable log into Ok(vec![]) again — indistinguishable from a genuinely quiet host"
+  bad "get_login_audit swallows a missing/unreadable log into Ok(vec![]) again - indistinguishable from a genuinely quiet host"
 fi
 
 if bodyhas "$SEC_SVC" "pub async fn get_login_audit" "unwrap_or_default"; then
-  bad "get_login_audit still has an unwrap_or_default() fallback on the read — the silent-empty-success path may be back"
+  bad "get_login_audit still has an unwrap_or_default() fallback on the read - the silent-empty-success path may be back"
 else
   ok "get_login_audit has no silent unwrap_or_default() on the auth log read"
 fi
 
-# Two sibling hardcodes found in the same sweep — same fix, different files.
+# Two sibling hardcodes found in the same sweep - same fix, different files.
 if has "$DIAG" 'resolve_auth_log_path()'; then
   ok "diagnostics.rs's brute-force scan uses the RHEL-aware path"
 else
-  bad "diagnostics.rs still hardcodes /var/log/auth.log — its brute-force finding silently never fires on RHEL"
+  bad "diagnostics.rs still hardcodes /var/log/auth.log - its brute-force finding silently never fires on RHEL"
 fi
 
 if has "$AGENT_LOGS_ROUTE" 'resolve_auth_log_path()'; then
@@ -197,7 +197,7 @@ echo "── 4. S4: hook/shell command validators close the quote-split bypass �
 if bodyhas "$CMDFILTER" "pub fn is_safe_hook_command" "normalize_for_blocklist(command)"; then
   ok "is_safe_hook_command routes its dangerous-pattern scan through normalize_for_blocklist"
 else
-  bad "is_safe_hook_command no longer normalizes — r'm' -rf / bypasses the blocklist and sh -c runs it for real"
+  bad "is_safe_hook_command no longer normalizes - r'm' -rf / bypasses the blocklist and sh -c runs it for real"
 fi
 
 if has "$BACKEND_MOD" "fn normalize_for_blocklist"; then
@@ -209,7 +209,7 @@ fi
 if bodyhas "$BACKEND_MOD" "pub fn is_safe_shell_command" "normalize_for_blocklist(cmd)"; then
   ok "is_safe_shell_command routes through normalize_for_blocklist"
 else
-  bad "is_safe_shell_command no longer normalizes — same quote-split bypass as command_filter.rs had"
+  bad "is_safe_shell_command no longer normalizes - same quote-split bypass as command_filter.rs had"
 fi
 
 echo

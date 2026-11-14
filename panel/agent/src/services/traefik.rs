@@ -67,7 +67,7 @@ pub async fn install(docker: &Docker, acme_email: &str) -> Result<TraefikStatus,
                 dashboard_url: "http://127.0.0.1:8080".to_string(),
             });
         }
-        // Exists but not running — start it
+        // Exists but not running - start it
         docker.start_container(TRAEFIK_CONTAINER, None::<StartContainerOptions<String>>)
             .await
             .map_err(|e| format!("Failed to start Traefik: {e}"))?;
@@ -113,7 +113,7 @@ pub async fn install(docker: &Docker, acme_email: &str) -> Result<TraefikStatus,
     ];
 
     let mut port_bindings = HashMap::new();
-    // Traefik listens on internal ports 8880/8443 — nginx stays on 80/443 as front-door
+    // Traefik listens on internal ports 8880/8443 - nginx stays on 80/443 as front-door
     port_bindings.insert("80/tcp".to_string(), Some(vec![PortBinding {
         host_ip: Some("127.0.0.1".to_string()),
         host_port: Some("8880".to_string()),
@@ -292,7 +292,7 @@ pub fn remove_route_config(domain: &str) {
     // domain would have been written as". True, and not sufficient: that name is
     // also what ANOTHER domain is written as *today*. `route_key` doubles a
     // literal `-`, so for any domain containing none it agrees with the legacy
-    // mangle — `legacy(a-b.com)` is `a-b-com.yml`, which is `route_key(a.b.com)`,
+    // mangle - `legacy(a-b.com)` is `a-b-com.yml`, which is `route_key(a.b.com)`,
     // the live file of a different app. That fires on a fresh install with no
     // legacy files at all, and never expires. So ask the file who it routes.
     let legacy = legacy_route_config_path(domain);
@@ -317,7 +317,7 @@ pub fn remove_route_config(domain: &str) {
 /// accepts, because `-` is legal inside a label: `a.b.com` and `a-b.com` both
 /// became `a-b-com`, so they shared one route file and one router name. The
 /// second app deployed silently truncated the first one's route, removing either
-/// deleted the other's, and `route_is_tls` answered for whichever won — feeding
+/// deleted the other's, and `route_is_tls` answered for whichever won - feeding
 /// `nginx::domain_is_https` and therefore the link the panel prints.
 ///
 /// Escaping first makes it injective: a literal `-` doubles, so a single `-` can
@@ -339,7 +339,7 @@ fn route_key(domain: &str) -> String {
 /// Path of the dynamic route config `write_route_config` writes for `domain`.
 ///
 /// Factored out so the readers below and the writer above cannot disagree about
-/// where the file lives — the same name-mangling has to be applied to find it.
+/// where the file lives - the same name-mangling has to be applied to find it.
 fn route_config_path(domain: &str) -> String {
     format!("{TRAEFIK_CONFIG_DIR}/dynamic/{}.yml", route_key(domain))
 }

@@ -51,7 +51,7 @@ export default function Extensions() {
   const [pendingDelete, setPendingDelete] = useState<{ id: string; name: string } | null>(null);
   // The remedy for a leaked webhook signing secret. The handler has always existed and
   // has always been audit-logged; without a control the only options were deleting the
-  // extension — losing its identity and its delivery history — or hand-crafting a curl.
+  // extension - losing its identity and its delivery history - or hand-crafting a curl.
   const [pendingRotate, setPendingRotate] = useState<{ id: string; name: string } | null>(null);
   const [rotated, setRotated] = useState<{ name: string; webhook_secret: string } | null>(null);
   const [creating, setCreating] = useState(false);
@@ -172,7 +172,7 @@ export default function Extensions() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-dark-50 font-mono">Extensions</h1>
-          <p className="text-sm text-dark-300 mt-1">Webhook-based integrations that receive DockPanel events</p>
+          <p className="text-sm text-dark-300 mt-1">Webhook-based integrations that receive CyberHunter - Panel events</p>
         </div>
         <button onClick={() => { setCreating(!creating); setNewKey(null); setError(""); }} className="px-4 py-2 bg-rust-500 text-dark-950 rounded-lg text-sm font-bold hover:bg-rust-400 transition-colors">
           + Add Extension
@@ -180,7 +180,7 @@ export default function Extensions() {
       </div>
 
       {error && <div className="px-4 py-3 bg-danger-500/10 border border-danger-500/30 rounded-lg text-sm text-danger-400">{error}</div>}
-      {/* Issue #120: both prompts portal to document.body — their triggers sit on the extension rows far below. */}
+      {/* Issue #120: both prompts portal to document.body - their triggers sit on the extension rows far below. */}
       {pendingDelete && (
         <ConfirmDialog
           label={`Delete extension "${pendingDelete.name}"?`}
@@ -199,7 +199,7 @@ export default function Extensions() {
       )}
       {rotated && (
         <div className="bg-rust-500/10 border border-rust-500/30 rounded-lg p-5 space-y-3">
-          <h3 className="text-sm font-bold text-rust-400">New Webhook Secret for "{rotated.name}" — Shown Once</h3>
+          <h3 className="text-sm font-bold text-rust-400">New Webhook Secret for "{rotated.name}" - Shown Once</h3>
           <div className="flex gap-2">
             <code className="flex-1 px-3 py-2 bg-dark-900 rounded text-sm text-dark-50 font-mono">{rotated.webhook_secret}</code>
             <button onClick={() => navigator.clipboard.writeText(rotated.webhook_secret)} className="px-3 py-2 bg-dark-700 text-dark-200 rounded text-xs hover:bg-dark-600">Copy</button>
@@ -212,7 +212,7 @@ export default function Extensions() {
       {/* New key display */}
       {newKey && (
         <div className="bg-rust-500/10 border border-rust-500/30 rounded-lg p-5 space-y-3">
-          <h3 className="text-sm font-bold text-rust-400">Extension Created — Save These Credentials</h3>
+          <h3 className="text-sm font-bold text-rust-400">Extension Created - Save These Credentials</h3>
           <div>
             <label className="text-xs text-dark-300">API Key (shown once)</label>
             <div className="flex gap-2 mt-1">

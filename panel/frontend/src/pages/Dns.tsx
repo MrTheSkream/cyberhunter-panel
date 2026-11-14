@@ -311,7 +311,7 @@ export default function Dns() {
       // A per-record catch that swallows leaves a green "Deleted N records"
       // standing over records that are still there. Report the shortfall.
       setMessage(deleted < selectedRecords.size
-        ? { text: `Deleted ${deleted} of ${selectedRecords.size} records — ${firstError}`, type: "error" }
+        ? { text: `Deleted ${deleted} of ${selectedRecords.size} records - ${firstError}`, type: "error" }
         : { text: `Deleted ${deleted} records`, type: "success" });
       setSelectedRecords(new Set());
       setBulkDeleting(false);
@@ -324,7 +324,7 @@ export default function Dns() {
   // ── Export zone file ──────────────────────────────────────────────────
   const handleExport = () => {
     if (!selectedZone || records.length === 0) return;
-    let output = `; Zone file for ${selectedZone.domain}\n; Exported from DockPanel\n\n$ORIGIN ${selectedZone.domain}.\n$TTL 3600\n\n`;
+    let output = `; Zone file for ${selectedZone.domain}\n; Exported from CyberHunter - Panel\n\n$ORIGIN ${selectedZone.domain}.\n$TTL 3600\n\n`;
     records.forEach(r => {
       const escapedDomain = selectedZone.domain.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const shortName = r.name.replace(new RegExp(`\\.?${escapedDomain}\\.?$`), '') || '@';
@@ -431,7 +431,7 @@ export default function Dns() {
     // Same shape as the bulk delete above: without this, a template that
     // created nothing at all still reported success.
     setMessage(created < recs.length
-      ? { text: `Created ${created} of ${recs.length} records — ${firstError}`, type: 'error' }
+      ? { text: `Created ${created} of ${recs.length} records - ${firstError}`, type: 'error' }
       : { text: `Created ${created} record${created !== 1 ? 's' : ''} from template`, type: 'success' });
     setShowTemplates(false);
     selectZone(selectedZone);
@@ -619,7 +619,7 @@ export default function Dns() {
         </div>
       )}
 
-      {/* Issue #120: portalled prompt — triggers (delete zone/record, bulk delete, purge cache) sit far below this point. */}
+      {/* Issue #120: portalled prompt - triggers (delete zone/record, bulk delete, purge cache) sit far below this point. */}
       {pendingConfirm && (
         <ConfirmDialog
           label={pendingConfirm.label}
@@ -1007,7 +1007,7 @@ export default function Dns() {
                 </select>
               </div>
 
-              {/* Records — Desktop Table */}
+              {/* Records - Desktop Table */}
               <div className="hidden md:block overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
@@ -1092,7 +1092,7 @@ export default function Dns() {
                 </table>
               </div>
 
-              {/* Records — Mobile Cards */}
+              {/* Records - Mobile Cards */}
               <div className="md:hidden divide-y divide-dark-600">
                 {filteredRecords.map((r) => (
                   <div key={r.id} className="px-4 py-3 space-y-1.5">

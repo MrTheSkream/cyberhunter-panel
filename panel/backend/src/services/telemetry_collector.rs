@@ -1,11 +1,11 @@
 //! Telemetry collector background service.
 //!
-//! Responsibilities (all scoped to THIS host — see `run`):
+//! Responsibilities (all scoped to THIS host - see `run`):
 //! 1. Periodically collects system diagnostics from the PANEL HOST's own agent
 //! 2. Stores error/warning events in the telemetry_events table
 //! 3. Sends unsent events to the configured remote endpoint (opt-in)
 //! 4. Cleans up old events based on retention settings
-//! 5. Checks GitHub Releases for DockPanel updates
+//! 5. Checks GitHub Releases for CyberHunter - Panel updates
 
 use crate::services::agent::{AgentClient, AgentRegistry};
 use crate::services::panel_update::semver_key;
@@ -45,10 +45,10 @@ pub async fn record_event(
     }
 }
 
-/// Main telemetry loop — runs as a supervised background service.
+/// Main telemetry loop - runs as a supervised background service.
 /// This service is LOCAL BY INTENT, and takes the registry to say so out loud.
 ///
-/// It diagnoses the panel host itself — its own agent's `/health` and `/diagnostics`,
+/// It diagnoses the panel host itself - its own agent's `/health` and `/diagnostics`,
 /// and the version of the binary executing this code. None of that is a fleet
 /// question, so it calls `agents.local()` rather than resolving a server. Taking a
 /// bare `AgentClient` made "local" indistinguishable from "nobody threaded this yet",
@@ -60,7 +60,7 @@ pub async fn run(
 ) {
     // Before anything sleeps: `update.sh` upgrades the binaries but never
     // touches the settings table, so on the first boot after an upgrade the
-    // stored advertisement still names the version now running — and the first
+    // stored advertisement still names the version now running - and the first
     // poll is UPDATE_CHECK_INTERVAL away. Reconcile it against the compiled-in
     // version now, off the network.
     reconcile_stored_update(&pool).await;
@@ -112,7 +112,7 @@ async fn collect_agent_health(pool: &PgPool, agent: &AgentClient) {
     // Check if agent is reachable via health endpoint
     match agent.get("/health").await {
         Ok(_) => {
-            // Agent is healthy — no event needed
+            // Agent is healthy - no event needed
         }
         Err(e) => {
             record_event(
@@ -205,7 +205,7 @@ async fn send_pending_events(pool: &PgPool, endpoint: &str) {
         "installation_id": installation_id,
     });
 
-    // Build batch payload — strip any PII
+    // Build batch payload - strip any PII
     let batch: Vec<serde_json::Value> = events
         .iter()
         .map(|(id, event_type, category, message, context, created_at)| {
@@ -330,12 +330,12 @@ async fn read_update_channel(pool: &PgPool) -> String {
 /// `update_channel` setting:
 ///   - `stable`    → /releases/latest (excludes prereleases, current default)
 ///   - `candidate` → /releases?per_page=20, first by published_at desc
-///                   (includes prereleases — pre-W4 GA releases AND RC
+///                   (includes prereleases - pre-W4 GA releases AND RC
 ///                   builds when CI starts tagging `prerelease: true`)
 ///   - `hold`      → skip the poll entirely (operator pinned)
 ///
 /// Both "Check Now" routes bypass the `hold` skip by calling
-/// [`check_for_updates_manual`] instead — `hold` pins automatic polling, not
+/// [`check_for_updates_manual`] instead - `hold` pins automatic polling, not
 /// an operator who has just asked to look.
 async fn check_for_updates(pool: &PgPool) {
     let channel = read_update_channel(pool).await;
@@ -346,7 +346,7 @@ async fn check_for_updates(pool: &PgPool) {
     check_for_updates_inner(pool, &channel).await;
 }
 
-/// Bypass the `hold` skip — operator manually clicked "Check now".
+/// Bypass the `hold` skip - operator manually clicked "Check now".
 /// Always polls regardless of channel; uses channel only to choose URL.
 pub async fn check_for_updates_manual(pool: &PgPool) {
     let mut channel = read_update_channel(pool).await;
@@ -468,7 +468,7 @@ async fn check_for_updates_inner(pool: &PgPool, channel: &str) {
     record_update_check_time(pool).await;
 
     tracing::info!(
-        "DockPanel update available ({channel} channel): v{current_version} -> v{latest_version}"
+        "CyberHunter - Panel update available ({channel} channel): v{current_version} -> v{latest_version}"
     );
 }
 
@@ -478,7 +478,7 @@ async fn check_for_updates_inner(pool: &PgPool, channel: &str) {
 /// writes to the settings table, and no migration touches these keys, so a
 /// panel that has just been upgraded boots with the row still advertising the
 /// version it is now running. Nothing else would clear it before the first
-/// poll, which is [`UPDATE_CHECK_INTERVAL`] plus the start stagger away — so
+/// poll, which is [`UPDATE_CHECK_INTERVAL`] plus the start stagger away - so
 /// every operator saw "vX is available (current: vX)" for six hours after
 /// every upgrade.
 ///
@@ -494,7 +494,7 @@ async fn reconcile_stored_update(pool: &PgPool) {
         return;
     }
     tracing::info!(
-        "Clearing stale update advertisement v{advertised} — this panel runs v{current_version}"
+        "Clearing stale update advertisement v{advertised} - this panel runs v{current_version}"
     );
     clear_update_advertisement(pool).await;
 }
@@ -509,7 +509,7 @@ async fn clear_update_advertisement(pool: &PgPool) {
     .await;
 }
 
-/// Record the check timestamp so the UI can show "checked Xs ago" — on polls
+/// Record the check timestamp so the UI can show "checked Xs ago" - on polls
 /// that found nothing just as much as on polls that found a release.
 async fn record_update_check_time(pool: &PgPool) {
     let _ = sqlx::query(
@@ -522,7 +522,7 @@ async fn record_update_check_time(pool: &PgPool) {
 }
 
 /// True when a stored `update_available_version` must be deleted rather than
-/// left standing — i.e. whenever it is not strictly newer than what is running.
+/// left standing - i.e. whenever it is not strictly newer than what is running.
 fn advertisement_is_stale(stored: &str, current: &str) -> bool {
     !is_newer_release(stored, current)
 }
@@ -530,7 +530,7 @@ fn advertisement_is_stale(stored: &str, current: &str) -> bool {
 /// True when `latest` is a strictly newer release than `current`.
 ///
 /// The single version comparison behind the poller, the start-up reconcile,
-/// the read-side `update_available` flags and the apply guard — one rule, so
+/// the read-side `update_available` flags and the apply guard - one rule, so
 /// the four surfaces cannot disagree about whether an update exists.
 pub fn is_newer_release(latest: &str, current: &str) -> bool {
     if latest.trim().is_empty() {
@@ -540,14 +540,14 @@ pub fn is_newer_release(latest: &str, current: &str) -> bool {
 }
 
 /// Ordering key for a release tag, layered on [`semver_key`] so the update
-/// surfaces and the fleet queue parse `X.Y.Z` the same way — including the
+/// surfaces and the fleet queue parse `X.Y.Z` the same way - including the
 /// junk tolerance that keeps a non-numeric segment from shifting the rest of
 /// the version left (`2.52.0-rc.1` is 2.52.0, never 2.52.1).
 ///
 /// `semver_key` drops the `-rc.N` suffix on purpose: the fleet queue wants an
 /// rc to sort with its GA release. The update path needs the other half of the
-/// SemVer rule — `2.53.0-rc.1` precedes `2.53.0`, and an operator on the
-/// `candidate` channel must still be offered rc.2 over rc.1 — so the suffix
+/// SemVer rule - `2.53.0-rc.1` precedes `2.53.0`, and an operator on the
+/// `candidate` channel must still be offered rc.2 over rc.1 - so the suffix
 /// comes back as a second component. GA (no suffix) outranks every prerelease;
 /// `rc.N` orders by N; any other suffix ranks below rc.1 rather than being
 /// silently promoted to GA.
@@ -623,7 +623,7 @@ mod tests {
     fn a_release_older_than_this_panel_clears_the_advertisement() {
         // #98 verbatim: the panel is on 2.52.0, the settings row still says
         // 2.49.0. The byte-equality gate this replaced answered "not stale"
-        // and left the row — and the banner — standing.
+        // and left the row - and the banner - standing.
         assert!(advertisement_is_stale("2.49.0", "2.52.0"));
         assert!(!is_newer_release("2.49.0", "2.52.0"));
     }
@@ -656,7 +656,7 @@ mod tests {
     #[test]
     fn a_release_candidate_orders_below_its_own_ga_release() {
         // The parser this replaced dropped the non-numeric segment and shifted
-        // the rest left, reading "2.53.0-rc.1" as 2.53.1 — a phantom upgrade
+        // the rest left, reading "2.53.0-rc.1" as 2.53.1 - a phantom upgrade
         // offered to every panel already running the GA release.
         assert!(!is_newer_release("2.53.0-rc.1", "2.53.0"));
         assert!(advertisement_is_stale("2.53.0-rc.1", "2.53.0"));

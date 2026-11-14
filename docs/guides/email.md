@@ -18,11 +18,11 @@ If the connection times out, port 25 is blocked on your network.
 
 ## One-Click Install
 
-DockPanel installs a complete mail server stack with one click.
+CyberHunter - Panel installs a complete mail server stack with one click.
 
 1. Go to **Mail** in the sidebar
 2. If the mail server is not installed, click **Install Mail Server**
-3. DockPanel installs and configures:
+3. CyberHunter - Panel installs and configures:
    - **Postfix** -- SMTP server for sending and receiving email
    - **Dovecot** -- IMAP/POP3 server for reading email
    - **OpenDKIM** -- DKIM signing for email authentication
@@ -31,7 +31,7 @@ The installation takes about 30 seconds. It also opens the mail ports (25, 587, 
 110, 995) in the firewall, sets Postfix's HELO name from your panel domain, and hands Dovecot
 your Let's Encrypt certificate if the box has one.
 
-### One thing DockPanel cannot do for you: reverse DNS
+### One thing CyberHunter - Panel cannot do for you: reverse DNS
 
 Set a **PTR record** for your server's IP, pointing at your mail hostname. Only whoever owns
 the IP can do this -- your hosting provider, usually under "reverse DNS" in their control
@@ -44,15 +44,15 @@ points on its own once everything else was correct.
 1. Go to **Mail** > **Domains**
 2. Click **Add Domain**
 3. Enter your domain name: `example.com`
-4. DockPanel generates the DKIM keys and shows the DNS records you need to add
+4. CyberHunter - Panel generates the DKIM keys and shows the DNS records you need to add
 
 ## DNS Records
 
 After adding a mail domain, you must add these DNS records at your domain registrar or DNS provider.
 
-**Read them from the panel, not from here.** Open the domain, go to the **DNS Records** tab, and copy each record — every field is copyable and each one is marked *published* or *missing* once you press **Verify DNS**. The values depend on your server's address and on the DKIM key generated for your domain, so a page like this one cannot state them without going stale.
+**Read them from the panel, not from here.** Open the domain, go to the **DNS Records** tab, and copy each record - every field is copyable and each one is marked *published* or *missing* once you press **Verify DNS**. The values depend on your server's address and on the DKIM key generated for your domain, so a page like this one cannot state them without going stale.
 
-This guide used to spell the records out, and every one of them was wrong in some way by the time you read it: it named the DKIM selector `default` when DockPanel has always used `dockpanel`, and it described the mail host as `mail.example.com` when the records DockPanel publishes use the domain itself. Following it produced a DKIM record that could never verify.
+This guide used to spell the records out, and every one of them was wrong in some way by the time you read it: it named the DKIM selector `default` when CyberHunter - Panel has always used `dockpanel`, and it described the mail host as `mail.example.com` when the records CyberHunter - Panel publishes use the domain itself. Following it produced a DKIM record that could never verify.
 
 What the panel gives you, and why each one exists:
 
@@ -64,15 +64,15 @@ What the panel gives you, and why each one exists:
 | `TXT` (DKIM) | The public key receivers use to verify our signature. |
 | `TXT` (DMARC) | Tells receivers what to do when SPF or DKIM fails. |
 
-If DockPanel manages the domain's DNS zone, these are created for you when you add the domain — there is nothing to copy.
+If CyberHunter - Panel manages the domain's DNS zone, these are created for you when you add the domain - there is nothing to copy.
 
 ### Checking them
 
-**Verify DNS** on the same tab checks that each record resolves *and points at this server*, rather than merely that something exists. A domain whose MX belongs to another provider is reported as such. See [What DockPanel checks for you](prerequisites.md) for the full behaviour, including what happens when a lookup cannot be run at all.
+**Verify DNS** on the same tab checks that each record resolves *and points at this server*, rather than merely that something exists. A domain whose MX belongs to another provider is reported as such. See [What CyberHunter - Panel checks for you](prerequisites.md) for the full behaviour, including what happens when a lookup cannot be run at all.
 
 ### DMARC policy
 
-DockPanel suggests `p=quarantine`, which asks receivers to flag suspicious mail. Once you have confirmed everything works, tightening it to `p=reject` (block spoofed email outright) is a change worth making by hand at your DNS provider.
+CyberHunter - Panel suggests `p=quarantine`, which asks receivers to flag suspicious mail. Once you have confirmed everything works, tightening it to `p=reject` (block spoofed email outright) is a change worth making by hand at your DNS provider.
 
 ## Create Mailboxes
 
@@ -114,7 +114,7 @@ Consequences worth knowing before you design around it:
 
 - Mailboxes **inside one domain** may send as each other, and as any address at
   that domain. They belong to the same customer, so this is not a boundary
-  DockPanel tries to enforce -- if you need per-mailbox sender restrictions
+  CyberHunter - Panel tries to enforce -- if you need per-mailbox sender restrictions
   within a single domain, that is not something this provides.
 - You cannot use this server as an authenticated relay for a domain it does not
   host. If you need that, host the domain here or relay through a provider that
@@ -144,7 +144,7 @@ the box until the next mailbox change.
 Send a test email from the server:
 
 ```bash
-echo "Test from DockPanel mail server" | mail -s "Test Email" recipient@gmail.com
+echo "Test from CyberHunter - Panel mail server" | mail -s "Test Email" recipient@gmail.com
 ```
 
 Or use the mail queue viewer in the panel (Mail > Queue) to monitor outgoing messages.
@@ -162,9 +162,9 @@ Send an email from an external account (Gmail, Outlook) to `user@example.com` an
 
 ### Verify DNS records
 
-Press **Verify DNS** on the domain's DNS Records tab — that checks the records point at *this* server, which a raw lookup cannot tell you.
+Press **Verify DNS** on the domain's DNS Records tab - that checks the records point at *this* server, which a raw lookup cannot tell you.
 
-To check by hand, substituting your own domain (and noting that DockPanel's DKIM selector is `dockpanel`, not the `default` many guides assume):
+To check by hand, substituting your own domain (and noting that CyberHunter - Panel's DKIM selector is `dockpanel`, not the `default` many guides assume):
 
 - **MX**: `dig MX example.com +short`
 - **SPF**: `dig TXT example.com +short`
@@ -188,7 +188,7 @@ Supported relay providers: SendGrid, Mailgun, Amazon SES, Brevo, or any SMTP ser
    - **Password**: Your SendGrid API key
 4. Save
 
-DockPanel configures Postfix to route all outbound email through the relay. Incoming email still arrives directly to your server (port 25 inbound is not blocked by providers, only outbound).
+CyberHunter - Panel configures Postfix to route all outbound email through the relay. Incoming email still arrives directly to your server (port 25 inbound is not blocked by providers, only outbound).
 
 ## Webmail (Roundcube)
 
@@ -212,7 +212,7 @@ The **Mail** page can also install Roundcube as a path on the panel's own domain
 set up and needs no second DNS record.
 
 > **Known issue (v2.36.0).** Installed this way, the message list can render empty even though the
-> mailbox has mail in it — a frame is navigated to the panel root, whose security policy refuses
+> mailbox has mail in it - a frame is navigated to the panel root, whose security policy refuses
 > it, and the error stops the list from loading. Logging in, IMAP, POP3 and delivery are all
 > unaffected, and any desktop or phone mail client works normally against the same account. If you
 > hit this, deploy Roundcube on its own domain as described above.

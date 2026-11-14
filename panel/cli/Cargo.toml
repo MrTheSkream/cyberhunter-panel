@@ -3,7 +3,7 @@ name = "dockpanel"
 version = "2.242.1"
 license = "AGPL-3.0-only"
 edition = "2024"
-description = "CLI for DockPanel — self-hosted server management"
+description = "CLI for CyberHunter - Panel - self-hosted server management"
 
 [[bin]]
 name = "dockpanel"

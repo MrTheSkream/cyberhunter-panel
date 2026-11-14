@@ -10,7 +10,7 @@ struct ServiceStatus {
     status: String,
 }
 
-/// GET /services/health — check status of critical system services.
+/// GET /services/health - check status of critical system services.
 async fn check_services() -> Json<Vec<ServiceStatus>> {
     let services = [
         "nginx",
@@ -76,7 +76,7 @@ async fn check_systemd_service(name: &str) -> ServiceStatus {
                 status: "not_installed".to_string(),
             };
         }
-        // Disabled services are intentionally off — don't alert
+        // Disabled services are intentionally off - don't alert
         return ServiceStatus {
             name: name.to_string(),
             status: "disabled".to_string(),

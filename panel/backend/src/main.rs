@@ -59,14 +59,14 @@ pub struct AppState {
     /// every background service. Route handlers that hold a connection open
     /// past a single request/response (the metrics websocket, every SSE
     /// stream below) subscribe to this so `shutdown_signal`'s graceful drain
-    /// isn't left waiting on a client that never disconnects on its own —
+    /// isn't left waiting on a client that never disconnects on its own -
     /// see `helpers::shutdown_signal_fut`.
     pub shutdown_tx: tokio::sync::broadcast::Sender<()>,
     /// WebAuthn/Passkey challenge store (in-memory, 5-minute TTL).
     pub passkey_challenges: routes::passkeys::ChallengeStore,
     /// Phase 4 W4: panel self-update orchestrator state. Read by
     /// `/api/update/status`; written by `start_panel_update`. In-process
-    /// only — DB rows in `panel_snapshots` are the durable cross-restart
+    /// only - DB rows in `panel_snapshots` are the durable cross-restart
     /// signal (the api process dies mid-binary-swap).
     pub panel_update_state: services::panel_update::UpdateStateHandle,
 }
@@ -189,13 +189,13 @@ async fn main() {
     // applied migration it has no file for; sqlx's default strict validation
     // rejects that with `VersionMissing(...)`, and since the call site panics,
     // the restored api exits 101 and crash-loops under Restart=always until it
-    // hits StartLimitBurst and lands in `failed` — a permanent 502 with no
+    // hits StartLimitBurst and lands in `failed` - a permanent 502 with no
     // operator-facing explanation. Verified on a lab box: injecting one unknown
     // `_sqlx_migrations` row is enough to brick startup.
     //
     // Migrations here are additive, so an older binary running against a newer
     // schema is safe; it simply ignores columns it does not know about. Missing
-    // migrations are still applied — only *unknown extra* ones are tolerated.
+    // migrations are still applied - only *unknown extra* ones are tolerated.
     sqlx::migrate!("./migrations")
         .set_ignore_missing(true)
         .run(&db)
@@ -226,7 +226,7 @@ async fn main() {
     // When CORS_ORIGINS is not configured, we deny all cross-origin requests.
     // When configured (e.g. for development or external integrations), we whitelist.
     let cors = if config.cors_origins.is_empty() {
-        // No CORS origins configured — deny all cross-origin requests.
+        // No CORS origins configured - deny all cross-origin requests.
         // Same-origin requests (the panel UI) are unaffected by CORS.
         CorsLayer::new()
             .allow_origin(AllowOrigin::list(Vec::<axum::http::HeaderValue>::new()))
@@ -263,7 +263,7 @@ async fn main() {
     // Register in the global OnceLock so notify_panel() can broadcast without AppState
     services::notifications::init_notif_broadcast(notif_tx.clone());
 
-    // Shutdown broadcast channel — all background services listen for this signal,
+    // Shutdown broadcast channel - all background services listen for this signal,
     // and (via AppState below) so does every long-lived route handler.
     let (shutdown_tx, _) = tokio::sync::broadcast::channel::<()>(1);
 
@@ -384,8 +384,8 @@ async fn main() {
     }
 
     // Status-page subscriber fan-out worker. Started here rather than from a
-    // service's run loop because BOTH producers feed it — the uptime monitor and
-    // the incidents HTTP handlers — and a request can arrive before any
+    // service's run loop because BOTH producers feed it - the uptime monitor and
+    // the incidents HTTP handlers - and a request can arrive before any
     // background task has had a chance to run. Idempotent.
     services::status_notices::start_worker(state.db.clone());
 
@@ -424,8 +424,8 @@ async fn main() {
     // The healer gets the REGISTRY and nothing else. Every one of its legs reads
     // rows that name a host and then writes through an agent, so it has no use
     // for a handle to this box in particular. It used to be handed the legacy
-    // local client too, and the two legs that took it — SSL renewal and
-    // container auto-sleep — were exactly the two that acted on the wrong
+    // local client too, and the two legs that took it - SSL renewal and
+    // container auto-sleep - were exactly the two that acted on the wrong
     // machine. Not passing it is what stops that from coming back.
     let (s_db, s_agents) = (state.db.clone(), state.agents.clone());
     spawn_supervised("auto_healer", &shutdown_tx, move |rx| services::auto_healer::run(s_db.clone(), s_agents.clone(), rx));
@@ -459,7 +459,7 @@ async fn main() {
     let (s_db, s_agents, s_jwt) = (state.db.clone(), state.agents.clone(), state.config.jwt_secret.clone());
     spawn_supervised("backup_policy_executor", &shutdown_tx, move |rx| services::backup_policy_executor::run(s_db.clone(), s_agents.clone(), s_jwt.clone(), rx));
 
-    // A drill restores a backup on the server that owns it — running one elsewhere
+    // A drill restores a backup on the server that owns it - running one elsewhere
     // certifies DR for a machine it never tested. See `dispatch_policy_drills`.
     let (s_db, s_agents) = (state.db.clone(), state.agents.clone());
     spawn_supervised("drill_scheduler", &shutdown_tx, move |rx| services::drill_scheduler::run(s_db.clone(), s_agents.clone(), rx));
@@ -535,15 +535,15 @@ async fn main() {
             }
             // The webhook limiter's window is an HOUR, not five minutes. Both
             // webhook handlers roll their own window at 3600s and both say "max 10
-            // attempts per hour" — but this janitor sat on the same line as the 2FA
+            // attempts per hour" - but this janitor sat on the same line as the 2FA
             // one and evicted the counter after 300s, so the entry was gone at the
             // next tick and a caller simply got a fresh 10 every ~15 minutes. The
             // 2FA sibling above is correct precisely because its handler window is
             // also 300s; sharing the constant is what made this look right.
             //
-            // Retaining for an hour costs memory on an UNAUTHENTICATED route — the
+            // Retaining for an hour costs memory on an UNAUTHENTICATED route - the
             // pre-check inserts an entry keyed on a caller-supplied UUID before the
-            // row is known to exist — so the longer retention is paired with a cap.
+            // row is known to exist - so the longer retention is paired with a cap.
             // A flood of invented ids parks at count 0, because the counter is only
             // incremented after a row is found and its secret mismatches, so
             // dropping the zero-count entries above the cap sheds exactly the flood
@@ -560,7 +560,7 @@ async fn main() {
             // Clean stale provisioning logs.
             //
             // The window has to be longer than the LONGEST job that writes into
-            // this map, because eviction does not stop the job — it silently
+            // this map, because eviction does not stop the job - it silently
             // detaches it. `emit` looks the id up and finds nothing, so every
             // remaining step, including the terminal one, goes nowhere; the SSE
             // stream ends without a verdict and the page watching it waits for a
@@ -576,7 +576,7 @@ async fn main() {
             // The owner prune below runs on every tick, not only on ticks where
             // this TTL evicted something. Each feature removes its own log 30-60s
             // after its job ends, so the one-hour sweep usually finds nothing to
-            // drop — which, while the prune was conditional on it, meant the owner
+            // drop - which, while the prune was conditional on it, meant the owner
             // map was almost never pruned and grew for the life of the process.
             // That was survivable when three call sites registered an owner. Every
             // provisioning log has one now, so it is not.
@@ -586,7 +586,7 @@ async fn main() {
             // leave a live log whose owner has just been swept out from under it.
             // Poison-tolerant, like every other accessor of these two maps. An
             // `if let Ok(...)` here would make a single panic under either lock
-            // permanently disable the only pruner they have — writers would keep
+            // permanently disable the only pruner they have - writers would keep
             // inserting through `into_inner()` while nothing ever removed, which
             // is the unbounded growth this block exists to prevent.
             {
@@ -616,7 +616,7 @@ async fn main() {
         .expect("Failed to bind TCP listener");
 
     tracing::info!(
-        "DockPanel API v{} listening on {listen_addr}",
+        "CyberHunter - Panel API v{} listening on {listen_addr}",
         env!("CARGO_PKG_VERSION")
     );
 
@@ -629,7 +629,7 @@ async fn main() {
 
     // Background services AND every long-lived route handler subscribed via
     // AppState::shutdown_tx already got the broadcast from inside
-    // shutdown_signal() itself, the instant the OS signal arrived — sending
+    // shutdown_signal() itself, the instant the OS signal arrived - sending
     // it here instead would be circular: `axum::serve(...).await` above does
     // not return until every in-flight connection's task has ended, so a
     // websocket/SSE handler waiting on THIS line to know when to close would
@@ -641,11 +641,11 @@ async fn main() {
     shutdown_db.close().await;
     tracing::info!("Database connection pool closed");
 
-    tracing::info!("DockPanel API shut down gracefully");
+    tracing::info!("CyberHunter - Panel API shut down gracefully");
 }
 
 /// Hard bound on the drain phase after a shutdown signal fires: a 78% cut from
-/// systemd's default 90s `TimeoutStopSec` (unset in our unit) — short enough to act
+/// systemd's default 90s `TimeoutStopSec` (unset in our unit) - short enough to act
 /// as a real bound, long enough that an ordinary slow request (some agent HTTP calls
 /// carry up to a 60s timeout) isn't routinely cut off mid-response during a normal
 /// deploy.
@@ -675,25 +675,25 @@ async fn shutdown_signal(shutdown_tx: tokio::sync::broadcast::Sender<()>) {
     }
 
     // Broadcast to every background service AND every long-lived route
-    // handler (the metrics websocket, every SSE stream — AppState::shutdown_tx
+    // handler (the metrics websocket, every SSE stream - AppState::shutdown_tx
     // / helpers::shutdown_signal_fut) the instant the OS signal arrives, not
     // after `with_graceful_shutdown` below has already finished waiting for
     // those same connections to close on their own. This function IS the
     // `signal` future axum awaits first (before it stops accepting new
-    // connections and starts draining existing ones) — sending from here
+    // connections and starts draining existing ones) - sending from here
     // means a subscribed handler actually has the ~20s window below to close
     // itself before the watchdog force-exits, instead of the drain and the
     // signal waiting on each other.
     let _ = shutdown_tx.send(());
 
     // `with_graceful_shutdown` waits for every in-flight connection to close on its
-    // own — an open SSE stream or WebSocket terminal session blocks that
+    // own - an open SSE stream or WebSocket terminal session blocks that
     // indefinitely, and axum spawns each connection onto its own task that this
     // signal resolving does not cancel, so a hung connection (or the unbounded
     // `shutdown_db.close().await` that runs afterward) could stall the whole
     // process past systemd's default 90s TimeoutStopSec. Arm a hard watchdog now
     // that the signal has actually fired, so shutdown is bounded no matter what
-    // happens downstream of this point — a plain `tokio::time::timeout` around the
+    // happens downstream of this point - a plain `tokio::time::timeout` around the
     // whole serve future would be wrong here: that future runs for the server's
     // entire lifetime, not just the drain phase, so timing it out would kill the
     // process ~20s after every boot regardless of whether shutdown was ever

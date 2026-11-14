@@ -2,30 +2,30 @@
 //!
 //! Each SFTP-enabled site gets its own Linux uid/gid (allocated by the panel,
 //! `sites.sftp_uid`/`sftp_gid`), which becomes the REAL owner of
-//! `/var/www/{domain}` — the actual per-tenant isolation. A separate jail tree
+//! `/var/www/{domain}` - the actual per-tenant isolation. A separate jail tree
 //! under `/var/dockpanel-sftp/{domain}` is the OpenSSH `ChrootDirectory`
 //! (root-owned, as OpenSSH requires); its one `content/` subdirectory is
 //! bind-mounted (a dedicated systemd `.mount` unit, not `/etc/fstab`) onto the
-//! real, UNMOVED `/var/www/{domain}` — no nginx/PHP-FPM/WP-CLI/CMS-installer
+//! real, UNMOVED `/var/www/{domain}` - no nginx/PHP-FPM/WP-CLI/CMS-installer
 //! path anywhere else in the codebase ever needs to change. Membership in the
 //! shared `SFTP_GROUP` is what scopes sshd's one `Match` block to these users;
 //! it is created once and never touched again after the first site enables.
 //!
 //! `useradd`/`groupadd`/`chown`/`usermod` all run via `safe_command_unsandboxed`
-//! (the `systemd-run` escape, same as the `vmail` user in `routes/mail.rs`) —
+//! (the `systemd-run` escape, same as the `vmail` user in `routes/mail.rs`) -
 //! `/etc/passwd`/`shadow`/`group` sit outside the agent's own `ReadWritePaths`.
 
 use crate::safe_cmd::{safe_command, safe_command_unsandboxed};
 use sha_crypt::{PasswordHasher, ShaCrypt};
 
 /// The shared secondary group every per-site SFTP user is a member of.
-/// `Match Group` in the sshd drop-in scopes the chroot to exactly this group —
+/// `Match Group` in the sshd drop-in scopes the chroot to exactly this group -
 /// created once, by name (no fixed gid needed; useradd/sshd both accept names).
 pub const SFTP_GROUP: &str = "sftp_sites";
 
 const SSHD_DROPIN: &str = "/etc/ssh/sshd_config.d/99-dockpanel-sftp.conf";
 
-/// Where the panel records which domain owns an allocated uid — read by
+/// Where the panel records which domain owns an allocated uid - read by
 /// [`crate::services::ownership::sftp_user`] before any teardown touches a
 /// real Linux account. Kept outside both the chroot jail and `/var/www` so
 /// the SFTP user's own session can never reach or edit it.
@@ -53,7 +53,7 @@ pub fn owner_marker_path(uid: i32) -> String {
 
 /// Compute the systemd unit name for `content_dir`'s bind mount via
 /// `systemd-escape`, rather than hand-rolling systemd's path-escaping rules
-/// (`-` -> `\x2d` etc.) — a `.mount` unit's filename MUST exactly match the
+/// (`-` -> `\x2d` etc.) - a `.mount` unit's filename MUST exactly match the
 /// escaped `Where=` path or systemd will not track the mount against it.
 async fn mount_unit_name(content_dir: &str) -> Result<String, String> {
     let output = safe_command("systemd-escape")
@@ -81,17 +81,17 @@ pub async fn provision(domain: &str, uid: i32, gid: i32) -> Result<(), String> {
     let groupname = sftp_groupname(gid);
     let site_dir = format!("/var/www/{domain}");
     if !std::path::Path::new(&site_dir).exists() {
-        return Err(format!("{site_dir} does not exist — cannot enable SFTP"));
+        return Err(format!("{site_dir} does not exist - cannot enable SFTP"));
     }
 
-    // 1. Shared secondary group — idempotent, ignore "already exists".
+    // 1. Shared secondary group - idempotent, ignore "already exists".
     let _ = safe_command_unsandboxed("groupadd", &[])
         .args([SFTP_GROUP])
         .output()
         .await;
 
     // 2. Per-site primary group, then the user itself. Both are genuinely new
-    // per site — a failure here must be a real error, not swallowed.
+    // per site - a failure here must be a real error, not swallowed.
     let out = safe_command_unsandboxed("groupadd", &[])
         .args(["-g", &gid.to_string(), &groupname])
         .output()
@@ -124,7 +124,7 @@ pub async fn provision(domain: &str, uid: i32, gid: i32) -> Result<(), String> {
         .map_err(|e| format!("useradd failed to run: {e}"))?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr).to_string();
-        // Roll back the group we just created — a half-provisioned site (group
+        // Roll back the group we just created - a half-provisioned site (group
         // present, no user) is worse than none, since a retry's groupadd would
         // then fail on "already exists" and mask the real problem.
         let _ = safe_command_unsandboxed("groupdel", &[]).args([&groupname]).output().await;
@@ -138,7 +138,7 @@ pub async fn provision(domain: &str, uid: i32, gid: i32) -> Result<(), String> {
     // directory does in `routes/mail.rs`: ProtectSystem=strict namespaces the
     // agent's writable set at unit START, and a path that did not exist then
     // is not in it regardless of what ReadWritePaths later gets updated to
-    // say — only the systemd-run escape can create it live. (Live-verified on
+    // say - only the systemd-run escape can create it live. (Live-verified on
     // a fresh VPS: the plain std::fs call failed with exactly this error
     // before this fix.)
     let content_dir = jail_content_dir(domain);
@@ -160,7 +160,7 @@ pub async fn provision(domain: &str, uid: i32, gid: i32) -> Result<(), String> {
     let unit_name = mount_unit_name(&content_dir).await?;
     let unit = format!(
         "[Unit]\n\
-         Description=DockPanel SFTP jail content mount: {domain}\n\
+         Description=CyberHunter - Panel SFTP jail content mount: {domain}\n\
          \n\
          [Mount]\n\
          What={site_dir}\n\
@@ -190,7 +190,7 @@ pub async fn provision(domain: &str, uid: i32, gid: i32) -> Result<(), String> {
 
     // 5. The actual isolation: re-own the real site directory. PHP-FPM's pool
     // is re-pointed at this same identity by the caller (`put_site`, driven by
-    // `pool_user`/`pool_group` on the next vhost rebuild — the backend sends
+    // `pool_user`/`pool_group` on the next vhost rebuild - the backend sends
     // those the moment `sftp_enabled` flips true).
     let out = safe_command_unsandboxed("chown", &[])
         .args(["-R", &format!("{username}:{groupname}"), &site_dir])
@@ -204,7 +204,7 @@ pub async fn provision(domain: &str, uid: i32, gid: i32) -> Result<(), String> {
         ));
     }
 
-    // 6. Owner marker — written last, only once every step above has actually
+    // 6. Owner marker - written last, only once every step above has actually
     // succeeded, so a marker on disk is never a promise this function did not
     // keep.
     if let Err(e) = std::fs::create_dir_all(OWNER_MARKER_DIR) {
@@ -221,13 +221,13 @@ pub async fn provision(domain: &str, uid: i32, gid: i32) -> Result<(), String> {
 }
 
 /// Tear down everything [`provision`] created. `last_sftp_site` tells us
-/// whether to also remove the shared sshd drop-in — the caller (the backend)
+/// whether to also remove the shared sshd drop-in - the caller (the backend)
 /// derives this from the `sites` table, not from re-scanning this box, since
 /// the DB is the source of truth for how many sites still have SFTP enabled.
 pub async fn deprovision(domain: &str, uid: i32, gid: i32, last_sftp_site: bool) -> Result<(), String> {
     if !crate::services::ownership::sftp_user(uid, domain).may_delete() {
         return Err(format!(
-            "uid {uid} does not carry an owner marker naming {domain} — refusing to tear down \
+            "uid {uid} does not carry an owner marker naming {domain} - refusing to tear down \
              an account this agent cannot prove belongs to this site"
         ));
     }
@@ -236,7 +236,7 @@ pub async fn deprovision(domain: &str, uid: i32, gid: i32, last_sftp_site: bool)
     let groupname = sftp_groupname(gid);
     let site_dir = format!("/var/www/{domain}");
 
-    // 1. Detach the bind mount FIRST — a chown while the site dir is still
+    // 1. Detach the bind mount FIRST - a chown while the site dir is still
     // mounted into the jail is safe either way (the mount is transparent to
     // path-based tools), but tearing down in this order means a failure here
     // leaves the account still enabled rather than half-disabled.
@@ -253,7 +253,7 @@ pub async fn deprovision(domain: &str, uid: i32, gid: i32, last_sftp_site: bool)
 
     // 2. Revert the real content back to the shared identity every other site
     // uses. The caller updates `sftp_enabled = false` and rebuilds the vhost
-    // (reverting the PHP-FPM pool) in the SAME transition — order between
+    // (reverting the PHP-FPM pool) in the SAME transition - order between
     // this and that rebuild does not matter, since both converge on
     // `www-data` and neither reads the other's intermediate state.
     if std::path::Path::new(&site_dir).exists() {
@@ -263,7 +263,7 @@ pub async fn deprovision(domain: &str, uid: i32, gid: i32, last_sftp_site: bool)
             .await;
     }
 
-    // 3. Remove the jail scaffolding — this is agent-created infrastructure,
+    // 3. Remove the jail scaffolding - this is agent-created infrastructure,
     // never site data (the real content lived at `site_dir` the whole time).
     // Same unsandboxed-escape requirement as creation (see provision()).
     let jail = jail_root(domain);
@@ -277,14 +277,14 @@ pub async fn deprovision(domain: &str, uid: i32, gid: i32, last_sftp_site: bool)
         Ok(_) => {}
     }
 
-    // 3.5. Stop this domain's PHP-FPM pool entirely — removed, not merely
+    // 3.5. Stop this domain's PHP-FPM pool entirely - removed, not merely
     // reverted, and RELOADED before any process is killed.
     //
     // Live-verified this is the actual fix step 4's `pkill` alone is not:
     // killing the pool's workers does not stop the php-fpm MASTER (running
     // as root, unaffected by `pkill -u <uid>`) from immediately respawning
     // new ones under the same uid per `pm.start_servers`/`pm.min_spare_
-    // servers` in the pool config that is STILL ON DISK — a pkill-then-
+    // servers` in the pool config that is STILL ON DISK - a pkill-then-
     // userdel sequence lost this race every time, new worker PIDs appearing
     // between the two calls. Only removing the pool file itself and
     // reloading stops the master from wanting workers under this identity
@@ -312,10 +312,10 @@ pub async fn deprovision(domain: &str, uid: i32, gid: i32, last_sftp_site: bool)
     // remove a uid with a running process, and the PHP-FPM pool's own
     // workers are still alive under it at this point unless the caller
     // happened to revert+reload the pool first. The `disable` path does that
-    // (as a necessary step in its own right — the pool must go back to
+    // (as a necessary step in its own right - the pool must go back to
     // www-data regardless), which was enough to unblock userdel there. Site
     // DELETION's teardown only ever *removes the pool config file*
-    // (`nginx.rs::delete_site`, no reload) — deleting the file does not stop
+    // (`nginx.rs::delete_site`, no reload) - deleting the file does not stop
     // an already-running worker, so the exact same "account still exists
     // after teardown reports success" failure reproduced through that path
     // with no shared code to have fixed it in one place. Rather than adding
@@ -327,7 +327,7 @@ pub async fn deprovision(domain: &str, uid: i32, gid: i32, last_sftp_site: bool)
     let _ = safe_command_unsandboxed("pkill", &[]).args(["-9", "-u", &uid.to_string()]).output().await;
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
-    // Best-effort (matching every other cleanup step above), but LOGGED — a
+    // Best-effort (matching every other cleanup step above), but LOGGED - a
     // swallowed failure here previously meant "disabled"/"deleted" could
     // report success while the OS account and its group were still present.
     match safe_command_unsandboxed("userdel", &[]).args([&username]).output().await {
@@ -359,19 +359,19 @@ pub async fn deprovision(domain: &str, uid: i32, gid: i32, last_sftp_site: bool)
 
 /// Set (or reset) `domain`'s SFTP password. Hashes in-process (glibc
 /// SHA-512-crypt via `sha-crypt`) rather than piping plaintext through
-/// `chpasswd`'s stdin — the shared `UnsandboxedCommand` primitive every
+/// `chpasswd`'s stdin - the shared `UnsandboxedCommand` primitive every
 /// privileged call here goes through has no stdin support today, and a hash
 /// (unlike plaintext) is not sensitive to pass as a `usermod -p` argument;
 /// that is the entire reason hashing exists.
 pub async fn set_password(uid: i32, plaintext: &str) -> Result<(), String> {
     let username = sftp_username(uid);
-    // NOT `ShaCrypt::hash_password()` — its auto-generated salt is
+    // NOT `ShaCrypt::hash_password()` - its auto-generated salt is
     // `password_hash`'s generic RECOMMENDED_SALT_LEN (16 RAW BYTES), which
     // base64-encodes to 22 characters. SHA-crypt's own spec caps the salt at
     // 16 base64 CHARACTERS; glibc's crypt() (what PAM actually calls to
     // verify a login) truncates an over-long salt to that limit when
     // recomputing the hash, so it silently computes a DIFFERENT digest than
-    // the one stored — authentication then fails for every correct password,
+    // the one stored - authentication then fails for every correct password,
     // forever. Live-verified on a fresh VPS: a hash made with the default
     // 16-byte/22-char salt round-tripped through Rust's own crypt.crypt()
     // check as WRONG. 12 raw bytes base64-encodes to exactly 16 characters
@@ -398,7 +398,7 @@ pub async fn set_password(uid: i32, plaintext: &str) -> Result<(), String> {
 }
 
 /// Write the sshd `Match Group` drop-in if it is not already present, then
-/// validate and reload — never the bare `restart_sshd`/no-validation path
+/// validate and reload - never the bare `restart_sshd`/no-validation path
 /// `services::security`'s existing SSH-hardening functions use today, since
 /// that path has no `sshd -t` gate anywhere and a malformed Match block would
 /// otherwise lock out SSH access on reload with no warning.
@@ -407,7 +407,7 @@ async fn ensure_sshd_dropin() -> Result<(), String> {
         return Ok(());
     }
     let block = format!(
-        "# Managed by DockPanel — per-site SFTP jails (GH #108). Do not edit by hand;\n\
+        "# Managed by CyberHunter - Panel - per-site SFTP jails (GH #108). Do not edit by hand;\n\
          # regenerated the next time a site's SFTP account is enabled/disabled.\n\
          Match Group {SFTP_GROUP}\n\
          \tChrootDirectory %h\n\
@@ -425,7 +425,7 @@ async fn ensure_sshd_dropin() -> Result<(), String> {
     Ok(())
 }
 
-/// `sshd -t` then `systemctl reload sshd` — reload, not restart, so an
+/// `sshd -t` then `systemctl reload sshd` - reload, not restart, so an
 /// unrelated config change never drops a live SSH session. On a failed
 /// validation the caller is responsible for removing whatever it just wrote;
 /// this function only ever validates the config CURRENTLY on disk.
@@ -456,8 +456,8 @@ mod tests {
 
     /// The live-verified bug this pins: `$6$rounds=5000$8mwPPcuR8m7wfnYuiMKDK.$...`
     /// (a real hash this code produced before the fix) has a 22-character
-    /// salt field. glibc's crypt() — what PAM actually calls to check a
-    /// login — truncates a SHA-crypt salt to 16 characters when recomputing
+    /// salt field. glibc's crypt() - what PAM actually calls to check a
+    /// login - truncates a SHA-crypt salt to 16 characters when recomputing
     /// the hash to verify against, so an over-long salt makes EVERY future
     /// login attempt recompute a different digest than the one stored: not a
     /// crash, not an error anywhere, just permanent, silent authentication
@@ -476,12 +476,12 @@ mod tests {
             .hash_password_with_salt(b"irrelevant-test-password", &salt)
             .expect("hashing a test password must succeed");
         let fields: Vec<&str> = hash.as_str().split('$').collect();
-        // ["", "6", ("rounds=N" |) salt, digest] — salt is always the
+        // ["", "6", ("rounds=N" |) salt, digest] - salt is always the
         // second-to-last field regardless of whether rounds= is present.
         let salt_field = fields[fields.len() - 2];
         assert!(
             salt_field.len() <= 16,
-            "salt field '{salt_field}' is {} characters — glibc's crypt() will \
+            "salt field '{salt_field}' is {} characters - glibc's crypt() will \
              truncate it on verify and every login will fail",
             salt_field.len()
         );
@@ -489,7 +489,7 @@ mod tests {
 
     /// The actual property that matters: a hash this code produces must
     /// verify correctly via the SAME crate used to produce it (a necessary
-    /// but not sufficient check — the salt-length assertion above is what
+    /// but not sufficient check - the salt-length assertion above is what
     /// catches the specific cross-implementation gap with glibc, since this
     /// crate happily verifies its OWN over-long-salt hashes without
     /// truncating, which is exactly why the bug was invisible to this check

@@ -2,7 +2,7 @@
 
 ## Security Scanner
 
-DockPanel runs a full security scan automatically every 7 days. You can also trigger a scan manually from **Security** > **Run Scan** or via the API.
+CyberHunter - Panel runs a full security scan automatically every 7 days. You can also trigger a scan manually from **Security** > **Run Scan** or via the API.
 
 The scanner checks the server through the agent and reports findings in three severity levels:
 
@@ -28,7 +28,7 @@ A score of 100 means no findings. The score is shown on the Security page and in
 
 ## Firewall (UFW)
 
-DockPanel manages the server firewall through UFW.
+CyberHunter - Panel manages the server firewall through UFW.
 
 ### View firewall status
 
@@ -45,7 +45,7 @@ Go to **Security** > **Firewall** to see all rules and whether UFW is active.
    - **From** (optional): Restrict to a specific IP or CIDR range
 4. Click **Add**
 
-When you create a site, DockPanel automatically configures firewall rules for ports 80 and 443. Docker container proxy ports are blocked from external access by default.
+When you create a site, CyberHunter - Panel automatically configures firewall rules for ports 80 and 443. Docker container proxy ports are blocked from external access by default.
 
 ### Delete a rule
 
@@ -74,7 +74,7 @@ Go to **Security** > **Fail2Ban** to see running jails, banned IPs, and ban coun
 
 ### Panel Login Jail
 
-DockPanel can create a dedicated Fail2Ban jail that monitors the panel's own login endpoint. Set it up from **Security** > **Panel Jail** > **Setup**.
+CyberHunter - Panel can create a dedicated Fail2Ban jail that monitors the panel's own login endpoint. Set it up from **Security** > **Panel Jail** > **Setup**.
 
 ### Manual Ban / Unban
 
@@ -103,7 +103,7 @@ curl -s https://panel.example.com/api/security/fail2ban/sshd/banned \
 
 ## Two-Factor Authentication (2FA)
 
-DockPanel supports TOTP-based 2FA using any authenticator app (Google Authenticator, Authy, 1Password, etc.).
+CyberHunter - Panel supports TOTP-based 2FA using any authenticator app (Google Authenticator, Authy, 1Password, etc.).
 
 ### Enable 2FA
 
@@ -154,32 +154,32 @@ Two limits worth knowing before you rely on it:
 
 ### Adding a passkey asks you to confirm who you are
 
-Since v2.85.0, adding a passkey requires you to re-present a credential you already hold — your current password, a code from your authenticator, or one of your recovery codes. **Any one of them is enough**, deliberately: an administrator who has lost their authenticator still knows their password, and the bullet above tells that person to register a passkey. A door that demanded a TOTP code would refuse them at exactly the moment they need it.
+Since v2.85.0, adding a passkey requires you to re-present a credential you already hold - your current password, a code from your authenticator, or one of your recovery codes. **Any one of them is enough**, deliberately: an administrator who has lost their authenticator still knows their password, and the bullet above tells that person to register a passkey. A door that demanded a TOTP code would refuse them at exactly the moment they need it.
 
-The reason for the prompt is that a passkey is the only credential this panel mints that **survives every reset it offers**. Clearing a user's 2FA, resetting their password and signing out all of their sessions leave an enrolled passkey working, and passkey sign-in does not take the 2FA step. So if someone reaches an open session — a shared machine, a stolen cookie — enrolling a passkey would convert that moment into permanent access. Confirming a credential closes that, because a session hijacker holds the session and nothing else.
+The reason for the prompt is that a passkey is the only credential this panel mints that **survives every reset it offers**. Clearing a user's 2FA, resetting their password and signing out all of their sessions leave an enrolled passkey working, and passkey sign-in does not take the 2FA step. So if someone reaches an open session - a shared machine, a stolen cookie - enrolling a passkey would convert that moment into permanent access. Confirming a credential closes that, because a session hijacker holds the session and nothing else.
 
 Two consequences worth knowing:
 
 - **An account that signs in only through an identity provider** (Google, GitHub) has no password to confirm and may have no authenticator. It is asked to sign in again with its provider if its session is more than five minutes old, and is not prompted at all if it has just signed in. This is a weaker check than a password and is not equivalent to one; it bounds a session replayed from another machine, not a script running on the panel's own origin.
 - **You are notified when a passkey is added to your account**, in the panel's notification centre, and passkeys now appear in **Export my data**. If a passkey you do not recognise appears, remove it in **My Account** and change your password.
 
-Removing a passkey is not guarded, and deliberately so: the person who has lost the authenticator holding it is exactly the person who needs to remove it, and a passkey is never an account's only way in — the password and identity-provider doors remain.
+Removing a passkey is not guarded, and deliberately so: the person who has lost the authenticator holding it is exactly the person who needs to remove it, and a passkey is never an account's only way in - the password and identity-provider doors remain.
 
 ### A passkey that verifies you is held to that on every login
 
-Since v2.199.0, **My Account** marks each passkey **Verified** or **Possession-only**. A security key can satisfy WebAuthn's user-presence requirement (a touch) without ever confirming who is touching it — no PIN, no fingerprint, no face. The panel now records, at the moment a passkey is registered, whether its authenticator actually performed that stronger check, and if it did, every future login with that same passkey is required to perform it again. A passkey that has never demonstrated verification — including every passkey registered before this release — keeps working exactly as before: presence alone is enough, same as always.
+Since v2.199.0, **My Account** marks each passkey **Verified** or **Possession-only**. A security key can satisfy WebAuthn's user-presence requirement (a touch) without ever confirming who is touching it - no PIN, no fingerprint, no face. The panel now records, at the moment a passkey is registered, whether its authenticator actually performed that stronger check, and if it did, every future login with that same passkey is required to perform it again. A passkey that has never demonstrated verification - including every passkey registered before this release - keeps working exactly as before: presence alone is enough, same as always.
 
-**Nothing already enrolled is affected.** This is a property of a specific credential, not an account-wide switch: two passkeys on the same account can carry different badges. If a security key you rely on shows **Possession-only** and you want the stronger guarantee, remove it and register it again with a PIN or biometric enabled on the device — the new registration will record verification and your future logins with it will require it.
+**Nothing already enrolled is affected.** This is a property of a specific credential, not an account-wide switch: two passkeys on the same account can carry different badges. If a security key you rely on shows **Possession-only** and you want the stronger guarantee, remove it and register it again with a PIN or biometric enabled on the device - the new registration will record verification and your future logins with it will require it.
 
 ## IP Whitelist
 
 Restrict panel access to specific IP addresses. When configured, login attempts from non-whitelisted IPs are rejected before password validation.
 
-The allowlist covers **every way of signing in** — password, passkey, the OAuth callback, and the second step of a 2FA login. Before v2.47.0 it guarded the password form alone, so an operator who restricted the panel by IP still had the passkey and SSO paths answering from anywhere. If you set an allowlist on an earlier release, re-check it after upgrading: it is now enforced on doors that previously ignored it.
+The allowlist covers **every way of signing in** - password, passkey, the OAuth callback, and the second step of a 2FA login. Before v2.47.0 it guarded the password form alone, so an operator who restricted the panel by IP still had the passkey and SSO paths answering from anywhere. If you set an allowlist on an earlier release, re-check it after upgrading: it is now enforced on doors that previously ignored it.
 
 Set **Panel IP Allowlist** in **Settings** > **Account** > **Security Hardening** to a comma-separated list of IPs or CIDR ranges (`203.0.113.4, 10.0.0.0/8, 2001:db8::/32`). Leave it empty to allow all IPs. Entries are validated on save, so a malformed range is rejected rather than stored.
 
-The check reads the client address from the `X-Real-IP` header. **If your reverse proxy does not set it, a non-empty allowlist rejects every login**, including yours — the check fails closed on purpose, since an allowlist that cannot identify the caller must not admit them. Confirm logins work from an allowlisted address before you rely on it. To recover from a lockout, clear the value directly in the database:
+The check reads the client address from the `X-Real-IP` header. **If your reverse proxy does not set it, a non-empty allowlist rejects every login**, including yours - the check fails closed on purpose, since an allowlist that cannot identify the caller must not admit them. Confirm logins work from an allowlisted address before you rely on it. To recover from a lockout, clear the value directly in the database:
 
 ```sql
 DELETE FROM settings WHERE key = 'allowed_panel_ips';
@@ -189,12 +189,12 @@ DELETE FROM settings WHERE key = 'allowed_panel_ips';
 
 Sign-in is refused with **"Email not verified. Check your inbox."** when an account is
 unverified *and* an SMTP host is set in Settings. The check is on the setting being
-**present**, not on the mail actually working — so a half-finished or wrong SMTP
+**present**, not on the mail actually working - so a half-finished or wrong SMTP
 configuration arms the gate just as effectively as a working one.
 
 Before v2.90.0 this could lock out the very first administrator. The account created by
 the initial setup screen was stored unverified and, because it never registered, it
-never held a verification token — so the verification link could not be resent, it could
+never held a verification token - so the verification link could not be resent, it could
 not be generated at all, and the password-reset route needed the same broken mail. From
 v2.90.0 the setup screen marks that account verified when it creates it, and upgrading
 also releases any existing account that is unverified and holds no token.
@@ -230,7 +230,7 @@ Each action is logged in the activity log. Ensure you have an SSH key configured
 ## Auto-Fix
 
 Two screens offer a one-click **Fix**, and they remediate different things. Each
-list below is the complete set — a finding without a Fix button is one neither
+list below is the complete set - a finding without a Fix button is one neither
 screen can act on, and it will tell you what to do instead rather than offering a
 button that cannot work.
 
@@ -249,7 +249,7 @@ button that cannot work.
 - Reclaiming unmanaged Docker images, containers and build cache
 - **Renewing an expiring SSL certificate.** This one is applied by the panel
   rather than by the agent, because renewal needs the site's runtime, document
-  root, PHP version and ACME contact — all of which live in the panel's database.
+  root, PHP version and ACME contact - all of which live in the panel's database.
   A certificate under `/etc/dockpanel/ssl` with no matching site (a DNS-01
   wildcard, or one installed by hand) is not renewable here, and the panel says
   so rather than failing: whatever installed it is what renews it.
@@ -269,7 +269,7 @@ The report is styled for printing and can be shared with auditors.
 
 ## GDPR Data Export
 
-Users can export all their personal data stored in DockPanel:
+Users can export all their personal data stored in CyberHunter - Panel:
 
 ```bash
 curl -s https://panel.example.com/api/auth/export-my-data \
@@ -341,9 +341,9 @@ The panic button performs an emergency lockdown: kills all active terminal sessi
 
 ### Immutable Audit Log
 
-Security events, and every destructive or privilege-sensitive action across the panel — deleting a site, server, or user; promoting or demoting a reseller; resetting another user's password or 2FA; rotating a secret, API key, or server token; disabling SSH password auth; transferring a site — are written to the `security_audit_log` table, and a PostgreSQL trigger rejects `UPDATE` and `DELETE` on it. That trigger is the guarantee — it is what makes the record in the database immutable, and it is what the panel reads. This is deliberately broader than the general activity log (**Sites** and other pages' own activity views, backed by the mutable `activity_logs` table): a compromised admin account or a malicious insider with panel access can edit or delete an `activity_logs` row, but not a `security_audit_log` one.
+Security events, and every destructive or privilege-sensitive action across the panel - deleting a site, server, or user; promoting or demoting a reseller; resetting another user's password or 2FA; rotating a secret, API key, or server token; disabling SSH password auth; transferring a site - are written to the `security_audit_log` table, and a PostgreSQL trigger rejects `UPDATE` and `DELETE` on it. That trigger is the guarantee - it is what makes the record in the database immutable, and it is what the panel reads. This is deliberately broader than the general activity log (**Sites** and other pages' own activity views, backed by the mutable `activity_logs` table): a compromised admin account or a malicious insider with panel access can edit or delete an `activity_logs` row, but not a `security_audit_log` one.
 
-Every event is **also** appended to a dated file on disk at `/var/lib/dockpanel/audit/`, as a convenience copy for host-level forensics and log shipping. **What this does not do, stated plainly:** those files are written in append mode, but nothing sets a kernel append-only attribute on them, so a process that can write the directory can still rewrite one in place. Treat the on-disk copies as a convenience, not as evidence — the database is the authoritative record. Nothing in DockPanel reads these files back; they are for you and your own tooling.
+Every event is **also** appended to a dated file on disk at `/var/lib/dockpanel/audit/`, as a convenience copy for host-level forensics and log shipping. **What this does not do, stated plainly:** those files are written in append mode, but nothing sets a kernel append-only attribute on them, so a process that can write the directory can still rewrite one in place. Treat the on-disk copies as a convenience, not as evidence - the database is the authoritative record. Nothing in CyberHunter - Panel reads these files back; they are for you and your own tooling.
 
 If you want kernel-enforced protection on the on-disk copies, apply it to the **files**, not the directory:
 
@@ -351,7 +351,7 @@ If you want kernel-enforced protection on the on-disk copies, apply it to the **
 chattr +a /var/lib/dockpanel/audit/*.log     # new files each day need it again
 ```
 
-Setting it on the directory instead is a common mistake and does not do what it looks like: it blocks deleting and renaming the logs while still allowing any of them to be truncated and rewritten. It also blocks DockPanel's own 365-day retention sweep, which cannot unlink under that attribute even as root — the panel logs a warning naming the directory when that happens. Either attribute can be cleared by root (`chattr -a`), so neither defends against an attacker who already has it.
+Setting it on the directory instead is a common mistake and does not do what it looks like: it blocks deleting and renaming the logs while still allowing any of them to be truncated and rewritten. It also blocks CyberHunter - Panel's own 365-day retention sweep, which cannot unlink under that attribute even as root - the panel logs a warning naming the directory when that happens. Either attribute can be cleared by root (`chattr -a`), so neither defends against an attacker who already has it.
 
 View the log in **Security** > **Lockdown** tab (Audit Log section).
 
@@ -359,11 +359,11 @@ View the log in **Security** > **Lockdown** tab (Audit Log section).
 
 Terminal sessions are recorded in asciicast v2 format while **Terminal Session Recording** is on in **Settings** > **Account** > **Security Hardening**. Recordings are stored at `/var/lib/dockpanel/recordings/` and listed in **Security** > **Recordings** tab. Retention: 30 days.
 
-The panel decides per session and tells the agent inside the signed connection ticket, so a user cannot opt their own session out. Turning the toggle off stops new recordings; it does not delete existing ones. Fleet members running an agent older than v2.46.0 ignore the setting and keep recording — update the agent for the toggle to take effect there.
+The panel decides per session and tells the agent inside the signed connection ticket, so a user cannot opt their own session out. Turning the toggle off stops new recordings; it does not delete existing ones. Fleet members running an agent older than v2.46.0 ignore the setting and keep recording - update the agent for the toggle to take effect there.
 
 ### Geo-IP Login Alerts
 
-When enabled, DockPanel alerts admins when a login or registration occurs from a new IP address, especially from VPN, proxy, or datacenter IPs. Configure in **Settings** > **Account** > **Security Hardening** section.
+When enabled, CyberHunter - Panel alerts admins when a login or registration occurs from a new IP address, especially from VPN, proxy, or datacenter IPs. Configure in **Settings** > **Account** > **Security Hardening** section.
 
 ### Registration Approval Mode
 
@@ -371,7 +371,7 @@ When enabled, new user registrations require admin approval before the user can 
 
 ### Auto-Lockdown
 
-If the system detects a configurable number of suspicious events within a time window (default: 5 events in 10 minutes), lockdown activates automatically. Configure **both** halves — **Auto-Lockdown Threshold** and **Auto-Lockdown Window** — in **Settings** > **Account** > **Security Hardening**.
+If the system detects a configurable number of suspicious events within a time window (default: 5 events in 10 minutes), lockdown activates automatically. Configure **both** halves - **Auto-Lockdown Threshold** and **Auto-Lockdown Window** - in **Settings** > **Account** > **Security Hardening**.
 
 Lockdown blocks non-admin access until it expires (24 hours) or an admin deactivates it from **Security** > **Lockdown**. Note that the default threshold is low and a single burst can reach it, so raise the threshold or widen the window if your panel sees legitimate bursts of flagged activity.
 
@@ -387,9 +387,9 @@ To also drop the events that tripped it, so the next check does not immediately 
 DELETE FROM suspicious_events WHERE created_at > NOW() - INTERVAL '10 minutes';
 ```
 
-> **Changed in 2.46.0.** Suspicious-event counting, lockdown expiry and canary monitoring used to be gated by the **auto-healing** switch, so turning auto-healing off silently disabled all three. They now run independently. Auto-healing is **off by default**, so this affects any install that never switched it on — not only those that deliberately turned it off. Configure the threshold deliberately rather than relying on that side effect.
+> **Changed in 2.46.0.** Suspicious-event counting, lockdown expiry and canary monitoring used to be gated by the **auto-healing** switch, so turning auto-healing off silently disabled all three. They now run independently. Auto-healing is **off by default**, so this affects any install that never switched it on - not only those that deliberately turned it off. Configure the threshold deliberately rather than relying on that side effect.
 >
-> **Fixed in 2.47.0.** While counting was gated off, the agent still queued suspicious events to disk and nothing drained the file. On 2.46.0 the first check after upgrading read that whole backlog and counted it as having happened at that moment, so a box that had ever seen five suspicious commands locked down immediately — for 24 hours, blocking every non-admin user. 2.47.0 records each event at the time it actually occurred, so an old backlog falls outside the window. If 2.46.0 locked you out, clear it with the SQL above and upgrade.
+> **Fixed in 2.47.0.** While counting was gated off, the agent still queued suspicious events to disk and nothing drained the file. On 2.46.0 the first check after upgrading read that whole backlog and counted it as having happened at that moment, so a box that had ever seen five suspicious commands locked down immediately - for 24 hours, blocking every non-admin user. 2.47.0 records each event at the time it actually occurred, so an old backlog falls outside the window. If 2.46.0 locked you out, clear it with the SQL above and upgrade.
 
 ### Site Creation Rate Limit
 
@@ -397,9 +397,9 @@ One user may create at most **Site Creation Rate Limit** sites per hour (default
 
 ### Canary Files
 
-A canary file is a decoy nobody legitimate reads. While **Canary File Monitoring** is on, DockPanel checks each one every 2 minutes and raises a critical alert — audit-log entry, suspicious event, and a notification to every admin — if its access time has moved. Canary monitoring, suspicious-event ingestion and auto-lockdown expiry run independently of the auto-healer's own switch.
+A canary file is a decoy nobody legitimate reads. While **Canary File Monitoring** is on, CyberHunter - Panel checks each one every 2 minutes and raises a critical alert - audit-log entry, suspicious event, and a notification to every admin - if its access time has moved. Canary monitoring, suspicious-event ingestion and auto-lockdown expiry run independently of the auto-healer's own switch.
 
-**The tripwire has to be armed before it can trip.** Press **Arm canary files** in **Settings** > **Account** > **Security Hardening**; the row beside the switch tells you how many paths are actually being watched. DockPanel plants four:
+**The tripwire has to be armed before it can trip.** Press **Arm canary files** in **Settings** > **Account** > **Security Hardening**; the row beside the switch tells you how many paths are actually being watched. CyberHunter - Panel plants four:
 
 | Path | Why |
 |------|-----|
@@ -408,23 +408,23 @@ A canary file is a decoy nobody legitimate reads. While **Canary File Monitoring
 | `/var/backups/dockpanel/.dockpanel-canary` | panel database dumps |
 | `/var/www/.dockpanel-canary` | web root |
 
-Three older paths — `/etc/.dockpanel-canary`, `/root/.dockpanel-canary` and `/home/.dockpanel-canary` — are still watched if you armed a host by hand before v2.132.0, so upgrading does not stop monitoring a tripwire you were relying on.
+Three older paths - `/etc/.dockpanel-canary`, `/root/.dockpanel-canary` and `/home/.dockpanel-canary` - are still watched if you armed a host by hand before v2.132.0, so upgrading does not stop monitoring a tripwire you were relying on.
 
 **What this does not do, stated plainly:**
 
-- **Before v2.132.0 nothing planted these files at all.** The switch is seeded on, and the endpoint that creates the canaries had no caller anywhere in the panel, so on a stock install the feature watched **zero** files and its silence was indistinguishable from an all-clear. If you are upgrading, arm it — being switched on was never the same as being armed.
-- **`/root/` and `/home/` can never be watched**, whatever is on disk. Both daemons run under `ProtectHome=yes`, which replaces those trees with an empty mount, so the panel does not see a file you place there. Widening the sandbox to reach them would cost more hardening than the tripwire is worth, so DockPanel does not plant them and no longer implies it watches them.
+- **Before v2.132.0 nothing planted these files at all.** The switch is seeded on, and the endpoint that creates the canaries had no caller anywhere in the panel, so on a stock install the feature watched **zero** files and its silence was indistinguishable from an all-clear. If you are upgrading, arm it - being switched on was never the same as being armed.
+- **`/root/` and `/home/` can never be watched**, whatever is on disk. Both daemons run under `ProtectHome=yes`, which replaces those trees with an empty mount, so the panel does not see a file you place there. Widening the sandbox to reach them would cost more hardening than the tripwire is worth, so CyberHunter - Panel does not plant them and no longer implies it watches them.
 - **`/etc/.dockpanel-canary` is watched but not planted.** `ProtectSystem=strict` leaves bare `/etc` read-only for the agent, so the panel cannot create it; `/etc/dockpanel/` is used instead.
-- **Repeat reads inside 24 hours may not register.** Linux mounts default to `relatime`, which updates an access time only when it is older than the file's modification time or more than a day stale. The first read after arming is caught — that is the intrusion you care about — but a second read soon after may not raise a separate alert.
-- **It cannot tell an intruder from a backup.** Anything that reads the whole filesystem — a backup agent, an antivirus scan, `updatedb` — moves the access time and trips the alert. Treat a canary alert as a prompt to check the audit log and forensic snapshot, not as proof on its own.
+- **Repeat reads inside 24 hours may not register.** Linux mounts default to `relatime`, which updates an access time only when it is older than the file's modification time or more than a day stale. The first read after arming is caught - that is the intrusion you care about - but a second read soon after may not raise a separate alert.
+- **It cannot tell an intruder from a backup.** Anything that reads the whole filesystem - a backup agent, an antivirus scan, `updatedb` - moves the access time and trips the alert. Treat a canary alert as a prompt to check the audit log and forensic snapshot, not as proof on its own.
 
 ### Backup Integrity Hashes
 
 Backups taken through the panel record a SHA-256 hash of the archive and the hash of the previous backup of the same resource. Both appear in the chain-of-trust report.
 
-**What this does not do, stated plainly:** nothing re-computes those hashes afterwards, so a tampered archive is not detected and no alert fires. The hashes are a record of what was written at the time — useful for comparing against a copy you verify yourself — not tamper detection.
+**What this does not do, stated plainly:** nothing re-computes those hashes afterwards, so a tampered archive is not detected and no alert fires. The hashes are a record of what was written at the time - useful for comparing against a copy you verify yourself - not tamper detection.
 
-**Every path records one as of v2.118.0.** Until then the two unattended *site* paths — a per-site schedule and a backup policy — did not, while manual site backups and every database and volume backup did. Backups those two paths took before v2.118.0 keep no hash; nothing back-fills one, because the archive's hash has to be taken when the archive is written. A report for a backup with no hash shows `—` rather than a value.
+**Every path records one as of v2.118.0.** Until then the two unattended *site* paths - a per-site schedule and a backup policy - did not, while manual site backups and every database and volume backup did. Backups those two paths took before v2.118.0 keep no hash; nothing back-fills one, because the archive's hash has to be taken when the archive is written. A report for a backup with no hash shows `-` rather than a value.
 
 ### Suspicious Command Detection
 
@@ -432,4 +432,4 @@ Terminal commands matching dangerous patterns (useradd, chpasswd, su, curl|bash,
 
 ### Panel Database Auto-Backup
 
-DockPanel's own PostgreSQL database is automatically backed up daily to `/var/backups/dockpanel/` with 7-day retention. Enable/disable in **Settings** > **Account** > **Security Hardening**.
+CyberHunter - Panel's own PostgreSQL database is automatically backed up daily to `/var/backups/dockpanel/` with 7-day retention. Enable/disable in **Settings** > **Account** > **Security Hardening**.

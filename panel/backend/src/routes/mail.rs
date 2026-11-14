@@ -27,7 +27,7 @@ pub struct MailDomain {
     /// site's address, else the primary address).
     pub send_ip_id: Option<Uuid>,
     /// The address mail actually leaves from; `null` = the primary address.
-    /// Response-only — filled by [`fill_send_ips`], never a column.
+    /// Response-only - filled by [`fill_send_ips`], never a column.
     #[sqlx(default)]
     pub effective_send_ip: Option<String>,
     /// `"forced"` | `"site"` | `"primary"`. Response-only, see [`fill_send_ips`].
@@ -141,7 +141,7 @@ pub async fn mail_status(
     Ok(Json(result))
 }
 
-/// POST /api/mail/install — Returns 202 + install_id for SSE progress tracking.
+/// POST /api/mail/install - Returns 202 + install_id for SSE progress tracking.
 pub async fn mail_install(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -192,7 +192,7 @@ pub async fn mail_install(
                 //
                 // Every OTHER writer of mail state syncs; the installer was the one
                 // path that did not, so a box that re-ran it kept whatever the map
-                // file already held — on any box upgrading past v2.106.0, nothing —
+                // file already held - on any box upgrading past v2.106.0, nothing -
                 // and stayed unprotected until its next mailbox or domain change.
                 //
                 // The 202 went out before this task started, so there is no response
@@ -252,7 +252,7 @@ pub async fn mail_install(
     }))))
 }
 
-/// POST /api/mail/uninstall — Uninstall mail server (admin only).
+/// POST /api/mail/uninstall - Uninstall mail server (admin only).
 pub async fn mail_uninstall(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -318,15 +318,15 @@ pub async fn mail_uninstall(
 
 // ── Domain routes ───────────────────────────────────────────────────────
 
-/// GET /api/mail/domains — the mail domains on the server in scope.
+/// GET /api/mail/domains - the mail domains on the server in scope.
 ///
 /// This read had no server term and no ownership term of any kind: it returned
 /// every mail domain in the installation to every administrator, including those
 /// on a fleet member somebody else registered. The page therefore listed rows the
-/// handlers behind it now refuse — [`MAIL_DOMAIN_CALLER_PREDICATE`] draws that
+/// handlers behind it now refuse - [`MAIL_DOMAIN_CALLER_PREDICATE`] draws that
 /// line for every per-domain route, and the list that feeds them drew none.
 ///
-/// TWO BRANCHES, and they authorise differently on purpose — the house pattern
+/// TWO BRANCHES, and they authorise differently on purpose - the house pattern
 /// from `sites::list` versus `sites::list_for_admin`, where OWNERSHIP authorises
 /// and the server term only SCOPES.
 ///
@@ -338,7 +338,7 @@ pub async fn mail_uninstall(
 ///   no `{id}` to bind. It is deliberately NOT scoped by `$1`. `ServerScope`'s
 ///   header-absent branch resolves the LOCAL server with no ownership check, and
 ///   a non-administrator never sends the header, so constraining this branch by
-///   `$1` would blank the list for a client whose site is on a fleet member —
+///   `$1` would blank the list for a client whose site is on a fleet member -
 ///   while all eight per-domain handlers, which resolve the host from the ROW,
 ///   would happily serve them. The list must agree with the handlers behind it.
 ///
@@ -352,7 +352,7 @@ pub async fn mail_uninstall(
 /// backfills those rows, so on a migrated install there are none; but its final
 /// `NOT NULL` is guarded and skipped when an install has no local server row to
 /// backfill from, so the column can still hold one. A row that names no server is
-/// not a row belonging to another operator — it belongs to nobody, there is
+/// not a row belonging to another operator - it belongs to nobody, there is
 /// nothing here to test it against, and hiding it would remove it from the only
 /// screen that can see it while `sync_mail_config` keeps refusing every rebuild in
 /// the installation because it exists. Listed, it reaches the handlers, which
@@ -401,7 +401,7 @@ pub async fn create_domain(
     }
 
     // Multi-IP: a forced send address must be declared on the server the domain
-    // is created on — checked before the agent generates anything.
+    // is created on - checked before the agent generates anything.
     if let Some(ip_id) = body.send_ip_id {
         crate::services::server_ips::declared_ip_on_server(&state.db, ip_id, server_id)
             .await
@@ -440,7 +440,7 @@ pub async fn create_domain(
     //
     // The column was never bound before. `mail_domains.server_id` has no DEFAULT
     // and is nullable, so every mail domain created through the panel since the
-    // multi-server migration was stored naming no server at all — which left the
+    // multi-server migration was stored naming no server at all - which left the
     // server switcher as the only thing deciding where a domain's mailboxes went,
     // and left `idx_mail_domains_domain_server` unable to reject a duplicate
     // (Postgres treats NULLs as distinct, and the old global UNIQUE on `domain` was
@@ -471,7 +471,7 @@ pub async fn create_domain(
 
     // Rebuild the maps now, not at the first mailbox change: the sync is what
     // publishes this domain's send transport (multi-IP §4.4), so a domain created
-    // with — or following a site on — a non-primary address would otherwise send
+    // with - or following a site on - a non-primary address would otherwise send
     // from the primary one until something unrelated triggered a sync.
     // Best-effort, like configure above: the row exists and is reported either way.
     if let Err((status, msg)) = sync_mail_config(&state, server_id, &agent).await {
@@ -482,7 +482,7 @@ pub async fn create_domain(
     //
     // `server_id` travels with the domain into the background task. It is the
     // value that was just written onto the row above, so the records describe the
-    // machine the mailboxes were actually created on — not whichever box this
+    // machine the mailboxes were actually created on - not whichever box this
     // process happens to run on, which is what `detect_public_ip` answered and
     // what published a member's A record pointing at the panel.
     let dns_domain = domain.clone();
@@ -506,14 +506,14 @@ pub async fn create_domain(
     // The claim system is DIRECTIONAL and only one direction was guarded.
     // `may_claim_mail_held` stops a site being pointed at a name whose mail
     // already exists; nothing stops mail being created over a name a site
-    // already holds — `ensure_claimable` is not called from this module at all.
+    // already holds - `ensure_claimable` is not called from this module at all.
     // Since #106 derives mailbox control from site ownership, this INSERT is now
     // an entitlement-granting write: the moment the row lands, whoever owns the
     // same-named site on this server holds every mailbox and every password hash
     // on it.
     //
-    // That is the intended flow — it is how an operator gives a customer their
-    // mail — so this must NOT refuse. `ensure_claimable` verbatim would 409 the
+    // That is the intended flow - it is how an operator gives a customer their
+    // mail - so this must NOT refuse. `ensure_claimable` verbatim would 409 the
     // ordinary "site first, mail after" pairing that the entitlement is built
     // around. What was missing is that the grant was SILENT. It is now named in
     // the activity record the operator can actually read, and in the log.
@@ -530,7 +530,7 @@ pub async fn create_domain(
 
     if let Some((ref who,)) = grantee {
         tracing::info!(
-            "Mail domain {domain} created over a site owned by {who} — that account now \
+            "Mail domain {domain} created over a site owned by {who} - that account now \
              manages its mailboxes (GitHub #106)"
         );
     }
@@ -596,7 +596,7 @@ pub async fn update_domain(
             .map_err(|e| internal_error("update domain", e))?;
     }
 
-    // Push the catch_all/enabled change into Postfix/Dovecot — previously written to the DB only,
+    // Push the catch_all/enabled change into Postfix/Dovecot - previously written to the DB only,
     // so disabling a domain or setting a catch-all had no effect until an unrelated account change.
     sync_mail_config(&state, server_id, &agent).await?;
 
@@ -608,7 +608,7 @@ pub async fn update_domain(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// PUT /api/mail/domains/{id}/send-ip — force a send address, or `null` for automatic.
+/// PUT /api/mail/domains/{id}/send-ip - force a send address, or `null` for automatic.
 ///
 /// The address must be declared on the domain's OWN server (the row's, not the
 /// switcher's). Applied by a mail sync, which publishes the per-domain transport
@@ -655,7 +655,7 @@ pub async fn set_send_ip(
 
     // An explicit change must not report success when it did not take. The row
     // is KEPT (it is the operator's stated intent and the next successful sync
-    // applies it) and the request answers 502 saying so — rolling back would need
+    // applies it) and the request answers 502 saying so - rolling back would need
     // a second sync that could fail the same way and leave the two disagreeing.
     if let Some(problem) = report.send_ip_problem(row.effective_send_ip.as_deref()) {
         return Err(err(
@@ -702,7 +702,7 @@ pub async fn delete_domain(
         .map_err(|e| internal_error("delete domain", e))?;
 
     // Rebuild Postfix/Dovecot maps from the remaining rows so the deleted domain's mailboxes
-    // stop authenticating and receiving immediately — the agent's /mail/domains/remove only drops
+    // stop authenticating and receiving immediately - the agent's /mail/domains/remove only drops
     // the DKIM key and defers map cleanup to this sync, which delete_domain previously never called.
     // `server_id` was captured above: the row it came from no longer exists.
     sync_mail_config(&state, server_id, &agent).await?;
@@ -742,7 +742,7 @@ pub async fn delete_domain(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// GET /api/mail/domains/{id}/dns — Required DNS records for email
+/// GET /api/mail/domains/{id}/dns - Required DNS records for email
 pub async fn domain_dns(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -756,7 +756,7 @@ pub async fn domain_dns(
     let (domain, selector, dkim_pub, server_id) =
         mail_domain_identity(&state.db, id, &claims).await?;
 
-    // The MAIL DOMAIN'S HOST's public address — not this process's, and not the
+    // The MAIL DOMAIN'S HOST's public address - not this process's, and not the
     // agent's hostname.
     //
     // This endpoint used to read `/system/info`'s `hostname` field into a variable
@@ -767,7 +767,7 @@ pub async fn domain_dns(
     // is the panel's, so the tab instructed the operator to point their mail
     // domain at a machine that does not run their mail.
     //
-    // A `None` here is not a write, so it does not have to refuse — but it must not
+    // A `None` here is not a write, so it does not have to refuse - but it must not
     // substitute this box either, because an operator following the instruction
     // would create the wrong record by hand and it would resolve and answer. Fall
     // back to the placeholder the endpoint already used when it could not detect an
@@ -828,14 +828,14 @@ pub async fn domain_dns(
 ///
 /// The mailboxes are listed only after the DOMAIN has been resolved through
 /// [`MAIL_DOMAIN_CALLER_PREDICATE`]. `mail_accounts` has no server column and no
-/// owner column — it reaches both only through `domain_id` — so the domain is the
+/// owner column - it reaches both only through `domain_id` - so the domain is the
 /// only place this question can be asked, and the bare `WHERE domain_id = $1` here
 /// asked it nowhere: any administrator could enumerate the mailboxes of any
 /// domain on any machine in the fleet by id.
 ///
 /// Resolving first rather than joining the predicate into the list query is
 /// deliberate. A joined query would answer an unauthorised caller with an empty
-/// list, which reads as "this domain has no mailboxes" — the failure that looks
+/// list, which reads as "this domain has no mailboxes" - the failure that looks
 /// like success. This way an invisible domain 404s, exactly as the mutating
 /// handlers already do.
 pub async fn list_accounts(
@@ -885,7 +885,7 @@ pub async fn create_account(
         return Err(err(StatusCode::BAD_REQUEST, "Password must be at least 8 characters"));
     }
 
-    // Hash in a scheme THIS server's Dovecot can verify — Argon2id where it is
+    // Hash in a scheme THIS server's Dovecot can verify - Argon2id where it is
     // built in, bcrypt where it is not. Hashing in a scheme the verifier does
     // not know produces an account that is created successfully and can never
     // be opened. "THIS server" now means the domain's host: asking the switcher's
@@ -950,7 +950,7 @@ pub async fn update_account(
         if password.len() < 8 {
             return Err(err(StatusCode::BAD_REQUEST, "Password must be at least 8 characters"));
         }
-        // Same scheme selection as creation — a password CHANGE that reverts to
+        // Same scheme selection as creation - a password CHANGE that reverts to
         // Argon2id on a box that cannot verify it locks the user out of a
         // mailbox that was working (#92b: count the call sites).
         let schemes = agent_password_schemes(&agent).await;
@@ -974,7 +974,7 @@ pub async fn update_account(
     }
 
     if let Some(quota) = body.quota_mb {
-        // Clamp to a sane range (1 MB .. 1 TB) — 0/negative writes a broken Dovecot quota rule.
+        // Clamp to a sane range (1 MB .. 1 TB) - 0/negative writes a broken Dovecot quota rule.
         sqlx::query("UPDATE mail_accounts SET quota_mb = $1, updated_at = NOW() WHERE id = $2")
             .bind(quota.clamp(1, 1_048_576))
             .bind(account_id)
@@ -1064,7 +1064,7 @@ pub async fn delete_account(
     headers: axum::http::HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     // Resolved before the DELETE, so the host is taken from the row while the row
-    // still exists — and so a mailbox on a machine this administrator does not
+    // still exists - and so a mailbox on a machine this administrator does not
     // operate is refused rather than removed.
     let (email, server_id, agent) =
         mail_account_agent_for_caller(&state, domain_id, account_id, &claims).await?;
@@ -1134,7 +1134,7 @@ pub async fn create_alias(
     Path(domain_id): Path<Uuid>,
     Json(body): Json<CreateAliasRequest>,
 ) -> Result<(StatusCode, Json<MailAlias>), ApiError> {
-    // This handler previously read no row at all — it INSERTed straight against the
+    // This handler previously read no row at all - it INSERTed straight against the
     // `{id}` path segment and let the foreign key decide whether the domain existed.
     // So it asked neither whether the caller may write to that domain nor which host
     // the resulting alias map belongs on. Resolving the domain answers both.
@@ -1150,7 +1150,7 @@ pub async fn create_alias(
     // address it creates; the alias path took `source_email` verbatim from the body
     // and stored it against whatever `{id}` was in the path. `mail_sync_payload`
     // then emits it into that server's Postfix virtual-alias map keyed on the
-    // ADDRESS, and Postfix applies an alias to any address it accepts — so an alias
+    // ADDRESS, and Postfix applies an alias to any address it accepts - so an alias
     // filed under a domain the caller may write to could redirect mail addressed to
     // a DIFFERENT domain on the same host, to any destination. The row's own
     // `domain_id` said one thing and the map said another, and the map is what runs.
@@ -1167,7 +1167,7 @@ pub async fn create_alias(
         return Err(err(StatusCode::BAD_REQUEST, "Alias source contains invalid characters"));
     }
     // Destination may be a comma-separated list of targets (matches the agent's
-    // alias validation) — so every ELEMENT is checked, not the string as a whole.
+    // alias validation) - so every ELEMENT is checked, not the string as a whole.
     if !is_wellformed_address_list(&destination, "") {
         return Err(err(StatusCode::BAD_REQUEST, "Alias destination contains invalid characters"));
     }
@@ -1205,8 +1205,8 @@ pub async fn delete_alias(
     AuthUser(claims): AuthUser,
     Path((domain_id, alias_id)): Path<(Uuid, Uuid)>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    // Scoping the alias to the {domain_id} path segment — otherwise a mismatched (domain, alias)
-    // pair would delete an alias belonging to a different domain — is now carried by the shared
+    // Scoping the alias to the {domain_id} path segment - otherwise a mismatched (domain, alias)
+    // pair would delete an alias belonging to a different domain - is now carried by the shared
     // resolver's `md.id = $1` term over the join, alongside the authorisation and host questions
     // the previous read did not ask at all.
     let (source, server_id, agent) =
@@ -1302,7 +1302,7 @@ fn extract_parent_domain(domain: &str) -> String {
 // `crate::helpers::detect_public_ip`. It is gone rather than re-signatured: its
 // only effect was to make a call site read "the server's IP" when the function
 // underneath answers "THIS PROCESS's IP", and that ambiguity is precisely the
-// defect — every mail path that wanted a host's address got the panel's. A name
+// defect - every mail path that wanted a host's address got the panel's. A name
 // that has to be looked up to know which machine it means is worse than no name,
 // so the one caller now spells `helpers::public_ip_for_server` in full, and the
 // server it is asking about is visible in the argument.
@@ -1313,7 +1313,7 @@ fn cf_headers(token: &str, email: Option<&str>) -> reqwest::header::HeaderMap {
 }
 
 /// Auto-create DNS records (MX, A, SPF, DMARC, DKIM) for a new mail domain.
-/// Runs in a background task — errors are logged, not returned to the user.
+/// Runs in a background task - errors are logged, not returned to the user.
 ///
 /// `server_id` is the host the domain was created on, carried in from
 /// `create_domain` where the operator chose it. It is what the A record and the
@@ -1324,7 +1324,7 @@ fn cf_headers(token: &str, email: Option<&str>) -> reqwest::header::HeaderMap {
 /// `/etc/dockpanel/ssl/{domain}/fullchain.pem`.
 ///
 /// Separated from every lookup so it can be exercised without a pool, an agent
-/// or a mail domain — the reason the decision underneath had never been tested.
+/// or a mail domain - the reason the decision underneath had never been tested.
 #[derive(Debug, PartialEq, Eq)]
 pub enum MailCertVerdict {
     /// Nothing there loses names. Issue.
@@ -1336,9 +1336,9 @@ pub enum MailCertVerdict {
 /// What occupies the certificate file, in the words the operator is shown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MailCertBlocker {
-    /// A DockPanel-issued DNS-01 certificate that also covers subdomains.
+    /// A CyberHunter - Panel-issued DNS-01 certificate that also covers subdomains.
     Wildcard,
-    /// A certificate DockPanel did not issue (uploaded, commercial, Origin CA).
+    /// A certificate CyberHunter - Panel did not issue (uploaded, commercial, Origin CA).
     Foreign,
 }
 
@@ -1347,7 +1347,7 @@ pub enum MailCertBlocker {
 /// A mail host genuinely needs a certificate, and the agent route that issues one
 /// writes `fullchain.pem` unconditionally. That path is not the mail host's
 /// private property: a site of the same name reads it, and so does a DNS-01
-/// **wildcard**, which `routes/ssl.rs` stores under the ZONE APEX — the very name
+/// **wildcard**, which `routes/ssl.rs` stores under the ZONE APEX - the very name
 /// a mail domain is normally created at. Issuing a single-name HTTP-01
 /// certificate over that file replaces one covering `*.example.com` with one
 /// covering `example.com` alone, and every sibling vhost (`app.`, `www.`,
@@ -1363,7 +1363,7 @@ pub enum MailCertBlocker {
 /// Each covers exactly what the other is blind to, which is why this takes both.
 ///
 /// `Issue` deliberately includes the ordinary shape the mail entitlement is built
-/// on — a site and its mailboxes sharing one name, holding a single-name
+/// on - a site and its mailboxes sharing one name, holding a single-name
 /// certificate that a re-issue merely refreshes. Refusing that would break the
 /// documented "set the mail up first, add the website after" order.
 pub fn mail_cert_verdict(
@@ -1418,12 +1418,12 @@ async fn provision_mail_host_cert(
         .await
         .unwrap_or(None);
 
-    // ⛔ ASKED FOR EVERY MAIL HOST, not only for one that owns a site row — and
+    // ⛔ ASKED FOR EVERY MAIL HOST, not only for one that owns a site row - and
     //    that placement is the whole repair. The issuer question used to live
     //    INSIDE the `if let` below, so it read as "this door asks" while asking
     //    nothing at all for a domain with no `sites` row. That is not a rare
     //    shape: `domain_claim::find_occupant` guarantees a Compose stack's domain
-    //    can never own a `sites` row, and a Docker app's cannot either — so for
+    //    can never own a `sites` row, and a Docker app's cannot either - so for
     //    exactly the population with no other protection here, the check that
     //    looked present was absent, and the order below replaced whatever was on
     //    disk.
@@ -1457,12 +1457,12 @@ async fn provision_mail_host_cert(
         }
     } else if foreign.is_some() {
         // No `sites` row exists for this domain (a Compose stack or Docker app
-        // claimed it — `domain_claim::find_occupant` guarantees a `sites` row
+        // claimed it - `domain_claim::find_occupant` guarantees a `sites` row
         // can never coexist with one). `announce_mail_cert_conflict` used to
         // take a non-optional site id and owner, so this branch could only log
         // a warning and had no alert to raise. `site_id` is now `Option`, and
         // the caller's own `user_id` (the admin who configured mail for this
-        // domain) stands in as the alert's owner — a real id from the call
+        // domain) stands in as the alert's owner - a real id from the call
         // chain, not an invented one.
         announce_mail_cert_conflict(db, domain, None, user_id, server_id, MailCertBlocker::Foreign)
             .await;
@@ -1475,13 +1475,13 @@ async fn provision_mail_host_cert(
     }))).await {
         Ok(_) => {
             tracing::info!("Auto-SSL (mail): provisioned certificate for {domain}");
-            // ⛔ The agent does not patch a vhost for a certificate — it
+            // ⛔ The agent does not patch a vhost for a certificate - it
             // re-renders the whole file from what we just sent, and what we
             // sent is `runtime: "static"` with no root, no limits and no
             // hardening. That is the right body for a mail host and a
             // catastrophe for a WEBSITE of the same name, which is an
             // ordinary shape: you host example.com and you add mail for
-            // example.com. Measured on a box at s398 — the site was
+            // example.com. Measured on a box at s398 - the site was
             // re-rendered static, answered 403 to every PHP request and lost
             // its `limit_req_zone`, while the panel went on reporting
             // `runtime = php` with all its limits set.
@@ -1493,7 +1493,7 @@ async fn provision_mail_host_cert(
             // `routes/ssl.rs` already do for their own writes.
             crate::routes::ssl::rebuild_vhost_for_domain(db, agent, domain, server_id).await;
         }
-        Err(e) => tracing::warn!("Auto-SSL (mail): failed for {domain}: {e} — provision manually"),
+        Err(e) => tracing::warn!("Auto-SSL (mail): failed for {domain}: {e} - provision manually"),
     }
 }
 
@@ -1519,23 +1519,23 @@ async fn announce_mail_cert_conflict(
              start serving a certificate that does not cover it"
         ),
         MailCertBlocker::Foreign => format!(
-            "the certificate installed for {domain} was not issued by DockPanel. \
+            "the certificate installed for {domain} was not issued by CyberHunter - Panel. \
              Issuing over it would destroy a certificate somebody installed \
              deliberately"
         ),
     };
 
-    tracing::warn!("Auto-SSL (mail): declined to provision for {domain} — {because}");
+    tracing::warn!("Auto-SSL (mail): declined to provision for {domain} - {because}");
 
     // No `sites` row for a Compose stack or Docker app domain, so there is no
-    // SSL tab to send the operator to — that instruction is specific to the
+    // SSL tab to send the operator to - that instruction is specific to the
     // `site_id.is_some()` population.
     let remedy = if site_id.is_some() {
         "If the mail host needs one of its own, issue it deliberately from the site's SSL tab, \
          where the consequences are shown before anything is replaced."
     } else {
         "If the mail host needs one of its own, replace the certificate deliberately at its \
-         source (the Compose stack or template that manages it) — DockPanel will not do it \
+         source (the Compose stack or template that manages it) - CyberHunter - Panel will not do it \
          automatically."
     };
 
@@ -1549,7 +1549,7 @@ async fn announce_mail_cert_conflict(
         "warning",
         &format!("Mail certificate not issued: {domain}"),
         &format!(
-            "DockPanel did not issue a certificate for the mail host {domain}, because \
+            "CyberHunter - Panel did not issue a certificate for the mail host {domain}, because \
              {because}. Mail for this domain will use the certificate already installed. \
              {remedy}"
         ),
@@ -1582,14 +1582,14 @@ async fn auto_create_mail_dns(
     let (provider, cf_zone_id, cf_api_token, cf_api_email) = match zone {
         Some(z) => z,
         None => {
-            tracing::info!("No DNS zone found for {parent} — skipping auto-DNS for mail domain {domain}");
+            tracing::info!("No DNS zone found for {parent} - skipping auto-DNS for mail domain {domain}");
             return Ok(());
         }
     };
 
     // A WRITE, so a host we cannot resolve stops it. Every record below is derived
     // from this one value: the A record IS it, and the SPF `ip4:` term authorises
-    // it to send. Substituting this process's address would not fail — it would
+    // it to send. Substituting this process's address would not fail - it would
     // publish a record that resolves and answers on the wrong machine, so mail for
     // the domain is delivered nowhere and SPF authorises a host that never sends
     // it. That is strictly worse than the domain having no records at all, which
@@ -1603,18 +1603,18 @@ async fn auto_create_mail_dns(
             // The whole set is refused, not just the two records that carry the
             // address. MX names the apex and DKIM/DMARC only mean anything once
             // mail can reach it, and the auto-SSL step below issues over HTTP-01
-            // against that same apex A record — a partial publish would leave a
+            // against that same apex A record - a partial publish would leave a
             // domain advertising a mail host that resolves to nothing, plus a
             // certificate failure, which is harder to read than nothing at all.
             return Err(format!(
                 "no public address is recorded for server {server_id} (it may not have checked \
-                 in yet), so NO DNS records were published for {domain} — create them by hand \
+                 in yet), so NO DNS records were published for {domain} - create them by hand \
                  from the domain's DNS tab once the server reports an address"
             ));
         }
     };
 
-    // THE record set — the same one the DNS tab shows and the prerequisite check
+    // THE record set - the same one the DNS tab shows and the prerequisite check
     // verifies.
     //
     // This used to be spelled inline here and again in `domain_dns`, and the two
@@ -1738,7 +1738,7 @@ async fn auto_create_mail_dns(
 }
 
 /// Auto-delete all DNS records for a removed mail domain.
-/// Runs in a background task — errors are logged, not returned to the user.
+/// Runs in a background task - errors are logged, not returned to the user.
 async fn auto_delete_mail_dns(
     db: &sqlx::PgPool,
     user_id: uuid::Uuid,
@@ -1759,7 +1759,7 @@ async fn auto_delete_mail_dns(
     let (provider, cf_zone_id, cf_api_token, cf_api_email) = match zone {
         Some(z) => z,
         None => {
-            tracing::info!("No DNS zone found for {parent} — skipping DNS cleanup for mail domain {domain}");
+            tracing::info!("No DNS zone found for {parent} - skipping DNS cleanup for mail domain {domain}");
             return Ok(());
         }
     };
@@ -1774,7 +1774,7 @@ async fn auto_delete_mail_dns(
         let headers = cf_headers(&token, cf_api_email.as_deref());
 
         // Collect all record names we need to clean up. These mirror exactly what
-        // `auto_create_mail_dns` publishes (apex A + MX + SPF, _dmarc, DKIM) —
+        // `auto_create_mail_dns` publishes (apex A + MX + SPF, _dmarc, DKIM) -
         // keep the two lists in step, or removing a domain leaves records behind.
         let names_to_check = vec![
             domain.to_string(),
@@ -1969,13 +1969,13 @@ pub async fn relay_remove(
 /// half (name, DKIM selector, public key) is what the DNS tab and the two
 /// verification endpoints describe. The authorisation half is
 /// [`MAIL_DOMAIN_CALLER_PREDICATE`], the same predicate every mutating handler in
-/// this module resolves through — these reads were the ones that never did, so a
+/// this module resolves through - these reads were the ones that never did, so a
 /// domain an administrator could not touch was still one they could read the full
 /// configuration of, by id.
 ///
 /// It also returns the domain's HOST, which is the value the DNS paths were
 /// missing entirely: they described the panel's address for a domain that may live
-/// anywhere in the fleet. `Option<Uuid>` and not `Uuid` — the predicate admits a
+/// anywhere in the fleet. `Option<Uuid>` and not `Uuid` - the predicate admits a
 /// row that names no server (see its comment), and a read must not turn that into
 /// a 404 for a domain that plainly exists. Each caller decides what an unknown
 /// host means for what it is reporting.
@@ -2010,15 +2010,15 @@ async fn mail_domain_identity(
     ))
 }
 
-/// GET /api/mail/domains/{id}/dns-check — Verify DNS records are propagated.
+/// GET /api/mail/domains/{id}/dns-check - Verify DNS records are propagated.
 ///
 /// # What this used to prove, and didn't
 ///
 /// This endpoint predates the prerequisite layer and checked only that records of
-/// the right *kind* existed. MX passed on any MX at all — including a Google
+/// the right *kind* existed. MX passed on any MX at all - including a Google
 /// Workspace one, i.e. exactly the configuration under which this server's mail is
 /// never delivered. SPF passed on any `v=spf1` string, so a domain publishing
-/// `include:sendgrid.net -all` — which explicitly forbids this server — reported a
+/// `include:sendgrid.net -all` - which explicitly forbids this server - reported a
 /// pass. DKIM passed on `contains("p=")` without ever comparing our key. The A
 /// record was not checked at all.
 ///
@@ -2038,8 +2038,8 @@ pub async fn dns_check(
     // Compare against the address of the machine this domain's mail RUNS ON.
     //
     // With `detect_public_ip_cached` this compared every domain against the
-    // PANEL's address, so a correctly configured domain on a fleet member — A
-    // record and SPF both naming its own host, exactly what that host needs —
+    // PANEL's address, so a correctly configured domain on a fleet member - A
+    // record and SPF both naming its own host, exactly what that host needs -
     // failed both checks and was reported as broken. The endpoint's whole purpose
     // is to stop certifying a state that does not match reality, and it was
     // certifying the reverse for every domain not on this box.
@@ -2048,12 +2048,12 @@ pub async fn dns_check(
     // erroring: `check_mail_dns_published` already treats that as "we could not
     // determine the expected address" and returns Unknown/Info, which the
     // projection below renders as `unknown` on every record. A single-box install
-    // is unaffected — the helper detects the local address outbound, exactly as
-    // this line used to — and a member with no recorded address gets an honest
+    // is unaffected - the helper detects the local address outbound, exactly as
+    // this line used to - and a member with no recorded address gets an honest
     // "we can't tell" instead of a confident, wrong "misconfigured".
     //
     // Multi-IP: the apex is checked against the site's address, SPF against the
-    // send address — the same pair the DNS tab and auto-DNS use.
+    // send address - the same pair the DNS tab and auto-DNS use.
     let (a_ip, spf_ip) =
         crate::services::server_ips::mail_dns_addresses_for(&state.db, server_id, &domain).await;
     let (a_ip, spf_ip) = (a_ip.unwrap_or_default(), spf_ip.unwrap_or_default());
@@ -2086,7 +2086,7 @@ pub async fn dns_check(
     let checks: Vec<serde_json::Value> = records
         .iter()
         .map(|r| {
-            // `present` is None only when the lookup itself couldn't run — report
+            // `present` is None only when the lookup itself couldn't run - report
             // that as unknown, never as a failure.
             let status = match r.present {
                 Some(true) => "pass",
@@ -2118,7 +2118,7 @@ pub async fn dns_check(
     })))
 }
 
-/// The short name the DNS tab shows for a record — "SPF" reads better than "TXT".
+/// The short name the DNS tab shows for a record - "SPF" reads better than "TXT".
 fn label_for(r: &crate::services::prerequisites::DnsRecordHint) -> &'static str {
     if r.value.starts_with("v=spf1") {
         "SPF"
@@ -2133,9 +2133,9 @@ fn label_for(r: &crate::services::prerequisites::DnsRecordHint) -> &'static str 
     }
 }
 
-/// GET /api/mail/domains/{id}/preflight — The mail domain's prerequisites.
+/// GET /api/mail/domains/{id}/preflight - The mail domain's prerequisites.
 ///
-/// Same host, same `None` handling and same reasoning as [`dns_check`] — this is
+/// Same host, same `None` handling and same reasoning as [`dns_check`] - this is
 /// the structured face of the identical evaluation, and the two must not disagree
 /// about which machine the domain is expected to point at.
 pub async fn preflight(
@@ -2162,7 +2162,7 @@ pub async fn preflight(
 
 // ── Mail Logs & Storage (agent proxies) ──────────────────────────────────
 
-/// GET /api/mail/logs — Parse mail.log for recent activity and stats.
+/// GET /api/mail/logs - Parse mail.log for recent activity and stats.
 pub async fn mail_logs(
     State(_state): State<AppState>,
     AdminUser(_claims): AdminUser,
@@ -2173,7 +2173,7 @@ pub async fn mail_logs(
     Ok(Json(result))
 }
 
-/// GET /api/mail/storage — Get storage usage for all mailboxes.
+/// GET /api/mail/storage - Get storage usage for all mailboxes.
 pub async fn mail_storage(
     State(_state): State<AppState>,
     AdminUser(_claims): AdminUser,
@@ -2186,11 +2186,11 @@ pub async fn mail_storage(
 
 // ── Blacklist / Reputation Check ────────────────────────────────────────
 
-/// GET /api/mail/blacklist-check — Check a server's IP against email blacklists.
+/// GET /api/mail/blacklist-check - Check a server's IP against email blacklists.
 ///
 /// Reputation belongs to the ADDRESS THAT SENDS THE MAIL, so this asks about the
-/// server in scope — the one whose mail queue, logs and storage the rest of this
-/// page is showing — not about the process answering the request. On the panel's
+/// server in scope - the one whose mail queue, logs and storage the rest of this
+/// page is showing - not about the process answering the request. On the panel's
 /// own box those are the same address, which is why the difference never showed;
 /// on a fleet member they never are, and the widget was reporting this box's
 /// listings under a member's mail page. A member with a genuinely blacklisted IP
@@ -2204,7 +2204,7 @@ pub async fn blacklist_check(
     AdminUser(_claims): AdminUser,
     ServerScope(server_id, _agent): ServerScope,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    // No address, no check. There is nothing to substitute here — a DNSBL answer
+    // No address, no check. There is nothing to substitute here - a DNSBL answer
     // about a DIFFERENT machine is not a weaker answer, it is an answer to a
     // question nobody asked, and it would be rendered as this server's reputation.
     // Refusing is also not a regression on a single-box install: the helper detects
@@ -2248,7 +2248,7 @@ pub async fn blacklist_check(
     //
     // First, read the ANSWER rather than merely whether one arrived. RFC 5782 §2.1
     // puts listings in 127.0.0.0/8, and the large zones answer a refused, rate-limited
-    // or unauthenticated query with 127.255.255.0/24 — which is an A record, so
+    // or unauthenticated query with 127.255.255.0/24 - which is an A record, so
     // `is_ok()` scores a refusal as a LISTING. Calling a refusal "on Spamhaus" is the
     // same lie pointing the other way, and it is the one that would have an operator
     // rebuilding a mail server that was never blacklisted.
@@ -2299,7 +2299,7 @@ pub async fn blacklist_check(
         // A confirmed listing needs no control: an answer inside the listing range is
         // positive evidence about THIS address, and discarding it because the zone's
         // test entry did not come back would hide a real blacklisting. The control is
-        // only what licenses the OTHER direction — reading NXDOMAIN as "not listed"
+        // only what licenses the OTHER direction - reading NXDOMAIN as "not listed"
         // rather than as "nobody answered".
         let (checked, listed) = match (subject, control) {
             (Some(true), _) => (true, Some(true)),
@@ -2322,7 +2322,7 @@ pub async fn blacklist_check(
 
     // A single confirmed listing is real evidence and outranks any number of zones we
     // could not reach. "clean" is reserved for the case where every zone was actually
-    // asked — anything less is `unknown`, which the card must not paint green.
+    // asked - anything less is `unknown`, which the card must not paint green.
     let status = if listed_count > 0 {
         "listed"
     } else if checked_count == results.len() {
@@ -2474,21 +2474,21 @@ pub async fn tls_enforce(
 
 /// The one predicate that decides whether a caller may act on a mail domain.
 ///
-/// Binds `$1` = the mail domain id, `$2` = the caller's own id — the same two
+/// Binds `$1` = the mail domain id, `$2` = the caller's own id - the same two
 /// parameters, in the same order, as [`crate::helpers::SITE_CALLER_PREDICATE`],
 /// so a query that joins another table onto `mail_domains` can add its own bind
 /// as `$3` and drop this in unchanged.
 ///
 /// There are TWO ways to satisfy it: administer the machine the row names, or
 /// own the site of the same name on that machine. `mail_domains` still has no
-/// `user_id` column (`migrations/20260315200000_mail_management.sql`) — the
+/// `user_id` column (`migrations/20260315200000_mail_management.sql`) - the
 /// second arm answers ownership through `sites`, which is what GitHub #106 asks
 /// for and is documented on the arm itself below.
 ///
 /// On the administrator arm, `is_local` is this box and `sv.user_id` is a member
 /// this same administrator registered. So an administrator reaches every mail
 /// domain on the hardware they operate and none on a machine somebody else
-/// added — the same line `SITE_CALLER_PREDICATE`'s admin arm draws.
+/// added - the same line `SITE_CALLER_PREDICATE`'s admin arm draws.
 ///
 /// Before this, the mail handlers drew no line whatsoever. Each loaded its row
 /// with a bare `WHERE id = $1` and the only thing standing between an
@@ -2497,7 +2497,7 @@ pub async fn tls_enforce(
 /// putting this in its place would have WIDENED the surface while appearing to
 /// narrow it.
 ///
-/// ⚠ A row naming NO server is admitted DELIBERATELY, and it is not a hole — but
+/// ⚠ A row naming NO server is admitted DELIBERATELY, and it is not a hole - but
 /// it now sits INSIDE the administrator arm rather than in front of both, because
 /// as a free-standing disjunct it carried no caller term at all and would have
 /// admitted every site owner in the installation the moment the second arm
@@ -2506,7 +2506,7 @@ pub async fn tls_enforce(
 /// refuses it by name with a 409 that says what is wrong, and
 /// [`sync_mail_config`]'s precondition counts exactly these rows and tells the
 /// operator to backfill them. Excluding it would collapse both into "Domain not
-/// found" — a 404 for a domain that plainly exists, read as "already cleaned up".
+/// found" - a 404 for a domain that plainly exists, read as "already cleaned up".
 ///
 /// ⚠ The role is read from `users.role` in the DATABASE, not from `claims.role`
 /// in the token, for the reason spelled out on `SITE_CALLER_PREDICATE`: a JWT
@@ -2521,12 +2521,12 @@ pub async fn tls_enforce(
 /// name on the SAME server. `mail_domains` has no owner column, so the site is
 /// where the ownership question is answered; this is the entitlement itself.
 ///
-/// **The server term is not a hardening nicety — it is the whole boundary.**
+/// **The server term is not a hardening nicety - it is the whole boundary.**
 /// `sites` is unique on `(domain, server_id)` and NOT on domain, and
 /// `mail_domains` likewise. Without it, an administrator creating a mail domain
 /// on ANY machine in the fleet hands every mailbox on it to whichever account
 /// happens to hold a site of that name on some other machine. With it, both
-/// sides are keyed identically and the join is 1:1 — which is exactly the
+/// sides are keyed identically and the join is 1:1 - which is exactly the
 /// same-name-same-host pairing `may_claim_mail_held` is written around.
 /// Consequence worth stating rather than discovering: a domain whose website and
 /// mailboxes live on DIFFERENT hosts stays administrator-only.
@@ -2535,20 +2535,20 @@ pub async fn tls_enforce(
 /// `mail_domains.domain` is lowercased by its only writer; `sites.domain` only
 /// has been since the domain-claim module landed, so legacy rows may hold mixed
 /// case. Folding one side alone would let two rows differing only in case both
-/// match — so the arm additionally requires that NO OTHER account owns a
+/// match - so the arm additionally requires that NO OTHER account owns a
 /// case-variant of the name on that server. One owner, or nobody: it fails
 /// CLOSED on exactly the legacy data that could otherwise widen it.
 ///
 /// A normalising migration was considered and deliberately REJECTED. The unique
 /// index is on the raw column, so lowercasing in bulk raises a duplicate key on
-/// precisely the installs that have the problem — and a failed migration aborts
+/// precisely the installs that have the problem - and a failed migration aborts
 /// startup. `sites.domain` is also the on-disk vhost key, which SQL cannot
 /// rename. The quantifier below costs two clauses and touches no rows.
 ///
 /// ⚠ Site ownership alone authorises; there is deliberately no role term on this
 /// arm. Ownership of the row IS the grant, exactly as it is for the site itself,
 /// and adding one would leave the same state reachable through a role that lacks
-/// it. What a non-administrator may not do is CREATE the pairing — that is
+/// it. What a non-administrator may not do is CREATE the pairing - that is
 /// `may_claim_mail_held`'s job, and it refuses every non-admin, not just clients.
 const MAIL_DOMAIN_CALLER_PREDICATE: &str = "md.id = $1 AND (EXISTS (\
     SELECT 1 FROM users u WHERE u.id = $2 AND u.role = 'admin' AND (\
@@ -2572,7 +2572,7 @@ const MAIL_DOMAIN_CALLER_PREDICATE: &str = "md.id = $1 AND (EXISTS (\
 ///
 /// Returns the domain name, the server it names, and a handle to that server. A
 /// host that will not resolve is REFUSED rather than quietly replaced with this
-/// one — see [`crate::helpers::agent_for_site_server`], the single choke point
+/// one - see [`crate::helpers::agent_for_site_server`], the single choke point
 /// every mail dispatch now funnels through.
 async fn mail_domain_agent_for_caller(
     state: &AppState,
@@ -2593,7 +2593,7 @@ async fn mail_domain_agent_for_caller(
 
     let agent = crate::helpers::agent_for_site_server(state, server_id, &domain).await?;
     let Some(server_id) = server_id else {
-        // Unreachable today — `agent_for_site_server` refuses a `None` server_id
+        // Unreachable today - `agent_for_site_server` refuses a `None` server_id
         // above. Written as a branch rather than an `unwrap` so that if that
         // refusal is ever softened, this becomes a 409 instead of a panic.
         return Err(err(
@@ -2684,14 +2684,14 @@ async fn mail_alias_agent_for_caller(
 ///
 /// The three reads used to have no `WHERE` clause of any kind. `mail_accounts`
 /// and `mail_aliases` still have no server column of their own, so they reach one
-/// the only way they can — through `mail_domains.server_id` on the domain that
+/// the only way they can - through `mail_domains.server_id` on the domain that
 /// owns them.
 ///
 /// Separated from [`sync_mail_config`] so that a database failure while gathering
 /// stays distinguishable from the safety precondition, which must never be
 /// swallowed. Only the precondition is fatal to the request.
 ///
-/// Multi-IP: each domain also carries `send_ip` + `helo` (resolved here — the
+/// Multi-IP: each domain also carries `send_ip` + `helo` (resolved here - the
 /// agent does no resolution), and the root carries `primary_helo`. Only the agent
 /// knows which address is its primary one, so `agent_primary` is its answer to
 /// `GET /system/ips`, or `None` when that could not be asked.
@@ -2776,7 +2776,7 @@ pub(crate) async fn agent_primary_ip(agent: &AgentHandle) -> Option<String> {
 ///
 /// # What it used to send, and to whom
 ///
-/// This took only an agent handle and read every mail row in the installation —
+/// This took only an agent handle and read every mail row in the installation -
 /// `SELECT domain, enabled, catch_all FROM mail_domains` with no `WHERE`, and the
 /// same for `mail_accounts` and `mail_aliases`. Two defects compounded. The
 /// payload was fleet-wide, so every mailbox's `password_hash` and `forward_to`
@@ -2792,14 +2792,14 @@ pub(crate) async fn agent_primary_ip(agent: &AgentHandle) -> Option<String> {
 ///
 /// # Why an un-scoped domain stops the whole rebuild
 ///
-/// `mail_domains.server_id` is NULLABLE — the multi-server migration set
+/// `mail_domains.server_id` is NULLABLE - the multi-server migration set
 /// `NOT NULL` on `sites`, `docker_stacks` and `git_deploys` and left this column
-/// alone — and its one-time backfill only ever touched rows that existed when the
+/// alone - and its one-time backfill only ever touched rows that existed when the
 /// migration ran.
 ///
 /// `/mail/sync` REBUILDS the maps; it does not merge into them. So a filtered
 /// payload that omits an un-scoped domain does not merely fail to update that
-/// domain — if the domain happens to live on the target box, the rebuild DELETES
+/// domain - if the domain happens to live on the target box, the rebuild DELETES
 /// its mailboxes from Postfix and Dovecot. And nothing here can tell whether it
 /// does: a `NULL` server_id is not evidence of the local box, it is the absence of
 /// evidence, and guessing a host is exactly what this whole change exists to stop.
@@ -2839,7 +2839,7 @@ pub(crate) async fn sync_mail_config_report(
 
     // Everything past the precondition stays best-effort, exactly as it was when
     // every call site spelled `let _ = sync_mail_config(…)`. A transient database
-    // blip or an agent that is down must not turn a saved change into a 500 — it
+    // blip or an agent that is down must not turn a saved change into a 500 - it
     // never did, and widening that here would be a behaviour change hiding inside
     // a security fix.
     let agent_primary = agent_primary_ip(agent).await;
@@ -2959,7 +2959,7 @@ pub(crate) async fn resync_if_mail_follows(
 
 /// Accept only the address character set the agent's `sync_config` accepts (ASCII alphanumeric
 /// plus `@ . _ - +`, and any char in `extra_allowed`). Anything outside it makes the agent reject
-/// the ENTIRE sync batch — and because callers discard the sync result, one bad row would silently
+/// the ENTIRE sync batch - and because callers discard the sync result, one bad row would silently
 /// freeze all future Postfix/Dovecot updates. Rejecting at the door (400) surfaces the error to the
 /// operator instead of wedging mail provisioning. (s236 mail-surface audit.)
 fn is_valid_mail_address(addr: &str, extra_allowed: &str) -> bool {
@@ -2981,19 +2981,19 @@ fn is_valid_mail_address(addr: &str, extra_allowed: &str) -> bool {
 ///   then `:1045`), and both key on the literal string `@example.com`. `postmap`
 ///   keeps the FIRST entry and reports the collision on stderr, which the agent
 ///   discards (`let _ = safe_command("postmap")`). So creating that mailbox
-///   silently VOIDS the domain's catch-all — a setting only an administrator can
-///   write — and returns 201 with no warning on any surface.
+///   silently VOIDS the domain's catch-all - a setting only an administrator can
+///   write - and returns 201 with no warning on any surface.
 /// * `"..@example.com"` passes. The agent builds `/var/vmail/{domain}/{local}`
 ///   (`:1105`), so the maildir resolves to `/var/vmail`, one level ABOVE the
 ///   domain directory, and the `chown -R` beside it then walks the whole tree on
 ///   every sync. `domain_configure` (`:932`) rejects a component containing `..`
-///   — that guard was simply never applied to the half of the path the local part
+///   - that guard was simply never applied to the half of the path the local part
 ///   supplies. (Depth is capped at one level: `/` is outside the character set.)
 ///
 /// Both doors are administrator-only today and open to a site's owner under
 /// GitHub #106, which is why this lands with that change rather than after it.
 ///
-/// The rule is deliberately narrow — non-empty local part, non-empty domain,
+/// The rule is deliberately narrow - non-empty local part, non-empty domain,
 /// exactly one `@`, and a local part that is not made only of dots. It refuses
 /// the three degenerate forms that are path components or map keys and nothing
 /// else, so it cannot reject a mailbox an install already has.
@@ -3014,7 +3014,7 @@ fn is_wellformed_address(addr: &str, extra_allowed: &str) -> bool {
 ///
 /// `is_valid_mail_address(dest, ",")` accepted `"root,a@b.com"` and
 /// `"a@b.com,root"` because it only ever asked whether the STRING contained an
-/// `@` somewhere — so a bare local name rode along beside a valid address and was
+/// `@` somewhere - so a bare local name rode along beside a valid address and was
 /// written into `virtual_alias_maps` verbatim. Checking per element is the only
 /// form of the question that means anything for a list.
 fn is_wellformed_address_list(list: &str, extra_allowed: &str) -> bool {
@@ -3031,9 +3031,9 @@ fn is_wellformed_address_list(list: &str, extra_allowed: &str) -> bool {
 /// natively and which is the same Argon2id KDF the panel uses for its own user accounts.
 ///
 /// The previous implementation emitted a single unsalted-round `SHA512(salt || password)` hex
-/// digest labelled `{SHA512-CRYPT}`. That was neither a real crypt(3) SHA-512 hash — so
+/// digest labelled `{SHA512-CRYPT}`. That was neither a real crypt(3) SHA-512 hash - so
 /// Dovecot's SHA512-CRYPT verifier rejected it for *every* password, breaking all mailbox login
-/// (IMAP/POP/SMTP-AUTH/webmail) — nor an adequate password KDF. Confirmed live with `doveadm
+/// (IMAP/POP/SMTP-AUTH/webmail) - nor an adequate password KDF. Confirmed live with `doveadm
 /// pw -t` during the s236 mail-surface audit; see the `dovecot_hash_*` tests below.
 fn dovecot_password_hash(password: &str) -> Result<String, argon2::password_hash::Error> {
     use argon2::password_hash::{rand_core::OsRng, SaltString};
@@ -3050,7 +3050,7 @@ fn dovecot_password_hash(password: &str) -> Result<String, argon2::password_hash
 ///
 /// **The version check in `dovecot_password_hash`'s doc comment is wrong in the
 /// way that matters: Argon2 is a BUILD OPTION, not a version.** Rocky 9.8 ships
-/// Dovecot 2.3.16 — past the ">= 2.3.11" that comment cites — compiled without
+/// Dovecot 2.3.16 - past the ">= 2.3.11" that comment cites - compiled without
 /// libsodium, so `doveadm pw -l` lists no ARGON2ID and every login fails with
 /// `Unknown scheme ARGON2ID` while the panel reports the account created
 /// successfully. That is s259's unopenable mailbox on a different family
@@ -3059,7 +3059,7 @@ fn dovecot_password_hash(password: &str) -> Result<String, argon2::password_hash
 /// So the scheme is chosen from what the agent reports its Dovecot supports,
 /// not from what we would prefer:
 ///
-/// * `ARGON2ID` when available — unchanged on Debian/Ubuntu, which is every
+/// * `ARGON2ID` when available - unchanged on Debian/Ubuntu, which is every
 ///   install that works today, so nobody is downgraded.
 /// * `BLF-CRYPT` (bcrypt) otherwise. It is a real password KDF, present in
 ///   every Dovecot build in the scheme list measured on both families, and
@@ -3067,7 +3067,7 @@ fn dovecot_password_hash(password: &str) -> Result<String, argon2::password_hash
 ///
 /// An empty `supported` means the agent could not tell (Dovecot not installed
 /// yet, `doveadm` missing). That is treated as "keep the strong default"
-/// rather than "supports nothing" — hashing is not the place to guess a
+/// rather than "supports nothing" - hashing is not the place to guess a
 /// downgrade, and accounts created before the mail stack exists are re-synced
 /// once it does.
 fn dovecot_password_hash_for(
@@ -3116,11 +3116,11 @@ mod address_shape_tests {
     /// ⚠ THE ARM THIS MODULE EXISTS FOR. Both of these were ACCEPTED before, and
     /// each produced a concrete effect that was measured, not argued:
     ///
-    /// * `@d` — the account line and the domain's catch-all line become the SAME
+    /// * `@d` - the account line and the domain's catch-all line become the SAME
     ///   `virtual_mailbox_maps` key. `postmap` keeps whichever was written first
     ///   (accounts are), and the agent discards its duplicate-entry warning, so
     ///   creating the mailbox silently deleted an administrator-only setting.
-    /// * `..@d` — the agent joins the local part into
+    /// * `..@d` - the agent joins the local part into
     ///   `/var/vmail/{domain}/{local}`, which resolves one level ABOVE the domain
     ///   directory, and `chown -R` then walks the whole tree on every sync.
     ///
@@ -3138,7 +3138,7 @@ mod address_shape_tests {
             // behaviour and not a test that was always going to be green.
             assert!(
                 is_valid_mail_address(addr, ""),
-                "{addr:?} must still satisfy the character-set check — if it does \
+                "{addr:?} must still satisfy the character-set check - if it does \
                  not, this test has stopped measuring the gap it was written for"
             );
         }
@@ -3156,7 +3156,7 @@ mod address_shape_tests {
             "u@example.com",
             "under_score-dash@sub.example.co.uk",
             "0@1.com",
-            // A local part containing dots beside other characters is fine — it
+            // A local part containing dots beside other characters is fine - it
             // is only a path component problem when it is NOTHING but dots.
             "a..b@example.com",
             ".leading@example.com",
@@ -3188,7 +3188,7 @@ mod address_shape_tests {
         assert!(is_wellformed_address_list("a@b.com,c@d.com", ""));
         assert!(is_wellformed_address_list(" a@b.com , c@d.com ", ""));
 
-        // Both orders — the old check accepted each, because it only ever asked
+        // Both orders - the old check accepted each, because it only ever asked
         // whether an '@' appeared SOMEWHERE in the string.
         assert!(!is_wellformed_address_list("root,a@b.com", ""));
         assert!(!is_wellformed_address_list("a@b.com,root", ""));
@@ -3215,7 +3215,7 @@ mod tests {
             "expected an {{ARGON2ID}} PHC credential, got: {stored}"
         );
 
-        // The PHC after the scheme label must verify against the password — the same check
+        // The PHC after the scheme label must verify against the password - the same check
         // Dovecot's ARGON2ID scheme performs (confirmed live with `doveadm pw -t`, s236 audit).
         let phc = stored.strip_prefix("{ARGON2ID}").unwrap();
         let parsed = PasswordHash::new(phc).expect("credential is a valid PHC string");
@@ -3284,7 +3284,7 @@ mod mail_cert_verdict_tests {
         );
     }
 
-    // Neither input alone is sufficient — this is the pair that proves it. Drop
+    // Neither input alone is sufficient - this is the pair that proves it. Drop
     // the columns and the wildcard case passes; drop the issuer and the foreign
     // case passes. Both directions are asserted above; this pins that the two
     // are not the same test written twice.

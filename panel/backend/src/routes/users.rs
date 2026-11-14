@@ -39,12 +39,12 @@ pub struct UserResponse {
     pub site_count: i64,
     /// Carried so the user table can offer "Reset 2FA" on the rows that have an
     /// enrolment and stay quiet on the rows that do not. Without it the control
-    /// would be a button that refuses on most of the list — the shape this panel
+    /// would be a button that refuses on most of the list - the shape this panel
     /// keeps having to remove.
     pub totp_enabled: bool,
 }
 
-/// GET /api/users — List all users (admin only).
+/// GET /api/users - List all users (admin only).
 pub async fn list(
     State(state): State<AppState>,
     AdminUser(_claims): AdminUser,
@@ -64,30 +64,30 @@ pub async fn list(
 }
 /// The role values an operator may assign through this module.
 ///
-/// ONE list, because there were three identical copies — create, update and the
-/// un-suspend restore — and adding `client` to the database CHECK and to the user
+/// ONE list, because there were three identical copies - create, update and the
+/// un-suspend restore - and adding `client` to the database CHECK and to the user
 /// editor still left all three refusing it, so the role existed everywhere except
 /// where it is written. `suspended` is deliberately absent: it is reached through
 /// `toggle_suspend`, never assigned directly.
 ///
 /// Public because `helpers::unsuspend_account` validates a stashed role against
-/// it. It is deliberately shared rather than copied — a fourth copy is how the
+/// it. It is deliberately shared rather than copied - a fourth copy is how the
 /// first three got out of step.
 pub const ASSIGNABLE_ROLES: [&str; 4] = ["admin", "reseller", "user", "client"];
 
 /// The message that names them. `err` takes a `&str`, so this cannot be built
-/// from the list at runtime — a unit test asserts it mentions every one instead,
+/// from the list at runtime - a unit test asserts it mentions every one instead,
 /// which is the same guarantee by a different route.
 const ASSIGNABLE_ROLES_MSG: &str = "Role must be one of: admin, reseller, user, client";
 
-/// True when `target` is another administrator — the caller's peer, not their
+/// True when `target` is another administrator - the caller's peer, not their
 /// subordinate. `AdminUser` below is a role check ONLY, so without this every
 /// two admin accounts on the same install are fully interchangeable: reset
 /// each other's password, strip each other's 2FA-recovering password (see
 /// `reset_password`), or delete each other and inherit their entire server
 /// fleet (`remove`'s `UPDATE servers SET user_id = ...` below). Multiple
 /// administrators is a live, supported configuration, not a hypothetical one
-/// — `docs/guides/roles-and-ownership.md` describes a per-admin hardware
+/// - `docs/guides/roles-and-ownership.md` describes a per-admin hardware
 /// boundary for sites ("does not extend to a machine another administrator
 /// added"), and `534dc51`/v2.185.0 fixed a second-admin-visibility bug
 /// elsewhere in this arc. `list`/`create` are deliberately untouched: seeing
@@ -97,7 +97,7 @@ fn is_other_admin(target_role: &str, target_id: Uuid, caller_id: Uuid) -> bool {
 }
 
 
-/// POST /api/users — Create a new user (admin only).
+/// POST /api/users - Create a new user (admin only).
 pub async fn create(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -141,7 +141,7 @@ pub async fn create(
     // `email_verified` is TRUE because this is an ADMIN-CREATED account, not a
     // self-registration: the administrator types the address and the password, and
     // no verification mail is ever sent from here. Omitting the column left it at
-    // its `NOT NULL DEFAULT FALSE` and issued no `email_token` either — which is
+    // its `NOT NULL DEFAULT FALSE` and issued no `email_token` either - which is
     // exactly the pair `login` treats as "unverified" while the verify route can
     // only match `WHERE email_token = $1`. Every account this door made was
     // therefore unable to sign in the moment SMTP existed, and unable to fix it.
@@ -150,7 +150,7 @@ pub async fn create(
     // welcome mail below goes out over the same SMTP whose presence arms the block,
     // and it says "please log in" while carrying no verification link.
     //
-    // The address is ASSERTED here, not proven — the same trade the two other
+    // The address is ASSERTED here, not proven - the same trade the two other
     // non-self-service doors already make (`oauth`, `whmcs`). Proving it instead
     // would mean issuing a token and sending mail from an admin action, which
     // reintroduces the dependency on SMTP that caused the lockout.
@@ -183,8 +183,8 @@ pub async fn create(
         let panel_url = &state.config.base_url;
         let welcome_html = format!(
             r#"<div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-                <h2 style="color: #4f46e5;">Welcome to DockPanel</h2>
-                <p>Your DockPanel account has been created by an administrator.</p>
+                <h2 style="color: #4f46e5;">Welcome to CyberHunter - Panel</h2>
+                <p>Your CyberHunter - Panel account has been created by an administrator.</p>
                 <p><strong>Email:</strong> {}</p>
                 <p><strong>Panel URL:</strong> <a href="{}">{}</a></p>
                 <p>Please log in and change your password at your earliest convenience.</p>
@@ -193,7 +193,7 @@ pub async fn create(
             user.email, panel_url, panel_url
         );
         if let Err(e) = crate::services::email::send_email(
-            &state.db, &user.email, "Welcome to DockPanel", &welcome_html
+            &state.db, &user.email, "Welcome to CyberHunter - Panel", &welcome_html
         ).await {
             tracing::debug!("Welcome email not sent to {}: {e}", user.email);
         }
@@ -209,7 +209,7 @@ pub async fn create(
     ))
 }
 
-/// PUT /api/users/{id} — Update user role or password (admin only).
+/// PUT /api/users/{id} - Update user role or password (admin only).
 pub async fn update(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -244,7 +244,7 @@ pub async fn update(
         if id == claims.sub && role_changed {
             return Err(err(StatusCode::BAD_REQUEST, "Cannot change your own role"));
         }
-        // Only mutate + revoke on an ACTUAL change — a no-op self-submit must not log the
+        // Only mutate + revoke on an ACTUAL change - a no-op self-submit must not log the
         // caller out. The last-admin guard is folded into the UPDATE's WHERE so a demotion
         // can never orphan the panel of admins (the row updates only if the new role is
         // admin, the current role isn't admin, or more than one admin remains); this is
@@ -271,7 +271,7 @@ pub async fn update(
                 return Err(err(StatusCode::BAD_REQUEST, "Cannot demote the last admin"));
             }
 
-            // Role change must take effect immediately — actually revoke the victim's live
+            // Role change must take effect immediately - actually revoke the victim's live
             // token(s). A plain DELETE of user_sessions is a no-op against the stateless JWT.
             crate::routes::auth::revoke_all_user_sessions(&state, id).await;
         }
@@ -297,7 +297,7 @@ pub async fn update(
             .await
             .map_err(|e| internal_error("update users", e))?;
 
-        // A password change must evict the user's live token(s) — same invariant as
+        // A password change must evict the user's live token(s) - same invariant as
         // reset_password (admin + self-service) and reseller update_user.
         crate::routes::auth::revoke_all_user_sessions(&state, id).await;
     }
@@ -317,14 +317,14 @@ pub async fn update(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// POST /api/users/{id}/toggle-suspend — Suspend or un-suspend a user (admin only).
+/// POST /api/users/{id}/toggle-suspend - Suspend or un-suspend a user (admin only).
 ///
 /// Suspending sets the user's role to "suspended" and records what it was in
 /// `users.prior_role`; un-suspending gives that role back. All sessions are
 /// invalidated either way.
 ///
 /// The stash used to live in `users.reset_token`, which the public password-reset
-/// flow also writes — so a suspended account could destroy the record of its own
+/// flow also writes - so a suspended account could destroy the record of its own
 /// role by asking for a password reset, and came back as a plain `user`. Both
 /// halves of the fix are elsewhere: the column is `prior_role` and the statements
 /// are `helpers::suspend_account` / `helpers::unsuspend_account`, shared with the
@@ -356,7 +356,7 @@ pub async fn toggle_suspend(
     // Both arms write the role themselves, in one statement each, so the stash and
     // the status can never come apart.
     //
-    // An administrator restoring through the panel has no deny-list — they may
+    // An administrator restoring through the panel has no deny-list - they may
     // give back anything that was recorded, including `admin`. The billing
     // webhook passes one; see `helpers::unsuspend_account`.
     let (new_role, action) = if user.role == "suspended" {
@@ -371,7 +371,7 @@ pub async fn toggle_suspend(
                     StatusCode::CONFLICT,
                     "This account was suspended by an older version and the record of its \
                      previous role was lost, so un-suspending cannot know what to give back. \
-                     Set the role directly from the user editor — that also lifts the suspension.",
+                     Set the role directly from the user editor - that also lifts the suspension.",
                 ))
             }
         }
@@ -380,7 +380,7 @@ pub async fn toggle_suspend(
         ("suspended".to_string(), "user.suspend")
     };
 
-    // Actually revoke the user's live token(s) — a plain DELETE of user_sessions does
+    // Actually revoke the user's live token(s) - a plain DELETE of user_sessions does
     // not invalidate the stateless JWT, so suspension would otherwise be a no-op for
     // up to 2h (and the suspended user could keep whatever role their token carries).
     crate::routes::auth::revoke_all_user_sessions(&state, id).await;
@@ -411,7 +411,7 @@ pub struct ResetPasswordRequest {
     pub password: String,
 }
 
-/// POST /api/users/{id}/reset-password — Admin resets a user's password.
+/// POST /api/users/{id}/reset-password - Admin resets a user's password.
 ///
 /// Hashes the new password with Argon2, updates the DB, and invalidates all sessions.
 pub async fn reset_password(
@@ -464,7 +464,7 @@ pub async fn reset_password(
         .map_err(|e| internal_error("reset_password", e))?;
 
     // Actually revoke the user's live token(s) so a stolen/active session cannot
-    // survive the reset — matches the self-service reset path (auth.rs).
+    // survive the reset - matches the self-service reset path (auth.rs).
     crate::routes::auth::revoke_all_user_sessions(&state, id).await;
 
     tracing::info!("Password reset by admin {} for user {}", claims.email, user.email);
@@ -483,25 +483,25 @@ pub async fn reset_password(
     Ok(Json(serde_json::json!({ "ok": true, "email": user.email })))
 }
 
-/// POST /api/users/{id}/reset-2fa — Clear a user's two-factor enrolment.
+/// POST /api/users/{id}/reset-2fa - Clear a user's two-factor enrolment.
 ///
 /// The door of last resort. `auth::twofa_disable` was, until this route existed,
 /// the ONLY statement in the panel that clears `totp_enabled`, and it can only be
-/// reached by someone who can still produce a code — either from the authenticator
+/// reached by someone who can still produce a code - either from the authenticator
 /// they have lost, or from the recovery codes. Which is the trap: every account
 /// that enrolled before v2.83.0 holds ten recovery codes it was never shown (the
 /// block that draws them sat inside a branch the enable handler cleared in the
 /// same breath), so for those accounts BOTH factors are gone at once and there was
-/// no panel path back at all — only direct database access. This is that path.
+/// no panel path back at all - only direct database access. This is that path.
 ///
 /// ⚠ It deliberately refuses to act on the CALLER. Resetting your own 2FA from
 /// here would strip the factor with no code presented at all, which is precisely
-/// what `twofa_disable` exists to prevent — a hijacked admin session would turn
+/// what `twofa_disable` exists to prevent - a hijacked admin session would turn
 /// the safeguard off in one click. An administrator who has lost their own
 /// authenticator is the case this route cannot serve, and the security-hardening
 /// guide states that limit outright rather than papering over it.
 ///
-/// ⚠ An administrator CAN reset another administrator's 2FA — deliberately left
+/// ⚠ An administrator CAN reset another administrator's 2FA - deliberately left
 /// outside `is_other_admin`, unlike `update`/`reset_password`/`remove`/
 /// `toggle_suspend` below. Clearing a factor does not by itself grant sign-in
 /// (the password is untouched), so it is not the same class as those four,
@@ -518,7 +518,7 @@ pub async fn reset_2fa(
     if id == claims.sub {
         return Err(err(
             StatusCode::BAD_REQUEST,
-            "Use My Account to change your own 2FA — resetting it here would skip the code check",
+            "Use My Account to change your own 2FA - resetting it here would skip the code check",
         ));
     }
 
@@ -530,7 +530,7 @@ pub async fn reset_2fa(
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "User not found"))?;
 
     // A half-finished enrolment leaves `totp_secret` set with `totp_enabled` still
-    // false, and that also wants clearing — so the refusal is keyed on there being
+    // false, and that also wants clearing - so the refusal is keyed on there being
     // nothing at all to clear, not on the flag alone.
     if !user.totp_enabled && user.totp_secret.is_none() {
         return Err(err(
@@ -567,7 +567,7 @@ pub async fn reset_2fa(
     Ok(Json(serde_json::json!({ "ok": true, "email": user.email })))
 }
 
-/// DELETE /api/users/{id} — Delete a user (admin only, cannot delete self).
+/// DELETE /api/users/{id} - Delete a user (admin only, cannot delete self).
 pub async fn remove(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -593,7 +593,7 @@ pub async fn remove(
         ));
     }
 
-    // Revoke the user's live token(s) BEFORE deletion — otherwise the stateless JWT
+    // Revoke the user's live token(s) BEFORE deletion - otherwise the stateless JWT
     // keeps authenticating as a now-nonexistent principal until it expires.
     crate::routes::auth::revoke_all_user_sessions(&state, id).await;
 
@@ -604,8 +604,8 @@ pub async fn remove(
     // (20260312800000_saas_auth.sql:29) and `sites.server_id` is
     // `REFERENCES servers(id) ON DELETE CASCADE` (20260319000000_multi_server.sql:8).
     // Those two edges compose: deleting the account that happens to hold a machine
-    // deleted the `servers` row, which deleted EVERY `sites` row on it — every
-    // owner's, not just this account's — and with them everything keyed on `site_id`
+    // deleted the `servers` row, which deleted EVERY `sites` row on it - every
+    // owner's, not just this account's - and with them everything keyed on `site_id`
     // (backups, crons, databases, schedules, deploy configs and logs, wp scans).
     // The handler returned `{"ok": true}` and the files kept serving from disk, so
     // the panel simply forgot an entire server's inventory with no error anywhere.
@@ -613,7 +613,7 @@ pub async fn remove(
     // It is not an exotic state. The local row is owned by the FIRST admin by
     // `created_at` (`services/agent.rs:1250`) and every fleet member by whoever
     // registered it (`routes/servers.rs:92`), so retiring the founding
-    // administrator — the ordinary reason an operator opens this screen — was the
+    // administrator - the ordinary reason an operator opens this screen - was the
     // trigger.
     //
     // RE-POINT rather than REFUSE, deliberately. Refusing would be safe for the
@@ -659,14 +659,14 @@ pub async fn remove(
 
     // Scrub the on-call references no foreign key can reach: rota membership is
     // a UUID[] and escalation routes are opaque strings inside a JSONB blob.
-    // Leaving them dangling silently drops pages — `resolve_on_call_user` indexes
+    // Leaving them dangling silently drops pages - `resolve_on_call_user` indexes
     // straight into `members` and hands back the deleted UUID, so the rotation
     // "pages" a principal that no longer exists. The write path already refuses
     // nonexistent members (on_call::validate_members_exist); this makes the
     // delete path reciprocate.
     //
     // Strictly AFTER the delete: several FKs to `users` are NO ACTION (maintenance
-    // windows, deploy approvals), so the DELETE can legitimately fail — and this
+    // windows, deploy approvals), so the DELETE can legitimately fail - and this
     // scrub is irreversible. Running it first would strip a still-existing user
     // from every rotation and then return 500, leaving the operator with an
     // "internal error" and a silently gutted on-call schedule.
@@ -738,13 +738,13 @@ mod tests {
 
     #[test]
     fn the_client_role_is_assignable_and_survives_an_unsuspend() {
-        // s312 / GitHub #51. Three separate copies of this list existed — create,
-        // update and the un-suspend restore — so a role added to the database
+        // s312 / GitHub #51. Three separate copies of this list existed - create,
+        // update and the un-suspend restore - so a role added to the database
         // CHECK and the user editor was still refused by all three.
         //
-        // ⚠ This comment used to end by naming the harm outright — "silently
+        // ⚠ This comment used to end by naming the harm outright - "silently
         // downgraded to user when the account is un-suspended, which would hand
-        // a client back a role that can create sites" — above an assertion that
+        // a client back a role that can create sites" - above an assertion that
         // could not detect it. Membership in this list was never what decided
         // the restore: the stash it read lived in `users.reset_token`, which the
         // public password-reset flow also wrote, so the value was frequently not
@@ -754,7 +754,7 @@ mod tests {
         //
         // The restore no longer reads a shared column and no longer falls back
         // to `user`. What this assertion is actually good for is the narrower
-        // thing it always proved — that `client` is assignable at all — and the
+        // thing it always proved - that `client` is assignable at all - and the
         // arms that cover the restore now live beside the code, in
         // `helpers::suspend_restore_tests`, plus `tests/suspend-restore-pin-e2e.sh`.
         assert!(ASSIGNABLE_ROLES.contains(&"client"));

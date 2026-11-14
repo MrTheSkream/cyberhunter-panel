@@ -14,7 +14,7 @@ A GPU has crossed its temperature threshold. Sustained operation at this tempera
    nvidia-smi --query-gpu=index,name,temperature.gpu,utilization.gpu,fan.speed,power.draw --format=csv
    sensors  # for chassis fans
    ```
-3. Check airflow physically if you have access — clogged intake fins are the #1 cause on bare-metal.
+3. Check airflow physically if you have access - clogged intake fins are the #1 cause on bare-metal.
 
 ## Common causes
 

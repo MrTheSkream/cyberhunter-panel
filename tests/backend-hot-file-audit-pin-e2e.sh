@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# backend-hot-file-audit-pin-e2e.sh — s463
+# backend-hot-file-audit-pin-e2e.sh - s463
 #
 # panel/backend/src/{routes,services} had never had its own exhaustion status
 # directly re-verified (agent crate: s461, panel/cli/src: s462). A LOC-rank +
@@ -12,40 +12,40 @@
 #
 #   §A dns.rs `update_record`/`delete_record` interpolated an unvalidated
 #      `record_id` path segment straight into the outbound Cloudflare API
-#      URL — a "../../../zones/OTHER/dns_records/RECID"-shaped id (percent-
+#      URL - a "../../../zones/OTHER/dns_records/RECID"-shaped id (percent-
 #      encoded to survive the reverse proxy) reroutes the request, carrying
 #      the zone's own decrypted CF token, to an arbitrary Cloudflare API
 #      path. PowerDNS's record_id is a different, safely-parsed hex-encoded
-#      composite (pdns_parse_record_id) — unaffected, left alone.
+#      composite (pdns_parse_record_id) - unaffected, left alone.
 #   §B security.rs `compliance_report` built an HTML report by raw
 #      format!-interpolating scan-derived title/description/remediation
 #      with no escaping, served as text/html and opened in a new tab by the
-#      frontend's own "Download Report" link — a stored XSS reachable the
+#      frontend's own "Download Report" link - a stored XSS reachable the
 #      moment a compromised hosted site names a file with HTML in its path
 #      (malware/secrets scans record raw filesystem paths verbatim).
 #   §C (off-menu, completeness critic) databases.rs `create()` authorizes
 #      via the fleet-wide SITE_CALLER_PREDICATE (any site an admin manages,
 #      including a tenant's site on the local box) but every OTHER handler
-#      — list/credentials/remove/get_db_info (the chokepoint for 11 more
-#      handlers)/pitr_config — required strict self-ownership, so a database
+#      - list/credentials/remove/get_db_info (the chokepoint for 11 more
+#      handlers)/pitr_config - required strict self-ownership, so a database
 #      an admin creates on a site they don't personally own becomes
 #      permanently unmanageable by its own creator. Same bug-class shape
 #      this file family has been fixed for 5 times before.
 #   §D panel_update.rs `build_fleet_plan` scoped fleet-update plans to
-#      `servers.user_id = caller` with no admin-widening — a fleet-wide
+#      `servers.user_id = caller` with no admin-widening - a fleet-wide
 #      update run silently skipped every server a DIFFERENT admin had
 #      registered, reporting success with no indication the plan was
 #      incomplete. Sibling call sites (servers.rs::list, dashboard.rs) had
 #      already established the admin-widened convention; this one never got
 #      it.
 #   §E update.rs `apply_fleet`'s `include_panel` path reached
-#      `start_panel_update` with only a shape check on target_version —
+#      `start_panel_update` with only a shape check on target_version -
 #      none of `apply_update`'s direction/advertised-match guard
 #      (`reject_apply_target`), so it could downgrade the panel to any
 #      syntactically-valid version, not merely a stale-advertised one.
 #   §F panel_update.rs `start_panel_update`'s concurrent-apply guard was
 #      read-check-then-later-write, with the multi-minute create_snapshot
-#      pipeline running entirely inside the gap — two requests within that
+#      pipeline running entirely inside the gap - two requests within that
 #      window both passed the check and both spawned their own snapshot +
 #      detached update.sh.
 #   §G panel_update.rs `rollback_to_snapshot` had no in-flight check at
@@ -54,7 +54,7 @@
 #
 # Read-only/authz-widening changes mostly; the one behavior addition beyond
 # tightening is databases.rs's admin-visibility widening, which grants
-# nothing create() didn't already grant — it makes read/manage consistent
+# nothing create() didn't already grant - it makes read/manage consistent
 # with what create() already authorized.
 
 set -uo pipefail
@@ -62,7 +62,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
 echo
 echo "=================================================="
-echo "  Backend hot-file audit — source pins (s463)"
+echo "  Backend hot-file audit - source pins (s463)"
 echo "=================================================="
 echo
 
@@ -134,7 +134,7 @@ fi
 
 # Positive control: the PowerDNS arm's record_id (a hex-encoded composite of
 # variable length, decoded via pdns_parse_record_id) must NOT be forced
-# through the same fixed-32-hex check — it was never the bug and a blanket
+# through the same fixed-32-hex check - it was never the bug and a blanket
 # fix would break every PowerDNS record update/delete.
 if has "$UPDATE_RECORD_BODY" 'pdns_parse_record_id'; then
   ok "A3 (control) update_record's powerdns arm still parses record_id via pdns_parse_record_id"
@@ -156,7 +156,7 @@ if has "$COMPLIANCE_BODY" 'html_escape\(severity\)' \
   && has "$COMPLIANCE_BODY" 'html_escape\(description\)'; then
   ok "B2 severity/title/description are escaped before interpolation"
 else
-  bad "B2 one of severity/title/description is no longer escaped — regressed"
+  bad "B2 one of severity/title/description is no longer escaped - regressed"
 fi
 
 if has "$COMPLIANCE_BODY" 'remediation\.as_deref\(\)\.map\(html_escape\)'; then
@@ -182,7 +182,7 @@ for pair in "DB_LIST_BODY:C1:list" "DB_CREDENTIALS_BODY:C2:credentials" "DB_REMO
   if has "$body" "u\.role = 'admin'" && has "$body" 'sv\.is_local OR sv\.user_id = u\.id'; then
     ok "$id $name() carries the admin-widening EXISTS clause"
   else
-    bad "$id $name() is missing the admin-widening EXISTS clause — creator/reader mismatch regressed"
+    bad "$id $name() is missing the admin-widening EXISTS clause - creator/reader mismatch regressed"
   fi
 done
 
@@ -206,7 +206,7 @@ echo "── §D panel_update.rs: build_fleet_plan admin-widened, mirroring serv
 if has "$BUILD_FLEET_PLAN_BODY" 'is_admin: bool'; then
   ok "D1 build_fleet_plan takes an is_admin parameter"
 else
-  bad "D1 build_fleet_plan has no is_admin parameter — still owner-only"
+  bad "D1 build_fleet_plan has no is_admin parameter - still owner-only"
 fi
 
 if has "$BUILD_FLEET_PLAN_BODY" '\(\$2 OR user_id = \$1\)'; then
@@ -250,24 +250,24 @@ echo "── §F panel_update.rs: start_panel_update closes the create_snapshot 
 if has "$START_UPDATE_BODY" 'let mut s = handle\.write\(\)\.await;' ; then
   ok "F1 the concurrent-apply guard now acquires a MUTABLE write lock up front (not read-then-later-write)"
 else
-  bad "F1 start_panel_update's guard no longer opens with a mutable write lock — TOCTOU reopened"
+  bad "F1 start_panel_update's guard no longer opens with a mutable write lock - TOCTOU reopened"
 fi
 
 # The write-lock acquisition and the InFlight reservation must be the SAME
-# statement block — grep the guard block specifically (from the write-lock
+# statement block - grep the guard block specifically (from the write-lock
 # open to its matching close) rather than the whole function, so a write
 # lock added elsewhere in the body for an unrelated reason can't fake this.
 GUARD_BLOCK=$(awk '/let mut s = handle\.write\(\)\.await;/{f=1} f{print; if (/^    \}/) exit}' <<< "$START_UPDATE_BODY")
 if has "$GUARD_BLOCK" 'AlreadyInFlight' && has "$GUARD_BLOCK" 'UpdateState::InFlight \{'; then
   ok "F2 the guard checks AND reserves InFlight inside the same write-lock hold"
 else
-  bad "F2 the reservation is not inside the same write-lock block as the check — race window reopened"
+  bad "F2 the reservation is not inside the same write-lock block as the check - race window reopened"
 fi
 
 if has "$START_UPDATE_BODY" 'UpdateState::Idle' && has "$START_UPDATE_BODY" 'Err\(e\) =>' ; then
   ok "F3 a failed snapshot releases the reservation back to Idle"
 else
-  bad "F3 no release-on-snapshot-failure path found — a failed attempt could permanently lock the guard"
+  bad "F3 no release-on-snapshot-failure path found - a failed attempt could permanently lock the guard"
 fi
 
 # ── §G panel_update.rs: rollback_to_snapshot gets an in-flight guard ────
@@ -276,19 +276,19 @@ echo "── §G panel_update.rs: rollback_to_snapshot no longer races a concurr
 if has "$ROLLBACK_BODY" 'handle: UpdateStateHandle'; then
   ok "G1 rollback_to_snapshot now takes the UpdateStateHandle"
 else
-  bad "G1 rollback_to_snapshot has no handle parameter — still unguarded"
+  bad "G1 rollback_to_snapshot has no handle parameter - still unguarded"
 fi
 
 if has "$ROLLBACK_BODY" 'AlreadyInFlight' && has "$ROLLBACK_BODY" 'UpdateState::InFlight \{'; then
   ok "G2 rollback_to_snapshot checks and reserves InFlight before calling spawn_restore"
 else
-  bad "G2 rollback_to_snapshot no longer reserves InFlight — race reopened"
+  bad "G2 rollback_to_snapshot no longer reserves InFlight - race reopened"
 fi
 
 if has "$UPDATE_C" 'rollback_to_snapshot\(state\.panel_update_state\.clone\(\), state\.db\.clone\(\)'; then
   ok "G3 the rollback route threads the handle through to rollback_to_snapshot"
 else
-  bad "G3 the rollback route call site was not updated — likely a compile error, or the guard is dead"
+  bad "G3 the rollback route call site was not updated - likely a compile error, or the guard is dead"
 fi
 
 echo

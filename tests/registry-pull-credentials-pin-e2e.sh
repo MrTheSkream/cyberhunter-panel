@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# registry-pull-credentials-pin-e2e.sh — s447
+# registry-pull-credentials-pin-e2e.sh - s447
 #
 # Pins the docker_apps.rs finding named in [[project_dockpanel_tech_debt_p185]]
 # §C: `GET /apps/registries` read a literal `/root/.docker/config.json`, but
 # every `docker` CLI invocation runs through `safe_command`, which points
 # `DOCKER_CONFIG` at `crate::safe_cmd::DOCKER_CONFIG_DIR`
-# (`/var/lib/dockpanel/docker`) — so a login always landed somewhere the
+# (`/var/lib/dockpanel/docker`) - so a login always landed somewhere the
 # route never looked, and the panel's "Configured registries" list was
 # always empty. Separately, every bollard `create_image` pull (template
 # deploy, app update, change-image, and compose deploy) passed
@@ -17,7 +17,7 @@
 # saved credentials by the image's parsed registry and is wired into all 4
 # production `create_image` call sites (3 in docker_apps.rs, 1 in
 # compose.rs). A 5th `create_image` call exists only in a `#[cfg(test)]`
-# probe helper and is deliberately excluded — it pulls a public test image
+# probe helper and is deliberately excluded - it pulls a public test image
 # and needs no credentials.
 #
 # Pure source analysis: no box, no network, no build.
@@ -74,7 +74,7 @@ if [ -z "$LISTREG" ]; then
 elif has "$LISTREG" 'DOCKER_CONFIG_DIR'; then
   ok "A1 list_registries reads crate::safe_cmd::DOCKER_CONFIG_DIR, not a hardcoded /root path"
 else
-  bad "A1 list_registries still reads a path other than DOCKER_CONFIG_DIR — logins land somewhere this route never looks"
+  bad "A1 list_registries still reads a path other than DOCKER_CONFIG_DIR - logins land somewhere this route never looks"
 fi
 
 # ── §B registry_credentials_for exists and is reachable outside this module ─
@@ -91,13 +91,13 @@ else
   fi
 fi
 if grep -qE 'pub\(crate\) fn registry_credentials_for' "$SERVICES"; then
-  ok "B2 registry_credentials_for is pub(crate) — reachable from compose.rs"
+  ok "B2 registry_credentials_for is pub(crate) - reachable from compose.rs"
 else
-  bad "B2 registry_credentials_for is not pub(crate) — compose.rs cannot call it"
+  bad "B2 registry_credentials_for is not pub(crate) - compose.rs cannot call it"
 fi
 
 # ── §C every production create_image site passes real credentials ──────────
-# Scoped to code before the first #[cfg(test)] module — a test-only pull of a
+# Scoped to code before the first #[cfg(test)] module - a test-only pull of a
 # public image needs no credentials and must not inflate this count.
 
 PROD_SERVICES=$(awk '/^#\[cfg\(test\)\]/{exit} {print}' "$SERVICES")
@@ -108,12 +108,12 @@ RCF_COUNT=$(grep -c 'registry_credentials_for(' <<< "$PROD_SERVICES")
 if [ "$CI_COUNT" -eq 3 ]; then
   ok "C1 docker_apps.rs has 3 production create_image sites (test-only probe excluded)"
 else
-  bad "C1 docker_apps.rs has $CI_COUNT production create_image sites, expected 3 — this suite's count needs updating"
+  bad "C1 docker_apps.rs has $CI_COUNT production create_image sites, expected 3 - this suite's count needs updating"
 fi
 if [ "$RCF_COUNT" -eq 4 ]; then
-  ok "C2 registry_credentials_for appears 4 times (1 definition + 3 call sites) — every production pull is wired"
+  ok "C2 registry_credentials_for appears 4 times (1 definition + 3 call sites) - every production pull is wired"
 else
-  bad "C2 registry_credentials_for appears $RCF_COUNT times, expected 4 — a create_image site still passes None"
+  bad "C2 registry_credentials_for appears $RCF_COUNT times, expected 4 - a create_image site still passes None"
 fi
 
 COMPOSE_SRC=$(code "$COMPOSE")

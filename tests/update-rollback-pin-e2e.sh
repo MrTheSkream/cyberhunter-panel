@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 #
-# DockPanel — pins for the two update-subsystem defects closed at s282.
+# CyberHunter - Panel - pins for the two update-subsystem defects closed at s282.
 #
 # 1. RESTORE (s231): a failure in a post-commit stage must not restart the
 #    still-installed NEWER dockpanel-api on top of a database that has just been
 #    reverted. It used to: `database-verify` and `record-rollback` both run after
 #    the restore transaction commits and before the binaries are swapped back, so
 #    a `fail` in either tripped the exit trap, the trap restarted the api
-#    unconditionally, and that api migrated the reverted database forward again —
+#    unconditionally, and that api migrated the reverted database forward again -
 #    quietly undoing the rollback it was reporting as FAILED.
 #
 # 2. UPDATE (F1): `update.sh` re-execs itself into a transient unit with
@@ -18,12 +18,12 @@
 #    ever come to carry one.
 #
 # Part 1 DRIVES restore-snapshot.sh end to end against a scratch tree with
-# stubbed systemctl/docker/curl — the guard decides whether to leave a panel
+# stubbed systemctl/docker/curl - the guard decides whether to leave a panel
 # down, and a guard that has never been executed is a comment. Part 2 is source
 # analysis over CODE ONLY: it strips comments from both subjects and reads the
 # Rust one as production code, because a claim about behaviour that a paragraph
 # of prose can satisfy is not a claim (s338). Its own arms are mutation-tested
-# on every run — commented out for the positive ones, and the real defect
+# on every run - commented out for the positive ones, and the real defect
 # planted for each negative one, which is the direction that fails quietly.
 # Neither part needs a box, a network or a build.
 #
@@ -47,13 +47,13 @@ bad() { FAIL=$((FAIL+1)); printf '  \033[0;31m✗\033[0m %s\n' "$1"; }
 chk() { if [ "$1" = "0" ]; then ok "$2"; else bad "$2"; fi; }
 
 contains()     { case "$2" in *"$1"*) return 0;; *) return 1;; esac; }
-assert_has()   { if contains "$2" "$3"; then ok "$1"; else bad "$1 — expected to find: $2"; fi; }
-assert_lacks() { if contains "$2" "$3"; then bad "$1 — must NOT contain: $2"; else ok "$1"; fi; }
+assert_has()   { if contains "$2" "$3"; then ok "$1"; else bad "$1 - expected to find: $2"; fi; }
+assert_lacks() { if contains "$2" "$3"; then bad "$1 - must NOT contain: $2"; else ok "$1"; fi; }
 
 # ── the comment strippers, ABOVE every arm that needs them (s337) ────────────
 #
 # A check placed below the thing it must run before inherits that position as a
-# defect even when the check itself is perfect — the s336 lesson, and the reason
+# defect even when the check itself is perfect - the s336 lesson, and the reason
 # these functions sit here rather than next to the source arms in Part 2.
 #
 # The comment marker is chosen by EXTENSION, never guessed. Getting it wrong is
@@ -82,7 +82,7 @@ code_lines() {
     # over it passed on code the stripper had merely removed.
     #
     # A trailing `//` is stripped, but only when the text before it has BALANCED
-    # double quotes — otherwise `let u = "https://host"` would lose its tail.
+    # double quotes - otherwise `let u = "https://host"` would lose its tail.
     # Backslash escapes are skipped so `\"` does not flip the parity.
     awk '
       /^[[:space:]]*\/\*/ &&  /\*\/[[:space:]]*$/ { print ""; next }
@@ -115,7 +115,7 @@ code_lines() {
 # into twice. Under `set -o pipefail`, `code_lines f | grep -q PATTERN` reports
 # FAILURE on a successful match: grep -q exits at the first hit, the producer
 # upstream dies of SIGPIPE (141), and pipefail takes the pipeline's status from
-# it. The effect is silent and selective — a file whose match is near the top gets
+# it. The effect is silent and selective - a file whose match is near the top gets
 # dropped while one whose match is near the bottom survives, because the producer
 # had already finished. `grep -c` consumes all of its input, so there is no early
 # exit and no signal. (s336 #365 is the same operator lying in the other
@@ -130,7 +130,7 @@ code_lineno() { local f="$1"; shift; code_lines "$f" | grep -n "$@" 2>/dev/null 
 # The orchestrator's unit-test module quotes, in its own assertions, the very
 # filename the arms below look for. An arm that reads the whole file is
 # therefore satisfied BY THE TESTS even when the production constant has been
-# retargeted at something else entirely — measured against this suite at s338,
+# retargeted at something else entirely - measured against this suite at s338,
 # with nothing commented out at all. So the Rust subject is read as production
 # code: comments stripped as above, then everything from the test attribute to
 # EOF blanked. Height is preserved here too, for the same reason.
@@ -146,20 +146,20 @@ has_prod()   { local f="$1"; shift; [ "$(prod_count "$f" "$@")" -gt 0 ]; }
 # The source arms in Part 2 are written through these four, so that no arm can
 # quietly go back to reading raw text: the file is named, never `cat`ed.
 pin_code()    { local l="$1" f="$2"; shift 2
-                if has_code "$f" "$@"; then ok "$l"; else bad "$l — expected to find in CODE: $*"; fi; }
+                if has_code "$f" "$@"; then ok "$l"; else bad "$l - expected to find in CODE: $*"; fi; }
 pin_no_code() { local l="$1" f="$2"; shift 2
-                if has_code "$f" "$@"; then bad "$l — must NOT appear in CODE: $*"; else ok "$l"; fi; }
+                if has_code "$f" "$@"; then bad "$l - must NOT appear in CODE: $*"; else ok "$l"; fi; }
 pin_prod()    { local l="$1" f="$2"; shift 2
-                if has_prod "$f" "$@"; then ok "$l"; else bad "$l — expected to find in PRODUCTION code: $*"; fi; }
+                if has_prod "$f" "$@"; then ok "$l"; else bad "$l - expected to find in PRODUCTION code: $*"; fi; }
 pin_no_prod() { local l="$1" f="$2"; shift 2
-                if has_prod "$f" "$@"; then bad "$l — must NOT appear in PRODUCTION code: $*"; else ok "$l"; fi; }
+                if has_prod "$f" "$@"; then bad "$l - must NOT appear in PRODUCTION code: $*"; else ok "$l"; fi; }
 
 SCRATCH="$(mktemp -d /tmp/dp-rollback-pin.XXXXXX)"
 cleanup() { [ -n "${KEEP:-}" ] || rm -rf "$SCRATCH"; }
 trap cleanup EXIT
 
 # ── Stub environment ─────────────────────────────────────────────────────────
-# systemctl records what it was asked to do — that log IS the assertion for
+# systemctl records what it was asked to do - that log IS the assertion for
 # "was the api restarted". docker fakes postgres. curl fakes /api/health.
 STUBS="$SCRATCH/stubs"
 mkdir -p "$STUBS"
@@ -266,7 +266,7 @@ run_restore() {
     local sha; sha="$(sha256sum "$base/snap.tar.gz" | awk '{print $1}')"
 
     # `env`, not a bare assignment prefix. The shell decides which words are
-    # assignments SYNTACTICALLY, before expansion — so a `"$@"` that expands to
+    # assignments SYNTACTICALLY, before expansion - so a `"$@"` that expands to
     # `STUB_RECORD_RC=1` is not an assignment, it becomes the COMMAND NAME, and
     # every scenario that passed an override silently ran nothing and exited 127.
     # `env` takes its VAR=VALUE arguments after expansion, which is the point.
@@ -299,11 +299,11 @@ chk "$([ "$(cat "$BIN_DIR_OUT/dockpanel-api")" = "OLD-API" ] && echo 0 || echo 1
     "the api binary was actually reverted to the snapshot's"
 
 echo
-echo "S2 · the bookkeeping INSERT fails — the box must still end CONSISTENT"
+echo "S2 · the bookkeeping INSERT fails - the box must still end CONSISTENT"
 run_restore record_fails yes STUB_RECORD_RC=1
-chk "$([ "$RC" = "0" ] && echo 0 || echo 1)" "exits 0 — the restore itself succeeded"
+chk "$([ "$RC" = "0" ] && echo 0 || echo 1)" "exits 0 - the restore itself succeeded"
 J="$(cat "$RES_JSON")"; A="$(cat "$ACTIONS")"
-assert_has "verdict is ok=false — there is something to read"  '"ok":false'      "$J"
+assert_has "verdict is ok=false - there is something to read"  '"ok":false'      "$J"
 assert_has "the detail names the bookkeeping failure"   'could not be recorded'  "$J"
 assert_has "dockpanel-api WAS started (binaries match the database)" \
            'systemctl start dockpanel-api' "$A"
@@ -325,15 +325,15 @@ J="$(cat "$RES_JSON")"
 assert_has "the unreadable count is reported, not raised" 'could not read a table count' "$J"
 
 echo
-echo "S4 · THE HAZARD · database reverted, api binary NOT — panel stays down"
+echo "S4 · THE HAZARD · database reverted, api binary NOT - panel stays down"
 run_restore no_api_in_snapshot no
-chk "$([ "$RC" = "1" ] && echo 0 || echo 1)" "exits non-zero — this one needs an operator"
+chk "$([ "$RC" = "1" ] && echo 0 || echo 1)" "exits non-zero - this one needs an operator"
 J="$(cat "$RES_JSON")"; A="$(cat "$ACTIONS")"
 assert_has "verdict is ok=false"                         '"ok":false'            "$J"
 assert_has "the detail says the panel was left down ON PURPOSE" 'LEFT STOPPED'   "$J"
 assert_has "the detail points at the pre-rollback dump"  'pre-rollback'          "$J"
 assert_lacks "dockpanel-api was NOT started"   'systemctl start dockpanel-api'   "$A"
-assert_has "the agent WAS started — the box stays reachable" \
+assert_has "the agent WAS started - the box stays reachable" \
            'systemctl start dockpanel-agent' "$A"
 
 echo
@@ -343,7 +343,7 @@ echo "S5 · THE HAZARD · a hard failure in the binaries stage, same answer"
 # s231 shape exactly: the old exit trap restarted the api from here.
 #
 # The failure is injected by pointing BIN_DIR at a directory that does not exist,
-# NOT by removing write permission — this suite runs as root on a box where the
+# NOT by removing write permission - this suite runs as root on a box where the
 # panel is installed, and root ignores the permission bits, so a chmod-based
 # injection quietly produces a HAPPY PATH and the scenario asserts nothing.
 BIN_DIR_OVERRIDE="$SCRATCH/binaries_fail/nonexistent-bin-dir" \
@@ -358,13 +358,13 @@ assert_lacks "dockpanel-api was NOT started"  'systemctl start dockpanel-api'   
 echo
 echo "S6 · a failure BEFORE the commit must still bring the panel back"
 # The guard has to be conditional. If it refused unconditionally it would turn
-# every harmless early failure into a dark box — the s228 shape it must not
+# every harmless early failure into a dark box - the s228 shape it must not
 # reintroduce.
 run_restore psql_fails yes STUB_PSQL_RC=3
 chk "$([ "$RC" != "0" ] && echo 0 || echo 1)" "exits non-zero"
 J="$(cat "$RES_JSON")"; A="$(cat "$ACTIONS")"
 assert_has  "the detail says nothing changed"   'nothing changed'                "$J"
-assert_has  "dockpanel-api WAS restarted — nothing was lost, so nothing is held" \
+assert_has  "dockpanel-api WAS restarted - nothing was lost, so nothing is held" \
             'systemctl start dockpanel-api' "$A"
 assert_lacks "and it is NOT reported as left down" 'LEFT STOPPED'                "$J"
 
@@ -373,7 +373,7 @@ echo "══ Part 2 · the update path, by source ══════════
 echo
 # Every behavioural arm below reads CODE. This part used to `cat` both files and
 # grep the text, which let a line of DOCUMENTATION satisfy a claim about
-# behaviour — measured against this suite at s338: five separate mutations that
+# behaviour - measured against this suite at s338: five separate mutations that
 # disabled the update path outright left all six arms green, because the
 # disabling edits' own comments still spelled the strings the arms looked for,
 # and in one case a pre-existing paragraph did it with nothing planted at all.
@@ -394,7 +394,7 @@ PAT_RESULT_READ='read_to_string[(][A-Z][A-Z0-9_]*[)]'
 PAT_PROMOTED='verdict[[:space:]]*=[[:space:]]*Some[(][(][[:space:]]*true'
 PAT_VERDICT_DECL='^[[:space:]]*let[[:space:]]+mut[[:space:]]+[a-z_]+[[:space:]]*=[[:space:]]*None;'
 
-O="$(cat "$ORCHESTRATOR")"   # raw, and used by exactly one arm — see §2b
+O="$(cat "$ORCHESTRATOR")"   # raw, and used by exactly one arm - see §2b
 
 echo "§2a · update.sh, read as code"
 # The assignment has to be an assignment: the filename must sit inside the
@@ -407,7 +407,7 @@ pin_code "it writes one on every exit path" "$UPDATE_SH" -E "$PAT_EXIT_TRAP"
 
 # The trap is only worth anything if the handler it names already exists when
 # the trap is registered. Both line numbers come from the stripped stream, which
-# BLANKS rather than deletes — the numbers are the file's real ones. The handler
+# BLANKS rather than deletes - the numbers are the file's real ones. The handler
 # name is lifted out of the source rather than written here.
 HANDLER="$(code_lines "$UPDATE_SH" | grep -oE "$PAT_EXIT_TRAP" | awk 'NR==1{print $2}')"
 TRAP_LN="$(code_lineno "$UPDATE_SH" -E "$PAT_EXIT_TRAP")"
@@ -416,7 +416,7 @@ DEF_LN=""
 if [ -n "$HANDLER" ] && [ -n "$TRAP_LN" ] && [ -n "$DEF_LN" ] && [ "$DEF_LN" -lt "$TRAP_LN" ]; then
     ok "the trap names a handler that is already defined above it"
 else
-    bad "the trap names a handler that is already defined above it — handler='${HANDLER:-none}' defined=${DEF_LN:-none} trapped=${TRAP_LN:-none}"
+    bad "the trap names a handler that is already defined above it - handler='${HANDLER:-none}' defined=${DEF_LN:-none} trapped=${TRAP_LN:-none}"
 fi
 
 # The whole point: systemd-run's exit status describes the handoff, never the
@@ -424,8 +424,8 @@ fi
 # sibling call site that never got it.
 #
 # The GATE reads code too, and that is not a detail. It used to read raw text, so
-# when the census BLANKED the entire re-exec block — no comment planted anywhere
-# — a paragraph further down still mentioned the invocation, the gate held, and
+# when the census BLANKED the entire re-exec block - no comment planted anywhere
+# - a paragraph further down still mentioned the invocation, the gate held, and
 # both arms below printed green over a subject that no longer existed. An
 # absence is only meaningful while the thing it is an absence FROM is present.
 if has_code "$UPDATE_SH" -E "$PAT_DETACHED"; then
@@ -458,7 +458,7 @@ const_use_count() {
 if [ "$(const_use_count "$ORCHESTRATOR")" -ge 2 ]; then
     ok "the path constant is read, not merely declared"
 else
-    bad "the path constant is read, not merely declared — it appears on fewer than two production lines"
+    bad "the path constant is read, not merely declared - it appears on fewer than two production lines"
 fi
 
 # THE behavioural claim, and it is a NEGATIVE one: nothing may write a success
@@ -473,7 +473,7 @@ pin_no_prod "the orchestrator says a zero exit is a handoff, not a success" \
 # DELIBERATELY RAW, and the only arm here that is. Its subject IS the prose: the
 # explanation of why a zero exit proves nothing has to stay beside the code that
 # depends on it, and stripping comments for this one would be the defect rather
-# than the fix. It makes no claim about behaviour — the arm above does that.
+# than the fix. It makes no claim about behaviour - the arm above does that.
 assert_has "the reason a zero exit proves nothing is still written down beside it" \
            'never "the work succeeded"' "$O"
 
@@ -537,7 +537,7 @@ echo "§2d · every pinned pattern, commented out on a copy"
 # An arm that has never been made to fail is a decoration. Each pattern above is
 # commented out in a COPY of its subject and its own predicate is run again: it
 # has to come back blind. The copy KEEPS THE SUBJECT'S EXTENSION, because the
-# stripper picks its language from the filename — a copy called `mutated` is read
+# stripper picks its language from the filename - a copy called `mutated` is read
 # as shell whatever it holds, and a Rust subject would keep every `//` line.
 MUTANTS="$SCRATCH/mutants"; mkdir -p "$MUTANTS"
 
@@ -550,7 +550,7 @@ mutate_out() {   # subject, ERE, tag  →  path of a copy with matching lines co
 }
 
 # Did the plant LAND? Same height, and every changed line is the original with a
-# marker in front of it — nothing added, nothing deleted, nothing else touched.
+# marker in front of it - nothing added, nothing deleted, nothing else touched.
 # A mutation arm that goes green over a plant which never landed is the blinded
 # arm all over again, one level up.
 plant_landed() {   # marker, subject, mutant  →  lines commented, or -1
@@ -567,9 +567,9 @@ mutation_blinds() {   # label, subject, ERE, tag, predicate
     marker="$(comment_marker_for "$src")"; [ -n "$marker" ] || marker='#'
     n="$(plant_landed "$marker" "$src" "$mut")"
     if [ "${n:--1}" -lt 1 ]; then
-        bad "$label — the mutation never landed (changed=$n), so a green arm proves nothing"
+        bad "$label - the mutation never landed (changed=$n), so a green arm proves nothing"
     elif "$pred" "$mut" -E "$pat"; then
-        bad "$label — the arm still finds it with the line commented out"
+        bad "$label - the arm still finds it with the line commented out"
     else
         ok "$label"
     fi
@@ -587,16 +587,16 @@ mutation_blinds "commenting out the path constant blinds its arm" \
 MUT_READ="$(mutate_out "$ORCHESTRATOR" "$PAT_RESULT_READ" pread)"
 MUT_READ_N="$(plant_landed '//' "$ORCHESTRATOR" "$MUT_READ")"
 if [ "${MUT_READ_N:--1}" -lt 1 ]; then
-    bad "commenting out the read of the path constant blinds the read-count arm — the mutation never landed (changed=$MUT_READ_N)"
+    bad "commenting out the read of the path constant blinds the read-count arm - the mutation never landed (changed=$MUT_READ_N)"
 elif [ "$(const_use_count "$MUT_READ")" -ge 2 ]; then
-    bad "commenting out the read of the path constant blinds the read-count arm — the count did not move"
+    bad "commenting out the read of the path constant blinds the read-count arm - the count did not move"
 else
     ok "commenting out the read of the path constant blinds the read-count arm"
 fi
 
 echo
 echo "§2e · the negative arms, with the real defect planted"
-# Stripping makes a check see LESS. On a POSITIVE arm that is loud — over-strip
+# Stripping makes a check see LESS. On a POSITIVE arm that is loud - over-strip
 # and it goes red at HEAD, in front of whoever ran it. On a NEGATIVE arm, where
 # a match means BROKEN, it is silent: the arm goes green over exactly the code it
 # exists to forbid, and nothing anywhere says so. So each negative arm gets the
@@ -608,7 +608,7 @@ plant_line_after() {   # subject, anchor ERE, defect line, tag  →  copy path
     # interprets escape sequences in -v, and the flag being planted here is a
     # shell continuation, so its trailing backslash was silently eaten and the
     # plant landed as a different line than the one this arm then looked for.
-    # The landing check caught it — which is the entire reason it is here.
+    # The landing check caught it - which is the entire reason it is here.
     DEFECT_LINE="$line" awk -v a="$anchor" '
         BEGIN { l = ENVIRON["DEFECT_LINE"] }
         { print }
@@ -626,7 +626,7 @@ CTL="$(plant_line_after "$UPDATE_SH" "$PAT_DETACHED" "$WAIT_DEFECT" ctlwait)"
 if landed_insert "$UPDATE_SH" "$CTL" "$WAIT_DEFECT" && has_code "$CTL" -F -e '--wait'; then
     ok "planting --wait into the detached unit makes that arm fire"
 else
-    bad "planting --wait into the detached unit makes that arm fire — it did NOT, the arm is blind"
+    bad "planting --wait into the detached unit makes that arm fire - it did NOT, the arm is blind"
 fi
 
 PIPE_DEFECT='            --pipe \'
@@ -634,7 +634,7 @@ CTL="$(plant_line_after "$UPDATE_SH" "$PAT_DETACHED" "$PIPE_DEFECT" ctlpipe)"
 if landed_insert "$UPDATE_SH" "$CTL" "$PIPE_DEFECT" && has_code "$CTL" -F -e '--pipe'; then
     ok "planting --pipe into the detached unit makes that arm fire"
 else
-    bad "planting --pipe into the detached unit makes that arm fire — it did NOT, the arm is blind"
+    bad "planting --pipe into the detached unit makes that arm fire - it did NOT, the arm is blind"
 fi
 
 # The census's own inversion, minus the branch surgery: a success verdict
@@ -645,7 +645,7 @@ CTL="$(plant_line_after "$ORCHESTRATOR" "$PAT_VERDICT_DECL" "$PROMOTE_DEFECT" ct
 if landed_insert "$ORCHESTRATOR" "$CTL" "$PROMOTE_DEFECT" && has_prod "$CTL" -E "$PAT_PROMOTED"; then
     ok "planting a recorded success at the handoff makes that arm fire"
 else
-    bad "planting a recorded success at the handoff makes that arm fire — it did NOT, the arm is blind"
+    bad "planting a recorded success at the handoff makes that arm fire - it did NOT, the arm is blind"
 fi
 
 echo

@@ -55,7 +55,7 @@ struct StreamTicket {
     /// The logs this ticket authorises: a site's domain, or `@system` for the
     /// admin-only host logs. `None` means a pre-fix panel that signed no scope.
     /// This is the SIGNED decision the agent trusts instead of the browser's
-    /// `?domain=`/`?type=` — trusting those let a site-scoped ticket stream
+    /// `?domain=`/`?type=` - trusting those let a site-scoped ticket stream
     /// `/var/log/auth.log` by asking for `type=auth` with the domain omitted.
     scope: Option<String>,
 }
@@ -136,14 +136,14 @@ async fn search_logs(Query(q): Query<SearchQuery>) -> Result<Json<Vec<String>>, 
     Ok(Json(result))
 }
 
-/// GET /logs/stream — WebSocket endpoint for real-time log tailing.
+/// GET /logs/stream - WebSocket endpoint for real-time log tailing.
 /// Auth via ?token= (short-lived JWT), ?type= for log type, ?domain= for site-specific.
 async fn stream_handler(
     State(state): State<AppState>,
     Query(q): Query<StreamQuery>,
     ws: WebSocketUpgrade,
 ) -> Response {
-    // Validate JWT ticket, keeping the claims — the SIGNED scope is what decides
+    // Validate JWT ticket, keeping the claims - the SIGNED scope is what decides
     // which log this stream serves, not the browser-controlled query params.
     let token_value = state.token.read().await.clone();
     let claims = q.token.as_deref().and_then(|t| {
@@ -202,7 +202,7 @@ async fn stream_handler(
         None => {
             tracing::warn!(
                 "Log stream ticket for {} carries no scope (pre-fix panel); \
-                 trusting ?domain=/?type= — upgrade the panel to bind the scope",
+                 trusting ?domain=/?type= - upgrade the panel to bind the scope",
                 claims.sub
             );
             let raw = requested_type.to_string();
@@ -247,7 +247,7 @@ struct StreamGuard {
 
 impl Drop for StreamGuard {
     fn drop(&mut self) {
-        // Best-effort kill — start_kill is non-async and safe in Drop
+        // Best-effort kill - start_kill is non-async and safe in Drop
         let _ = self.child.start_kill();
         ACTIVE_STREAMS.fetch_sub(1, Ordering::Relaxed);
     }
@@ -307,7 +307,7 @@ async fn handle_stream(mut socket: WebSocket, path: String) {
     // guard dropped here → kills child process and decrements counter
 }
 
-/// GET /logs/stats — Parse nginx access log for aggregated stats.
+/// GET /logs/stats - Parse nginx access log for aggregated stats.
 async fn log_stats(
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
@@ -414,11 +414,11 @@ async fn log_stats(
     })))
 }
 
-/// GET /logs/docker — List Docker containers with dockpanel.managed label.
+/// GET /logs/docker - List Docker containers with dockpanel.managed label.
 ///
 /// `-a` is load-bearing, not tidiness: without it this listed only *running*
-/// containers, so the crashed ones — the only containers anybody opens this
-/// page for — were exactly the ones missing from the picker. Docker keeps the
+/// containers, so the crashed ones - the only containers anybody opens this
+/// page for - were exactly the ones missing from the picker. Docker keeps the
 /// logs of an exited container until it is removed.
 async fn docker_containers() -> Json<serde_json::Value> {
     let output = tokio::time::timeout(
@@ -450,7 +450,7 @@ async fn docker_containers() -> Json<serde_json::Value> {
     Json(serde_json::json!({ "containers": names }))
 }
 
-/// GET /logs/docker/{container} — Get Docker container logs.
+/// GET /logs/docker/{container} - Get Docker container logs.
 async fn docker_logs(
     Path(container): Path<String>,
     Query(params): Query<std::collections::HashMap<String, String>>,
@@ -492,7 +492,7 @@ async fn docker_logs(
     })))
 }
 
-/// GET /logs/service/{service} — Get systemd service logs via journalctl.
+/// GET /logs/service/{service} - Get systemd service logs via journalctl.
 async fn service_logs(
     Path(service): Path<String>,
     Query(params): Query<std::collections::HashMap<String, String>>,
@@ -553,7 +553,7 @@ async fn service_logs(
     })))
 }
 
-/// GET /logs/sizes — Get log file sizes.
+/// GET /logs/sizes - Get log file sizes.
 async fn log_sizes() -> Json<serde_json::Value> {
     let log_files = [
         ("/var/log/nginx/access.log", "Nginx Access"),
@@ -617,7 +617,7 @@ async fn log_sizes() -> Json<serde_json::Value> {
     }))
 }
 
-/// POST /logs/truncate — Truncate a specific log file (clear it).
+/// POST /logs/truncate - Truncate a specific log file (clear it).
 async fn truncate_log(
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
@@ -663,7 +663,7 @@ pub fn router() -> Router<AppState> {
         .route("/logs/{domain}", get(get_site_logs))
 }
 
-/// Stream route — placed outside auth middleware (validates its own JWT via query param).
+/// Stream route - placed outside auth middleware (validates its own JWT via query param).
 pub fn stream_router() -> Router<AppState> {
     Router::new().route("/logs/stream", get(stream_handler))
 }

@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 #
-# Regression pins for s288 — issues #93 and #94, two reports of the same shape:
+# Regression pins for s288 - issues #93 and #94, two reports of the same shape:
 # a feature whose halves were each present and were not connected to each other.
 #
 #   #94  The panel sent the container environment under the key "env_vars".
 #        The agent's DeployRequest declared that field as `env` with a bare
 #        #[serde(default)], so the unrecognised key was dropped and the
-#        recognised one defaulted to empty. Every git deploy — Dockerfile and
-#        Nixpacks, first deploy and redeploy, rollback and PR preview — started
+#        recognised one defaulted to empty. Every git deploy - Dockerfile and
+#        Nixpacks, first deploy and redeploy, rollback and PR preview - started
 #        its container with no environment, and every layer reported success.
 #        A fifth call site, auto-rollback, sent no environment under either
 #        spelling AND no memory_mb/cpu_percent, so a crashed container came back
@@ -15,19 +15,19 @@
 #
 #   #93  The S3/SFTP destination form was written in Settings, then switched off
 #        behind `{false && (` by the commit that moved the Destinations tab to
-#        Backup Manager — which carried across the list and the Test button and
+#        Backup Manager - which carried across the list and the Test button and
 #        left create, update and delete with no caller anywhere in the panel.
 #        The empty state went on telling operators to "add one via Settings".
 #        Underneath, two of the three places that hand a destination to the
-#        agent posted the stored CIPHERTEXT as the credential, while the third —
-#        Test Connection — decrypted, so a destination verified green and then
+#        agent posted the stored CIPHERTEXT as the credential, while the third -
+#        Test Connection - decrypted, so a destination verified green and then
 #        failed every real upload. And the per-site schedule's destination check
 #        inner-joined on a column that is NULL on every destination the panel
 #        creates, so it answered 403 for all of them.
 #
 # ⚠ EVERY CHECK BELOW STRIPS COMMENTS FIRST. The code these pins inspect
 # explains these defects in its own comments, naming the very strings under
-# test — "env_vars", `{false && (`, "via Settings". A raw-source grep would
+# test - "env_vars", `{false && (`, "via Settings". A raw-source grep would
 # match the prose that documents the trap and pass while the code re-broke.
 # See feedback_source_pin_prose_trap and lesson #110f.
 #
@@ -56,7 +56,7 @@ for f in "$GD_RS" "$AGENT_GB" "$BD_RS" "$BSCHED_RS" "$BPOL_RS" "$BSCHEDR_RS" \
   [ -f "$f" ] || { echo "missing file: $f"; exit 1; }
 done
 
-# Strip whole-line `//` comments FIRST, then block comments — that order matters
+# Strip whole-line `//` comments FIRST, then block comments - that order matters
 # and the reverse is a live hazard. The sibling suites do it the other way, and a
 # doc comment containing `/*` (a path glob such as the agent's backups route with
 # a wildcard, which this file's own subject matter has) reads as a block-comment
@@ -90,7 +90,7 @@ assert_readable() {
   raw=$(wc -l < "$1")
   stripped=$(code_of "$1" | grep -c . || true)
   if [ "$raw" -gt 40 ] && [ "$stripped" -lt $((raw / 4)) ]; then
-    bad "comment stripping consumed $1 ($stripped of $raw lines survive) — every check against it would pass vacuously"
+    bad "comment stripping consumed $1 ($stripped of $raw lines survive) - every check against it would pass vacuously"
     return 1
   fi
   return 0
@@ -132,7 +132,7 @@ AGENT_KEYS=$(printf '%s\n%s\n' "$AGENT_FIELD" "$AGENT_ALIASES" | grep -c . || tr
 if [ -n "$AGENT_FIELD" ] && [ "$AGENT_KEYS" -ge 2 ]; then
   ok "agent DeployRequest env field discovered: '$AGENT_FIELD' (+$((AGENT_KEYS-1)) alias) "
 else
-  bad "could not discover the agent's env field and at least one alias — a broken pattern must not read as a clean sweep (#100)"
+  bad "could not discover the agent's env field and at least one alias - a broken pattern must not read as a clean sweep (#100)"
 fi
 
 PANEL_KEY=$(code_of "$GD_RS" \
@@ -142,7 +142,7 @@ PANEL_KEY=$(code_of "$GD_RS" \
 if [ -n "$PANEL_KEY" ]; then
   ok "panel build_deploy_body sends the environment as '$PANEL_KEY'"
 else
-  bad "build_deploy_body sends no env key at all — the deploy body has lost the environment again"
+  bad "build_deploy_body sends no env key at all - the deploy body has lost the environment again"
 fi
 
 # Both sides must be non-empty BEFORE they are compared. Without this guard the
@@ -151,11 +151,11 @@ fi
 # it do exactly that against the pre-fix tree, where it was the one arm of this
 # section that stayed green while the defect it names was present.
 if [ -z "$AGENT_FIELD" ] || [ -z "$PANEL_KEY" ]; then
-  bad "cannot compare spellings: agent field='$AGENT_FIELD' panel key='$PANEL_KEY' — one side was not discovered, which is not a pass"
+  bad "cannot compare spellings: agent field='$AGENT_FIELD' panel key='$PANEL_KEY' - one side was not discovered, which is not a pass"
 elif printf '%s\n%s\n' "$AGENT_FIELD" "$AGENT_ALIASES" | grep -cx -- "$PANEL_KEY" >/dev/null; then
   ok "'$PANEL_KEY' is a spelling the agent accepts"
 else
-  bad "the panel sends '$PANEL_KEY' and the agent accepts only: $(printf '%s %s' "$AGENT_FIELD" "$AGENT_ALIASES") — this is #94 exactly"
+  bad "the panel sends '$PANEL_KEY' and the agent accepts only: $(printf '%s %s' "$AGENT_FIELD" "$AGENT_ALIASES") - this is #94 exactly"
 fi
 
 echo
@@ -166,7 +166,7 @@ BOTH=$(code_of "$GD_RS" | awk '/fn build_deploy_body/,/^}/' | grep -cE '"env(_va
 if [ "$BOTH" -eq 1 ]; then
   ok "build_deploy_body sets exactly one env key"
 else
-  bad "build_deploy_body sets $BOTH env keys — serde treats a field plus its alias as a duplicate field and rejects the whole request"
+  bad "build_deploy_body sets $BOTH env keys - serde treats a field plus its alias as a duplicate field and rejects the whole request"
 fi
 
 echo
@@ -178,19 +178,19 @@ BUILDER_CALLS=$(countre "$GD_RS" 'build_deploy_body\(DeployBody \{')
 if [ "$DEPLOY_CALLS" -ge 5 ]; then
   ok "found $DEPLOY_CALLS callers of /git/deploy to account for"
 else
-  bad "found only $DEPLOY_CALLS /git/deploy callers — the discovery pattern is broken, not the code (#100)"
+  bad "found only $DEPLOY_CALLS /git/deploy callers - the discovery pattern is broken, not the code (#100)"
 fi
 
 if [ "$BUILDER_CALLS" -eq "$DEPLOY_CALLS" ]; then
   ok "all $DEPLOY_CALLS deploy bodies are built by build_deploy_body"
 else
-  bad "$DEPLOY_CALLS callers of /git/deploy but $BUILDER_CALLS uses of build_deploy_body — a body is being hand-rolled again, which is how auto-rollback lost env, memory_mb and cpu_percent"
+  bad "$DEPLOY_CALLS callers of /git/deploy but $BUILDER_CALLS uses of build_deploy_body - a body is being hand-rolled again, which is how auto-rollback lost env, memory_mb and cpu_percent"
 fi
 
 # The struct has no Default and no Option-defaulting, so every caller must name
 # every field. If that stops being true, an omission goes quiet again.
 if hasre "$GD_RS" 'struct DeployBody' && ! hasre "$GD_RS" 'impl Default for DeployBody'; then
-  ok "DeployBody has no Default — a caller cannot omit a field silently"
+  ok "DeployBody has no Default - a caller cannot omit a field silently"
 else
   bad "DeployBody gained a Default; omitting env or memory_mb would compile again"
 fi
@@ -201,7 +201,7 @@ echo "§4 the environment reaching the agent is a map of strings (#94's aftermat
 if hasre "$GD_RS" 'fn env_object'; then
   ok "env_vars is coerced before it is sent"
 else
-  bad "no env_object coercion — a non-string value in the env_vars JSONB now fails the WHOLE deploy at the agent's HashMap<String, String>"
+  bad "no env_object coercion - a non-string value in the env_vars JSONB now fails the WHOLE deploy at the agent's HashMap<String, String>"
 fi
 
 if hasre "$GD_RS" '"env": env_object\(' ; then
@@ -225,12 +225,12 @@ DECRYPT_CALLERS=$(
 if [ "$DECRYPT_CALLERS" -ge 3 ]; then
   ok "$DECRYPT_CALLERS call sites route through agent_destination_payload"
 else
-  bad "only $DECRYPT_CALLERS uses of agent_destination_payload — the scheduler and the policy executor must both go through it, or they post ciphertext as the credential while Test Connection reports success"
+  bad "only $DECRYPT_CALLERS uses of agent_destination_payload - the scheduler and the policy executor must both go through it, or they post ciphertext as the credential while Test Connection reports success"
 fi
 
 for f in "$BSCHED_RS" "$BPOL_RS"; do
   if hasre "$f" 'insert\("type"\.to_string\(\)'; then
-    bad "$(basename "$f") folds \"type\" into a destination payload by hand — that is the hand-rolled path that skipped the decrypt"
+    bad "$(basename "$f") folds \"type\" into a destination payload by hand - that is the hand-rolled path that skipped the decrypt"
   else
     ok "$(basename "$f") does not hand-roll a destination payload"
   fi
@@ -246,7 +246,7 @@ echo
 echo "§6 a destination can be attached to a per-site schedule (#93, the 403)"
 
 if hasre "$BSCHEDR_RS" 'JOIN backup_destinations|bd JOIN servers'; then
-  bad "the destination check still INNER JOINs servers on bd.server_id — that column is NULL on every destination the panel creates, so this answers 403 for all of them"
+  bad "the destination check still INNER JOINs servers on bd.server_id - that column is NULL on every destination the panel creates, so this answers 403 for all of them"
 else
   ok "the destination check no longer inner-joins on a column that is always NULL"
 fi
@@ -261,7 +261,7 @@ DEST_RS=panel/backend/src/routes/backup_destinations.rs
 if hasre "$DEST_RS" 'DESTINATION_CALLER_PREDICATE.*bd\.server_id IS NULL'; then
   ok "an unscoped (shared) destination is accepted"
 else
-  bad "the check does not accept a NULL server_id — destinations created through the API have no server"
+  bad "the check does not accept a NULL server_id - destinations created through the API have no server"
 fi
 
 echo
@@ -277,7 +277,7 @@ for verb in post put delete; do
   if hasre "$ORCH_TSX" "$pat"; then
     ok "Backup Manager calls $label"
   else
-    bad "no caller for $label — the endpoint is registered and unreachable, which is #93"
+    bad "no caller for $label - the endpoint is registered and unreachable, which is #93"
   fi
 done
 
@@ -294,11 +294,11 @@ DEST_CALLS_IN_SETTINGS=$(countf "$SETTINGS_TSX" '/backup-destinations')
 if [ "$DEST_CALLS_IN_SETTINGS" -eq 0 ]; then
   ok "Settings makes no backup-destination calls"
 else
-  bad "Settings still has $DEST_CALLS_IN_SETTINGS backup-destination call(s) — the split ownership that produced #93"
+  bad "Settings still has $DEST_CALLS_IN_SETTINGS backup-destination call(s) - the split ownership that produced #93"
 fi
 
 if hasre "$SETTINGS_TSX" '\{false && \('; then
-  bad "Settings has a {false && (...)} block — a feature switched off in place is a feature nobody can find and nobody deletes"
+  bad "Settings has a {false && (...)} block - a feature switched off in place is a feature nobody can find and nobody deletes"
 else
   ok "Settings has no disabled-in-place block"
 fi
@@ -322,18 +322,18 @@ else
 fi
 
 if hasre "$ORCH_TSX" 'function tabFromSearch' && hasre "$ORCH_TSX" 'URLSearchParams'; then
-  ok "the page reads ?tab= — the remediation link lands where it says"
+  ok "the page reads ?tab= - the remediation link lands where it says"
 else
   bad "BackupOrchestrator ignores ?tab=, so every link the panel already emits opens Overview instead"
 fi
 
 echo
-echo "§10 a vault read derives its key — the raw JWT secret is not the vault key (s306)"
+echo "§10 a vault read derives its key - the raw JWT secret is not the vault key (s306)"
 
 # Same shape as #94 at the top of this file, one layer down: the git deploy's
 # environment was assembled correctly and never arrived, because the only reader
 # of auto-inject secrets unlocked them with the wrong key material. AES-GCM
-# authenticates, so a wrong key cannot yield garbage — it yields an Err, which a
+# authenticates, so a wrong key cannot yield garbage - it yields an Err, which a
 # bare `if let Ok` discarded, leaving the agent call and the only log line inside
 # an `if !env_pairs.is_empty()` that could not be entered.
 #
@@ -341,7 +341,7 @@ echo "§10 a vault read derives its key — the raw JWT secret is not the vault 
 # the vault pair `encrypt`/`decrypt`, whose key is `secrets::get_encryption_key`,
 # and the `*_credential*` family, whose key IS the JWT secret. Only the first is
 # in scope. A hardcoded list of its call sites is precisely the arm that cannot
-# see the next one (lesson #182) — this defect sat in a file such a list would
+# see the next one (lesson #182) - this defect sat in a file such a list would
 # never have named.
 #
 # s358 SPLIT THE READ PATH, so this section's subject moved (lesson #150) and
@@ -350,7 +350,7 @@ echo "§10 a vault read derives its key — the raw JWT secret is not the vault 
 # source a value could have been written under. Deriving ONE source with
 # `get_encryption_key` and handing it to the low-level `decrypt` is exactly what
 # made adding `SECRETS_ENCRYPTION_KEY` strand every vault secret on an install
-# that already held data — so writers must still derive, and readers must not.
+# that already held data - so writers must still derive, and readers must not.
 VAULT_CALL='secrets_crypto::(encrypt|decrypt)\('
 VAULT_SURFACE='secrets_crypto::(encrypt|decrypt|decrypt_vault)\('
 VAULT_FILES=()
@@ -359,7 +359,7 @@ while IFS= read -r f; do
 done < <(grep -rlE "$VAULT_SURFACE" panel/backend/src --include=*.rs 2>/dev/null | sort)
 
 if [ "${#VAULT_FILES[@]}" -lt 3 ]; then
-  bad "enumerated only ${#VAULT_FILES[@]} files on the vault surface — implausible, so every arm below would pass having examined nothing"
+  bad "enumerated only ${#VAULT_FILES[@]} files on the vault surface - implausible, so every arm below would pass having examined nothing"
 else
   ok "enumerated ${#VAULT_FILES[@]} files on the vault surface"
 
@@ -369,7 +369,7 @@ else
       if [ "$(countre "$f" 'get_encryption_key')" -gt 0 ]; then
         ok "$(basename "$f") derives the vault key before writing"
       else
-        bad "$(basename "$f") writes with the vault cipher without ever deriving the key — its values are unreadable by every other caller"
+        bad "$(basename "$f") writes with the vault cipher without ever deriving the key - its values are unreadable by every other caller"
       fi
     else
       ok "$(basename "$f") does not write to the vault, so it owes no derivation"
@@ -387,7 +387,7 @@ else
     n=$(countre "$f" "$SINGLE_SOURCE_READ")
     if [ "$n" -gt 0 ]; then
       SS_HITS=$((SS_HITS + n))
-      bad "$(basename "$f") reads the vault with the single-source cipher — a value written under any other key source is invisible to it"
+      bad "$(basename "$f") reads the vault with the single-source cipher - a value written under any other key source is invisible to it"
     fi
   done
   # POSITIVE CONTROL for the absence above: the same matcher, same corpus, must
@@ -443,13 +443,13 @@ done
 # A skipped secret must be sayable, and the arm has to be keyed on THIS path's
 # own diagnostics: `deploy.rs` is a large file with warnings all over it, so an
 # arm asking only whether the file can warn at all is green on the broken tree
-# too — it would have passed for the whole time the feature was dead. The
+# too - it would have passed for the whole time the feature was dead. The
 # `Auto-inject:` prefix belongs to this block alone; the success line reads
 # `Auto-injected`, so it cannot satisfy this on its own.
 if [ "$(countf "$DEPLOY_RS" '"Auto-inject: ')" -gt 0 ]; then
   ok "deploy.rs reports the secrets it could not decrypt"
 else
-  bad "deploy.rs swallows decrypt failures again — an inert auto-inject looks exactly like an empty vault"
+  bad "deploy.rs swallows decrypt failures again - an inert auto-inject looks exactly like an empty vault"
 fi
 
 echo

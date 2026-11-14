@@ -48,8 +48,8 @@ pub(crate) fn ssh_command(key_path: &str) -> Result<String, String> {
 
 /// Top-level entries of a site directory that the panel cannot prove it wrote.
 ///
-/// Creating a site populates the web root — a filler page in whichever
-/// directory `services::nginx::document_root_for` picks — so a first deploy
+/// Creating a site populates the web root - a filler page in whichever
+/// directory `services::nginx::document_root_for` picks - so a first deploy
 /// never meets an empty destination, and git refuses to clone into one that is
 /// not empty. Clearing the way is only defensible for files the panel wrote
 /// itself, which is why this asks about CONTENT rather than trusting a name:
@@ -88,7 +88,7 @@ fn panel_owned(path: &Path) -> bool {
 ///
 /// Renaming the clone onto the site directory cannot work: that directory
 /// exists and is not empty, which is the entire reason this path exists, and
-/// `rename` refuses a non-empty destination. So the move goes entry by entry —
+/// `rename` refuses a non-empty destination. So the move goes entry by entry -
 /// and an entry the clone does NOT supply is left alone, which is what keeps a
 /// document root present when a repository ships no `public/`.
 fn merge_into(from: &Path, to: &Path) -> Result<Vec<String>, String> {
@@ -154,7 +154,7 @@ fn owned_by_root(_path: &str) -> bool {
 /// so the only repository root may safely operate on is root's own. A foreign
 /// one is discarded rather than repaired: repairing means chowning content the
 /// web user wrote back to root and then executing it, which is the original
-/// defect with an extra step. The caller clones again — one extra clone on a
+/// defect with an extra step. The caller clones again - one extra clone on a
 /// site upgrading from v2.64.x, and no adoption at all of a repository planted
 /// by a compromised application.
 fn discard_repo_we_do_not_own(site_dir: &str, output_buf: &mut String) {
@@ -172,7 +172,7 @@ fn discard_repo_we_do_not_own(site_dir: &str, output_buf: &mut String) {
 /// Hand a deployed tree to the web server without handing over the repository.
 ///
 /// PHP-FPM runs as www-data and must be able to write the application's own
-/// directory — that requirement is real, and it is why v2.64.0 added a
+/// directory - that requirement is real, and it is why v2.64.0 added a
 /// recursive chown. The mistake was its reach: a recursive chown includes
 /// `.git`, which gives the application `config` and `hooks/`, and git runs both
 /// as root on the next deploy.
@@ -228,8 +228,8 @@ pub async fn clone_or_pull(
     let mut output_buf = String::new();
 
     // SSRF: this process is the one that actually dials `repo_url` (the panel's
-    // own check at write time runs on a different host, at a different — often
-    // much earlier — moment). See ssrf_guard's module docs.
+    // own check at write time runs on a different host, at a different - often
+    // much earlier - moment). See ssrf_guard's module docs.
     crate::services::ssrf_guard::validate_repo_url_not_internal(repo_url).await?;
 
     let env_ssh = match key_path {
@@ -240,11 +240,11 @@ pub async fn clone_or_pull(
     // Git's `dubious ownership` guard exists so root cannot be tricked into
     // running hooks out of a tree that another user controls. v2.64.1 lifted it,
     // per path and per invocation, so that deploys would keep working after
-    // v2.64.0 handed the whole checkout — `.git` included — to www-data. The two
+    // v2.64.0 handed the whole checkout - `.git` included - to www-data. The two
     // together made every git-deployed site a www-data-to-root escalation: the
     // site writes one line into `.git/config` and the next deploy executes it as
     // root. The guard stays switched on now, and the repository is kept root's
-    // own instead — see `hand_tree_to_web_user`.
+    // own instead - see `hand_tree_to_web_user`.
     discard_repo_we_do_not_own(&site_dir, &mut output_buf);
 
     if Path::new(&git_dir).exists() {
@@ -259,7 +259,7 @@ pub async fn clone_or_pull(
         // safe_command sets no kill_on_drop, so a timed-out (dropped) future
         // would otherwise leave `git fetch` running in the background,
         // holding .git/index.lock against every later deploy attempt on this
-        // site — see git_build.rs's identical fix (this crate has a second,
+        // site - see git_build.rs's identical fix (this crate has a second,
         // independent clone_or_pull) and database.rs:317, migration.rs:91,
         // database_backup.rs:424, security_scanner.rs:633 elsewhere.
         cmd.kill_on_drop(true);
@@ -295,9 +295,9 @@ pub async fn clone_or_pull(
         output_buf.push_str(&String::from_utf8_lossy(&reset.stdout));
         output_buf.push_str(&String::from_utf8_lossy(&reset.stderr));
 
-        // The fetch above is checked and this was not, so a reset that failed —
+        // The fetch above is checked and this was not, so a reset that failed -
         // most reachably when the configured branch changes and the old checkout
-        // still holds local commits — reported a successful deploy over a
+        // still holds local commits - reported a successful deploy over a
         // working tree still serving the previous release.
         if !reset.status.success() {
             return Ok(DeployResult {
@@ -311,8 +311,8 @@ pub async fn clone_or_pull(
         // Fresh clone.
         //
         // The destination is not reliably empty. Creating a site writes a filler
-        // page into the document root, so git — which refuses any destination
-        // that exists and is not empty — used to fail the FIRST deploy of every
+        // page into the document root, so git - which refuses any destination
+        // that exists and is not empty - used to fail the FIRST deploy of every
         // site the panel itself created, and with it every step the panel runs
         // only on a successful deploy.
         //
@@ -351,7 +351,7 @@ pub async fn clone_or_pull(
         if let Some(ref ssh) = env_ssh {
             cmd.env("GIT_SSH_COMMAND", ssh);
         }
-        // Same orphan-on-timeout leak as the fetch branch above — see its comment.
+        // Same orphan-on-timeout leak as the fetch branch above - see its comment.
         cmd.kill_on_drop(true);
 
         let clone = match tokio::time::timeout(
@@ -396,7 +396,7 @@ pub async fn clone_or_pull(
 
         // Static and PHP sites are served from `public/`. When the repository
         // supplies none, the filler directory survives the merge and remains
-        // exactly what a visitor gets — report that instead of a clean deploy
+        // exactly what a visitor gets - report that instead of a clean deploy
         // over a page nobody asked for.
         let public_dir = Path::new(&site_dir).join("public");
         if !moved.iter().any(|name| name == "public")
@@ -512,9 +512,9 @@ pub async fn run_script(domain: &str, script: &str) -> Result<(bool, String), St
 /// This gives zero-downtime deploys for PHP sites (Capistrano/Deployer-style).
 ///
 /// Directory structure:
-///   /var/www/{domain}/releases/{timestamp}/   — immutable release snapshots
-///   /var/www/{domain}/current                 — symlink to active release
-///   /var/www/{domain}/shared/                 — persistent dirs (uploads, .env, logs)
+///   /var/www/{domain}/releases/{timestamp}/   - immutable release snapshots
+///   /var/www/{domain}/current                 - symlink to active release
+///   /var/www/{domain}/shared/                 - persistent dirs (uploads, .env, logs)
 pub async fn atomic_deploy(
     domain: &str,
     repo_url: &str,
@@ -531,8 +531,8 @@ pub async fn atomic_deploy(
     let current_link = format!("{site_dir}/current");
 
     // SSRF: this process is the one that actually dials `repo_url` (the panel's
-    // own check at write time runs on a different host, at a different — often
-    // much earlier — moment). See ssrf_guard's module docs.
+    // own check at write time runs on a different host, at a different - often
+    // much earlier - moment). See ssrf_guard's module docs.
     crate::services::ssrf_guard::validate_repo_url_not_internal(repo_url).await?;
 
     // Create directory structure
@@ -610,7 +610,7 @@ pub async fn atomic_deploy(
         if shared.ends_with('/') || !shared.contains('.') {
             std::fs::create_dir_all(&shared_path).ok();
         } else {
-            // Shared file — create parent and touch
+            // Shared file - create parent and touch
             if let Some(parent) = Path::new(&shared_path).parent() {
                 std::fs::create_dir_all(parent).ok();
             }
@@ -750,7 +750,7 @@ pub async fn atomic_deploy(
         };
         if needs_update {
             if Path::new(&public_link).is_dir() && !Path::new(&public_link).is_symlink() {
-                // First atomic deploy: existing public/ is a real directory — move to shared as backup
+                // First atomic deploy: existing public/ is a real directory - move to shared as backup
                 let backup_dir = format!("{shared_dir}/_pre_atomic_public_backup");
                 let _ = std::fs::rename(&public_link, &backup_dir);
                 output_buf.push_str("==> Migrated existing public/ to shared/_pre_atomic_public_backup\n");
@@ -767,7 +767,7 @@ pub async fn atomic_deploy(
 
     // Ensure correct ownership. Same split as the non-atomic path: this release
     // has always been handed to www-data wholesale, which is why `list_releases`
-    // could never read its commit hash back without an ownership exception — and
+    // could never read its commit hash back without an ownership exception - and
     // why an exception was there to be lifted at all.
     hand_tree_to_web_user(&release_dir).await;
 
@@ -826,8 +826,8 @@ pub fn list_releases(domain: &str) -> Result<Vec<ReleaseInfo>, String> {
             // Get commit hash from release. This answered None on every atomic
             // release for as long as the feature existed, because the release
             // had been handed to www-data; it now reads back because `.git`
-            // stays root's. A release still owned by www-data — one written by
-            // a version before this — is left answering None rather than
+            // stays root's. A release still owned by www-data - one written by
+            // a version before this - is left answering None rather than
             // adopted, for the reason `discard_repo_we_do_not_own` gives.
             let git_dir = format!("{}/{}", e.path().display(), ".git");
             let commit = if Path::new(&git_dir).exists() {
@@ -993,7 +993,7 @@ mod first_deploy_tests {
             "a real site must be refused, and named");
     }
 
-    /// The merge replaces what the clone supplies and LEAVES what it does not —
+    /// The merge replaces what the clone supplies and LEAVES what it does not -
     /// the property that keeps a document root present when a repository has no
     /// `public/`.
     #[test]
@@ -1049,7 +1049,7 @@ mod first_deploy_tests {
             );
             assert!(
                 !out.status.success(),
-                "git cloned into a populated web root ({layout}) — the staging path is now dead code"
+                "git cloned into a populated web root ({layout}) - the staging path is now dead code"
             );
             let stderr = String::from_utf8_lossy(&out.stderr).to_lowercase();
             assert!(
@@ -1072,7 +1072,7 @@ mod ownership_tests {
     use std::path::PathBuf;
 
     /// Build a repository in the state v2.64.0/v2.64.1 left every git-deployed
-    /// site in — owned by another uid — and return its path plus a payload
+    /// site in - owned by another uid - and return its path plus a payload
     /// planted in its config the way a compromised application would.
     ///
     /// The payload is `core.fsmonitor`, not a hook file: it needs no executable
@@ -1145,7 +1145,7 @@ mod ownership_tests {
             .unwrap();
         assert!(
             !bare.status.success(),
-            "git accepted a repository owned by another user — the ownership guard this fix \
+            "git accepted a repository owned by another user - the ownership guard this fix \
              relies on is gone, and `.git` being root's is no longer sufficient on its own"
         );
         assert!(!proof.exists(), "the guard refused the command and it ran anyway");
@@ -1187,7 +1187,7 @@ mod ownership_tests {
     /// the only thing standing between the payload and uid 0 is the suppression
     /// pair. Testing this against a foreign-owned repository would pass whether
     /// or not `GIT_NO_EXEC` does anything, because the guard would refuse the
-    /// command first — green for the wrong reason, which is the failure mode
+    /// command first - green for the wrong reason, which is the failure mode
     /// this project keeps finding in its own arms.
     #[test]
     fn the_suppression_pair_neutralises_a_planted_payload_by_itself() {
@@ -1277,7 +1277,7 @@ mod ownership_tests {
         );
         assert!(
             out.contains("not owned by root"),
-            "the discard was silent — the operator has no way to know a re-clone happened"
+            "the discard was silent - the operator has no way to know a re-clone happened"
         );
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -1306,7 +1306,7 @@ mod ownership_tests {
 
         assert!(
             owned_by_root(&format!("{path}/.git")),
-            "the repository was handed to the web user — this is the v2.64.0 defect"
+            "the repository was handed to the web user - this is the v2.64.0 defect"
         );
         assert!(
             owned_by_root(&format!("{path}/.git/config")),

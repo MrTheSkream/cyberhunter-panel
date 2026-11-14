@@ -1,34 +1,34 @@
 #!/usr/bin/env bash
-# status-page-gate-pin-e2e.sh — s313 / v2.70.0
+# status-page-gate-pin-e2e.sh - s313 / v2.70.0
 #
 # Pins the fix for a panel that published its own alert engine's output to the
 # internet from first boot, with no operator action, while the documented switch
 # governed a different endpoint and the guide promised a 404.
 #
 #   §A  the GATE exists and FAILS CLOSED. Absent setting, unreadable setting,
-#       any value that is not the literal "true" — all off. A decision to
+#       any value that is not the literal "true" - all off. A decision to
 #       publish operational state is never made by a default.
 #   §B  EVERY route on the public /api/status-page surface reaches it. This is
 #       the arm that matters, and it is the arm the old code would have failed:
 #       four routes answered unauthenticated and exactly one checked anything.
-#       The subject list is COMPUTED from the router, never written here — a
+#       The subject list is COMPUTED from the router, never written here - a
 #       class arm that hardcodes its own members cannot see the fifth route
 #       somebody adds next year (lesson #181).
 #   §C  the public config read is DETERMINISTIC. An unordered LIMIT 1 over a
 #       table that could hold duplicates let two readers of one flag disagree,
 #       so an operator could untick "Enabled", get a 200, and still publish.
-#   §D  one config row per operator — a real ON CONFLICT target, and the unique
+#   §D  one config row per operator - a real ON CONFLICT target, and the unique
 #       index that makes it mean anything.
 #
 # Pure source analysis: no box, no network, no build.
 #
 # ⚠ §A2 and §B are ABSENCE arms over a subject that DID NOT EXIST at v2.69.0, so
-# "red at the previous tag" cannot test them (lesson #222) — there was no gate to
+# "red at the previous tag" cannot test them (lesson #222) - there was no gate to
 # fail to call. Both were MUTATION-TESTED at HEAD instead: deleting the
 # require_enabled call from incidents::subscribe turns §B red and names the
 # handler; flipping the gate's unwrap_or(false) to (true) turns §A2 red.
 #
-# NO PIPES INTO `grep -q` — under `set -o pipefail` grep -q closes the pipe on
+# NO PIPES INTO `grep -q` - under `set -o pipefail` grep -q closes the pipe on
 # its first match and the arm goes red on correct code, non-deterministically.
 # Every arm feeds grep a here-string.
 
@@ -52,7 +52,7 @@ done
 # Comments out, CODE INTACT. Copied from the FIXED stripper (lesson #136): the
 # naive s{/\*.*?\*/}{}gs deletes real code, because `/*` occurs inside string
 # literals, and a truncated subject makes an ABSENCE arm pass on code the
-# stripper merely removed — failure in the reassuring direction.
+# stripper merely removed - failure in the reassuring direction.
 code() {
   perl -0777 -pe '
     s{\{/\*.*?\*/\}}{}gs;
@@ -92,7 +92,7 @@ echo "== §A  the gate exists, and it fails closed =="
 
 if [ ! -f "$GATE" ]; then
   bad "A1 services/public_status.rs exists (the one place the publish decision is made)"
-  bad "A2 the gate fails closed — absent or unreadable setting is OFF"
+  bad "A2 the gate fails closed - absent or unreadable setting is OFF"
   bad "A3 the gate is registered in services/mod.rs"
 elif G=$(subj "$GATE"); then
   if grep -qE 'pub async fn require_enabled' <<< "$G" \
@@ -108,9 +108,9 @@ elif G=$(subj "$GATE"); then
   if grep -qE '\.unwrap_or\(None\)' <<< "$G" \
   && grep -qE 'unwrap_or\(false\)' <<< "$G" \
   && ! grep -qE 'unwrap_or(_else)?\((\|\| *)?true' <<< "$G"; then
-    ok "A2 the gate fails closed — query error and absent row both read OFF"
+    ok "A2 the gate fails closed - query error and absent row both read OFF"
   else
-    bad "A2 the gate fails closed — query error and absent row both read OFF"
+    bad "A2 the gate fails closed - query error and absent row both read OFF"
   fi
 
   if grep -qE '^pub mod public_status;' <<< "$(code "$SVCMOD")"; then
@@ -128,11 +128,11 @@ HANDLERS=$(grep -oE '(monitors|incidents)::[a-z_]+' <<< "$ROUTES" | sort -u || t
 NHANDLERS=$(grep -c . <<< "$HANDLERS" || true)
 
 # An arm that enumerates its own subjects must assert the enumeration FIRST
-# (lesson #143) — an empty list makes every check below pass having examined
+# (lesson #143) - an empty list makes every check below pass having examined
 # nothing. Four public + four admin handlers exist today; anything under 6 means
 # the extraction broke, not that the surface shrank.
 if [ "$NHANDLERS" -lt 6 ]; then
-  bad "B0 router enumeration produced $NHANDLERS status-page handlers — extraction is broken, arms below are vacuous"
+  bad "B0 router enumeration produced $NHANDLERS status-page handlers - extraction is broken, arms below are vacuous"
 else
   ok "B0 router enumeration found $NHANDLERS status-page handlers"
 
@@ -147,7 +147,7 @@ else
     BODY=$(fnbody "$S" "$fn")
     [ -n "$SIG" ] || { UNGUARDED="$UNGUARDED $h(no-fn)"; continue; }
 
-    # Authenticated is fine — the gate is for the routes that answer to anybody.
+    # Authenticated is fine - the gate is for the routes that answer to anybody.
     if grep -qE '(AdminUser|AuthUser)' <<< "$SIG"; then continue; fi
     if grep -qE 'public_status::require_enabled' <<< "$BODY"; then continue; fi
     UNGUARDED="$UNGUARDED $h"
@@ -267,12 +267,12 @@ fi
 echo "== §F  the public surface does not republish what it must not ==="
 
 # v2.149.0. Two leaks on the SAME unauthenticated response, both of them
-# over-disclosure rather than a missing gate — the gate above was working.
+# over-disclosure rather than a missing gate - the gate above was working.
 #
 #   §F1/F2/F3  a monitor's own URL. `reqwest::Error`'s Display ends with
 #              " for url ({url})", and that string became `incidents.cause`,
 #              `managed_incidents.description` and the "Auto-detected: …"
-#              timeline entry — two of which this endpoint publishes, while
+#              timeline entry - two of which this endpoint publishes, while
 #              the guide states URLs are not published and the OTHER public
 #              handler drops the URL deliberately.
 #   §F4        `author_email`. The timeline was serialized whole, and the
@@ -280,7 +280,7 @@ echo "== §F  the public surface does not republish what it must not ==="
 #
 # ⚠ F2 is the arm the UNIT TESTS CANNOT REPLACE. `uptime.rs`'s tests exercise
 # `redact_monitor_target` directly, so deleting its CALL from
-# `describe_check_error` leaves all three of them green — measured, not
+# `describe_check_error` leaves all three of them green - measured, not
 # assumed. F2 is what makes that mutation red.
 
 UPT=panel/backend/src/services/uptime.rs
@@ -299,7 +299,7 @@ elif U=$(subj "$UPT"); then
     ok "F0 function subjects resolved (check_http ${#HTTPBODY}c, describe_check_error ${#DESCBODY}c, redact_monitor_target ${#REDBODY}c)"
 
     # The failing arm of check_http must not hand reqwest's Display straight to
-    # the caller — that string is what gets stored and published.
+    # the caller - that string is what gets stored and published.
     if grep -qE 'describe_check_error\(' <<< "$HTTPBODY" \
     && ! grep -qE 'Some\(e\.to_string\(\)\)' <<< "$HTTPBODY"; then
       ok "F1 check_http renders its error through describe_check_error, not reqwest's Display"
@@ -319,7 +319,7 @@ elif U=$(subj "$UPT"); then
       bad "F3 describe_check_error still strips the error's own URL slot"
     fi
   else
-    bad "F0 function subjects resolved — extraction is broken, F1-F3 would be vacuous"
+    bad "F0 function subjects resolved - extraction is broken, F1-F3 would be vacuous"
     bad "F1 check_http renders its error through describe_check_error"
     bad "F2 describe_check_error is WIRED to the scrub"
     bad "F3 describe_check_error still strips the error's own URL slot"
@@ -344,7 +344,7 @@ if I=$(subj "$INC"); then
       bad "F5 author_email is named nowhere in the public handler"
     fi
   else
-    bad "F4 public_status_page subject resolved (${#PUBBODY}c) — arms would be vacuous"
+    bad "F4 public_status_page subject resolved (${#PUBBODY}c) - arms would be vacuous"
     bad "F5 public_status_page subject resolved"
   fi
 fi
@@ -352,7 +352,7 @@ fi
 echo "== §G  the public read is scoped to ONE tenant (s418) =="
 
 # v2.171.0. §A-§F all guarded WHETHER the page publishes and WHAT fields it
-# publishes — none of them checked WHOSE data it publishes. Every query below
+# publishes - none of them checked WHOSE data it publishes. Every query below
 # `status_page_config`'s ORDER BY was unscoped: on any multi-tenant/reseller
 # install, one tenant's components/incidents/legacy-incidents were served to
 # every anonymous visitor of every OTHER tenant's /status page. Confirmed
@@ -378,7 +378,7 @@ if I=$(subj "$INC"); then
     fi
 
     if grep -qE 'WHERE cm\.component_id = \$1 AND m\.user_id = \$2 AND m\.enabled = TRUE' <<< "$PUBBODY"; then
-      ok "G3 the per-component monitor-status read is ALSO scoped (defense in depth — the component is already owner-scoped, but a monitor linked cross-tenant into it must not leak status)"
+      ok "G3 the per-component monitor-status read is ALSO scoped (defense in depth - the component is already owner-scoped, but a monitor linked cross-tenant into it must not leak status)"
     else
       bad "G3 the per-component monitor-status read is ALSO scoped"
     fi
@@ -408,7 +408,7 @@ if I=$(subj "$INC"); then
       bad "G6 the components/incidents queries are structurally UNREACHABLE without an owner_id, not merely filtered"
     fi
   else
-    bad "G1 public_status_page subject resolved (${#PUBBODY}c) — G1-G6 would be vacuous"
+    bad "G1 public_status_page subject resolved (${#PUBBODY}c) - G1-G6 would be vacuous"
     bad "G2 components read scoped"; bad "G3 monitor-status read scoped"
     bad "G4 managed-incidents read scoped"; bad "G5 legacy-incidents read scoped"
     bad "G6 queries structurally gated on owner_id"
@@ -419,7 +419,7 @@ echo "== §H  the subscriber list and its fan-out are ALSO scoped (s427) =="
 
 # v2.180.0. §G scoped every READ of the public page to one tenant. The
 # subscriber table (and the worker that mails it) was the one piece of this
-# surface §G never touched — s418's own fan-out found it, deferred it, and it
+# surface §G never touched - s418's own fan-out found it, deferred it, and it
 # sat as a documented, zero-owner-column carry until now. Same failure shape as
 # §G: a real address list, readable/mailable across every tenant on the
 # install, not just the one whose page a visitor actually subscribed through.
@@ -435,7 +435,7 @@ if G=$(subj "$GATE"); then
   fi
 
   # The fallback that makes this reachable even before an admin has ever
-  # visited status-page settings — see resolve_current_status_page_owner's own
+  # visited status-page settings - see resolve_current_status_page_owner's own
   # doc comment for why `status_page_enabled` can be true with zero config rows.
   RCSPO=$(fnbody "$G" resolve_current_status_page_owner)
   if [ "${#RCSPO}" -ge 200 ] && grep -qE 'FROM users ORDER BY created_at ASC' <<< "$RCSPO"; then
@@ -468,7 +468,7 @@ if I=$(subj "$INC"); then
     fi
 
     # The negative control: list_subscribers must not be install-wide. Before
-    # s427 this endpoint had no WHERE clause at all — any admin's JWT could
+    # s427 this endpoint had no WHERE clause at all - any admin's JWT could
     # read every OTHER tenant's subscriber email list.
     if grep -qE 'WHERE owner_id = \$1' <<< "$LISTBODY" \
     && grep -qE '\.bind\(claims\.sub\)' <<< "$LISTBODY"; then
@@ -477,7 +477,7 @@ if I=$(subj "$INC"); then
       bad "H6 list_subscribers is scoped to the calling admin's own owner_id"
     fi
   else
-    bad "H3 subscribe/unsubscribe/list_subscribers subjects resolved — H4-H6 would be vacuous"
+    bad "H3 subscribe/unsubscribe/list_subscribers subjects resolved - H4-H6 would be vacuous"
     bad "H4 subscribe stamps owner_id"; bad "H5 unsubscribe scoped"; bad "H6 list_subscribers scoped"
   fi
 fi
@@ -498,9 +498,9 @@ else
 
   ENQSIG=$(fnsig "$N" enqueue)
   if grep -qE 'owner_id: Uuid' <<< "$ENQSIG"; then
-    ok "I2 enqueue() requires an owner_id — a call site missing it cannot compile"
+    ok "I2 enqueue() requires an owner_id - a call site missing it cannot compile"
   else
-    bad "I2 enqueue() requires an owner_id — a call site missing it cannot compile"
+    bad "I2 enqueue() requires an owner_id - a call site missing it cannot compile"
   fi
 
   # The one query that actually enforces isolation between two tenants' mail.
@@ -546,7 +546,7 @@ if I=$(subj "$INC"); then
   if [ "$NCALLS" -eq 3 ]; then
     ok "I6 exactly 3 notify_subscribers call sites found (a 4th needs its own arm here)"
   else
-    bad "I6 expected 3 notify_subscribers call sites, found $NCALLS — I7-I9 would be vacuous or miscounted"
+    bad "I6 expected 3 notify_subscribers call sites, found $NCALLS - I7-I9 would be vacuous or miscounted"
   fi
 
   if grep -qE 'notify_subscribers\(&incident\.title, status, req\.description\.as_deref\(\)\.unwrap_or\(""\), incident\.user_id\);' <<< "$I"; then
@@ -598,11 +598,11 @@ fi
 echo "== §K  monitors.rs's OWN public status-page route is ALSO scoped (s430) =="
 
 # v2.185.0. §G scoped incidents.rs::public_status_page's four queries at
-# v2.171.0 (s418) — but a SIBLING public, unauthenticated status-page route
+# v2.171.0 (s418) - but a SIBLING public, unauthenticated status-page route
 # lives in monitors.rs, created FROM SCRATCH two releases later (v2.173.0),
 # with the identical unscoped shape §G had just fixed one file over:
 # `SELECT ... FROM monitors WHERE enabled = true` with no owner filter,
-# behind a comment reading "no user filter — this is public." No frontend
+# behind a comment reading "no user filter - this is public." No frontend
 # caller ever reaches it, which is exactly why it went unnoticed while its
 # twin got fixed and pinned. Same failure shape as §G, same remedy: resolve
 # the status page's owner and require it before the query can run at all.
@@ -639,7 +639,7 @@ if S=$(subj "$MON"); then
       bad "K4 the old unscoped query string is gone"
     fi
   else
-    bad "K1 status_page subject resolved (${#SPBODY}c) — K1-K4 would be vacuous"
+    bad "K1 status_page subject resolved (${#SPBODY}c) - K1-K4 would be vacuous"
     bad "K2 monitors read scoped"; bad "K3 query structurally gated"; bad "K4 old query removed"
   fi
 else

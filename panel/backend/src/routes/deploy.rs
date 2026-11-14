@@ -73,13 +73,13 @@ pub struct LogsQuery {
 
 /// Helper: resolve a site this caller may act on, and return its domain.
 ///
-/// One line over [`crate::helpers::site_domain_for_caller`] — the shared resolver
+/// One line over [`crate::helpers::site_domain_for_caller`] - the shared resolver
 /// this module used to keep its own copy of.
 async fn get_site(state: &AppState, site_id: Uuid, claims: &Claims) -> Result<String, ApiError> {
     crate::helpers::site_domain_for_caller(state, site_id, claims).await
 }
 
-/// GET /api/sites/{id}/deploy — Get deploy config.
+/// GET /api/sites/{id}/deploy - Get deploy config.
 pub async fn get_config(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -108,7 +108,7 @@ pub async fn get_config(
     Ok(Json(config))
 }
 
-/// PUT /api/sites/{id}/deploy — Set/update deploy config.
+/// PUT /api/sites/{id}/deploy - Set/update deploy config.
 pub async fn set_config(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -131,7 +131,7 @@ pub async fn set_config(
     let atomic_deploy = body.atomic_deploy.unwrap_or(false);
     let keep_releases = body.keep_releases.unwrap_or(5).clamp(2, 20);
     let webhook_secret = Uuid::new_v4().to_string().replace('-', "");
-    // Only used on first INSERT — ON CONFLICT's DO UPDATE never touches this
+    // Only used on first INSERT - ON CONFLICT's DO UPDATE never touches this
     // column, so an existing config keeps its original secret (this mirrors
     // the pre-encryption behavior exactly; see the decrypt-what-came-back
     // below rather than trusting this local value for the returned struct).
@@ -177,7 +177,7 @@ pub async fn set_config(
     Ok(Json(config))
 }
 
-/// DELETE /api/sites/{id}/deploy — Remove deploy config.
+/// DELETE /api/sites/{id}/deploy - Remove deploy config.
 pub async fn remove_config(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -194,13 +194,13 @@ pub async fn remove_config(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// POST /api/sites/{id}/deploy/trigger — Trigger a deployment (async with SSE).
+/// POST /api/sites/{id}/deploy/trigger - Trigger a deployment (async with SSE).
 pub async fn trigger(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
-    // Check for active critical/major incidents — block deploy during outage
+    // Check for active critical/major incidents - block deploy during outage
     let active_incidents: (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM managed_incidents \
          WHERE status NOT IN ('resolved', 'postmortem') \
@@ -291,7 +291,7 @@ pub async fn trigger(
     }))))
 }
 
-/// POST /api/sites/{id}/deploy/keygen — Generate deploy key.
+/// POST /api/sites/{id}/deploy/keygen - Generate deploy key.
 pub async fn keygen(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -323,7 +323,7 @@ pub async fn keygen(
     })))
 }
 
-/// GET /api/sites/{id}/deploy/logs — List deploy logs.
+/// GET /api/sites/{id}/deploy/logs - List deploy logs.
 pub async fn logs(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -347,7 +347,7 @@ pub async fn logs(
     Ok(Json(logs))
 }
 
-/// POST /api/webhooks/deploy/{site_id}/{secret} — Webhook endpoint (no auth).
+/// POST /api/webhooks/deploy/{site_id}/{secret} - Webhook endpoint (no auth).
 pub async fn webhook(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -422,7 +422,7 @@ pub async fn webhook(
         None => (String::new(), None),
     };
 
-    // Check for active critical/major incidents — skip webhook deploy during outage
+    // Check for active critical/major incidents - skip webhook deploy during outage
     let active_incidents: (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM managed_incidents \
          WHERE status NOT IN ('resolved', 'postmortem') \
@@ -436,7 +436,7 @@ pub async fn webhook(
 
     // Resolve the agent for the server this SITE lives on. A webhook has no
     // authenticated caller and therefore no `ServerScope`, which is why this
-    // used to take the local agent — but the site row names its server, and
+    // used to take the local agent - but the site row names its server, and
     // deploying a remote tenant's site onto the panel host writes their files
     // and their vhost on the wrong machine.
     let site_server_id = match site_server_id {
@@ -448,7 +448,7 @@ pub async fn webhook(
         Err(e) => {
             tracing::warn!(
                 "Webhook deploy for {domain} refused: its server {site_server_id} is \
-                 unreachable ({e}) — refusing to deploy on a different host"
+                 unreachable ({e}) - refusing to deploy on a different host"
             );
             return Err(err(StatusCode::BAD_GATEWAY, "Deploy target server is unreachable"));
         }
@@ -514,7 +514,7 @@ async fn execute_deploy(
     let duration_ms = result.get("duration_ms").and_then(|v| v.as_u64()).unwrap_or(0) as i32;
     let status = if success { "success" } else { "failed" };
 
-    // GAP 26: Auto-rollback on failed deploy — restore from most recent pre-deploy backup
+    // GAP 26: Auto-rollback on failed deploy - restore from most recent pre-deploy backup
     if !success {
         let latest_backup: Option<(String,)> = sqlx::query_as(
             "SELECT filename FROM backups WHERE site_id = $1 ORDER BY created_at DESC LIMIT 1"
@@ -565,7 +565,7 @@ async fn execute_deploy(
         }
     }
 
-    // GAP 37: Post-deploy cache invalidation — clear nginx fastcgi cache for the domain
+    // GAP 37: Post-deploy cache invalidation - clear nginx fastcgi cache for the domain
     if success {
         let _ = agent.post(
             "/diagnostics/fix",
@@ -623,7 +623,7 @@ async fn execute_deploy(
     if success {
         let jwt_secret = std::env::var("JWT_SECRET").unwrap_or_default();
         if !jwt_secret.is_empty() {
-            // The vault is NOT encrypted under the JWT secret — it is encrypted
+            // The vault is NOT encrypted under the JWT secret - it is encrypted
             // under the key derived from it. Every writer goes through the
             // derivation in `routes::secrets`, and so does the manual "Inject"
             // button beside it, which runs this same query against the same
@@ -631,12 +631,12 @@ async fn execute_deploy(
             // passed the raw JWT secret instead, so every decrypt returned Err.
             //
             // Nothing could report that. AES-GCM authenticates, so a wrong key
-            // cannot yield garbage — it yields an error, which `if let Ok` threw
+            // cannot yield garbage - it yields an error, which `if let Ok` threw
             // away; `env_pairs` then stayed empty, and the agent call and the
             // only log line both sit inside `if !env_pairs.is_empty()`. A
             // feature on the README, in FEATURES.md, in the guide and behind a
             // UI checkbox was inert and silent at the same time.
-            // Read path — `decrypt_vault` tries every source the value could have
+            // Read path - `decrypt_vault` tries every source the value could have
             // been written under. Deriving ONE source and handing it to
             // `secrets_crypto::decrypt` is the shape that made adding
             // SECRETS_ENCRYPTION_KEY strand every vault secret; this call site
@@ -681,7 +681,7 @@ async fn execute_deploy(
                 } else if undecryptable > 0 {
                     tracing::warn!(
                         "Auto-inject: all {undecryptable} auto-inject secrets for {domain} \
-                         failed to decrypt — nothing was injected"
+                         failed to decrypt - nothing was injected"
                     );
                 }
             }
@@ -728,7 +728,7 @@ async fn execute_deploy(
     Ok(log)
 }
 
-/// GET /api/sites/{id}/deploy/releases — List releases for atomic deploy site.
+/// GET /api/sites/{id}/deploy/releases - List releases for atomic deploy site.
 pub async fn list_releases(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -747,7 +747,7 @@ pub async fn list_releases(
     Ok(Json(releases))
 }
 
-/// POST /api/sites/{id}/deploy/rollback/{release_id} — Rollback to a specific release.
+/// POST /api/sites/{id}/deploy/rollback/{release_id} - Rollback to a specific release.
 pub async fn rollback_release(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,

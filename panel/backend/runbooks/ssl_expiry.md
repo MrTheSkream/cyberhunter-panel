@@ -22,9 +22,9 @@ The agent reads each managed cert and the panel fires at the configured ladder (
 - HTTP-01 challenge blocked (firewall change blocked port 80, or nginx config broke `.well-known/acme-challenge` path)
 - Rate limit hit at the CA (Let's Encrypt: 5 duplicate certs per week per domain)
 - Domain ownership changed (DNS now points elsewhere)
-- ACME profile mismatch (CA dropped the profile the panel is configured for — check **Settings → SSL → ACME Profile**)
+- ACME profile mismatch (CA dropped the profile the panel is configured for - check **Settings → SSL → ACME Profile**)
 - Cert is for a domain that's been removed but the cert object lingered
 
 ## Escalation
 
-Wake a human at 3 days remaining if "Renew now" fails twice. Beyond that, customer-facing TLS warnings start showing up in browsers. If the CA is rate-limiting, wait the window out — forcing more attempts compounds the problem.
+Wake a human at 3 days remaining if "Renew now" fails twice. Beyond that, customer-facing TLS warnings start showing up in browsers. If the CA is rate-limiting, wait the window out - forcing more attempts compounds the problem.

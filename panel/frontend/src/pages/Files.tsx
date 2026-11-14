@@ -16,14 +16,14 @@ interface Site {
 }
 
 function formatSize(bytes: number): string {
-  if (bytes === 0) return "—";
+  if (bytes === 0) return "-";
   const units = ["B", "KB", "MB", "GB"];
   const i = Math.floor(Math.log(bytes) / Math.log(1024));
   return `${(bytes / Math.pow(1024, i)).toFixed(i > 0 ? 1 : 0)} ${units[i]}`;
 }
 
 function formatDate(iso: string): string {
-  if (!iso) return "—";
+  if (!iso) return "-";
   return new Date(iso).toLocaleString(undefined, {
     month: "short",
     day: "numeric",
@@ -222,7 +222,7 @@ export default function Files() {
                 for (const file of Array.from(files)) {
                   // Refuse an oversize file HERE, before spending the upload.
                   // The server refuses it too, but only after the whole body
-                  // has travelled — and its refusal used to be discarded by the
+                  // has travelled - and its refusal used to be discarded by the
                   // bare catch below, which is exactly what #121 reported: a
                   // 33 MB upload that failed with no message of any kind.
                   if (file.size > UPLOAD_MAX_FILE_BYTES) {
@@ -253,9 +253,9 @@ export default function Files() {
                 setUploading(false);
                 if (failed > 0) {
                   // A count is not a reason. Carry the first failure's sentence
-                  // — it is the only part that says what to do next.
+                  // - it is the only part that says what to do next.
                   setUploadMessage(
-                    success > 0 ? `${success} uploaded, ${failed} failed — ${firstError}` : firstError
+                    success > 0 ? `${success} uploaded, ${failed} failed - ${firstError}` : firstError
                   );
                 } else {
                   setUploadMessage(`${success} file(s) uploaded`);
@@ -401,7 +401,7 @@ export default function Files() {
                         </button>
                       </td>
                       <td className="px-4 py-3 text-sm text-dark-200 font-mono">
-                        {entry.is_dir ? "—" : formatSize(entry.size)}
+                        {entry.is_dir ? "-" : formatSize(entry.size)}
                       </td>
                       <td className="px-4 py-3 text-sm text-dark-200 font-mono">
                         {formatDate(entry.modified)}

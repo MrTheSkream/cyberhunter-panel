@@ -32,7 +32,7 @@ pub struct TestRequest {
     pub from_name: Option<String>,
 }
 
-/// POST /smtp/configure — Write msmtp config and PHP sendmail path.
+/// POST /smtp/configure - Write msmtp config and PHP sendmail path.
 async fn configure(
     Json(body): Json<ConfigureRequest>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
@@ -40,7 +40,7 @@ async fn configure(
         return Err(err(StatusCode::BAD_REQUEST, "Host is required"));
     }
 
-    let from_name = body.from_name.as_deref().unwrap_or("DockPanel");
+    let from_name = body.from_name.as_deref().unwrap_or("CyberHunter - Panel");
     let encryption = body.encryption.as_deref().unwrap_or("starttls");
 
     smtp::configure(
@@ -57,7 +57,7 @@ async fn configure(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// POST /smtp/test — Send a test email.
+/// POST /smtp/test - Send a test email.
 async fn test_email(
     Json(body): Json<TestRequest>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
@@ -65,7 +65,7 @@ async fn test_email(
         return Err(err(StatusCode::BAD_REQUEST, "Valid email address required"));
     }
 
-    let from_name = body.from_name.as_deref().unwrap_or("DockPanel");
+    let from_name = body.from_name.as_deref().unwrap_or("CyberHunter - Panel");
 
     let message = smtp::send_test(&body.to, &body.from, from_name)
         .await

@@ -84,7 +84,7 @@ pub struct ResellerServer {
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
-/// GET /api/resellers — List all resellers with their profiles (admin only).
+/// GET /api/resellers - List all resellers with their profiles (admin only).
 pub async fn list(
     State(state): State<AppState>,
     AdminUser(_claims): AdminUser,
@@ -106,7 +106,7 @@ pub async fn list(
     Ok(Json(resellers))
 }
 
-/// POST /api/resellers — Promote a user to reseller (admin only).
+/// POST /api/resellers - Promote a user to reseller (admin only).
 pub async fn create(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -135,7 +135,7 @@ pub async fn create(
     // has no reference to this table at all). So a demoted reseller keeps an
     // orphan profile, and gating this check on the role meant the next promotion
     // sailed past it, updated the role, hit the unique constraint on INSERT and
-    // answered 500 — an account an admin could then never promote.
+    // answered 500 - an account an admin could then never promote.
     let existing: Option<(Uuid,)> =
         sqlx::query_as("SELECT id FROM reseller_profiles WHERE user_id = $1")
             .bind(user_id)
@@ -162,7 +162,7 @@ pub async fn create(
     // Re-promotion of an account that kept its profile through a demotion. The
     // role UPDATE above is the whole of the work; inserting would violate the
     // unique constraint. Its stored quotas and branding are preserved rather
-    // than silently replaced by whatever this request happened to carry — an
+    // than silently replaced by whatever this request happened to carry - an
     // admin restoring a reseller is not asking to reset it.
     if let Some((existing_id,)) = existing {
         tracing::info!(
@@ -221,7 +221,7 @@ pub async fn create(
     ))
 }
 
-/// GET /api/resellers/{id} — Get reseller profile by profile id (admin only).
+/// GET /api/resellers/{id} - Get reseller profile by profile id (admin only).
 pub async fn get(
     State(state): State<AppState>,
     AdminUser(_claims): AdminUser,
@@ -239,7 +239,7 @@ pub async fn get(
     Ok(Json(profile))
 }
 
-/// PUT /api/resellers/{id} — Update reseller quotas/branding (admin only).
+/// PUT /api/resellers/{id} - Update reseller quotas/branding (admin only).
 pub async fn update(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -299,7 +299,7 @@ pub async fn update(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// DELETE /api/resellers/{id} — Demote reseller back to user (admin only).
+/// DELETE /api/resellers/{id} - Demote reseller back to user (admin only).
 pub async fn remove(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -369,7 +369,7 @@ pub async fn remove(
     Ok(Json(serde_json::json!({ "ok": true, "email": user_email.0 })))
 }
 
-/// GET /api/resellers/{id}/servers — List servers allocated to reseller (admin only).
+/// GET /api/resellers/{id}/servers - List servers allocated to reseller (admin only).
 pub async fn list_servers(
     State(state): State<AppState>,
     AdminUser(_claims): AdminUser,
@@ -390,7 +390,7 @@ pub async fn list_servers(
     Ok(Json(servers))
 }
 
-/// POST /api/resellers/{id}/servers — Allocate server to reseller (admin only).
+/// POST /api/resellers/{id}/servers - Allocate server to reseller (admin only).
 pub async fn allocate_server(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -457,7 +457,7 @@ pub async fn allocate_server(
     ))
 }
 
-/// DELETE /api/resellers/{id}/servers/{server_id} — Deallocate server from reseller (admin only).
+/// DELETE /api/resellers/{id}/servers/{server_id} - Deallocate server from reseller (admin only).
 pub async fn deallocate_server(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,

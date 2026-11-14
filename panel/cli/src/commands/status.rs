@@ -170,7 +170,7 @@ pub async fn cmd_diagnose(token: &str, output: &str) -> Result<(), String> {
     let total = summary["total"].as_u64().unwrap_or(0);
 
     if total == 0 {
-        println!("\x1b[32m✓ All checks passed — no issues detected.\x1b[0m");
+        println!("\x1b[32m✓ All checks passed - no issues detected.\x1b[0m");
         return Ok(());
     }
 

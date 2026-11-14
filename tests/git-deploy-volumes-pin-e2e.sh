@@ -3,7 +3,7 @@
 # Regression pin for GIT DEPLOY PERSISTENT VOLUMES (#118).
 #
 # WHAT HAPPENED. A Git Deploy container got no volume and no bind mount, and
-# every deploy replaced the container — so anything the app wrote to its own
+# every deploy replaced the container - so anything the app wrote to its own
 # filesystem (uploads, a SQLite database, a cache) was destroyed on the NEXT
 # deploy. The failure was silent and delayed: everything worked until the
 # second deploy, by which point the loss looked unrelated. Reported as a real
@@ -18,21 +18,21 @@
 #      added to only one mount on deploy and UN-mount on the next blue-green
 #      update.
 #   2. Blue-green runs the old and new container against the SAME host paths
-#      for the length of a health check — silent corruption for a
+#      for the length of a health check - silent corruption for a
 #      single-writer database like SQLite. Any declared volume must force the
 #      slower stop/recreate path instead.
-#   3. Preview environments must NEVER inherit volumes — a throwaway PR
+#   3. Preview environments must NEVER inherit volumes - a throwaway PR
 #      container gaining durable storage defeats the point of "throwaway".
 #   4. Delete-time cleanup must derive what to remove from the container's
-#      OWN binds (read before it is removed), never from its name alone — a
+#      OWN binds (read before it is removed), never from its name alone - a
 #      name match is not proof of ownership, the exact class of bug
 #      `docker_apps::owned_app_dir` exists to prevent.
-#   5. The field is container-path only, host side derived — a free-form
+#   5. The field is container-path only, host side derived - a free-form
 #      host path would be a container-escape surface under this agent's
 #      `ProtectSystem=strict` sandbox.
 #   6. A deploy that ADDS a volume to an already-running container must
 #      rescue whatever is already sitting in that container's writable
-#      layer before the recreate deletes it — the exact shape of #110,
+#      layer before the recreate deletes it - the exact shape of #110,
 #      generalised from `docker_apps::migrate_unmounted_volumes`.
 #
 # Ship 1-5 without 6 and the FIRST deploy after the fix destroys the files
@@ -54,7 +54,7 @@ for f in "$GIT_SVC" "$GIT_ROUTE" "$APPS_SVC" "$BACKEND"; do
   [ -f "$f" ] || { echo "missing $f"; exit 1; }
 done
 
-# Strip line comments only — a block-comment stripper is what deleted 485 lines
+# Strip line comments only - a block-comment stripper is what deleted 485 lines
 # of real code until s294 (lesson #384/#391 territory); this deliberately does
 # the narrow, safe thing.
 code() { sed 's://.*$::' "$1"; }
@@ -79,7 +79,7 @@ for pair in "GIT_SVC:deploy_or_update" "GIT_SVC:cleanup_container" "GIT_ROUTE:de
   esac
   case "$hay" in
     *"fn${needle}"*) ok "$needle is still defined in $var" ;;
-    *) bad "$needle is MISSING from $var — every arm below is meaningless" ;;
+    *) bad "$needle is MISSING from $var - every arm below is meaningless" ;;
   esac
 done
 
@@ -117,7 +117,7 @@ echo "§2 blue-green is refused for ANY deploy with a declared volume"
 case "$SVC_FLAT" in
   *'ifhas_nginx&&volumes.is_empty(){'*)
     ok "blue-green requires has_nginx AND an empty volumes list" ;;
-  *) bad "blue-green's gate no longer checks volumes.is_empty() — the SQLite-corruption guard is gone" ;;
+  *) bad "blue-green's gate no longer checks volumes.is_empty() - the SQLite-corruption guard is gone" ;;
 esac
 
 # Positive control on the pin itself: the OLD gate (has_nginx alone) must not
@@ -138,7 +138,7 @@ case "$SVC_FLAT" in
 esac
 
 # A cleared/edited volumes list must filter the OLD binds down to what is still
-# declared — dropping this filter would carry a REMOVED path's bind forward
+# declared - dropping this filter would carry a REMOVED path's bind forward
 # forever, or (the more dangerous direction) leak a stale bind whose directory
 # no longer matches what the operator asked for.
 case "$SVC_FLAT" in
@@ -166,7 +166,7 @@ esac
 case "$SVC_FLAT" in
   *'returnErr(format!("Abortingdeployof{name}withoutremovingtherunningcontainer:'*)
     ok "a migration failure ABORTS before remove_container ever runs" ;;
-  *) bad "a migration failure no longer aborts the recreate — #118's own regression risk" ;;
+  *) bad "a migration failure no longer aborts the recreate - #118's own regression risk" ;;
 esac
 
 echo
@@ -175,7 +175,7 @@ echo "§4 delete-time cleanup derives the volume directory from the container's 
 case "$SVC_FLAT" in
   *'fnowned_git_data_dir(name:&str,binds:&[String])->Option<String>{'*)
     ok "owned_git_data_dir exists as its own ownership-proof function" ;;
-  *) bad "owned_git_data_dir is missing — cleanup would have to guess the path from the name" ;;
+  *) bad "owned_git_data_dir is missing - cleanup would have to guess the path from the name" ;;
 esac
 
 INSPECT_AT=$(printf '%s\n' "$SVC_CODE" | grep -n 'inspect_container(&container_name, None).await' | head -1 | cut -d: -f1)
@@ -189,7 +189,7 @@ else
 fi
 
 # The "container already missing" arm must NOT guess a directory from the name
-# — that is precisely the cross-tenant-delete shape #4 exists to close.
+# - that is precisely the cross-tenant-delete shape #4 exists to close.
 NONE_ARM=$(printf '%s\n' "$SVC_CODE" | grep -A4 'Err(_) => (')
 NONE_ARM_FLAT=$(printf '%s' "$NONE_ARM" | tr -d ' \t\n')
 case "$NONE_ARM_FLAT" in
@@ -204,7 +204,7 @@ echo "§5 previews are refused a volumes list at the AGENT boundary, not just by
 case "$ROUTE_FLAT" in
   *'ifscope!=ownership::GitScope::Deploy&&!body.volumes.is_empty(){'*)
     ok "the agent route itself refuses volumes for any scope but Deploy" ;;
-  *) bad "the agent no longer enforces the preview/volumes exclusion — a backend bug would be the only thing left standing between a preview and durable storage" ;;
+  *) bad "the agent no longer enforces the preview/volumes exclusion - a backend bug would be the only thing left standing between a preview and durable storage" ;;
 esac
 
 case "$BACKEND_FLAT" in
@@ -229,19 +229,19 @@ case "$BACKEND_FLAT" in
 esac
 
 echo
-echo "§7 migrate_unmounted_volumes was GENERALISED, not duplicated — one implementation, two callers"
+echo "§7 migrate_unmounted_volumes was GENERALISED, not duplicated - one implementation, two callers"
 
 case "$APPS_FLAT" in
   *'pub(crate)asyncfnmigrate_unmounted_volumes(data_dir:&str,docker:&Docker,container_id:&str,name:&str,image:&str,missing:&[&str],host_config:&mutbollard::service::HostConfig,'*)
     ok "migrate_unmounted_volumes takes data_dir as a parameter (no longer hardcoded to APP_DATA_DIR)" ;;
-  *) bad "migrate_unmounted_volumes's signature no longer takes a data_dir parameter — a duplicate may have been written instead" ;;
+  *) bad "migrate_unmounted_volumes's signature no longer takes a data_dir parameter - a duplicate may have been written instead" ;;
 esac
 
 N_DEFS=$(printf '%s\n' "$APPS_CODE" "$SVC_CODE" | grep -c 'fn migrate_unmounted_volumes')
 if [ "$N_DEFS" -eq 1 ]; then
   ok "exactly one definition of migrate_unmounted_volumes exists across both files"
 else
-  bad "found $N_DEFS definitions of migrate_unmounted_volumes — the logic drifted into a duplicate"
+  bad "found $N_DEFS definitions of migrate_unmounted_volumes - the logic drifted into a duplicate"
 fi
 
 DOCKER_APPS_CALLS=$(printf '%s\n' "$APPS_CODE" | grep -c 'migrate_unmounted_volumes(\s*$\|migrate_unmounted_volumes(APP_DATA_DIR')

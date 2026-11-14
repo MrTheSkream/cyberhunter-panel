@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# shutdown-drain-race-pin-e2e.sh — s466
+# shutdown-drain-race-pin-e2e.sh - s466
 #
 # Standing carry from s465 (project_dockpanel_tech_debt_p204): the demo
 # deploy's own `systemctl stop dockpanel-api` triggered the graceful-shutdown
 # watchdog (main.rs::shutdown_signal, GRACEFUL_SHUTDOWN_TIMEOUT = 20s) for the
-# FIRST time in 12 sessions of monitoring — a real forced exit
+# FIRST time in 12 sessions of monitoring - a real forced exit
 # (`std::process::exit(1)`, systemd `status=1/FAILURE`), not another clean
 # non-trigger.
 #
@@ -20,15 +20,15 @@
 #
 #   §A AppState gained `shutdown_tx: tokio::sync::broadcast::Sender<()>`,
 #      populated from the SAME channel `spawn_supervised` already hands every
-#      background service (main.rs) — the channel's creation moved earlier so
+#      background service (main.rs) - the channel's creation moved earlier so
 #      the AppState struct literal can hold a clone of it.
-#   §B New shared helper `helpers::shutdown_signal_fut(&AppState)` — a future
+#   §B New shared helper `helpers::shutdown_signal_fut(&AppState)` - a future
 #      that resolves on the first shutdown broadcast. Feeds either
 #      `StreamExt::take_until` (SSE) or a `tokio::select!` race (WebSocket).
-#   §C ws_metrics.rs::handle_socket — the ONLY axum `WebSocketUpgrade`/
+#   §C ws_metrics.rs::handle_socket - the ONLY axum `WebSocketUpgrade`/
 #      `on_upgrade` site in the whole backend crate. `routes/terminal.rs` and
 #      `routes/logs.rs` DO exist in this crate, but only mint short-lived
-#      signed JWT tickets — the actual WebSocket is dialed by the BROWSER
+#      signed JWT tickets - the actual WebSocket is dialed by the BROWSER
 #      directly against the agent (nginx pins that path to the agent socket;
 #      the panel deliberately does not proxy it), so neither file ever holds
 #      a connection open through this process. Now races its whole
@@ -36,11 +36,11 @@
 #      the shutdown signal via `tokio::select!`, not just a check at the top
 #      of the loop: a single `agent.get()` call already budgets up to 60s
 #      (`AgentClient::request`), which alone exceeds the 20s drain window.
-#   §D All 6 SSE handlers in the crate (the complete set — confirmed by
+#   §D All 6 SSE handlers in the crate (the complete set - confirmed by
 #      grepping for every `Sse::new` site) now end with
 #      `.take_until(shutdown_signal_fut(&state))`:
 #      `notifications.rs::stream` (keyed on the PROCESS-LIFETIME `notif_tx`
-#      broadcast — this one would otherwise never end on its own; every admin
+#      broadcast - this one would otherwise never end on its own; every admin
 #      tab with the panel open holds one), plus the 5 provision-log-shaped
 #      streams (`sites.rs::provision_log`, `git_deploys.rs::deploy_log`,
 #      `docker_apps.rs::deploy_log`, `system.rs::install_log`,
@@ -49,7 +49,7 @@
 #      job is in progress at shutdown time.
 #
 # Adversarially reviewed via a 3-lens skeptic workflow (correctness,
-# completeness-vs-independent-grep, blast-radius) before shipping — see
+# completeness-vs-independent-grep, blast-radius) before shipping - see
 # project_dockpanel_tech_debt_p205 for the verdicts.
 
 set -uo pipefail
@@ -57,7 +57,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
 echo
 echo "=================================================="
-echo "  Graceful-shutdown drain race — source pins (s466)"
+echo "  Graceful-shutdown drain race - source pins (s466)"
 echo "=================================================="
 echo
 
@@ -130,7 +130,7 @@ fi
 if [ -n "$CHANNEL_LINE" ] && [ -n "$STATE_LITERAL_LINE" ] && [ "$CHANNEL_LINE" -lt "$STATE_LITERAL_LINE" ]; then
   ok "A3 shutdown_tx is created BEFORE the AppState struct literal (so the literal can hold a clone)"
 else
-  bad "A3 shutdown_tx creation is not positioned before 'let state = AppState {' — the literal cannot reference it"
+  bad "A3 shutdown_tx creation is not positioned before 'let state = AppState {' - the literal cannot reference it"
 fi
 
 if has "$MAIN_C" 'shutdown_tx: shutdown_tx\.clone\(\),'; then
@@ -146,30 +146,30 @@ else
   bad "A5 (control) spawn_supervised's shutdown_tx wiring was altered"
 fi
 
-# ── A6/A7: the CRITICAL fix-of-the-fix — where the broadcast actually fires ─
+# ── A6/A7: the CRITICAL fix-of-the-fix - where the broadcast actually fires ─
 #
 # The first cut of this fix (caught by an adversarial skeptic workflow before
 # shipping) sent `shutdown_tx.send(())` AFTER
 # `axum::serve(...).with_graceful_shutdown(...).await` returned. That await
-# does not return until every in-flight connection's task has ended — so a
+# does not return until every in-flight connection's task has ended - so a
 # route handler racing itself against `shutdown_tx` for exactly that reason
 # was waiting on a signal that could only be sent once it, and every sibling
 # connection, had already closed some OTHER way. Circular: the fix was a
 # no-op for its own stated purpose. The real fix moves the send INSIDE
-# `shutdown_signal()`, which is the `signal` future axum polls FIRST — before
-# it stops accepting connections or starts draining existing ones — so
+# `shutdown_signal()`, which is the `signal` future axum polls FIRST - before
+# it stops accepting connections or starts draining existing ones - so
 # subscribers get the broadcast the instant the OS signal arrives, not after
 # the drain that's waiting on them has already finished.
 if has "$MAIN_C" 'async fn shutdown_signal\(shutdown_tx: tokio::sync::broadcast::Sender<\(\)>\)' \
   && has "$MAIN_C" '\.with_graceful_shutdown\(shutdown_signal\(shutdown_tx\.clone\(\)\)\)'; then
   ok "A6 shutdown_signal takes shutdown_tx and is invoked with a clone of it"
 else
-  bad "A6 shutdown_signal no longer takes/receives shutdown_tx — the send-timing fix regressed"
+  bad "A6 shutdown_signal no longer takes/receives shutdown_tx - the send-timing fix regressed"
 fi
 
 SHUTDOWN_SIGNAL_BODY=$(fnbody "$MAIN_C" "shutdown_signal")
 # Relative line numbers WITHIN the extracted function body only (never
-# whole-file line numbers — shutdown_signal's own select! is not the first
+# whole-file line numbers - shutdown_signal's own select! is not the first
 # tokio::select! in main.rs, spawn_supervised and the cleanup task both have
 # one earlier), so ordering here can't be fooled by an unrelated select!
 # elsewhere in the file.
@@ -178,9 +178,9 @@ SEND_REL=$(grep -nE 'let _ = shutdown_tx\.send\(\(\)\);' <<< "$SHUTDOWN_SIGNAL_B
 WATCHDOG_REL=$(grep -nE 'tokio::spawn\(async \{' <<< "$SHUTDOWN_SIGNAL_BODY" | head -1 | cut -d: -f1)
 if [ -n "$SELECT_REL" ] && [ -n "$SEND_REL" ] && [ -n "$WATCHDOG_REL" ] \
   && [ "$SEND_REL" -gt "$SELECT_REL" ] && [ "$SEND_REL" -lt "$WATCHDOG_REL" ]; then
-  ok "A7 inside shutdown_signal(), the send fires AFTER the OS-signal select! and BEFORE the watchdog spawn — not after the drain in main()"
+  ok "A7 inside shutdown_signal(), the send fires AFTER the OS-signal select! and BEFORE the watchdog spawn - not after the drain in main()"
 else
-  bad "A7 shutdown_tx.send(()) is not correctly ordered inside shutdown_signal() — the circular-wait bug may have returned"
+  bad "A7 shutdown_tx.send(()) is not correctly ordered inside shutdown_signal() - the circular-wait bug may have returned"
 fi
 
 # Positive control: main() no longer sends a second, too-late broadcast after
@@ -231,7 +231,7 @@ else
 fi
 
 # Positive control: the 4 concurrent agent fetches this loop exists to make
-# are unchanged — this fix restructures control flow, not the payload.
+# are unchanged - this fix restructures control flow, not the payload.
 AGENT_GET_CALLS=$(count "$HANDLE_SOCKET_BODY" 'agent\.get\("/(system/info|system/processes|system/network|apps/gpu-info)"\)')
 if [ "$AGENT_GET_CALLS" -eq 4 ]; then
   ok "C4 (control) all 4 agent.get() endpoints are still fetched per tick"
@@ -239,13 +239,13 @@ else
   bad "C4 (control) expected 4 agent.get() calls in handle_socket, found $AGENT_GET_CALLS"
 fi
 
-# C5 — adversarial-review follow-up: the trailing close-frame send is timed,
+# C5 - adversarial-review follow-up: the trailing close-frame send is timed,
 # so a black-holed peer can't stall this connection's own task (and with it,
 # axum's drain wait for it) past the shutdown signal that just fired.
 if has "$HANDLE_SOCKET_BODY" 'tokio::time::timeout\(Duration::from_secs\(2\), socket\.send\(Message::Close\(None\)\)\)\.await'; then
   ok "C5 the trailing close-frame send is wrapped in a 2s timeout, not a bare await"
 else
-  bad "C5 the trailing close-frame send is unbounded again — a black-holed peer could stall this connection's own drain"
+  bad "C5 the trailing close-frame send is unbounded again - a black-holed peer could stall this connection's own drain"
 fi
 
 # ── §D every SSE stream in the crate ends on shutdown too ──────────────────
@@ -288,15 +288,15 @@ else
 fi
 
 # Whole-crate completeness control: exactly 6 Sse::new sites exist and exactly
-# 6 take_until(shutdown_signal_fut(...)) sites exist — if a 7th SSE handler is
+# 6 take_until(shutdown_signal_fut(...)) sites exist - if a 7th SSE handler is
 # ever added without this race, this count catches it; if take_until count
 # ever drops below Sse::new count, a regression removed the race somewhere.
 SSE_SITES=$(grep -rlE 'Sse::new' panel/backend/src/routes/*.rs | wc -l | tr -d ' ')
 SHUTDOWN_RACED_FILES=$(grep -rlE '\.take_until\(crate::helpers::shutdown_signal_fut\(&state\)\)' panel/backend/src/routes/*.rs | wc -l | tr -d ' ')
 if [ "$SSE_SITES" -eq 6 ] && [ "$SHUTDOWN_RACED_FILES" -eq 6 ]; then
-  ok "D7 (crate-wide control) all 6 Sse::new sites are exactly the 6 files racing shutdown — no gap, no drift"
+  ok "D7 (crate-wide control) all 6 Sse::new sites are exactly the 6 files racing shutdown - no gap, no drift"
 else
-  bad "D7 (crate-wide control) Sse::new sites=$SSE_SITES, shutdown-raced files=$SHUTDOWN_RACED_FILES — mismatch, investigate"
+  bad "D7 (crate-wide control) Sse::new sites=$SSE_SITES, shutdown-raced files=$SHUTDOWN_RACED_FILES - mismatch, investigate"
 fi
 
 echo

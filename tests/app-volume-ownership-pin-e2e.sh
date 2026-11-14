@@ -5,7 +5,7 @@
 #
 # WHAT HAPPENED. `deploy_app` creates every declared volume as a directory under
 # APP_DATA_DIR, running as root, mode 0755, and bind-mounts it. Nothing chowned
-# it. That is correct for most images — they start as root and chown their own
+# it. That is correct for most images - they start as root and chown their own
 # data directory in their entrypoint, which is exactly what postgres, mysql and
 # mongo do before dropping privileges.
 #
@@ -15,7 +15,7 @@
 #
 # MEASURED, not argued. Every catalogue image's config blob was read from the
 # registry (no pulls) at s342: 42 of 148 images run non-root, and 31 of those
-# declare a volume — 21% of the catalogue could not persist a byte. Proven end to
+# declare a volume - 21% of the catalogue could not persist a byte. Proven end to
 # end on prom/prometheus:v3, whose `Config.User` is the NAME `nobody`:
 #
 #   root-owned 0755 dir (what deploy_app made)  -> exited 1, "permission denied"
@@ -25,14 +25,14 @@
 #                                                  the WAL and the lock
 #
 # WHY THE FIX IS SHAPED THE WAY IT IS. `Config.User` is frequently a NAME, and a
-# name is defined by the image's own /etc/passwd and by nothing on the host — 24
+# name is defined by the image's own /etc/passwd and by nothing on the host - 24
 # of the 31 victims name a user rather than a uid. So the resolver reads
 # /etc/passwd out of the image itself, by creating a container and copying the
 # file out without ever starting it. The two lazy alternatives are both refused
 # on purpose: 0777 would put a world-writable data directory on a host that runs
 # other people's containers, and guessing a uid hands one tenant's data to
 # another account. When the name cannot be resolved the directory is left
-# root-owned and the agent says so — the same state as before, but no longer a
+# root-owned and the agent says so - the same state as before, but no longer a
 # silent one.
 #
 # ALSO PINNED HERE: the Readarr template, withdrawn s342. Its image published an
@@ -43,7 +43,7 @@
 # that sweep classified by error MESSAGE. An absence arm keeps it withdrawn.
 #
 # WRAP TOLERANCE. Every arm that reads Rust canonicalises the source by deleting
-# whitespace first, and no pattern ever spells a CLOSING delimiter — that is
+# whitespace first, and no pattern ever spells a CLOSING delimiter - that is
 # where rustfmt inserts its trailing comma, and spelling one is how #384 got
 # shipped into the suite written to pin #384, twice (lessons #384, #391).
 #
@@ -79,13 +79,13 @@ DECLS=$(printf '%s\n' "$CODE" | grep -c 'AppTemplateDef {' || true)
 if [ "$DECLS" -ge 100 ]; then
   ok "catalogue parsed: $DECLS AppTemplateDef declarations survive the strip"
 else
-  bad "catalogue did not parse — only $DECLS declarations; every arm below is meaningless"
+  bad "catalogue did not parse - only $DECLS declarations; every arm below is meaningless"
 fi
 
 STRIPPED_LINES=$(printf '%s\n' "$CODE" | wc -l)
 RAW_LINES=$(wc -l < "$CATALOGUE")
 if [ "$STRIPPED_LINES" -eq "$RAW_LINES" ]; then
-  ok "comment strip removed no LINES ($RAW_LINES) — it cannot have eaten a declaration"
+  ok "comment strip removed no LINES ($RAW_LINES) - it cannot have eaten a declaration"
 else
   bad "comment strip changed the line count ($RAW_LINES -> $STRIPPED_LINES)"
 fi
@@ -107,7 +107,7 @@ esac
 
 case "$FLAT" in
   *'.config?'*'.user'*) ok "the owner comes from the image's own Config.User" ;;
-  *) bad "nothing reads Config.User — the uid can only be a guess" ;;
+  *) bad "nothing reads Config.User - the uid can only be a guess" ;;
 esac
 
 echo
@@ -131,7 +131,7 @@ case "$FLAT" in
 esac
 
 echo
-echo "§3 a NAME is resolved from inside the image — the whole point of the fix"
+echo "§3 a NAME is resolved from inside the image - the whole point of the fix"
 
 case "$FLAT" in
   *'read_file_from_image(docker,image,"/etc/passwd")'*)
@@ -147,11 +147,11 @@ esac
 
 # The probe must never START the container it creates to read a file out of.
 # ⚠ The haystack is already whitespace-free, so the window's own boundaries must
-# be spelled that way too — spelling them with spaces extracts nothing, and an
+# be spelled that way too - spelling them with spaces extracts nothing, and an
 # empty window is why the guard below exists rather than a bare grep (s302).
 PROBE=$(printf '%s' "$FLAT" | sed -n 's/.*asyncfnread_file_from_image\(.*\)fnpasswd_lookup.*/\1/p')
 if [ -z "$PROBE" ]; then
-  bad "could not isolate read_file_from_image — the arm below would pass on nothing"
+  bad "could not isolate read_file_from_image - the arm below would pass on nothing"
 elif grep -q 'start_container' <<<"$PROBE"; then
   bad "the file probe STARTS the container; it must only create and remove it"
 else
@@ -160,7 +160,7 @@ fi
 
 case "$PROBE" in
   *'remove_container'*) ok "the probe container is always removed again" ;;
-  *) bad "the probe container is never removed — every deploy would leak one" ;;
+  *) bad "the probe container is never removed - every deploy would leak one" ;;
 esac
 
 echo
@@ -169,7 +169,7 @@ echo "§4 the two refused shortcuts stay refused"
 # 0777 on a multi-tenant host, and a guessed uid, are the two cheap fixes that
 # would have made this a one-line change. Neither may appear.
 if grep -qE '0o777|0777' <<<"$FLAT"; then
-  bad "a world-writable mode appears in the catalogue — that is the refused shortcut"
+  bad "a world-writable mode appears in the catalogue - that is the refused shortcut"
 else
   ok "no world-writable fallback anywhere in the file"
 fi
@@ -181,14 +181,14 @@ fi
 #               chowns the directory ITSELF and nothing below it.
 #   the migration has just refused to touch a non-empty directory and then filled
 #               it with `docker cp`, so every path below it is one it created
-#               seconds ago — and it must chown all of them, because `docker cp`
+#               seconds ago - and it must chown all of them, because `docker cp`
 #               writes them as root (#110, s360).
 #
 # ⚠ THE ARM THIS REPLACES WAS A FALSE GREEN. It grepped for `chown-R`, `WalkDir`
 # or one exact `read_dir().map()` spelling, so it printed "the chown is not
 # recursive" against a file that had just grown a recursive chown written as an
 # ordinary stack walk. An absence arm keyed on three spellings of a thing cannot
-# see the fourth (lesson #490). Count the CALL SITES instead — a name has one
+# see the fourth (lesson #490). Count the CALL SITES instead - a name has one
 # spelling and the compiler enforces it.
 #
 # The test module is raw source too and calls this function itself (s342), so the
@@ -197,7 +197,7 @@ SRC_ONLY=$(printf '%s\n' "$CODE" | sed '/#\[cfg(test)\]/,$d')
 FLAT_SRC=$(printf '%s' "$SRC_ONLY" | tr -d ' \t\n')
 SRC_LINES=$(printf '%s\n' "$SRC_ONLY" | wc -l)
 if [ "$SRC_LINES" -lt 1000 ] || [ "$SRC_LINES" -ge "$STRIPPED_LINES" ]; then
-  bad "could not isolate the shipping half ($SRC_LINES of $STRIPPED_LINES lines) — the count below would be meaningless"
+  bad "could not isolate the shipping half ($SRC_LINES of $STRIPPED_LINES lines) - the count below would be meaningless"
 else
   ok "shipping half isolated: $SRC_LINES of $STRIPPED_LINES lines precede the test module"
 fi
@@ -206,7 +206,7 @@ RECURSIVE_CALLS=$(printf '%s' "$FLAT_SRC" | grep -o 'chown_migrated_tree(' | wc 
 if [ "$RECURSIVE_CALLS" -eq 2 ]; then
   ok "the recursive chown has exactly one call site plus its definition"
 else
-  bad "chown_migrated_tree appears $RECURSIVE_CALLS times in shipping code, expected 2 — a second caller means some other path recurses over a directory it did not create"
+  bad "chown_migrated_tree appears $RECURSIVE_CALLS times in shipping code, expected 2 - a second caller means some other path recurses over a directory it did not create"
 fi
 
 case "$FLAT" in
@@ -226,12 +226,12 @@ echo "§4b the migration chowns what it wrote, and cannot walk out through a sym
 
 # GitHub #110, second act. v2.111.0 rescued the data out of the writable layer and
 # then handed it back owned by root, so every non-root image died on its first
-# write — n8n on `EACCES .../crash.journal`, then `SQLITE_READONLY`. Reproduced end
+# write - n8n on `EACCES .../crash.journal`, then `SQLITE_READONLY`. Reproduced end
 # to end at s360 with the real image before any of this was written.
 case "$FLAT" in
   *'chown_migrated_tree(&resolved,owner)'*)
     ok "the migration chowns the whole tree it just created" ;;
-  *) bad "the migration does not chown its tree — docker cp wrote it as root, so a non-root app cannot write the data just rescued (#110)" ;;
+  *) bad "the migration does not chown its tree - docker cp wrote it as root, so a non-root app cannot write the data just rescued (#110)" ;;
 esac
 
 case "$FLAT" in
@@ -243,7 +243,7 @@ esac
 case "$FLAT" in
   *'libc::lchown('*)
     ok "entries are lchowned, so a symlink is changed and never its target" ;;
-  *) bad "no lchown — a symlink in the app's own data would be followed" ;;
+  *) bad "no lchown - a symlink in the app's own data would be followed" ;;
 esac
 
 # The precondition that BOUNDS the recursion. If this refusal ever goes, the walk
@@ -251,12 +251,12 @@ esac
 # else's data. The two must never drift apart.
 case "$FLAT" in
   *'Refusingtomigrate'*)
-    ok "the migration still refuses a non-empty directory — what makes the recursion bounded" ;;
+    ok "the migration still refuses a non-empty directory - what makes the recursion bounded" ;;
   *) bad "the non-empty refusal is gone, so the recursive chown is no longer bounded by construction" ;;
 esac
 
 echo
-echo "§4c the repair reaches installs the migration already broke — on ALL three doors"
+echo "§4c the repair reaches installs the migration already broke - on ALL three doors"
 
 # v2.113.2 fixed the migration and could not undo it: the migration runs only for a
 # volume that is MISSING, and the bad migration is what supplied the mount. So the
@@ -266,13 +266,13 @@ REPAIR_CALLS=$(printf '%s' "$FLAT_SRC" | grep -o 'repair_root_owned_volumes(' | 
 if [ "$REPAIR_CALLS" -eq 4 ]; then
   ok "the repair is wired to all three recreate doors (plus its definition)"
 else
-  bad "repair_root_owned_volumes appears $REPAIR_CALLS times in shipping code, expected 4 — update_app, change_container_image and update_env must ALL call it or one door silently leaves apps broken"
+  bad "repair_root_owned_volumes appears $REPAIR_CALLS times in shipping code, expected 4 - update_app, change_container_image and update_env must ALL call it or one door silently leaves apps broken"
 fi
 
 # The narrowest rule that repairs what we did: reclaim root and nothing else. An
 # ownership somebody chose deliberately is not ours to rewrite.
 # s449: rewritten around fd-relative syscalls (openat/fstatat, all
-# O_NOFOLLOW/AT_SYMLINK_NOFOLLOW) to close a TOCTOU — a path-based
+# O_NOFOLLOW/AT_SYMLINK_NOFOLLOW) to close a TOCTOU - a path-based
 # `symlink_metadata` then `read_dir` re-resolves the path twice, and an app
 # with write access to its own bind mount can swap a directory for a symlink
 # in between (project_dockpanel_tech_debt_p185 carry F). Keys on the new
@@ -280,16 +280,16 @@ fi
 case "$FLAT" in
   *'st.st_uid==0'*)
     ok "the repair reclaims ONLY root-owned paths" ;;
-  *) bad "the repair is not filtered to root-owned paths — it would rewrite an ownership a human chose" ;;
+  *) bad "the repair is not filtered to root-owned paths - it would rewrite an ownership a human chose" ;;
 esac
 
 # F fix: every path lookup in the walk must be fd-relative (openat/fstatat/
 # fchownat with O_NOFOLLOW/AT_SYMLINK_NOFOLLOW), never a path string handed
-# to std::fs — the latter re-resolves from '/' and reopens the TOCTOU window.
+# to std::fs - the latter re-resolves from '/' and reopens the TOCTOU window.
 case "$FLAT" in
   *'openat(dir_fd,name.as_ptr(),libc::O_NOFOLLOW'*)
     ok "the walk opens each entry O_NOFOLLOW, relative to its already-open parent" ;;
-  *) bad "the walk does not open entries O_NOFOLLOW against an open parent fd — the TOCTOU is back" ;;
+  *) bad "the walk does not open entries O_NOFOLLOW against an open parent fd - the TOCTOU is back" ;;
 esac
 case "$FLAT" in
   *'fstatat(dir_fd,name.as_ptr(),&mutst,libc::AT_SYMLINK_NOFOLLOW)'*)
@@ -299,24 +299,24 @@ esac
 
 # A root-owned entry with nlink>1 is a planted hardlink to a real host file
 # (fs.protected_hardlinks=0 lets an unprivileged process create one inside
-# its own volume) — chowning it would repaint that other name too.
+# its own volume) - chowning it would repaint that other name too.
 case "$FLAT" in
   *'st.st_nlink>1'*)
     ok "the walk skips a root-owned entry with more than one link" ;;
-  *) bad "the walk has no nlink guard — a hardlinked host file inside the volume would be repainted" ;;
+  *) bad "the walk has no nlink guard - a hardlinked host file inside the volume would be repainted" ;;
 esac
 
 # Root-run images have nothing to repair, and resolve_volume_owner is what says so.
 case "$FLAT" in
   *'letSome(owner)=resolve_volume_owner(docker,image).awaitelse{'*)
-    ok "a root-run image is skipped — the resolver's None is the discriminator" ;;
+    ok "a root-run image is skipped - the resolver's None is the discriminator" ;;
   *) bad "the repair does not consult resolve_volume_owner, so it would act on root-run images" ;;
 esac
 
 # Same prefix discipline as every other writer into APP_DATA_DIR.
 REPAIR_BODY=$(printf '%s' "$FLAT_SRC" | sed -n 's/.*asyncfnrepair_root_owned_volumes\(.*\)fnchown_root_owned_entries.*/\1/p')
 if [ -z "$REPAIR_BODY" ]; then
-  bad "could not isolate repair_root_owned_volumes — the arms below would pass on nothing"
+  bad "could not isolate repair_root_owned_volumes - the arms below would pass on nothing"
 else
   case "$REPAIR_BODY" in
     *'canonicalize'*'starts_with(&prefix)'*)
@@ -355,7 +355,7 @@ esac
 for sibling in 'linuxserver/sonarr' 'linuxserver/radarr'; do
   case "$FLAT" in
     *"$sibling"*) ok "control: $sibling is still present" ;;
-    *) bad "control: $sibling vanished — the arms above prove nothing" ;;
+    *) bad "control: $sibling vanished - the arms above prove nothing" ;;
   esac
 done
 

@@ -11,7 +11,7 @@ import Dashboard from "./pages/Dashboard";
 import "./index.css";
 
 // Theme + layout attributes. This is a `<script type="module">` (index.html), so
-// it is DEFERRED — public/theme-init.js, a render-blocking classic script, has
+// it is DEFERRED - public/theme-init.js, a render-blocking classic script, has
 // already set data-theme and data-color-scheme before first paint. The writes
 // below are an idempotent backstop for those two, and the only setter for
 // data-layout.
@@ -35,11 +35,11 @@ import "./index.css";
   document.documentElement.setAttribute("data-color-scheme", (theme === "clean" || theme === "arctic") ? "light" : "dark");
 })();
 
-// Retry lazy import — handles stale chunks after deploy
+// Retry lazy import - handles stale chunks after deploy
 function lazyRetry(importFn: () => Promise<{ default: React.ComponentType }>) {
   return lazy(() =>
     importFn().catch(() => {
-      // Chunk failed to load (likely stale hash after deploy) — reload once
+      // Chunk failed to load (likely stale hash after deploy) - reload once
       const key = "chunk_reload";
       if (!sessionStorage.getItem(key)) {
         sessionStorage.setItem(key, "1");
@@ -50,7 +50,7 @@ function lazyRetry(importFn: () => Promise<{ default: React.ComponentType }>) {
   );
 }
 
-// Error boundary — catches chunk load failures and shows reload button
+// Error boundary - catches chunk load failures and shows reload button
 class ChunkErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
   constructor(props: { children: ReactNode }) {
     super(props);
@@ -63,7 +63,7 @@ class ChunkErrorBoundary extends Component<{ children: ReactNode }, { hasError: 
     if (this.state.hasError) {
       return (
         <div className="flex flex-col items-center justify-center h-screen gap-4 bg-dark-900">
-          <p className="text-dark-200 text-sm font-mono">Page failed to load — a new version may have been deployed.</p>
+          <p className="text-dark-200 text-sm font-mono">Page failed to load - a new version may have been deployed.</p>
           <button
             onClick={() => window.location.reload()}
             className="px-4 py-2 bg-rust-500 text-white rounded-lg text-sm font-medium hover:bg-rust-600"

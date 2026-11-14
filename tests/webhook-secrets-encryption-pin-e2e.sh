@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# webhook-secrets-encryption-pin-e2e.sh — s431
+# webhook-secrets-encryption-pin-e2e.sh - s431
 #
 # Regression pins for the 5 sibling plaintext webhook/verify secrets deferred
 # from s430's notification-secrets rollout: `deploy_configs.webhook_secret`,
@@ -9,10 +9,10 @@
 # that wrote or read them.
 #
 # ⚠ The s430 ledger's own design note characterized deploy_configs/git_deploys
-# as "compare-only — should be HASHED, mirroring extensions.api_key_hash".
+# as "compare-only - should be HASHED, mirroring extensions.api_key_hash".
 # That was wrong: Deploy.tsx and GitDeploys.tsx read `config.webhook_secret`
 # from the GET/list response on EVERY page load to render the webhook URL to
-# paste into the git host — not shown once at creation like an API key. A
+# paste into the git host - not shown once at creation like an API key. A
 # hash-only design would have silently broken that display on the very next
 # page load after creation. All five subjects here are reversible-encrypt.
 #
@@ -20,7 +20,7 @@
 # of the five columns (deploy_configs.webhook_secret VARCHAR(64),
 # git_deploys.webhook_secret VARCHAR(64), webhook_endpoints.verify_secret
 # VARCHAR(200)) are sized for the PLAINTEXT. Base64(nonce+ciphertext+tag) is
-# longer than the plaintext it wraps — encrypting in place without widening
+# longer than the plaintext it wraps - encrypting in place without widening
 # would overflow the column and fail every write. Migration
 # 20260830010000_widen_webhook_secret_columns.sql widens all three to TEXT.
 #
@@ -36,7 +36,7 @@
 #       the preserve-vs-mint comparison still runs on plaintext); get_config
 #       and the inbound webhook receiver DECRYPT.
 #   §D  deploy.rs::set_config ENCRYPTS on write, then decrypts whatever
-#       RETURNING * actually gives back (not the freshly-generated local) —
+#       RETURNING * actually gives back (not the freshly-generated local) -
 #       ON CONFLICT's DO UPDATE never touches this column, so an
 #       update-existing call must show the ORIGINAL secret, not a new one
 #       that was never stored. get_config and the webhook receiver DECRYPT.
@@ -203,7 +203,7 @@ has "$MIGRATION" 'ALTER TABLE git_deploys ALTER COLUMN webhook_secret TYPE TEXT'
   "G2 git_deploys.webhook_secret widened to TEXT"
 has "$MIGRATION" 'ALTER TABLE webhook_endpoints ALTER COLUMN verify_secret TYPE TEXT' \
   "G3 webhook_endpoints.verify_secret widened to TEXT"
-# Negative control: the original CREATE TABLE migrations must be untouched —
+# Negative control: the original CREATE TABLE migrations must be untouched -
 # this is a widen-forward, not an edit to a migration already shipped.
 has "panel/backend/migrations/20260312400000_deploy_configs.sql" 'webhook_secret VARCHAR\(64\) NOT NULL' \
   "G4 CONTROL: the original deploy_configs migration is untouched (widen is a separate forward migration)"

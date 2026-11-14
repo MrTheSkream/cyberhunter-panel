@@ -30,7 +30,7 @@ const MAX_LONG_CONNECTIONS: usize = 5;
 /// ⚠ A timeout is not an unreachable agent, and conflating the two is worse now
 /// than it was. Every remote failure used to become `Connection`, which trips the
 /// circuit breaker and reaches the operator as "agent unreachable". A busy agent
-/// answering perfectly well would be reported as down — and moving remote long
+/// answering perfectly well would be reported as down - and moving remote long
 /// operations onto the small pool makes waiting, and therefore timing out, far
 /// more likely than it was.
 ///
@@ -49,12 +49,12 @@ fn remote_send_error(cb: &CircuitBreaker, e: reqwest::Error) -> AgentError {
 /// Take a permit within the caller's budget, and report what is left of it.
 ///
 /// The budget a caller names is the time it has to spend before something above
-/// it stops waiting — the doc on `DB_RESTORE_TIMEOUT_SECS` sets 270s precisely
+/// it stops waiting - the doc on `DB_RESTORE_TIMEOUT_SECS` sets 270s precisely
 /// so the 300s `TimeoutLayer` never fires first, because a timeout the panel
 /// owns is the only kind it can explain. Queuing outside that budget defeats it:
 /// the permit wait was unbounded, so the work started late and ran its full
 /// allowance on top, and the server cut the request off mid-flight with a
-/// bodyless 504 — the exact answer that doc exists to prevent.
+/// bodyless 504 - the exact answer that doc exists to prevent.
 ///
 /// So the wait is inside the budget, and a request that never got a permit says
 /// THAT, rather than borrowing the sentence for work that ran and overran.
@@ -85,12 +85,12 @@ const MAX_RESPONSE_SIZE: usize = 50 * 1024 * 1024;
 /// Deliberately BELOW the server's own ceiling rather than matched to the agent's work
 /// budget, and the gap is the whole point. The agent gives a restore 600s
 /// (`agent/src/services/database_backup.rs`), but `main.rs` wraps every route in a 300s
-/// `TimeoutLayer` and the generated nginx vhost sets `proxy_read_timeout 300s` — so a
+/// `TimeoutLayer` and the generated nginx vhost sets `proxy_read_timeout 300s` - so a
 /// handler that waited 600s would be cut off by its own server at 300 and answer a
 /// bodyless 504 that no client can explain. Waiting slightly less means the timeout is
 /// OURS, which is what lets the handler say something true about it: a timeout here does
 /// not mean the import failed, it means we stopped watching. `agent_error` cannot make
-/// that distinction — `AgentError::Request` falls to the arm that mints an incident id —
+/// that distinction - `AgentError::Request` falls to the arm that mints an incident id -
 /// so the callers of this constant handle that variant themselves.
 ///
 /// ⚠ A panel behind Cloudflare's proxy is cut at 100s regardless of any of this; the
@@ -98,11 +98,11 @@ const MAX_RESPONSE_SIZE: usize = 50 * 1024 * 1024;
 pub const DB_RESTORE_TIMEOUT_SECS: u64 = 270;
 
 /// A backup drill (scheduled or on-demand) spins a scratch container, restores a real
-/// backup into it end to end, then probes it — the agent-side budget for the slowest leg
+/// backup into it end to end, then probes it - the agent-side budget for the slowest leg
 /// (volume: 300s restore + 60s read-probe) is 360s, several multiples of the plain 60s
 /// `post` cap. Unlike `DB_RESTORE_TIMEOUT_SECS`, drills always run inside a detached
 /// `tokio::spawn` (never awaited directly by an axum handler), so there is no 300s
-/// `TimeoutLayer`/nginx `proxy_read_timeout` ceiling to stay under here — the only cost of
+/// `TimeoutLayer`/nginx `proxy_read_timeout` ceiling to stay under here - the only cost of
 /// headroom is how long a stuck drill occupies the long-op semaphore. Set with margin over
 /// the 360s worst case for container pull/start overhead on a cold box.
 pub const DRILL_TIMEOUT_SECS: u64 = 420;
@@ -112,7 +112,7 @@ pub const DRILL_TIMEOUT_SECS: u64 = 420;
 /// reqwest only offers a *total* per-request timeout, and the client default
 /// (60s) is far shorter than a legitimate streamed `apt-get upgrade`. There is
 /// no per-request "no timeout", so it is pushed out of reach and the real bound
-/// becomes the idle watchdog in [`drive_idle_bounded`] — which is the correct
+/// becomes the idle watchdog in [`drive_idle_bounded`] - which is the correct
 /// thing to measure for a stream anyway.
 const STREAM_TOTAL_TIMEOUT_SECS: u64 = 24 * 60 * 60;
 
@@ -199,7 +199,7 @@ impl CircuitBreaker {
 ///
 /// `ticks` is bumped by the caller's wrapped line callback. The watchdog arms a
 /// fresh `idle_timeout_secs` window each time round the loop and only gives up
-/// if the counter did not move across a whole window — so an operation that is
+/// if the counter did not move across a whole window - so an operation that is
 /// slow but still talking runs to completion, while one that has genuinely
 /// wedged still fails in bounded time.
 ///
@@ -235,7 +235,7 @@ where
 }
 
 // ---------------------------------------------------------------------------
-// AgentClient — talks to agent via Unix domain socket (local server)
+// AgentClient - talks to agent via Unix domain socket (local server)
 // ---------------------------------------------------------------------------
 
 #[derive(Clone)]
@@ -541,7 +541,7 @@ impl AgentClient {
     /// parses newline-delimited JSON, and calls `on_line` for each parsed JSON value.
     /// Used for long-running operations that stream output (e.g. apt updates).
     ///
-    /// `idle_timeout_secs` bounds **silence, not total runtime** — the clock is
+    /// `idle_timeout_secs` bounds **silence, not total runtime** - the clock is
     /// rearmed every time a line arrives. This was a flat cap on the whole
     /// operation, which cannot be set correctly for a stream: `apt-get upgrade`
     /// finishes in 40s on this box and can legitimately run for the better part
@@ -560,8 +560,8 @@ impl AgentClient {
         F: Fn(serde_json::Value) + Send + 'static,
     {
         self.cb.check()?;
-        // A stream has no total budget by design — the idle clock bounds SILENCE,
-        // not runtime — so there is no allowance to subtract a queue wait from. The
+        // A stream has no total budget by design - the idle clock bounds SILENCE,
+        // not runtime - so there is no allowance to subtract a queue wait from. The
         // wait is bounded by that same idle figure instead: a stream that cannot
         // even be started inside its own silence budget is stalled, and saying so
         // beats waiting for ever behind work that may not finish.
@@ -696,7 +696,7 @@ impl AgentClient {
 }
 
 // ---------------------------------------------------------------------------
-// RemoteAgentClient — talks to agent via HTTP/HTTPS (remote servers)
+// RemoteAgentClient - talks to agent via HTTP/HTTPS (remote servers)
 // ---------------------------------------------------------------------------
 
 #[derive(Clone)]
@@ -789,7 +789,7 @@ impl RemoteAgentClient {
 
     /// Build a client that optionally pins the agent's TLS cert by SHA-256
     /// fingerprint. When `fingerprint` is `Some`, TLS verification rejects any
-    /// cert whose DER SHA-256 doesn't match — a stronger guarantee than CA-based
+    /// cert whose DER SHA-256 doesn't match - a stronger guarantee than CA-based
     /// trust for self-signed agent certs. When `None`, falls back to the legacy
     /// `AGENT_TLS_VERIFY=insecure` env flag so old agents (without fingerprint
     /// reporting) still work while their first checkin captures a pin.
@@ -816,7 +816,7 @@ impl RemoteAgentClient {
                 .unwrap_or(false);
             if !accept_invalid {
                 tracing::warn!(
-                    "Remote agent {base_url} has no pinned fingerprint — TLS will require a valid CA cert. If the agent is self-signed (default), wait for first checkin to capture the pin, or set AGENT_TLS_VERIFY=insecure temporarily."
+                    "Remote agent {base_url} has no pinned fingerprint - TLS will require a valid CA cert. If the agent is self-signed (default), wait for first checkin to capture the pin, or set AGENT_TLS_VERIFY=insecure temporarily."
                 );
             }
             reqwest::Client::builder()
@@ -902,7 +902,7 @@ impl RemoteAgentClient {
         self.request(reqwest::Method::PUT, path, Some(body)).await
     }
 
-    /// PUT with an explicit timeout — the remote twin of [`AgentClient::put_long`].
+    /// PUT with an explicit timeout - the remote twin of [`AgentClient::put_long`].
     pub async fn put_long(
         &self,
         path: &str,
@@ -997,7 +997,7 @@ impl RemoteAgentClient {
     ) -> Result<serde_json::Value, AgentError> {
         self.cb.check()?;
         // The LONG pool, as the local client has always used here. Taking the quick
-        // pool meant `MAX_LONG_CONNECTIONS` bounded nothing on a fleet — every
+        // pool meant `MAX_LONG_CONNECTIONS` bounded nothing on a fleet - every
         // remote build, import and restore competed with ordinary requests for the
         // same 20 permits, so the limit that exists to stop long work starving the
         // panel applied only to the machine the panel runs on.
@@ -1041,7 +1041,7 @@ impl RemoteAgentClient {
     /// calls `on_line` for each parsed JSON line. Used for streamed operations.
     ///
     /// As with the local client, `idle_timeout_secs` bounds silence rather than
-    /// total runtime — see [`AgentClient::post_long_ndjson`].
+    /// total runtime - see [`AgentClient::post_long_ndjson`].
     pub async fn post_long_ndjson<F>(
         &self,
         path: &str,
@@ -1134,7 +1134,7 @@ impl RemoteAgentClient {
 }
 
 // ---------------------------------------------------------------------------
-// AgentHandle — unified interface for local or remote agent
+// AgentHandle - unified interface for local or remote agent
 // ---------------------------------------------------------------------------
 
 /// A handle to an agent that provides the same API regardless of transport.
@@ -1212,7 +1212,7 @@ impl AgentHandle {
         }
     }
 
-    /// `idle_timeout_secs` bounds silence, not total runtime — see
+    /// `idle_timeout_secs` bounds silence, not total runtime - see
     /// [`AgentClient::post_long_ndjson`].
     pub async fn post_long_ndjson<F>(
         &self,
@@ -1239,7 +1239,7 @@ impl AgentHandle {
 }
 
 // ---------------------------------------------------------------------------
-// AgentRegistry — manages local + remote agents, dispatches by server_id
+// AgentRegistry - manages local + remote agents, dispatches by server_id
 // ---------------------------------------------------------------------------
 
 #[derive(Clone)]
@@ -1254,7 +1254,7 @@ pub struct AgentRegistry {
     db: sqlx::PgPool,
     /// Key `servers.agent_token` is encrypted under. Held here because
     /// `for_server` is the single site that opens a stored dial-out token, and
-    /// a struct field is a dependency the compiler checks — an env read inside
+    /// a struct field is a dependency the compiler checks - an env read inside
     /// the method would be a second source of truth for that key, silently
     /// returning ciphertext-as-token if it were ever unset.
     jwt_secret: String,
@@ -1276,7 +1276,7 @@ impl AgentRegistry {
     /// Exposed so the UNATTENDED renewal loops can open a Cloudflare API token
     /// for a DNS-01 renewal. They hold an `AgentRegistry` and no `AppState`, and
     /// this struct is already the single place that key lives for background
-    /// work — re-reading it from the environment there would be the second
+    /// work - re-reading it from the environment there would be the second
     /// source of truth the field comment above exists to prevent.
     pub fn jwt_secret(&self) -> &str {
         &self.jwt_secret
@@ -1329,7 +1329,7 @@ impl AgentRegistry {
 
         match row {
             // The local server, reached without the short-circuit above. That
-            // happens whenever `local_server_id` is still None — which is a real
+            // happens whenever `local_server_id` is still None - which is a real
             // state, not a theoretical one: `ensure_local_server` returns
             // `Uuid::nil()` when no admin exists yet, so nothing sets the cached
             // id until someone completes setup or logs in.
@@ -1339,14 +1339,14 @@ impl AgentRegistry {
             // background service that resolves its OWN server would refuse to
             // act. Threading the fleet onto `for_server` is what makes that
             // reachable, and a single-server install is the commonest
-            // deployment there is — so this arm is load-bearing for them, not
+            // deployment there is - so this arm is load-bearing for them, not
             // an edge case.
             Some((_, _, _, true)) => Ok(AgentHandle::Local(self.local.clone())),
             Some((Some(url), token, fingerprint, false)) if !url.is_empty() => {
                 // The ONLY consumer of the stored dial-out token. `servers.agent_token`
                 // is encrypted at rest by every writer (`routes::servers::create_server`,
-                // `rotate_token`, and `ensure_local_server`); decrypt here — the single
-                // choke point every remote agent call funnels through — so no read site
+                // `rotate_token`, and `ensure_local_server`); decrypt here - the single
+                // choke point every remote agent call funnels through - so no read site
                 // can forget to. `decrypt_credential_or_legacy` returns a pre-encryption
                 // plaintext token unchanged, so an existing fleet keeps dialling without
                 // a migration and without a re-enrolment.
@@ -1394,7 +1394,7 @@ impl AgentRegistry {
     /// Every online server, resolved to its owner, its name and its own agent.
     ///
     /// This is the subject list for a background service whose subject is a
-    /// MACHINE rather than a row — a scanner, or a health check that asks a host
+    /// MACHINE rather than a row - a scanner, or a health check that asks a host
     /// what it is running. A service driven by a table gets its host from the
     /// row and should use `for_server` directly instead.
     ///
@@ -1416,7 +1416,7 @@ impl AgentRegistry {
         for (id, user_id, name, is_local) in rows {
             match self.for_server(id).await {
                 Ok(agent) => fleet.push(FleetMember { id, user_id, name, is_local, agent }),
-                Err(e) => tracing::debug!("Fleet iteration: skipping {name} ({id}) — no agent: {e}"),
+                Err(e) => tracing::debug!("Fleet iteration: skipping {name} ({id}) - no agent: {e}"),
             }
         }
         fleet
@@ -1445,8 +1445,8 @@ pub struct FleetMember {
 /// the one value that decides whether the column can be opened again.
 pub async fn ensure_local_server(db: &sqlx::PgPool, agent_token: &str, jwt_secret: &str) -> Uuid {
     // Encrypted at rest like every other stored credential. The local row's
-    // plaintext is never dialled — `AgentPool::for_server` short-circuits
-    // `is_local` to the Unix-socket handle before it looks at the token — so
+    // plaintext is never dialled - `AgentPool::for_server` short-circuits
+    // `is_local` to the Unix-socket handle before it looks at the token - so
     // this row is write-only in practice; it is encrypted anyway so that "no
     // plaintext credential lives in this column" is true of every row, which is
     // what a sweep, a dump and the published promise can each rely on.
@@ -1490,7 +1490,7 @@ pub async fn ensure_local_server(db: &sqlx::PgPool, agent_token: &str, jwt_secre
     let user_id = match admin {
         Some((uid,)) => uid,
         None => {
-            // No users yet — create a placeholder that will be updated on first setup
+            // No users yet - create a placeholder that will be updated on first setup
             tracing::info!("No users yet, deferring local server registration to first login");
             return Uuid::nil();
         }

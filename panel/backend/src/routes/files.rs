@@ -18,14 +18,14 @@ use crate::AppState;
 /// capped at axum's 2 MiB default (`DEFAULT_LIMIT` in `axum-core`), on this
 /// hop AND again on the panel to agent hop, which is a second axum service
 /// with the same default. Base64 costs a third, so 2 MiB of body carries about
-/// 1.57 MB of file — and the path and filename travel in the same body, so the
+/// 1.57 MB of file - and the path and filename travel in the same body, so the
 /// advertised number leaves room for them.
 ///
 /// ⚠ RAISING THIS IS NOT A ONE-LINE CHANGE, and the original author's warning
 /// here was right even though the tracker it pointed at never existed. Three
 /// things have to be true first:
 ///
-///  1. Both hops' body limits go up, and **per-route** — never with `.layer()`
+///  1. Both hops' body limits go up, and **per-route** - never with `.layer()`
 ///     on the root router, which would hand every unauthenticated caller,
 ///     `/login` and the public webhook doors included, a buffered allocation of
 ///     the same size.
@@ -47,8 +47,8 @@ pub const UPLOAD_MAX_FILE_BYTES: usize = 1_500_000;
 
 /// The sentence an operator gets when a file will not fit through the panel.
 ///
-/// One sentence, used by both refusals — the body-limit rejection that fires
-/// before this handler and the decoded-size check inside it — so the operator
+/// One sentence, used by both refusals - the body-limit rejection that fires
+/// before this handler and the decoded-size check inside it - so the operator
 /// cannot receive two different accounts of the same limit.
 fn upload_too_large() -> ApiError {
     err_coded(
@@ -66,7 +66,7 @@ fn upload_too_large() -> ApiError {
 /// Whether a base64 payload carries more than the file manager accepts.
 ///
 /// Split out as a pure function so the boundary can be judged without a
-/// request, a socket or a running panel — the same reason `url_authority` was
+/// request, a socket or a running panel - the same reason `url_authority` was
 /// split out of the URL guard one release ago.
 ///
 /// The estimate is deliberately an UPPER bound. Four base64 characters carry
@@ -176,7 +176,7 @@ pub async fn read_file(
     Ok(Json(result))
 }
 
-/// PUT /api/sites/{id}/files/write — { path, content }
+/// PUT /api/sites/{id}/files/write - { path, content }
 pub async fn write_file(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -235,7 +235,7 @@ pub async fn create_entry(
     Ok(Json(result))
 }
 
-/// POST /api/sites/{id}/files/rename — { from, to }
+/// POST /api/sites/{id}/files/rename - { from, to }
 pub async fn rename_entry(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -289,7 +289,7 @@ pub async fn delete_entry(
     Ok(Json(result))
 }
 
-/// GET /api/sites/{id}/files/download?path= — Download a file.
+/// GET /api/sites/{id}/files/download?path= - Download a file.
 pub async fn download_file(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -345,7 +345,7 @@ pub async fn download_file(
     ))
 }
 
-/// POST /api/sites/{id}/files/upload — Upload a file.
+/// POST /api/sites/{id}/files/upload - Upload a file.
 pub async fn upload_file(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -370,7 +370,7 @@ pub async fn upload_file(
     }
 
     // The payload is bounded twice: by the request-body limit that rejects
-    // before this handler runs, and here, on the DECODED size — which is the
+    // before this handler runs, and here, on the DECODED size - which is the
     // number the operator actually thinks in. Both refusals share one sentence.
     //
     // This check used to read 100 MB and could never fire, because the body
@@ -381,7 +381,7 @@ pub async fn upload_file(
         return Err(upload_too_large());
     }
 
-    // Advisory hygiene only — NOT a security boundary. Tenant code isolation is the
+    // Advisory hygiene only - NOT a security boundary. Tenant code isolation is the
     // per-site PHP-FPM pool + the site-root confinement in resolve_safe_path; a tenant
     // legitimately runs their own code (incl. .php) in their own webroot, so this
     // blocklist is deliberately not replicated on write/create and must never be
@@ -440,8 +440,8 @@ mod tests {
     /// The guard that matters most, and the one the old code failed.
     ///
     /// The advertised limit has to fit INSIDE the request-body envelope that
-    /// rejects before this module runs. When it does not — as when this file
-    /// advertised 100 MB against a 2 MiB envelope — the check becomes
+    /// rejects before this module runs. When it does not - as when this file
+    /// advertised 100 MB against a 2 MiB envelope - the check becomes
     /// unreachable and the product refuses in silence. `DEFAULT_LIMIT` in
     /// `axum-core` is 2 MiB; base64 costs a third of that.
     #[test]
@@ -451,7 +451,7 @@ mod tests {
         assert!(
             UPLOAD_MAX_FILE_BYTES <= carryable,
             "advertised {UPLOAD_MAX_FILE_BYTES} exceeds the {carryable} bytes a \
-             {AXUM_DEFAULT_BODY_LIMIT}-byte body can carry — the check would be unreachable"
+             {AXUM_DEFAULT_BODY_LIMIT}-byte body can carry - the check would be unreachable"
         );
     }
 }

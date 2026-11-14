@@ -148,7 +148,7 @@ export default function Monitors() {
   const handleUrlChange = (url: string) => {
     setFormUrl(url);
     if (formMonitorType === "tcp" || formMonitorType === "ping") {
-      // For TCP/ping, the URL is just a hostname — use it as auto-name
+      // For TCP/ping, the URL is just a hostname - use it as auto-name
       if (!formName || formName === prevAutoName) {
         setFormName(url.trim());
         setPrevAutoName(url.trim());

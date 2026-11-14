@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# db-schema-browser-pin-e2e.sh — s350
+# db-schema-browser-pin-e2e.sh - s350
 #
 # Pins the database Schema Browser: the columns pane, the indexes pane, and the
 # panel↔agent contract underneath both.
@@ -10,14 +10,14 @@
 # The agent has never had a field to receive them: its request struct carries
 # `sql` and nothing else, so serde dropped the key and the placeholder reached
 # `mariadb -e` / `psql -c` unbound. Every column listing failed from that commit
-# until s350 — and nobody reported it, because the caller discarded the rejection
+# until s350 - and nobody reported it, because the caller discarded the rejection
 # in a bare `catch {}` and the pane renders empty either way.
 #
 # Coverage before this file: `grep -rln 'table_schema\|/indexes/\|schema-overview'
 # tests/` returned ZERO across all 60 suites (control: `grep -rln databases
 # tests/` returns 10). The fix would have shipped unpinned.
 #
-# THE SHAPE OF THE REGRESSION THIS GUARDS. Not deletion — REINTRODUCTION of a
+# THE SHAPE OF THE REGRESSION THIS GUARDS. Not deletion - REINTRODUCTION of a
 # send-side key with no receive-side field, and re-severing the two panes. So:
 #
 #   §A  THE CONTRACT, cross-tree and the arm worth the most: every key the
@@ -25,7 +25,7 @@
 #       declares. This is the invariant `29d959b` broke; an arm that merely
 #       greps for the literal "params" would pass the day someone invents a
 #       differently-named orphan key.
-#   §B  the STATEMENTS interpolate and carry no placeholder — a bound `?` is
+#   §B  the STATEMENTS interpolate and carry no placeholder - a bound `?` is
 #       unservable on this endpoint, so its presence is the defect itself.
 #   §C  ONE validator, and it is the strict one. Two copies with two charsets is
 #       what let the interpolating sibling and the placeholder sibling drift.
@@ -53,7 +53,7 @@ done
 
 # Strip comments before measuring. Load-bearing here: the s350 fix is commented
 # in all three subjects and those comments NAME the exact tokens the arms grep
-# for — "params", the placeholders, `Promise.all`, `29d959b`. Grepping raw
+# for - "params", the placeholders, `Promise.all`, `29d959b`. Grepping raw
 # source would match the sentence explaining the check instead of the check
 # ([[feedback_source_pin_prose_trap]]). The JSX form `{/* ... */}` is handled
 # first and non-greedily, because a .tsx subject uses it inside markup.
@@ -90,7 +90,7 @@ fi
 
 # Keyed on the commit sha, which appears ONLY in the explanatory comment. An
 # earlier draft of this arm grepped `Promise.all`, which matched a real and
-# unrelated `Promise.all(` elsewhere in the page — a self-check that fails on
+# unrelated `Promise.all(` elsewhere in the page - a self-check that fails on
 # correct code is not a self-check.
 if has "$PAGE_S" '29d959b'; then
   bad "0.2 Databases.tsx: comments survived the strip (the commit sha is still present)"
@@ -110,7 +110,7 @@ fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 echo
-echo "§A  the panel↔agent contract — every key sent is a field the agent declares"
+echo "§A  the panel↔agent contract - every key sent is a field the agent declares"
 
 # The agent's request struct for POST /databases/query.
 AGENT_STRUCT=$(awk '/struct QueryDbRequest/{f=1} f{print} f&&/^}/{exit}' <<< "$AGENT_S")
@@ -119,7 +119,7 @@ AGENT_FIELDS=$(grep -oE '^[ \t]+[a-z_]+:' <<< "$AGENT_STRUCT" | tr -d ' \t:' | s
 if [ -n "$AGENT_FIELDS" ]; then
   ok  "A1 agent QueryDbRequest parsed ($(wc -w <<< "$AGENT_FIELDS") fields: $(tr '\n' ' ' <<< "$AGENT_FIELDS"))"
 else
-  bad "A1 could not parse agent QueryDbRequest — every arm in §A would be vacuous"
+  bad "A1 could not parse agent QueryDbRequest - every arm in §A would be vacuous"
 fi
 
 # Every json! body posted to /databases/query in the backend, and every key in it.
@@ -137,7 +137,7 @@ SENT_KEYS=$(awk '
 if [ -n "$SENT_KEYS" ]; then
   ok  "A2 backend query bodies parsed ($(wc -w <<< "$SENT_KEYS") distinct keys: $(tr '\n' ' ' <<< "$SENT_KEYS"))"
 else
-  bad "A2 could not parse any /databases/query body — §A is vacuous"
+  bad "A2 could not parse any /databases/query body - §A is vacuous"
 fi
 
 ORPHANS=""
@@ -145,15 +145,15 @@ for k in $SENT_KEYS; do
   grep -qx "$k" <<< "$AGENT_FIELDS" || ORPHANS="$ORPHANS $k"
 done
 if [ -z "$ORPHANS" ]; then
-  ok  "A3 no orphan key — every key the backend sends has a field on the agent"
+  ok  "A3 no orphan key - every key the backend sends has a field on the agent"
 else
-  bad "A3 ORPHAN KEY(S):$ORPHANS — sent by the backend, silently dropped by the agent (this is the 29d959b defect)"
+  bad "A3 ORPHAN KEY(S):$ORPHANS - sent by the backend, silently dropped by the agent (this is the 29d959b defect)"
 fi
 
 # The specific dead channel, kept as its own named arm so a regression reads
 # clearly in the log rather than only as a generic orphan.
 if has "$BACK_S" '"params"'; then
-  bad "A4 the dead \"params\" key is back in databases.rs — the agent cannot bind it"
+  bad "A4 the dead \"params\" key is back in databases.rs - the agent cannot bind it"
 else
   ok  "A4 no \"params\" key in databases.rs"
 fi
@@ -168,7 +168,7 @@ INDEX_FN=$(awk '/pub async fn table_indexes/{f=1} f{print} f&&/^}/{exit}' <<< "$
 if [ -n "$SCHEMA_FN" ] && [ -n "$INDEX_FN" ]; then
   ok  "B1 both handlers extracted (table_schema $(wc -l <<< "$SCHEMA_FN") lines, table_indexes $(wc -l <<< "$INDEX_FN") lines)"
 else
-  bad "B1 could not extract handlers — §B is vacuous"
+  bad "B1 could not extract handlers - §B is vacuous"
 fi
 
 if [ "$(occurrences "$SCHEMA_FN" "table_name = '\{table\}'")" -eq 2 ]; then
@@ -178,7 +178,7 @@ else
 fi
 
 if has "$SCHEMA_FN" 'table_name = \?|table_name = \$1'; then
-  bad "B3 table_schema carries a bound placeholder — /databases/query cannot bind it"
+  bad "B3 table_schema carries a bound placeholder - /databases/query cannot bind it"
 else
   ok  "B3 table_schema carries no bound placeholder"
 fi
@@ -198,11 +198,11 @@ VALIDATOR=$(awk '/fn is_safe_table_name/{f=1} f{print} f&&/^}/{exit}' <<< "$BACK
 if [ -n "$VALIDATOR" ]; then
   ok  "C1 is_safe_table_name exists"
 else
-  bad "C1 is_safe_table_name is gone — §C is vacuous"
+  bad "C1 is_safe_table_name is gone - §C is vacuous"
 fi
 
 if has "$VALIDATOR" "c == '-'"; then
-  bad "C2 the validator admits '-' — it guards an interpolated statement; match the strict charset"
+  bad "C2 the validator admits '-' - it guards an interpolated statement; match the strict charset"
 else
   ok  "C2 the validator admits no '-'"
 fi
@@ -221,7 +221,7 @@ else
   bad "C4 expected 2 callers of is_safe_table_name, found $CALLERS"
 fi
 
-# Outside the validator's own body — the validator is of course allowed to
+# Outside the validator's own body - the validator is of course allowed to
 # contain the one charset check. Anything else is a second copy.
 BACK_MINUS_VALIDATOR=$(awk '
   /fn is_safe_table_name/ { skip=1 }
@@ -232,7 +232,7 @@ INLINE=$(occurrences "$BACK_MINUS_VALIDATOR" "table\.chars\(\)")
 if [ "$INLINE" -eq 0 ]; then
   ok  "C5 no inline table-name charset check survives outside the shared validator"
 else
-  bad "C5 $INLINE inline table.chars() check(s) remain outside the validator — the two-copies drift is back"
+  bad "C5 $INLINE inline table.chars() check(s) remain outside the validator - the two-copies drift is back"
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -244,13 +244,13 @@ LOADER=$(awk '/const loadTableDetails/{f=1} f{print} f&&/^  \};/{exit}' <<< "$PA
 if [ -n "$LOADER" ]; then
   ok  "D1 loadTableDetails extracted ($(wc -l <<< "$LOADER") lines)"
 else
-  bad "D1 could not extract loadTableDetails — §D is vacuous"
+  bad "D1 could not extract loadTableDetails - §D is vacuous"
 fi
 
 if has "$LOADER" 'Promise\.allSettled'; then
   ok  "D2 the two requests are settled independently"
 else
-  bad "D2 loadTableDetails does not use Promise.allSettled — one pane can blank the other"
+  bad "D2 loadTableDetails does not use Promise.allSettled - one pane can blank the other"
 fi
 
 if has "$LOADER" 'Promise\.all\('; then
@@ -260,7 +260,7 @@ else
 fi
 
 if has "$LOADER" 'catch \{ *\}|catch \{ */\* *ignore'; then
-  bad "D4 loadTableDetails swallows its rejection again — five months of a dead pane went unreported this way"
+  bad "D4 loadTableDetails swallows its rejection again - five months of a dead pane went unreported this way"
 else
   ok  "D4 loadTableDetails does not swallow rejections"
 fi
@@ -275,14 +275,14 @@ fi
 if has "$PAGE_S" '\{detailError && \('; then
   ok  "D6 the failure reason is rendered"
 else
-  bad "D6 detailError is set but never rendered — a reason nobody sees is a swallowed error with extra steps"
+  bad "D6 detailError is set but never rendered - a reason nobody sees is a swallowed error with extra steps"
 fi
 
 # The indexes pane must not be gated behind the columns result.
 if has "$PAGE_S" 'selectedTable && \(tableSchema \|\| tableIndexes \|\| detailError\)'; then
   ok  "D7 the detail pane renders when EITHER call succeeds, or when one failed"
 else
-  bad "D7 the detail pane is gated on tableSchema alone — a failed columns call hides the working indexes pane"
+  bad "D7 the detail pane is gated on tableSchema alone - a failed columns call hides the working indexes pane"
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# backup-encryption-integrity-pin-e2e.sh — s441
+# backup-encryption-integrity-pin-e2e.sh - s441
 #
 # ONE PROPERTY: an encrypted database backup that has been corrupted or
 # tampered with is REJECTED before it is ever decrypted, instead of
@@ -8,7 +8,7 @@
 # `panel/agent/src/services/encryption.rs` used plain AES-256-CBC with no
 # integrity check (CWE-353). PKCS7 padding bounds only the final ciphertext
 # block, so a bit-flip anywhere earlier decrypts without error into
-# corrupted plaintext — a database dump that silently fails to import, or
+# corrupted plaintext - a database dump that silently fails to import, or
 # worse, imports partially. Fix: encrypt-then-MAC. `encrypt_file` appends a
 # 32-byte HMAC-SHA256 tag (over the ciphertext, keyed by a passphrase-
 # derived subkey independent of the AES key openssl derives internally) plus
@@ -19,13 +19,13 @@
 #
 # §A the crypto helpers + format constants exist.
 # §B encrypt_file: waits for openssl success, THEN computes+appends the tag
-#    (position — tagging a failed/partial encrypt would tag garbage).
+#    (position - tagging a failed/partial encrypt would tag garbage).
 # §C decrypt_file: verifies the tag BEFORE the openssl child is spawned
-#    (position — the core property; decrypting-then-checking would already
+#    (position - the core property; decrypting-then-checking would already
 #    have written attacker-controlled plaintext to disk by the time a check
 #    ran).
 # §D decrypt_file: a backup with no trailer (legacy, pre-fix) still
-#    decrypts — the compatibility half of the fix.
+#    decrypts - the compatibility half of the fix.
 # §E docs no longer claim a mode ("GCM") this file has never implemented.
 # §F a live round trip against the REAL openssl binary + a Python replica of
 #    the exact HMAC construction: encrypt, tag, verify+decrypt recovers the
@@ -42,7 +42,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
 echo
 echo "=================================================="
-echo "  Backup encryption integrity — pins + live round trip (s441)"
+echo "  Backup encryption integrity - pins + live round trip (s441)"
 echo "=================================================="
 echo
 
@@ -106,7 +106,7 @@ echo "── §A HMAC helpers and format constants exist ──"
 if has "$ENC_C" 'fn derive_mac_key'; then
   ok "A1 derive_mac_key exists"
 else
-  bad "A1 derive_mac_key is missing — nothing below can be measuring the real fix"
+  bad "A1 derive_mac_key is missing - nothing below can be measuring the real fix"
 fi
 
 if has "$ENC_C" 'fn compute_tag'; then
@@ -124,13 +124,13 @@ fi
 if has "$ENC_C" 'MAC_MAGIC'; then
   ok "A4 a magic trailer marker distinguishes tagged from legacy files"
 else
-  bad "A4 no magic marker constant — legacy detection has nothing to key off"
+  bad "A4 no magic marker constant - legacy detection has nothing to key off"
 fi
 
 if has "$ENC_C" '"dockpanel-backup-hmac-v1"'; then
   ok "A5 the MAC key is domain-separated from the AES key by a fixed label"
 else
-  bad "A5 no domain-separation label — the MAC subkey derivation changed shape"
+  bad "A5 no domain-separation label - the MAC subkey derivation changed shape"
 fi
 
 # ── §B encrypt_file: tag AFTER confirmed success, not before ────────────
@@ -139,19 +139,19 @@ echo "── §B encrypt_file tags only a confirmed-good ciphertext ──"
 if has "$ENCRYPT_BODY" 'compute_tag'; then
   ok "B1 encrypt_file calls compute_tag"
 else
-  bad "B1 encrypt_file does not call compute_tag — no tag is ever written"
+  bad "B1 encrypt_file does not call compute_tag - no tag is ever written"
 fi
 
 if before "$ENCRYPT_BODY" "output.status.success" "compute_tag("; then
-  ok "B2 the openssl success check precedes compute_tag — a failed/partial encrypt is never tagged"
+  ok "B2 the openssl success check precedes compute_tag - a failed/partial encrypt is never tagged"
 else
-  bad "B2 compute_tag runs before (or without) confirming openssl succeeded — could tag garbage"
+  bad "B2 compute_tag runs before (or without) confirming openssl succeeded - could tag garbage"
 fi
 
 if has "$ENCRYPT_BODY" '\.append\(true\)'; then
   ok "B3 the tag is appended to the ciphertext file, not written to a side channel"
 else
-  bad "B3 no append-mode write found — where does the tag actually go?"
+  bad "B3 no append-mode write found - where does the tag actually go?"
 fi
 
 # ── §C decrypt_file: verify BEFORE decrypting ────────────────────────────
@@ -160,13 +160,13 @@ echo "── §C decrypt_file verifies the tag before openssl ever runs ──"
 if has "$DECRYPT_BODY" 'verify_tag'; then
   ok "C1 decrypt_file calls verify_tag"
 else
-  bad "C1 decrypt_file does not call verify_tag — a tampered backup would decrypt unchecked"
+  bad "C1 decrypt_file does not call verify_tag - a tampered backup would decrypt unchecked"
 fi
 
 if before "$DECRYPT_BODY" "verify_tag(" "safe_command(\"openssl\")"; then
-  ok "C2 verify_tag precedes the openssl child spawn — verify-then-decrypt, not the reverse"
+  ok "C2 verify_tag precedes the openssl child spawn - verify-then-decrypt, not the reverse"
 else
-  bad "C2 verify_tag runs at or after the openssl spawn — present-but-too-late is the same as absent"
+  bad "C2 verify_tag runs at or after the openssl spawn - present-but-too-late is the same as absent"
 fi
 
 if has "$DECRYPT_BODY" "integrity check failed"; then
@@ -181,7 +181,7 @@ echo "── §D a backup with no trailer falls back to the old path ──"
 if has "$DECRYPT_BODY" 'has_tag'; then
   ok "D1 decrypt_file branches on whether a trailer is present"
 else
-  bad "D1 no has_tag-style branch — every old backup would now fail to decrypt"
+  bad "D1 no has_tag-style branch - every old backup would now fail to decrypt"
 fi
 
 if has "$DECRYPT_BODY" 'predates the integrity'; then
@@ -197,7 +197,7 @@ DOC=docs/guides/backup-orchestrator.md
 if [ -f "$DOC" ] && ! grep -q "AES-256-GCM" "$DOC"; then
   ok "E1 $DOC no longer claims AES-256-GCM for backup encryption"
 else
-  bad "E1 $DOC still claims AES-256-GCM — openssl enc on this project's target OpenSSL refuses AEAD ciphers entirely"
+  bad "E1 $DOC still claims AES-256-GCM - openssl enc on this project's target OpenSSL refuses AEAD ciphers entirely"
 fi
 
 if [ -f "$DOC" ] && grep -qi "HMAC-SHA256" "$DOC"; then

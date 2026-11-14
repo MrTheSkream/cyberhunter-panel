@@ -12,7 +12,7 @@ use crate::auth::{Claims, ServerScope};
 use crate::services::agent::AgentHandle;
 use crate::AppState;
 
-/// True once ANY of the checks `handler()` runs at handshake would now reject `claims` —
+/// True once ANY of the checks `handler()` runs at handshake would now reject `claims` -
 /// expiry, blacklist, or global session revocation. Shared by the handshake gate and the
 /// per-tick recheck in `handle_socket` so the two can't drift (see the comment at the
 /// handshake's revocation check).
@@ -65,7 +65,7 @@ fn extract_token(q: &WsQuery, headers: &HeaderMap) -> Option<String> {
     None
 }
 
-/// GET /api/ws/metrics — WebSocket endpoint that pushes live system metrics every 5s.
+/// GET /api/ws/metrics - WebSocket endpoint that pushes live system metrics every 5s.
 /// Authenticates via ?token=<jwt> query param OR cookie.
 pub async fn handler(
     State(state): State<AppState>,
@@ -119,16 +119,16 @@ pub async fn handler(
         }
     }
 
-    // Global session revocation — the panic button and `POST /auth/revoke-all`
+    // Global session revocation - the panic button and `POST /auth/revoke-all`
     // both write `sessions_revoked_at`, and `AuthUser` refuses any token minted
     // before it. This handler decodes the JWT by hand rather than going through
     // that extractor, so without this block it was the one authenticated channel
     // panic could not close: a stolen admin token could open a NEW socket after
     // the button was pressed and stream the process list every 5 seconds until
-    // its own 2h expiry — a live view of the operator's incident response, for
+    // its own 2h expiry - a live view of the operator's incident response, for
     // the intruder it was pressed against.
     //
-    // The comparison is deliberately IDENTICAL to the one in `AuthUser` — two
+    // The comparison is deliberately IDENTICAL to the one in `AuthUser` - two
     // gates enforcing one invariant must not drift. `iat` is whole seconds, so
     // a token minted in the same second as the revoke survives at both sites;
     // tightening that is a single change to BOTH, not an asymmetric one here
@@ -147,7 +147,7 @@ pub async fn handler(
     }
 
     // Live host telemetry (system info, full process list, network connections, GPU)
-    // is admin-only — the equivalent REST endpoints (system::info, logs::processes,
+    // is admin-only - the equivalent REST endpoints (system::info, logs::processes,
     // logs::network) all require AdminUser. ServerScope's no-X-Server-Id fallback
     // resolves the local/admin-owned server WITHOUT a role check, so gate here.
     if claims.role != "admin" {
@@ -182,7 +182,7 @@ async fn handle_socket(
         // Re-validate every tick, not just at handshake. Without this, logout, the panic
         // button, and token-blacklist revocation all closed the door to NEW connections
         // but left an ALREADY-OPEN socket streaming the full process/network/GPU/system
-        // feed for as long as the underlying TCP connection stayed alive — unbounded by
+        // feed for as long as the underlying TCP connection stayed alive - unbounded by
         // even the token's own nominal expiry, since nothing in this loop ever re-checked
         // `exp` either. This is exactly the "live view of the operator's incident
         // response" scenario the handshake's own revocation comment says panic closes.
@@ -228,7 +228,7 @@ async fn handle_socket(
                 Ok(Some(Ok(Message::Close(_)))) => false,
                 Ok(Some(Err(_))) => false,
                 Ok(None) => false,
-                // Timeout (5s elapsed) or non-close message — continue the loop
+                // Timeout (5s elapsed) or non-close message - continue the loop
                 _ => true,
             }
         };
@@ -249,7 +249,7 @@ async fn handle_socket(
     // Send explicit close frame so client doesn't linger. Timed: a
     // black-holed peer (vanished without FIN/RST) can stall this write on
     // kernel retransmission, which would otherwise keep THIS connection's
-    // task alive — and with it, axum's graceful-drain wait for it — past the
+    // task alive - and with it, axum's graceful-drain wait for it - past the
     // shutdown signal that just fired to close it.
     let _ = tokio::time::timeout(Duration::from_secs(2), socket.send(Message::Close(None))).await;
     WS_CONNECTIONS.fetch_sub(1, Ordering::SeqCst);

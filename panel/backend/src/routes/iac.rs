@@ -14,16 +14,16 @@ use crate::AppState;
 //
 // These endpoints provide a stable API surface for Terraform/Pulumi providers.
 //
-// ⚠ (s418, corrected) IaC tokens are CRUD-only — created, listed, deleted — and
+// ⚠ (s418, corrected) IaC tokens are CRUD-only - created, listed, deleted - and
 // do not authenticate anything. Every handler below takes `AuthUser` (JWT); no
 // extractor anywhere in this crate reads a `dpiac_`-prefixed bearer token back
 // against `iac_tokens.token_hash` to admit a request. The line this replaced
-// claimed "Authentication via IaC tokens (Bearer token) or regular JWT" — that
+// claimed "Authentication via IaC tokens (Bearer token) or regular JWT" - that
 // was never true. See FEATURES.md § Withdrawn Claims.
 // Resources: sites, databases. (`dns_records` was named here too; no
 // `tf_list_dns` handler, or any dns_records reader, has ever existed.)
 
-/// POST /api/iac/tokens — Create a new IaC token.
+/// POST /api/iac/tokens - Create a new IaC token.
 pub async fn create_token(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -76,7 +76,7 @@ pub async fn create_token(
         Some("iac_token"), Some(name), None, None, "warning", claims.key_id,
     ).await;
 
-    // Return the raw token ONCE — it cannot be retrieved after this
+    // Return the raw token ONCE - it cannot be retrieved after this
     Ok((StatusCode::CREATED, Json(serde_json::json!({
         "id": id.0,
         "name": name,
@@ -85,7 +85,7 @@ pub async fn create_token(
     }))))
 }
 
-/// GET /api/iac/tokens — List IaC tokens (without revealing the token value).
+/// GET /api/iac/tokens - List IaC tokens (without revealing the token value).
 pub async fn list_tokens(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -111,7 +111,7 @@ pub async fn list_tokens(
     Ok(Json(serde_json::json!({ "tokens": items })))
 }
 
-/// DELETE /api/iac/tokens/{id} — Revoke an IaC token.
+/// DELETE /api/iac/tokens/{id} - Revoke an IaC token.
 pub async fn delete_token(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -131,7 +131,7 @@ pub async fn delete_token(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// GET /api/iac/resources/sites — Terraform-compatible site listing.
+/// GET /api/iac/resources/sites - Terraform-compatible site listing.
 pub async fn tf_list_sites(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -157,7 +157,7 @@ pub async fn tf_list_sites(
     Ok(Json(serde_json::json!({ "resources": items })))
 }
 
-/// GET /api/iac/resources/databases — Terraform-compatible database listing.
+/// GET /api/iac/resources/databases - Terraform-compatible database listing.
 pub async fn tf_list_databases(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -199,7 +199,7 @@ pub struct AutoscaleRuleRequest {
     pub cooldown_seconds: Option<i32>,
 }
 
-/// GET /api/autoscale — List all auto-scaling rules.
+/// GET /api/autoscale - List all auto-scaling rules.
 pub async fn list_autoscale(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -229,7 +229,7 @@ pub async fn list_autoscale(
     Ok(Json(serde_json::json!({ "rules": items })))
 }
 
-/// POST /api/autoscale — Create an auto-scaling rule.
+/// POST /api/autoscale - Create an auto-scaling rule.
 pub async fn create_autoscale(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -271,7 +271,7 @@ pub async fn create_autoscale(
     Ok((StatusCode::CREATED, Json(serde_json::json!({ "ok": true, "id": id.0 }))))
 }
 
-/// PUT /api/autoscale/{id} — Update an auto-scaling rule.
+/// PUT /api/autoscale/{id} - Update an auto-scaling rule.
 pub async fn update_autoscale(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -309,7 +309,7 @@ pub async fn update_autoscale(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// DELETE /api/autoscale/{id} — Remove an auto-scaling rule.
+/// DELETE /api/autoscale/{id} - Remove an auto-scaling rule.
 pub async fn delete_autoscale(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,

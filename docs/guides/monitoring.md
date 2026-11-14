@@ -2,7 +2,7 @@
 
 ## Monitors
 
-Monitors check whether your services are reachable. DockPanel supports four active monitor types and a passive heartbeat type.
+Monitors check whether your services are reachable. CyberHunter - Panel supports four active monitor types and a passive heartbeat type.
 
 | Type | How it works |
 |------|-------------|
@@ -91,10 +91,10 @@ After an alert fires, it will not fire again for the configured cooldown period 
 
 | Column | Switched off means |
 |--------|--------------------|
-| **Record** | The alert is never created at all — no alert row, no bell, no status-page incident, and nothing for escalation to page you about. |
+| **Record** | The alert is never created at all - no alert row, no bell, no status-page incident, and nothing for escalation to page you about. |
 | **Notify** | The alert is still recorded and visible in the panel exactly as usual. Only the external send is suppressed: Slack, Discord, PagerDuty and webhooks. |
 
-Ten of the twenty alert types have a **Record** switch: CPU, memory, disk, offline, service, backup, SSL expiry, and the three GPU types — which share a single switch between them. The other ten are always recorded and show a dash in that column; use **Notify** if you do not want to be paged for one of those.
+Ten of the twenty alert types have a **Record** switch: CPU, memory, disk, offline, service, backup, SSL expiry, and the three GPU types - which share a single switch between them. The other ten are always recorded and show a dash in that column; use **Notify** if you do not want to be paged for one of those.
 
 Switching **Record** off also stops alerts of that type **escalating**. Before v2.158.0 it did not: the switch was read only when an alert was first recorded, so a row that was already firing when you switched its type off carried on re-paging every thirty minutes until it aged out of the seven-day escalation window. Switching the type back on resumes paging on the next sweep, without the delay a fresh alert waits out.
 
@@ -138,7 +138,7 @@ If an HTTP monitor returns a successful status but the response time exceeds 500
 
 ### Auto-Incidents
 
-When a monitor goes down, DockPanel automatically creates a managed incident for the public status page. When the monitor recovers, the incident is auto-resolved. Status page subscribers are notified of both transitions.
+When a monitor goes down, CyberHunter - Panel automatically creates a managed incident for the public status page. When the monitor recovers, the incident is auto-resolved. Status page subscribers are notified of both transitions.
 
 ### Disk-Full Forecast
 
@@ -168,26 +168,26 @@ certificate records its expiry.
 
 **An uploaded certificate must name the site it secures.** Since v2.148.0 the upload is
 refused, before anything is written, if the certificate's subjectAltName entries (or its
-Common Name, when it carries no SAN) do not cover the site's domain — and the refusal
+Common Name, when it carries no SAN) do not cover the site's domain - and the refusal
 tells you which names it does cover. A wildcard counts for exactly one level, so
 `*.example.com` covers `app.example.com` and not `app.staging.example.com`. Before that
 check existed, pasting the wrong `fullchain.pem` installed cleanly: nginx does not
 compare a certificate against `server_name`, so the panel showed a padlock and only the
 browser disagreed, with `ERR_CERT_COMMON_NAME_INVALID`. The same check refuses a private
-key pasted into the certificate field — which used to be stored with the certificate's
+key pasted into the certificate field - which used to be stored with the certificate's
 permissions rather than the key's, and left the site with no recorded expiry at all.
 
-**DockPanel renews only the Let's Encrypt certificates it issued itself.** Its ACME
-client can produce nothing else, so a certificate from any other issuer — a commercial
-wildcard, a Cloudflare Origin CA certificate, a corporate PKI — is left alone by the
+**CyberHunter - Panel renews only the Let's Encrypt certificates it issued itself.** Its ACME
+client can produce nothing else, so a certificate from any other issuer - a commercial
+wildcard, a Cloudflare Origin CA certificate, a corporate PKI - is left alone by the
 automatic renewal loops, and the Renew button refuses it with the issuer named. Renew
 those wherever they were issued and upload the replacement. (Before v2.139.0 the weekly
 security scan replaced them instead, which is why this is stated so plainly.)
 
 ### Registered certificates (administrators)
 
-A certificate you manage outside the panel — a Cloudflare Origin CA wildcard, a
-commercial certificate, a corporate PKI — can be **registered once, under a name**,
+A certificate you manage outside the panel - a Cloudflare Origin CA wildcard, a
+commercial certificate, a corporate PKI - can be **registered once, under a name**,
 and then served by any number of Compose stacks whose domain it covers. The pair is
 kept on that server's disk beside the panel's own certificates, never in the
 database; the page lists what each certificate names, who issued it, when it expires,
@@ -197,21 +197,21 @@ certificate** and its name when a stack claims a domain.
 Three things are checked before anything is written. The private key must belong to
 the certificate (the check nginx would otherwise make at the first reload after a
 claim). A key pasted into the certificate field is refused. And at claim time the
-certificate must actually name the domain — the same subjectAltName rule as the
-per-site upload, wildcards counting for one level — or the claim is refused with the
+certificate must actually name the domain - the same subjectAltName rule as the
+per-site upload, wildcards counting for one level - or the claim is refused with the
 names it does cover. A certificate cannot be deleted while a stack still names it, and
 a replacement that stops covering a domain a stack serves is refused before the old
 pair is overwritten.
 
-**The panel does not renew a registered certificate** — as with any certificate it
+**The panel does not renew a registered certificate** - as with any certificate it
 did not issue. Its expiry shows on this page with the same status ladder as the rest,
 and replacing it in place puts the new pair behind every stack that uses it at once.
 
 ### All certificates on this server (administrators)
 
 Administrators get an **All certificates on this server** switch. It lists every site's
-certificate on the current server together with its owner, and — because the agent scans
-the host, not the database — the certificates the machine holds that belong to no site
+certificate on the current server together with its owner, and - because the agent scans
+the host, not the database - the certificates the machine holds that belong to no site
 at all: DNS-01 wildcards, certificates issued for Docker apps, anything installed by
 hand. Those appear as **Not a site** and offer no Renew or Delete control, because both
 act on a site record and there is none.

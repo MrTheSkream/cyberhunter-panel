@@ -109,7 +109,7 @@ export default function Updates() {
       const result = await api.post<{ install_id?: string } & ApplyResult>("/system/updates/apply", body);
 
       if (result.install_id) {
-        // SSE mode — stream progress.
+        // SSE mode - stream progress.
         //
         // The backend replays the whole log before going live
         // (snapshot_stream.chain(live_stream)), so a reconnect loses nothing.
@@ -155,14 +155,14 @@ export default function Updates() {
                 "",
                 success
                   ? "> Update completed successfully"
-                  : "> Update completed with errors — check the output above",
+                  : "> Update completed with errors - check the output above",
               ]);
               setMessage({
                 text: success
                   ? selected.size > 0
                     ? `Successfully updated ${selected.size} package(s)`
                     : "All packages updated successfully"
-                  : "Update completed with errors — check the output below",
+                  : "Update completed with errors - check the output below",
                 type: success ? "success" : "error",
               });
               // Refresh package list
@@ -177,7 +177,7 @@ export default function Updates() {
           } catch { /* ignore */ }
         };
         es.onerror = () => {
-          // readyState CLOSED means EventSource has given up for good — the
+          // readyState CLOSED means EventSource has given up for good - the
           // endpoint answered non-200 (the log was garbage-collected), and the
           // spec says not to retry that. CONNECTING means a retry is already in
           // flight, so say so and wait rather than tearing the terminal down.
@@ -188,11 +188,11 @@ export default function Updates() {
               ...(prev || []),
               "",
               "> Lost the connection to this update's output.",
-              "> The update itself is unaffected and continues on the server —",
+              "> The update itself is unaffected and continues on the server -",
               "> reopen this page to see how it finished.",
             ]);
             setMessage({
-              text: "Lost the connection to the update's output — the update itself is still running on the server",
+              text: "Lost the connection to the update's output - the update itself is still running on the server",
               type: "warning",
             });
             return;
@@ -201,7 +201,7 @@ export default function Updates() {
           replaying = true;
           setAptOutput(prev => [
             ...(prev || []),
-            `> Connection interrupted — reconnecting (${reconnects}/${MAX_RECONNECTS})…`,
+            `> Connection interrupted - reconnecting (${reconnects}/${MAX_RECONNECTS})…`,
           ]);
         };
       } else {

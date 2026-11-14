@@ -4,7 +4,7 @@
 //! Compose stack refers to it by that alias when it claims a domain. The PEM pair
 //! never passes through this table: the agent parses it, checks the key belongs
 //! to it, writes it under `/etc/dockpanel/ssl-registry/<alias>/`, and hands back
-//! the metadata that is recorded here — names, issuer, validity, fingerprint and
+//! the metadata that is recorded here - names, issuer, validity, fingerprint and
 //! the two paths. Postgres holds no key material.
 //!
 //! Why this is not the single-site upload with a second caller: that door writes
@@ -27,11 +27,11 @@ use crate::services::agent::{AgentError, AgentHandle};
 use crate::AppState;
 
 /// The agent release whose deploy path honours tls_mode/tls_certificate and serves
-/// /ssl/registry. ⛔ FROZEN at the release that shipped it — a version bump must not move it.
+/// /ssl/registry. ⛔ FROZEN at the release that shipped it - a version bump must not move it.
 pub(crate) const PROVIDED_TLS_MIN_AGENT: &str = "2.160.0";
 
 /// The agent release whose per-domain SSL renew route accepts a request with NO
-/// `runtime` field — the in-place branch a Compose stack's renewal needs.
+/// `runtime` field - the in-place branch a Compose stack's renewal needs.
 ///
 /// ⛔ The route is deliberately NOT spelled out here. `sibling-parity` builds
 /// its render-door census with `grep -rl` over RAW SOURCE, which cannot tell a
@@ -43,7 +43,7 @@ pub(crate) const PROVIDED_TLS_MIN_AGENT: &str = "2.160.0";
 /// port lives in the compose YAML, which only the agent parses), so the stack
 /// renewal in `services::security_scanner` omits `runtime` and the agent
 /// reloads instead of re-rendering. An agent older than this parses `runtime`
-/// as required and answers 422 — on every weekly scan, for ever.
+/// as required and answers 422 - on every weekly scan, for ever.
 /// ⛔ FROZEN at the release that shipped it, same rule as its neighbour.
 pub(crate) const STACK_RENEWAL_MIN_AGENT: &str = "2.161.0";
 
@@ -74,14 +74,14 @@ pub(crate) fn is_valid_cert_alias(alias: &str) -> bool {
 ///
 /// 412 PRECONDITION_FAILED with an "update that server's agent" sentence, so the
 /// operator learns what to do rather than what went wrong. Reads `/health`, the
-/// route every agent has always carried — `servers.agent_version` is NULL for the
+/// route every agent has always carried - `servers.agent_version` is NULL for the
 /// local box, so the column cannot be the source.
 ///
 /// An unreadable version FAILS CLOSED. The port-check gate degrades when it
 /// cannot tell, because the worst case there is one more probe; here the worst
 /// case is an older agent that ignores the fields it does not know, infers "no
 /// TLS" from the absent address, and writes a provided-certificate domain as a
-/// plain-HTTP vhost — behind the HSTS header its previous vhost already sent.
+/// plain-HTTP vhost - behind the HSTS header its previous vhost already sent.
 /// That silent downgrade is exactly the outage this feature exists to prevent.
 pub(crate) async fn require_agent_at_least(
     agent: &AgentHandle,
@@ -249,7 +249,7 @@ async fn owned_certificate(
 /// Resolve a registered certificate by alias for a stack claim: the row's id.
 ///
 /// Scoped to the caller AND the server, because the alias is unique per server
-/// only — the same name may be registered on two fleet members with different
+/// only - the same name may be registered on two fleet members with different
 /// certificates behind it, and a stack must resolve the one on its own host.
 pub(crate) async fn certificate_id_for_alias(
     db: &sqlx::PgPool,
@@ -274,7 +274,7 @@ pub(crate) async fn certificate_id_for_alias(
     })
 }
 
-/// GET /api/tls-certificates — the registry on the scoped server.
+/// GET /api/tls-certificates - the registry on the scoped server.
 pub async fn list(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -306,7 +306,7 @@ pub struct CreateCertificateRequest {
     pub private_key: String,
 }
 
-/// POST /api/tls-certificates — register a certificate on the scoped server.
+/// POST /api/tls-certificates - register a certificate on the scoped server.
 ///
 /// Order: grammar and sizes here → the agent gate → the agent parses, matches the
 /// key, and writes the pair → only then the row. A refusal at any step leaves
@@ -395,7 +395,7 @@ pub async fn create(
     .map_err(|e| {
         // The agent only reaches this point for a NEW alias on its disk, so a
         // unique violation here means the panel row exists without the pair
-        // having been on disk — a registry entry removed by hand. Name it.
+        // having been on disk - a registry entry removed by hand. Name it.
         if e.to_string().contains("tls_certificates_server_id_alias_key") {
             err(
                 StatusCode::CONFLICT,
@@ -444,11 +444,11 @@ pub struct ReplaceCertificateRequest {
     pub private_key: String,
 }
 
-/// PUT /api/tls-certificates/{id} — replace the pair behind an alias.
+/// PUT /api/tls-certificates/{id} - replace the pair behind an alias.
 ///
 /// `must_cover` carries every domain a stack currently serves under this alias,
 /// so a renewal that dropped a name is refused BEFORE the old pair is overwritten
-/// — the agent checks coverage first and writes nothing on a refusal.
+/// - the agent checks coverage first and writes nothing on a refusal.
 pub async fn replace(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -539,7 +539,7 @@ pub async fn replace(
     Ok(Json(cert_json(&updated, &in_use_by)))
 }
 
-/// DELETE /api/tls-certificates/{id} — remove a registered certificate.
+/// DELETE /api/tls-certificates/{id} - remove a registered certificate.
 ///
 /// Refused with a 409 naming the stacks while any still points at it: the FK is
 /// SET NULL, so the database would let the delete through and the next redeploy
@@ -573,7 +573,7 @@ pub async fn remove(
         crate::helpers::agent_for_site_server(&state, Some(row.server_id), &row.alias).await?;
     match agent.delete(&format!("/ssl/registry/{}", row.alias)).await {
         Ok(_) => {}
-        // The pair is already gone from the disk — removed by hand, or the box
+        // The pair is already gone from the disk - removed by hand, or the box
         // was reinstalled. The row is the only thing left to clear, and refusing
         // to clear it would make this certificate undeletable for ever.
         Err(AgentError::Status(404, _)) => {

@@ -43,7 +43,7 @@ async fn status(
     Json(serde_json::to_value(s).unwrap_or_default())
 }
 
-/// POST /traefik/route — Write a Traefik dynamic route config for an app.
+/// POST /traefik/route - Write a Traefik dynamic route config for an app.
 async fn add_route(
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
@@ -61,7 +61,7 @@ async fn add_route(
     Ok(Json(serde_json::json!({ "ok": true, "domain": domain, "port": port, "ssl": ssl })))
 }
 
-/// DELETE /traefik/route — Remove a Traefik dynamic route config.
+/// DELETE /traefik/route - Remove a Traefik dynamic route config.
 async fn remove_route(
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {

@@ -1,8 +1,8 @@
 //! Whole-system CPU usage, sampled on a fixed cadence.
 //!
 //! CPU percentage is a *delta over a window*, not a readable instant value. The
-//! obvious implementation — refresh inside the request handler and return
-//! `global_cpu_usage()` — makes the window "time since whichever unrelated
+//! obvious implementation - refresh inside the request handler and return
+//! `global_cpu_usage()` - makes the window "time since whichever unrelated
 //! caller last hit this endpoint". The agent has five such callers (the metrics
 //! collector every 30 s, the dashboard WebSocket loop every ~5 s, the dashboard
 //! REST tick, the backup scheduler, the Docker-apps page), so every caller
@@ -14,7 +14,7 @@
 //!   used to walk all of `/proc` on every call (~70 ms of CPU with 583
 //!   processes). When two callers landed a few hundred ms apart, that walk was
 //!   most of the measured window. The self-inflicted floor is
-//!   `walk_ms / (gap_ms * cores) * 100` — ~2 % on a 12-core box at a 250 ms gap,
+//!   `walk_ms / (gap_ms * cores) * 100` - ~2 % on a 12-core box at a 250 ms gap,
 //!   but **~28 % on a single-core box, and higher once the WebSocket loop's
 //!   concurrent `/system/processes` call (two more full walks) lands in the same
 //!   window.** That is how an idle box reported ~99 %.
@@ -45,7 +45,7 @@ const PRIME_DELAY: Duration = Duration::from_millis(300);
 
 /// Handle to the latest whole-system CPU usage, 0-100.
 ///
-/// Cheap to clone and free to read — the value is an `f32` stored as its bit
+/// Cheap to clone and free to read - the value is an `f32` stored as its bit
 /// pattern, so readers never block the sampler or each other.
 #[derive(Clone)]
 pub struct CpuSampler {
@@ -111,7 +111,7 @@ impl CpuSampler {
 /// Number of running processes, without walking every `/proc` entry's stats.
 ///
 /// `/system/info` needs only the count, but obtaining it from sysinfo means
-/// `refresh_processes(All, true)` — a full walk that reads and parses a stat
+/// `refresh_processes(All, true)` - a full walk that reads and parses a stat
 /// file per process. That walk was both the endpoint's dominant cost (~70 ms of
 /// CPU per call) and the contaminant in the CPU window above, so the count is
 /// taken by listing the directory instead.

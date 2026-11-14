@@ -47,13 +47,13 @@ const LEVELS: [&str; 3] = ["error", "warning", "info"];
 ///
 /// `backup_policy_executor` inserts one row per 60-second tick recording total
 /// backup bytes, and `backup_orchestrator` reads them back as a 30-day time
-/// series — so the rows have a consumer and must keep being written. But they
+/// series - so the rows have a consumer and must keep being written. But they
 /// are not events an operator reads: on this panel they outnumbered genuine
 /// entries 43,272 to 10, which at the page's 50-row window put every real entry
 /// older than ~50 minutes below the fold and made the log unusable by hand.
 ///
-/// So the default listing hides them. The source is still SELECTABLE — picking
-/// it explicitly returns them — because a filter the operator cannot switch off
+/// So the default listing hides them. The source is still SELECTABLE - picking
+/// it explicitly returns them - because a filter the operator cannot switch off
 /// is the same defect pointed the other way.
 const METRIC_SOURCE: &str = "backup_storage";
 
@@ -64,7 +64,7 @@ const METRIC_SOURCE: &str = "backup_storage";
 /// listing hides and the name the dropdown offers cannot drift apart.
 ///
 /// ⚠ This is a NARROWING: it makes the endpoint return less than before, and a
-/// narrowing that goes too far fails silently — the response still looks like a
+/// narrowing that goes too far fails silently - the response still looks like a
 /// healthy list either way. `tests/system-logs-scope-pin-e2e.sh` pins both
 /// directions: a non-metric row must still be returned, and the metric source
 /// must still be reachable when named.
@@ -72,7 +72,7 @@ fn hide_metric() -> String {
     format!("source <> '{METRIC_SOURCE}'")
 }
 
-/// GET /api/system-logs — List system log entries (admin only).
+/// GET /api/system-logs - List system log entries (admin only).
 pub async fn list(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -87,7 +87,7 @@ pub async fn list(
     //
     // ⚠ An unrecognised filter value is REFUSED, not ignored. Every one of these
     // used to fall through to "push no condition", which does not return an error
-    // and does not return an empty set — it returns the UNFILTERED list. To the
+    // and does not return an empty set - it returns the UNFILTERED list. To the
     // caller that is indistinguishable from "your filter matched a great many
     // rows", so a typo silently widened the answer while looking like it worked.
     let mut conditions: Vec<String> = Vec::new();
@@ -98,7 +98,7 @@ pub async fn list(
         if !LEVELS.contains(&level) {
             return Err(err(
                 StatusCode::BAD_REQUEST,
-                &format!("Unknown level '{level}' — expected one of {}", LEVELS.join(", ")),
+                &format!("Unknown level '{level}' - expected one of {}", LEVELS.join(", ")),
             ));
         }
         conditions.push(format!("level = ${bind_idx}"));
@@ -111,7 +111,7 @@ pub async fn list(
             conditions.push(format!("source = ${bind_idx}"));
             bind_idx += 1;
         }
-        // No source named — hide the metric rows. See `METRIC_SOURCE`.
+        // No source named - hide the metric rows. See `METRIC_SOURCE`.
         None => conditions.push(hide_metric()),
     }
 
@@ -119,7 +119,7 @@ pub async fn list(
         let interval = parse_since(since).ok_or_else(|| {
             err(
                 StatusCode::BAD_REQUEST,
-                &format!("Unknown range '{since}' — expected 1h, 24h, 7d or 30d"),
+                &format!("Unknown range '{since}' - expected 1h, 24h, 7d or 30d"),
             )
         })?;
         conditions.push(format!("created_at > NOW() - INTERVAL '{interval}'"));
@@ -150,7 +150,7 @@ pub async fn list(
     query = query.bind(limit).bind(offset);
 
     // ⚠ This used to be `.unwrap_or_default()`, which renders a database failure
-    // as an empty list — "there are no logs" and "we could not read the logs"
+    // as an empty list - "there are no logs" and "we could not read the logs"
     // became the same screen, on the one page an operator opens to find out what
     // went wrong. Same class as the canary reader's silence-as-safety.
     let logs = query
@@ -173,7 +173,7 @@ pub struct LogCounts {
     pub info: i64,
 }
 
-/// GET /api/system-logs/count — Count log entries by level (admin only).
+/// GET /api/system-logs/count - Count log entries by level (admin only).
 pub async fn count(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -186,13 +186,13 @@ pub async fn count(
         Some(since) => parse_since(since).ok_or_else(|| {
             err(
                 StatusCode::BAD_REQUEST,
-                &format!("Unknown range '{since}' — expected 1h, 24h, 7d or 30d"),
+                &format!("Unknown range '{since}' - expected 1h, 24h, 7d or 30d"),
             )
         })?,
     };
 
     // The tiles must count the same population the default listing shows, or the
-    // "Info" tile reports one metric sample per minute — 1,440 a day, forever —
+    // "Info" tile reports one metric sample per minute - 1,440 a day, forever -
     // and reads as activity. See `METRIC_SOURCE`.
     let hide = hide_metric();
     let rows: Vec<(String, i64)> = sqlx::query_as(

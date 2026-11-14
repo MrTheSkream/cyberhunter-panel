@@ -15,7 +15,7 @@ interface UserItem {
 export default function ResellerUsers() {
   const { user } = useAuth();
   // Half-broken for an admin rather than wholly: `list_users` branches on the
-  // role and hands an admin every reseller's sub-accounts, so the page LOADS —
+  // role and hands an admin every reseller's sub-accounts, so the page LOADS -
   // but "+ Create User" 403s (`create_user` is reseller-only) and deleting from
   // here skips the quota decrement, leaving the reseller's counter inflated. A
   // screen that renders fine and misreports on two of its three controls is
@@ -119,7 +119,7 @@ export default function ResellerUsers() {
       {/* Issue #120: this used to be an inline bar rendered here, above the user
           table. The Delete buttons that arm it sit in the rows below, so on a
           long list the prompt appeared off-screen. It is a portalled dialog now
-          — see components/ConfirmDialog. */}
+          - see components/ConfirmDialog. */}
       {pendingDelete && (
         <ConfirmDialog
           label={`Delete user "${pendingDelete.email}"? Their sites and databases will also be deleted.`}

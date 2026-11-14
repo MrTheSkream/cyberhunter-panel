@@ -2,14 +2,14 @@
 //!
 //! ## What this used to be, and why it never worked (s233, measured)
 //!
-//! This endpoint answered with three fields — `version`, `download_url` and
-//! `checksum` — read from three `settings` rows. **Nothing in the repo ever
+//! This endpoint answered with three fields - `version`, `download_url` and
+//! `checksum` - read from three `settings` rows. **Nothing in the repo ever
 //! wrote those rows.** They were accepted by the admin settings allowlist and
 //! by nothing else: no seed, no migration, no installer, no release step, no UI
 //! field, no doc. So `download_url` was null on every install that has ever
 //! existed, and the agent's updater refused with "No download URL provided".
 //!
-//! It also required `AuthUser` — a signed user JWT — from a caller that
+//! It also required `AuthUser` - a signed user JWT - from a caller that
 //! structurally cannot hold one: an agent has a random hex token from its
 //! `servers` row. So it 401'd on every request since v2.10.0. The mount comment
 //! above the route in `routes/mod.rs` claimed the opposite ("uses Bearer token
@@ -23,7 +23,7 @@
 //!
 //! One field, `target_version`, and no download plumbing at all.
 //! `scripts/agent-self-update.sh` derives the architecture, the asset URL and
-//! the expected digest **on the box** from the release's own `checksums.txt` —
+//! the expected digest **on the box** from the release's own `checksums.txt` -
 //! so `agent_download_url` and `agent_checksum` were never merely unwritten,
 //! they were unnecessary. A single scalar URL could not have been correct for a
 //! mixed amd64/arm64 fleet anyway.
@@ -39,7 +39,7 @@ use crate::auth::{agent_rate_limit, authenticate_agent};
 use crate::error::{internal_error, ApiError};
 use crate::AppState;
 
-/// GET /api/agent/version — the version the calling agent should be running.
+/// GET /api/agent/version - the version the calling agent should be running.
 ///
 /// Authenticated with the agent's own `servers`-table token.
 pub async fn latest_version(
@@ -89,7 +89,7 @@ async fn resolve_agent_target(state: &AppState) -> Result<Option<String>, ApiErr
 mod tests {
     /// The panel advertises its OWN crate version as the agent's target, so the
     /// two crates must ship the same version or the panel names a tag whose
-    /// agent asset was never built. Nothing else in the tree enforces this —
+    /// agent asset was never built. Nothing else in the tree enforces this -
     /// they were equal by convention only (s233).
     #[test]
     fn the_agent_and_api_crates_ship_the_same_version() {
@@ -105,7 +105,7 @@ mod tests {
         assert_eq!(
             api, agent,
             "dockpanel-api {api} would advertise v{api} as the agent target, \
-             but dockpanel-agent is {agent} — that tag has no agent asset"
+             but dockpanel-agent is {agent} - that tag has no agent asset"
         );
     }
 
@@ -114,7 +114,7 @@ mod tests {
     /// ever existed.
     ///
     /// The key names are assembled rather than written out, because this test
-    /// greps its own file and a literal would match itself — the source-pin
+    /// greps its own file and a literal would match itself - the source-pin
     /// prose trap, which caught this very test on its first run.
     #[test]
     fn the_dead_settings_keys_are_gone_from_the_reader_and_both_allowlists() {
@@ -129,7 +129,7 @@ mod tests {
             let quoted = format!("\"{key}\"");
             assert!(
                 !settings.contains(&quoted),
-                "{key} is still allowlisted in settings.rs — the update AND the \
+                "{key} is still allowlisted in settings.rs - the update AND the \
                  import allowlist must both drop it"
             );
             // Prose may name them; code may not.

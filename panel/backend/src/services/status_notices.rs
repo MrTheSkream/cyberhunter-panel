@@ -8,13 +8,13 @@
 //!
 //! - Inline is wrong. In `uptime` the caller is a `check_monitor` task holding
 //!   one of only 10 concurrency slots, and the tick loop drains the whole
-//!   JoinSet before advancing — so awaiting a long fan-out there stalls ALL
+//!   JoinSet before advancing - so awaiting a long fan-out there stalls ALL
 //!   monitoring. In `incidents` the caller is an HTTP handler, so it stalls the
 //!   operator's request (and holds a pool slot) until the fan-out finishes or
 //!   the proxy times out.
-//! - A detached `tokio::spawn` per event is also wrong. It loses ordering — two
+//! - A detached `tokio::spawn` per event is also wrong. It loses ordering - two
 //!   events one tick apart race, and subscribers can be told a monitor recovered
-//!   before they are told it went down — and it loses backpressure, so a
+//!   before they are told it went down - and it loses backpressure, so a
 //!   fleet-wide blip spawns hundreds of concurrent fan-outs that exhaust the
 //!   20-connection pool and the mail relay at once.
 //!
@@ -22,7 +22,7 @@
 //! order the events happened, and exactly one fan-out is ever in flight.
 //!
 //! s427: `status_page_subscribers` carries an `owner_id`, and every
-//! [`StatusNotice`] carries the tenant its producer belongs to — the fan-out
+//! [`StatusNotice`] carries the tenant its producer belongs to - the fan-out
 //! below only reaches subscribers stamped with that same owner. Before this,
 //! the subscriber list was global: on a multi-tenant install every verified
 //! subscriber received every tenant's status notices.
@@ -41,13 +41,13 @@ const MAX_SUBSCRIBER_FANOUT: i64 = 1000;
 const QUEUE_DEPTH: usize = 256;
 
 pub struct StatusNotice {
-    /// What the notice is about — a monitor or incident name, for logging only.
+    /// What the notice is about - a monitor or incident name, for logging only.
     pub source: String,
     pub subject: String,
     pub message: String,
     /// s427: the tenant this notice's monitor/incident belongs to. The
     /// fan-out below only reaches subscribers stamped with this SAME
-    /// owner_id — previously every verified subscriber got every tenant's
+    /// owner_id - previously every verified subscriber got every tenant's
     /// notices regardless of who they subscribed through.
     pub owner_id: Uuid,
 }
@@ -55,7 +55,7 @@ pub struct StatusNotice {
 static NOTICE_TX: std::sync::OnceLock<tokio::sync::mpsc::Sender<StatusNotice>> =
     std::sync::OnceLock::new();
 
-/// Start the worker. Idempotent — later calls are no-ops, so it is safe for a
+/// Start the worker. Idempotent - later calls are no-ops, so it is safe for a
 /// supervised service to call this on every restart.
 pub fn start_worker(pool: PgPool) {
     let (tx, mut rx) = tokio::sync::mpsc::channel::<StatusNotice>(QUEUE_DEPTH);
@@ -67,7 +67,7 @@ pub fn start_worker(pool: PgPool) {
         while let Some(notice) = rx.recv().await {
             // Bail before the fan-out if there is no mail transport at all. The
             // public subscribe endpoint auto-verifies, so verified subscribers
-            // exist even on installs that never configured SMTP — without this
+            // exist even on installs that never configured SMTP - without this
             // check each notice would walk the whole list and emit one failed-send
             // warning plus two settings queries per subscriber.
             let smtp_configured: Option<(String,)> =
@@ -78,7 +78,7 @@ pub fn start_worker(pool: PgPool) {
                     .flatten();
             if smtp_configured.is_none() {
                 tracing::debug!(
-                    "No SMTP configured — skipping subscriber notices for '{}'",
+                    "No SMTP configured - skipping subscriber notices for '{}'",
                     notice.source
                 );
                 continue;
@@ -101,7 +101,7 @@ pub fn start_worker(pool: PgPool) {
 
             if emails.len() as i64 == MAX_SUBSCRIBER_FANOUT {
                 tracing::warn!(
-                    "Status notice for '{}' capped at {MAX_SUBSCRIBER_FANOUT} subscribers — \
+                    "Status notice for '{}' capped at {MAX_SUBSCRIBER_FANOUT} subscribers - \
                      later subscribers were not emailed",
                     notice.source
                 );
@@ -128,7 +128,7 @@ pub fn start_worker(pool: PgPool) {
     });
 }
 
-/// Enqueue a notice and return immediately — never blocks the caller.
+/// Enqueue a notice and return immediately - never blocks the caller.
 ///
 /// A full queue drops the notice with a warning rather than applying
 /// backpressure to a monitor check or an HTTP handler: a status email is worth
@@ -148,7 +148,7 @@ pub fn enqueue(source: &str, subject: String, message: String, owner_id: Uuid) {
 
     if tx.try_send(notice).is_err() {
         tracing::warn!(
-            "Status-notice queue full ({QUEUE_DEPTH}) — dropped notification for '{source}'"
+            "Status-notice queue full ({QUEUE_DEPTH}) - dropped notification for '{source}'"
         );
     }
 }

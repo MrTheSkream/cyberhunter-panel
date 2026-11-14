@@ -60,7 +60,7 @@ pub struct UpdateRecordRequest {
 }
 
 /// Helper: load a zone by id. DNS management is admin-only (every handler calls
-/// `require_admin`), so any admin may manage any zone — we no longer scope by
+/// `require_admin`), so any admin may manage any zone - we no longer scope by
 /// `user_id` (that scoping made the admin-gated read endpoints unusable on a zone
 /// created by a different admin).
 async fn get_zone(state: &AppState, zone_id: Uuid) -> Result<DnsZone, ApiError> {
@@ -232,7 +232,7 @@ fn pdns_flatten_records(rrsets: &[serde_json::Value]) -> Vec<serde_json::Value> 
 
 // ── Route handlers ──────────────────────────────────────────────────────
 
-/// GET /api/dns/zones — List DNS zones.
+/// GET /api/dns/zones - List DNS zones.
 pub async fn list_zones(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -261,7 +261,7 @@ pub async fn list_zones(
     Ok(Json(result))
 }
 
-/// POST /api/dns/zones — Add a DNS zone.
+/// POST /api/dns/zones - Add a DNS zone.
 pub async fn create_zone(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -415,7 +415,7 @@ pub async fn create_zone(
     }
 }
 
-/// DELETE /api/dns/zones/{id} — Remove a DNS zone.
+/// DELETE /api/dns/zones/{id} - Remove a DNS zone.
 pub async fn delete_zone(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -438,7 +438,7 @@ pub async fn delete_zone(
             .await
             .map_err(|e| upstream_error("PowerDNS delete zone", e))?;
         let st = resp.status();
-        // 2xx = deleted; 404 = already absent — both are acceptable end states.
+        // 2xx = deleted; 404 = already absent - both are acceptable end states.
         if !st.is_success() && st.as_u16() != 404 {
             let body_text = resp.text().await.unwrap_or_default();
             tracing::warn!("PowerDNS delete-zone error ({}): {body_text}", zone.domain);
@@ -457,7 +457,7 @@ pub async fn delete_zone(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// GET /api/dns/zones/{id}/records — List DNS records.
+/// GET /api/dns/zones/{id}/records - List DNS records.
 pub async fn list_records(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -533,7 +533,7 @@ pub async fn list_records(
     }
 }
 
-/// POST /api/dns/zones/{id}/records — Create a DNS record.
+/// POST /api/dns/zones/{id}/records - Create a DNS record.
 pub async fn create_record(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -688,7 +688,7 @@ pub async fn create_record(
     }
 }
 
-/// PUT /api/dns/zones/{id}/records/{record_id} — Update a DNS record.
+/// PUT /api/dns/zones/{id}/records/{record_id} - Update a DNS record.
 pub async fn update_record(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -705,7 +705,7 @@ pub async fn update_record(
     match zone.provider.as_str() {
         "cloudflare" => {
             // CF record IDs are 32-char lowercase hex, same as cf_zone_id (line ~290).
-            // record_id is interpolated unescaped into the outbound URL below — without
+            // record_id is interpolated unescaped into the outbound URL below - without
             // this check a "../../../zones/OTHER/dns_records/RECID"-shaped id (percent-
             // encoded to survive the reverse proxy) reroutes the request, carrying this
             // zone's own decrypted token, to an arbitrary Cloudflare API path.
@@ -918,7 +918,7 @@ pub async fn update_record(
     }
 }
 
-/// DELETE /api/dns/zones/{id}/records/{record_id} — Delete a DNS record.
+/// DELETE /api/dns/zones/{id}/records/{record_id} - Delete a DNS record.
 pub async fn delete_record(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -935,7 +935,7 @@ pub async fn delete_record(
 
     match zone.provider.as_str() {
         "cloudflare" => {
-            // Same discipline as update_record — CF record IDs are 32-char lowercase
+            // Same discipline as update_record - CF record IDs are 32-char lowercase
             // hex; record_id is unescaped in the outbound URL below.
             if record_id.len() != 32 || !record_id.chars().all(|c| c.is_ascii_hexdigit()) {
                 return Err(err(StatusCode::BAD_REQUEST, "Invalid record ID"));
@@ -1053,7 +1053,7 @@ pub async fn delete_record(
     }
 }
 
-/// POST /api/dns/propagation — Check DNS propagation across multiple public resolvers.
+/// POST /api/dns/propagation - Check DNS propagation across multiple public resolvers.
 pub async fn check_propagation(
     State(_state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -1143,7 +1143,7 @@ async fn run_dig(domain: &str, rtype: &str) -> String {
         .unwrap_or_default()
 }
 
-/// POST /api/dns/health-check — Run DNS health checks on a domain.
+/// POST /api/dns/health-check - Run DNS health checks on a domain.
 pub async fn dns_health_check(
     State(_state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -1184,7 +1184,7 @@ pub async fn dns_health_check(
     checks.push(serde_json::json!({
         "check": "A Record",
         "status": if !a.is_empty() { "pass" } else { "info" },
-        "detail": if a.is_empty() { "No A record — domain won't resolve to an IP".to_string() } else { a },
+        "detail": if a.is_empty() { "No A record - domain won't resolve to an IP".to_string() } else { a },
     }));
 
     // 4. MX record
@@ -1192,7 +1192,7 @@ pub async fn dns_health_check(
     checks.push(serde_json::json!({
         "check": "MX Record",
         "status": if !mx.is_empty() { "pass" } else { "info" },
-        "detail": if mx.is_empty() { "No MX record — domain can't receive email".to_string() } else { mx },
+        "detail": if mx.is_empty() { "No MX record - domain can't receive email".to_string() } else { mx },
     }));
 
     // 5. SPF
@@ -1201,7 +1201,7 @@ pub async fn dns_health_check(
     checks.push(serde_json::json!({
         "check": "SPF Record",
         "status": if has_spf { "pass" } else { "warn" },
-        "detail": if has_spf { "SPF configured" } else { "No SPF record — email authentication missing" },
+        "detail": if has_spf { "SPF configured" } else { "No SPF record - email authentication missing" },
     }));
 
     // 6. DNSSEC
@@ -1233,7 +1233,7 @@ pub async fn dns_health_check(
 
 // ── DNSSEC Status ───────────────────────────────────────────────────────
 
-/// GET /api/dns/zones/{id}/dnssec — Get DNSSEC status for a zone.
+/// GET /api/dns/zones/{id}/dnssec - Get DNSSEC status for a zone.
 pub async fn dnssec_status(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -1284,7 +1284,7 @@ pub async fn dnssec_status(
 
 // ── DNS Changelog ───────────────────────────────────────────────────────
 
-/// GET /api/dns/zones/{id}/changelog — Get DNS change history.
+/// GET /api/dns/zones/{id}/changelog - Get DNS change history.
 pub async fn dns_changelog(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -1320,7 +1320,7 @@ pub async fn dns_changelog(
 
 // ── DNS Analytics ───────────────────────────────────────────────────────
 
-/// GET /api/dns/zones/{id}/analytics — Get DNS query analytics (Cloudflare only).
+/// GET /api/dns/zones/{id}/analytics - Get DNS query analytics (Cloudflare only).
 pub async fn dns_analytics(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -1419,7 +1419,7 @@ pub async fn dns_analytics(
 
 // ── Cloudflare Zone Settings ───────────────────────────────────────────
 
-/// GET /api/dns/zones/{id}/cf/settings — Get Cloudflare zone settings.
+/// GET /api/dns/zones/{id}/cf/settings - Get Cloudflare zone settings.
 pub async fn cf_zone_settings(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -1469,7 +1469,7 @@ pub async fn cf_zone_settings(
     })))
 }
 
-/// PUT /api/dns/zones/{id}/cf/settings — Update a Cloudflare zone setting.
+/// PUT /api/dns/zones/{id}/cf/settings - Update a Cloudflare zone setting.
 pub async fn cf_update_setting(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -1582,7 +1582,7 @@ pub async fn cf_update_setting(
 
 // ── Cloudflare Cache Purge ─────────────────────────────────────────────
 
-/// POST /api/dns/zones/{id}/cf/cache/purge — Purge Cloudflare cache.
+/// POST /api/dns/zones/{id}/cf/cache/purge - Purge Cloudflare cache.
 pub async fn cf_purge_cache(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,

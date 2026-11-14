@@ -1,27 +1,27 @@
 #!/usr/bin/env bash
-# telemetry-oncall-db-audit-pin-e2e.sh — s464
+# telemetry-oncall-db-audit-pin-e2e.sh - s464
 #
 # dockpanel-fanout on panel/backend/src/routes/telemetry.rs +
 # panel/backend/src/services/telemetry_collector.rs (the s463 exhaustion
-# check's standing next candidate — see feedback_dockpanel_audit_scope_p2).
+# check's standing next candidate - see feedback_dockpanel_audit_scope_p2).
 # Found and fixed 3 real, independently-verified issues:
 #
 #   §A telemetry.rs's `preview` endpoint (and the frontend Preview modal)
 #      asserted "This is exactly what would be sent" over a `system` block
 #      built from the AGENT's full host-fingerprint endpoint (hostname, OS,
-#      kernel, memory, disk, cpu, uptime, services) — but the function that
+#      kernel, memory, disk, cpu, uptime, services) - but the function that
 #      actually POSTs to the external endpoint, `send_pending_events`, never
 #      receives an AgentClient at all and builds its own tiny
 #      {dockpanel_version, installation_id} system object. The false claim
 #      existed in TWO independent places: the backend JSON `note` field and
 #      a separately hardcoded frontend footer (Telemetry.tsx). Direction of
-#      the error is over-claiming what leaves the box, not under-claiming —
+#      the error is over-claiming what leaves the box, not under-claiming -
 #      not a live PII leak, but a false transparency claim on a
 #      privacy-sensitive opt-in feature, live-reachable regardless of the
 #      telemetry_enabled toggle (preview has no gate on it).
 #   §B (off-menu, completeness critic) on_call.rs's `validate_members_exist`
 #      only checked submitted member UUIDs existed (`SELECT COUNT(*) ...
-#      WHERE id = ANY($1)`), with no ownership term — the exact sibling gap
+#      WHERE id = ANY($1)`), with no ownership term - the exact sibling gap
 #      `escalation_policies.rs`'s `validate_user_routes` closed for `user:`
 #      escalation routes at s437, missed here because a schedule's member
 #      list is a different path into the same paging sink. An admin could
@@ -31,15 +31,15 @@
 #      email/Slack/Discord/PagerDuty/webhook with no consent.
 #   §C (setup critic, re-scoped) the agent's `remove_database` force-removes
 #      a container (with volumes) by id with no check that the container is
-#      actually dockpanel-managed — unlike its sibling `require_managed()`/
+#      actually dockpanel-managed - unlike its sibling `require_managed()`/
 #      `is_managed_labels()` in docker_apps.rs (v2.15.0), which this module
 #      never had. Reachability is defense-in-depth only: every caller of
 #      `/databases/{cid}` DELETE sources `container_id` from the panel's own
 #      `databases` row, written once from this module's own create response,
-#      never from user input — confirmed unchanged since s297
+#      never from user input - confirmed unchanged since s297
 #      (project_dockpanel_tech_debt_p26.md). NOTE: that memory's own citation
 #      ("ensure_managed... defined in routes/docker_apps.rs, 19 call sites")
-#      does not match current code — grepped, zero hits anywhere in the
+#      does not match current code - grepped, zero hits anywhere in the
 #      backend. The real, current primitive is `is_managed_labels`/
 #      `require_managed` in panel/agent/src/services/docker_apps.rs, scoped
 #      to Docker Apps only. The underlying gap (no managed-label check on
@@ -50,7 +50,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
 echo
 echo "=================================================="
-echo "  Telemetry / on-call / db-remove audit — source pins (s464)"
+echo "  Telemetry / on-call / db-remove audit - source pins (s464)"
 echo "=================================================="
 echo
 
@@ -121,13 +121,13 @@ else
 fi
 
 # Positive control: send_pending_events's real (small) system object is
-# unchanged — the fix narrows the CLAIM, not the payload (widening the
+# unchanged - the fix narrows the CLAIM, not the payload (widening the
 # payload would be the arming move the skeptic flagged against).
 SEND_PENDING_BODY=$(fnbody "$(code panel/backend/src/services/telemetry_collector.rs)" "send_pending_events")
 if has "$SEND_PENDING_BODY" 'dockpanel_version' && lacks "$SEND_PENDING_BODY" 'hostname\|system-info\|AgentClient'; then
-  ok "A5 (control) send_pending_events' real payload is still just {dockpanel_version, installation_id} — not widened"
+  ok "A5 (control) send_pending_events' real payload is still just {dockpanel_version, installation_id} - not widened"
 else
-  bad "A5 (control) send_pending_events' payload shape changed — verify this wasn't accidentally widened"
+  bad "A5 (control) send_pending_events' payload shape changed - verify this wasn't accidentally widened"
 fi
 
 # ── §B on_call.rs: schedule members are self-or-managed, not just existing ─
@@ -136,13 +136,13 @@ echo "── §B on_call.rs: validate_members_exist enforces self-or-managed own
 if has "$VALIDATE_MEMBERS_BODY" 'owner_id: Uuid'; then
   ok "B1 validate_members_exist takes an owner_id parameter"
 else
-  bad "B1 validate_members_exist has no owner_id parameter — still existence-only"
+  bad "B1 validate_members_exist has no owner_id parameter - still existence-only"
 fi
 
 if has "$VALIDATE_MEMBERS_BODY" 'id = \$2 OR reseller_id = \$2'; then
   ok "B2 the member query requires self-or-managed (id = \$2 OR reseller_id = \$2)"
 else
-  bad "B2 the member query no longer carries the ownership term — regressed to existence-only"
+  bad "B2 the member query no longer carries the ownership term - regressed to existence-only"
 fi
 
 CALL_SITES=$(grep -c 'validate_members_exist(&state\.db, &input\.members, claims\.sub)' <<< "$ON_CALL_C")
@@ -174,7 +174,7 @@ fi
 if has "$BEFORE_STOP" 'dockpanel\.managed'; then
   ok "C2 remove_database checks the dockpanel.managed label before the stop/remove call"
 else
-  bad "C2 no dockpanel.managed check found ahead of stop/remove — guard regressed or reordered after the destructive call"
+  bad "C2 no dockpanel.managed check found ahead of stop/remove - guard regressed or reordered after the destructive call"
 fi
 
 if has "$REMOVE_DB_BODY" 'not a dockpanel-managed container'; then
@@ -184,11 +184,11 @@ else
 fi
 
 # Positive control: create_database still labels its own containers
-# dockpanel.managed=true — the thing the new guard checks for.
+# dockpanel.managed=true - the thing the new guard checks for.
 if has "$CREATE_DB_BODY" '"dockpanel\.managed"\.to_string\(\), "true"\.to_string\(\)'; then
   ok "C4 (control) create_database still labels new containers dockpanel.managed=true"
 else
-  bad "C4 (control) create_database no longer sets the managed label — the new guard would reject every legitimate removal"
+  bad "C4 (control) create_database no longer sets the managed label - the new guard would reject every legitimate removal"
 fi
 
 echo

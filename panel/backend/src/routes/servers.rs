@@ -41,33 +41,33 @@ pub struct Server {
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
-/// GET /api/servers — the machines this caller may see.
+/// GET /api/servers - the machines this caller may see.
 ///
 /// **An administrator sees every machine; anybody else sees the ones they hold.**
 /// This used to be `WHERE user_id = $1` for everyone, and `servers.user_id` names
-/// whoever happened to register the row — the FIRST admin by `created_at` for the
+/// whoever happened to register the row - the FIRST admin by `created_at` for the
 /// local one (`services::agent`), and the registering admin for a fleet member. So
 /// a panel's SECOND administrator opened Servers to "No servers found. The local
-/// server should appear automatically." — which reads as a broken install, on a box
+/// server should appear automatically." - which reads as a broken install, on a box
 /// whose sites that same account can fully administer. It could not appear: nothing
 /// re-points `user_id`, and the only INSERT is this module's own.
 ///
 /// Widening this is safe in the one direction that matters: `agent_token` carries
 /// `#[serde(skip_serializing)]` above, so the row this returns has never contained
 /// the credential that is root on the agent. A non-admin is unchanged and still
-/// sees only rows it owns — which for a `client` is none, because no non-admin can
+/// sees only rows it owns - which for a `client` is none, because no non-admin can
 /// own one.
 ///
 /// ⚠ SCOPE LIMIT (CLOSED s432), stated here rather than discovered later: this
 /// fixes the LIST. It named seven sibling reads that still resolved a machine
-/// through `servers.user_id` and so still under-reported for a second admin —
+/// through `servers.user_id` and so still under-reported for a second admin -
 /// `routes/drift.rs`'s `servers()` and `report()`, `services/drift.rs`'s five
 /// report fetchers (one logical site), and four `routes/dashboard.rs`
 /// aggregations (`fleet_overview`, `metrics_history`, `gpu_metrics_history`,
 /// `timeline`). `routes/billing.rs:63` was never one of them: counting the
 /// servers a given account holds is what billing means. `fleet_overview` was
 /// closed first, at s430 (`AdminUser`-only, so the filter was dropped
-/// outright — see its own comment). The remaining six were closed at s432 by
+/// outright - see its own comment). The remaining six were closed at s432 by
 /// the same rule, applied per caller shape: the `AdminUser`-only routes
 /// (`drift.rs`, `services/drift.rs`) drop the filter exactly as this route
 /// does below; the routes that also serve non-admins (`metrics_history`,
@@ -96,7 +96,7 @@ pub async fn list(
     Ok(Json(servers))
 }
 
-/// POST /api/servers — Register a new remote server. Returns agent token and install script.
+/// POST /api/servers - Register a new remote server. Returns agent token and install script.
 pub async fn create(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -131,7 +131,7 @@ pub async fn create(
     // decrypted at the single site that consumes it,
     // `services::agent::AgentPool::for_server`. `auto_healer` names the
     // exposure this closes: a panel DB dump carried it in cleartext.
-    // The response below still returns the PLAINTEXT local variable — the
+    // The response below still returns the PLAINTEXT local variable - the
     // operator needs it for the install one-liner, and that is the only time
     // it is ever shown.
     let agent_token_enc =
@@ -154,7 +154,7 @@ pub async fn create(
 
     // Generate install script with panel URL and token.
     //
-    // `base_url` is EMPTY on every IP-only install — setup.sh only writes it
+    // `base_url` is EMPTY on every IP-only install - setup.sh only writes it
     // when a domain was given. Interpolating that produced
     // `curl -sSL /install-agent.sh … --panel-url  --token <tok>`, which is not a
     // URL and whose arg parser then swallows `--token` as the value of
@@ -162,7 +162,7 @@ pub async fn create(
     // installed without a panel URL never phones home, so `last_seen_at` stays
     // NULL and the box is invisible to the fleet plan's reachability gate
     // forever. Fall back to the address the operator just typed for this server
-    // — they are on the panel, so they know where it is.
+    // - they are on the panel, so they know where it is.
     let panel_url = if state.config.base_url.trim().is_empty() {
         None
     } else {
@@ -176,7 +176,7 @@ pub async fn create(
         None => format!(
             "# This panel has no BASE_URL configured (it was installed without a domain).\n\
              # Replace https://PANEL-ADDRESS with the address this server can reach it on,\n\
-             # in BOTH places — an agent installed without --panel-url never checks in, and\n\
+             # in BOTH places - an agent installed without --panel-url never checks in, and\n\
              # a server that never checks in can never be picked up by a fleet update.\n\
              curl -sSL https://PANEL-ADDRESS/install-agent.sh | sudo bash -s -- \\\n  --panel-url https://PANEL-ADDRESS \\\n  --token {agent_token} \\\n  --server-id {}",
             server.id
@@ -224,7 +224,7 @@ pub async fn create(
     ))
 }
 
-/// GET /api/servers/{id} — Get server details.
+/// GET /api/servers/{id} - Get server details.
 pub async fn get_one(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -242,7 +242,7 @@ pub async fn get_one(
     Ok(Json(server))
 }
 
-/// DELETE /api/servers/{id} — Remove a server (cannot delete local server).
+/// DELETE /api/servers/{id} - Remove a server (cannot delete local server).
 pub async fn remove(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -304,9 +304,9 @@ pub async fn remove(
     Ok(Json(serde_json::json!({ "ok": true, "name": server.name })))
 }
 
-/// POST /api/servers/{id}/rotate-cert-pin — Clear the stored TLS fingerprint
+/// POST /api/servers/{id}/rotate-cert-pin - Clear the stored TLS fingerprint
 /// so the next agent checkin re-captures it (TOFU). Use when an agent's cert
-/// has legitimately changed (rotation, reinstall) — otherwise an unexpected
+/// has legitimately changed (rotation, reinstall) - otherwise an unexpected
 /// fingerprint change signals MITM and is refused at checkin time.
 pub async fn rotate_cert_pin(
     State(state): State<AppState>,
@@ -364,11 +364,11 @@ pub async fn rotate_cert_pin(
 
     Ok(Json(serde_json::json!({
         "ok": true,
-        "message": "Cert pin cleared — next agent checkin will re-capture the fingerprint (TOFU).",
+        "message": "Cert pin cleared - next agent checkin will re-capture the fingerprint (TOFU).",
     })))
 }
 
-/// POST /api/servers/{id}/test — Test connection to a remote server's agent.
+/// POST /api/servers/{id}/test - Test connection to a remote server's agent.
 pub async fn test_connection(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -426,7 +426,7 @@ pub async fn test_connection(
     }
 }
 
-/// PUT /api/servers/{id} — Update server name/IP/URL.
+/// PUT /api/servers/{id} - Update server name/IP/URL.
 pub async fn update(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -502,7 +502,7 @@ pub async fn update(
     Ok(Json(updated))
 }
 
-/// POST /api/servers/{id}/rotate-token — Rotate agent token.
+/// POST /api/servers/{id}/rotate-token - Rotate agent token.
 /// Calls the agent's rotation endpoint, then updates the hash in the database.
 pub async fn rotate_token(
     State(state): State<AppState>,
@@ -629,7 +629,7 @@ pub struct UptimeResponse {
     pub bucket_minutes: i32,
 }
 
-/// GET /api/servers/{id}/uptime — 24h × 10min uptime sparkline derived from
+/// GET /api/servers/{id}/uptime - 24h × 10min uptime sparkline derived from
 /// `metrics_history` row presence. A bucket is "online" if at least one
 /// metrics_collector row landed in that 10-minute window for the server.
 /// 144 buckets total, oldest first (index 0 = ~24h ago, last = now).

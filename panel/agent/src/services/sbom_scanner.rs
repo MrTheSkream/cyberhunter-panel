@@ -3,7 +3,7 @@
 // Produces an SPDX 2.3 JSON document describing every package present in a
 // Docker image. Different from the per-image vulnerability scanner (grype):
 // SBOMs describe *what is installed*, vuln scans describe *what is vulnerable*.
-// Operators want both — the SBOM is the supply-chain artifact, the vuln scan
+// Operators want both - the SBOM is the supply-chain artifact, the vuln scan
 // is the risk assessment.
 
 use crate::safe_cmd::safe_command;
@@ -13,7 +13,7 @@ use std::time::Duration;
 const SYFT_DIR: &str = "/var/lib/dockpanel/scanners";
 const SYFT_BIN: &str = "/var/lib/dockpanel/scanners/syft";
 
-// Same pinning rationale as image_scanner.rs's GRYPE_VERSION — see that comment.
+// Same pinning rationale as image_scanner.rs's GRYPE_VERSION - see that comment.
 const SYFT_VERSION: &str = "v1.51.1";
 
 /// True if the syft binary is present at the managed path.
@@ -21,7 +21,7 @@ pub async fn is_installed() -> bool {
     tokio::fs::metadata(SYFT_BIN).await.is_ok()
 }
 
-/// Install syft via Anchore's official installer script into the DockPanel
+/// Install syft via Anchore's official installer script into the CyberHunter - Panel
 /// data directory so the hardened agent sandbox can read/write it.
 pub async fn install_syft() -> Result<(), String> {
     if is_installed().await {
@@ -106,7 +106,7 @@ pub async fn generate_sbom(image: &str) -> Result<String, String> {
     // Defensive: confirm syft actually emitted SPDX (top-level field present).
     // Avoids storing a corrupt/empty document that would fail later validation.
     if !stdout.contains("\"spdxVersion\"") {
-        return Err("syft output missing SPDX header — unexpected format".to_string());
+        return Err("syft output missing SPDX header - unexpected format".to_string());
     }
 
     Ok(stdout)

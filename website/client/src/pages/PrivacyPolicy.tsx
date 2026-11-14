@@ -3,7 +3,7 @@ import { LegalDoc, type LegalSection } from '../components/LegalDoc';
 
 /**
  * Wording is unchanged from the version this page has served since March. Only
- * the chrome moved — which is also why the date below still reads March: a
+ * the chrome moved - which is also why the date below still reads March: a
  * privacy policy whose "last updated" advances because someone restyled it
  * teaches readers that the date means nothing.
  */
@@ -26,10 +26,10 @@ const SECTIONS: LegalSection[] = [
   {
     id: 'software',
     label: 'Your server',
-    title: 'DockPanel software (self-hosted)',
+    title: 'CyberHunter - Panel software (self-hosted)',
     body: (
       <p>
-        When you install DockPanel on your own server, all data stays on your server. DockPanel does
+        When you install CyberHunter - Panel on your own server, all data stays on your server. CyberHunter - Panel does
         not phone home, send telemetry, or transmit any information to us or third parties. Your
         server configuration, site data, database credentials, and backups remain entirely under your
         control.
@@ -42,8 +42,8 @@ const SECTIONS: LegalSection[] = [
     title: 'Cookies',
     body: (
       <p>
-        This website does not use cookies. The self-hosted DockPanel application uses a session cookie
-        solely for authentication purposes on your own server — this cookie is never shared with any
+        This website does not use cookies. The self-hosted CyberHunter - Panel application uses a session cookie
+        solely for authentication purposes on your own server - this cookie is never shared with any
         external service.
       </p>
     ),
@@ -74,7 +74,7 @@ const SECTIONS: LegalSection[] = [
     title: 'GitHub',
     body: (
       <p>
-        DockPanel&apos;s source code is hosted on GitHub. If you open issues, submit pull requests, or
+        CyberHunter - Panel&apos;s source code is hosted on GitHub. If you open issues, submit pull requests, or
         interact with the repository, GitHub&apos;s privacy policy applies to those interactions.
       </p>
     ),
@@ -108,7 +108,7 @@ export default function PrivacyPolicy() {
       updated={UPDATED}
       standfirst={
         <>
-          DockPanel is a free, open-source, self-hosted server management panel. We are committed to
+          CyberHunter - Panel is a free, open-source, self-hosted server management panel. We are committed to
           transparency about data practices. The short version: we collect almost nothing, and your
           server data never leaves your infrastructure.
         </>

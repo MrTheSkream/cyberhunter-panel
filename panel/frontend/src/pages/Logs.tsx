@@ -415,7 +415,7 @@ function SiteLogsContent() {
       // in five seconds. Selecting a fleet member is the case that matters: the
       // panel cannot stream to one, says so, and retrying that for ever buried
       // the explanation under "reconnecting" lines. Only a transport-level
-      // failure — no status at all, or a gateway/unavailable — is worth another
+      // failure - no status at all, or a gateway/unavailable - is worth another
       // attempt.
       const status = e instanceof ApiError ? e.status : 0;
       const worthRetrying = status === 0 || status === 502 || status === 503 || status === 504;
@@ -750,7 +750,7 @@ function SiteLogsContent() {
               <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-rust-500" />
             </span>
             <span className="text-xs text-rust-400 font-medium">
-              Live streaming — {lines.length} lines received
+              Live streaming - {lines.length} lines received
             </span>
           </div>
         )}
@@ -762,7 +762,7 @@ function SiteLogsContent() {
         </div>
       )}
 
-      {/* Issue #120: the truncate prompt portals to document.body — its trigger is a per-file row far below this point. */}
+      {/* Issue #120: the truncate prompt portals to document.body - its trigger is a per-file row far below this point. */}
       {pendingTruncate && (
         <ConfirmDialog
           label={`Clear log file? This cannot be undone: ${pendingTruncate}`}
@@ -848,8 +848,8 @@ function SiteLogsContent() {
               <span className={errorCheck.status === "warning" ? "text-danger-400" : "text-rust-400"}>
                 Error rate: {errorCheck.error_rate_percent}% ({errorCheck.error_5xx} / {errorCheck.total_requests} requests)
                 {errorCheck.status === "warning"
-                  ? " — High error rate detected!"
-                  : " — Within normal range"}
+                  ? " - High error rate detected!"
+                  : " - Within normal range"}
               </span>
             </div>
           )}
@@ -944,8 +944,8 @@ type LogTab = "site" | "system" | "audit";
 
 export default function Logs() {
   const { user } = useAuth();
-  // Deep-linkable tab (see Monitoring.tsx). Two legacy URLs redirect here —
-  // `/activity` and `/system-logs` — and both landed on Site Logs, which is a
+  // Deep-linkable tab (see Monitoring.tsx). Two legacy URLs redirect here -
+  // `/activity` and `/system-logs` - and both landed on Site Logs, which is a
   // file tailer, not the audit trail or the system events they are named for.
   // The Dashboard's "Recent Activity → View all" had the same problem: it lists
   // `activity_logs` rows and sent you to a tab that reads nginx files.

@@ -19,7 +19,7 @@ pub struct DrillSiteRequest {
     pub filename: String,
 }
 
-/// POST /backups/drill/site — End-to-end site drill.
+/// POST /backups/drill/site - End-to-end site drill.
 async fn drill_site(
     Json(req): Json<DrillSiteRequest>,
 ) -> Result<Json<backup_drill::DrillResult>, ApiErr> {
@@ -42,7 +42,7 @@ pub struct DrillDbRequest {
     pub filename: String,
 }
 
-/// POST /backups/drill/db — DB drill: scratch engine container + full restore + row probe.
+/// POST /backups/drill/db - DB drill: scratch engine container + full restore + row probe.
 async fn drill_db(
     Json(req): Json<DrillDbRequest>,
 ) -> Result<Json<backup_drill::DrillResult>, ApiErr> {
@@ -63,7 +63,7 @@ pub struct DrillVolumeRequest {
     pub filename: String,
 }
 
-/// POST /backups/drill/volume — Volume drill: scratch Docker volume + restore container + read-test probe.
+/// POST /backups/drill/volume - Volume drill: scratch Docker volume + restore container + read-test probe.
 async fn drill_volume(
     Json(req): Json<DrillVolumeRequest>,
 ) -> Result<Json<backup_drill::DrillResult>, ApiErr> {

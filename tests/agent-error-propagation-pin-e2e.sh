@@ -1,25 +1,25 @@
 #!/usr/bin/env bash
 #
-# Pins the fix for issues #90, #91 and #92 — three separate reporters filing
-# three separate bugs against one defect: the panel told them "Agent offline —
-# the DockPanel agent is not responding" while the agent was answering
+# Pins the fix for issues #90, #91 and #92 - three separate reporters filing
+# three separate bugs against one defect: the panel told them "Agent offline -
+# the CyberHunter - Panel agent is not responding" while the agent was answering
 # perfectly clearly ("Path must be within /var/backups/ or /tmp/", "WAF not
 # installed", a full nginx -t diagnostic).
 #
 # Two halves produced the lie and both are pinned here:
-#   backend  — agent_error() took `impl Display`, so AgentError::Status(code,
+#   backend  - agent_error() took `impl Display`, so AgentError::Status(code,
 #              body) was stringified and every non-2xx became one generic 502.
-#   frontend — api.ts rewrote ANY 502 into the "agent offline" sentence.
+#   frontend - api.ts rewrote ANY 502 into the "agent offline" sentence.
 #
 # Plus the WAF half of #92: the installer's unicode.mapping fallback wrote a
 # ZERO-BYTE file, which ModSecurity cannot parse, so nginx -t failed the first
-# time a site enabled the WAF — after the installer had reported success.
+# time a site enabled the WAF - after the installer had reported success.
 #
 # ⚠ Every source check below strips comments before searching. This file's own
 # subject matter is spelled out in the comments of the code it inspects, so a
 # raw-source grep would credit (or convict) the prose that explains the trap
 # rather than the code that avoids it. See feedback_source_pin_prose_trap and
-# lesson #110f — that trap has now fired on three separate suites.
+# lesson #110f - that trap has now fired on three separate suites.
 
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -56,13 +56,13 @@ echo "§1 the status survives the boundary"
 if hasre "$ERR_RS" 'pub fn agent_error\(context: &str, e: AgentError\)'; then
   ok "agent_error takes AgentError by value, so the status cannot be stringified away"
 else
-  bad "agent_error no longer takes AgentError — an 'impl Display' bound is exactly what let 244 call sites discard the agent's status code"
+  bad "agent_error no longer takes AgentError - an 'impl Display' bound is exactly what let 244 call sites discard the agent's status code"
 fi
 
 if hasre "$ERR_RS" '\(400\.\.500\)\.contains\(&code\)'; then
   ok "a 4xx from the agent is handled as its own case"
 else
-  bad "no 4xx branch in agent_error — agent refusals are being collapsed again"
+  bad "no 4xx branch in agent_error - agent refusals are being collapsed again"
 fi
 
 if hasre "$ERR_RS" 'StatusCode::from_u16\(code\)'; then
@@ -88,13 +88,13 @@ MARKER_USES=$(code_of "$ERR_RS" | sed '/#\[cfg(test)\]/q' | grep -cF 'CODE_AGENT
 if [ "$MARKER_USES" -eq 2 ]; then
   ok "CODE_AGENT_UNREACHABLE appears exactly twice in production code (definition + the one arm that earns it)"
 else
-  bad "CODE_AGENT_UNREACHABLE appears $MARKER_USES times in production code, expected 2 — a Status or Parse arm may now be claiming the agent is offline"
+  bad "CODE_AGENT_UNREACHABLE appears $MARKER_USES times in production code, expected 2 - a Status or Parse arm may now be claiming the agent is offline"
 fi
 
 if hasre "$ERR_RS" 'v\.get\("error"\)' && hasre "$ERR_RS" 'or_else\(\|\| v\.get\("message"\)\)'; then
   ok "both agent error-body shapes are understood ({error:…} and {success:false,message:…})"
 else
-  bad "only one agent error-body shape is parsed — the other renders as raw JSON to the user"
+  bad "only one agent error-body shape is parsed - the other renders as raw JSON to the user"
 fi
 
 echo
@@ -103,7 +103,7 @@ echo "§3 a 5xx still hides its internals"
 if hasre "$ERR_RS" 'Operation failed\. Reference:'; then
   ok "agent 5xx keeps the generic incident-id response"
 else
-  bad "the 5xx path no longer returns a generic message — internals may leak"
+  bad "the 5xx path no longer returns a generic message - internals may leak"
 fi
 
 echo
@@ -118,7 +118,7 @@ fi
 # NEGATIVE: the blanket rewrite must be gone from the CODE. The comment above
 # it describes the old behaviour on purpose, which is why this reads code only.
 if hasre "$API_TS" 'res\.status === 502'; then
-  bad "api.ts still keys the 'agent offline' message off a bare 502 — that is the defect in #90/#91/#92"
+  bad "api.ts still keys the 'agent offline' message off a bare 502 - that is the defect in #90/#91/#92"
 else
   ok "no bare-502 branch remains in api.ts"
 fi
@@ -129,7 +129,7 @@ echo "§5 third-party failures are not the agent's fault"
 if hasre "$ERR_RS" 'pub fn upstream_error'; then
   ok "upstream_error exists for third-party calls"
 else
-  bad "no upstream_error — Stripe/Cloudflare failures have nowhere honest to go"
+  bad "no upstream_error - Stripe/Cloudflare failures have nowhere honest to go"
 fi
 
 # dns.rs legitimately talks to BOTH: Cloudflare over reqwest and the agent for
@@ -148,32 +148,32 @@ echo "§6 the WAF's unicode.mapping cannot be empty (#92)"
 if [ -f "$MAPPING" ]; then
   ok "the vendored mapping asset is in the tree"
 else
-  bad "panel/agent/assets/unicode.mapping is missing — the include_str! will not compile"
+  bad "panel/agent/assets/unicode.mapping is missing - the include_str! will not compile"
 fi
 
 SZ=$(wc -c < "$MAPPING" 2>/dev/null || echo 0)
 if [ "$SZ" -gt 40000 ]; then
   ok "the mapping asset is a real file ($SZ bytes)"
 else
-  bad "the mapping asset is $SZ bytes — a truncated mapping fails nginx -t exactly like the empty one did"
+  bad "the mapping asset is $SZ bytes - a truncated mapping fails nginx -t exactly like the empty one did"
 fi
 
 if [ "$(grep -cE '^20127' "$MAPPING" 2>/dev/null || echo 0)" -gt 0 ]; then
   ok "the asset defines code page 20127, which modsecurity.conf names"
 else
-  bad "the asset has no 20127 section — the code page modsecurity.conf asks for is absent"
+  bad "the asset has no 20127 section - the code page modsecurity.conf asks for is absent"
 fi
 
 if hasre "$SVC_RS" 'include_str!\("\.\./\.\./assets/unicode\.mapping"\)'; then
   ok "the mapping rides the binary instead of depending on distro packaging"
 else
-  bad "unicode.mapping is not embedded — Debian 13 ships no copy, so the install writes nothing usable"
+  bad "unicode.mapping is not embedded - Debian 13 ships no copy, so the install writes nothing usable"
 fi
 
 # NEGATIVE: the zero-byte fallback. Written as a regex over CODE so the comment
 # explaining why it was removed cannot satisfy it.
 if hasre "$SVC_RS" 'write\("/etc/modsecurity/unicode\.mapping", ""\)'; then
-  bad "the empty-file fallback is back — it creates a file ModSecurity cannot parse and reports the install as successful"
+  bad "the empty-file fallback is back - it creates a file ModSecurity cannot parse and reports the install as successful"
 else
   ok "no zero-byte unicode.mapping fallback"
 fi
@@ -181,7 +181,7 @@ fi
 if hasre "$SVC_RS" 'c\.contains\("20127"\)'; then
   ok "the installer verifies the mapping it just wrote, rather than assuming it"
 else
-  bad "the installer does not check unicode.mapping after writing — #45's shape, and the reason #92 shipped as a success"
+  bad "the installer does not check unicode.mapping after writing - #45's shape, and the reason #92 shipped as a success"
 fi
 
 echo

@@ -110,12 +110,12 @@ async fn check_schedules(pool: &PgPool, agents: &AgentRegistry) {
             Ok(_) => {
                 // Another tick or an operator cleared it between the SELECT and
                 // here. Whoever cleared it owns the deploy; do not double-fire.
-                tracing::info!("One-time deploy {id} was already claimed — skipping");
+                tracing::info!("One-time deploy {id} was already claimed - skipping");
                 continue;
             }
             Err(e) => {
                 tracing::warn!(
-                    "Failed to clear scheduled_deploy_at for deploy {id}: {e} — NOT deploying, \
+                    "Failed to clear scheduled_deploy_at for deploy {id}: {e} - NOT deploying, \
                      because an uncleared schedule redeploys on every tick"
                 );
                 continue;

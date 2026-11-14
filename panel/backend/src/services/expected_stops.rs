@@ -1,4 +1,4 @@
-//! Deliberate container stops — the one place that records, reads and clears them.
+//! Deliberate container stops - the one place that records, reads and clears them.
 //!
 //! The alert engine cannot otherwise tell "the operator stopped this" from "this
 //! crashed": it sees `exited`/`dead` in a 120-second poll of the agent's `/apps`
@@ -6,8 +6,8 @@
 //! purpose records a row here; the engine reads it before firing and deletes it
 //! the moment the container is observed in any state that is not exited/dead.
 //!
-//! Keyed on `(server_id, container_name)` — the same key `alert_state` uses for
-//! this alert type — never on `container_id`, which changes on every app Update
+//! Keyed on `(server_id, container_name)` - the same key `alert_state` uses for
+//! this alert type - never on `container_id`, which changes on every app Update
 //! (`update_app`/`change_container_image`/`update_env` re-create the container)
 //! and is not unique across a cloned fleet member. See the migration for the
 //! full reasoning.
@@ -21,8 +21,8 @@ pub const REASON_OPERATOR_STOP: &str = "operator_stop";
 pub const REASON_MANUAL_SLEEP: &str = "manual_sleep";
 pub const REASON_AUTO_SLEEP: &str = "auto_sleep";
 pub const REASON_STACK_STOP: &str = "stack_stop";
-/// Update/change-image/edit-env recreate the container — `docker rm` then
-/// `docker create` (or its blue-green equivalent) — which is genuinely
+/// Update/change-image/edit-env recreate the container - `docker rm` then
+/// `docker create` (or its blue-green equivalent) - which is genuinely
 /// exited/absent for part of that window even though nobody asked it to stay
 /// down. Recorded BEFORE the agent call starts, unlike every other reason
 /// here: those record only after a stop has already succeeded, but a
@@ -59,7 +59,7 @@ pub async fn record(
     if let Err(e) = res {
         // Deliberately not fatal: failing to record an expectation costs a
         // spurious alert, while failing the operator's stop costs them the
-        // action they asked for. But it must be visible — a silent miss here
+        // action they asked for. But it must be visible - a silent miss here
         // looks exactly like the defect this table exists to fix.
         tracing::warn!(
             "Could not record expected stop for '{container_name}' on server {server_id}: {e}"
@@ -67,7 +67,7 @@ pub async fn record(
     }
 }
 
-/// Forget the expectation — the container is running again, or is being started.
+/// Forget the expectation - the container is running again, or is being started.
 pub async fn clear(pool: &PgPool, server_id: Uuid, container_name: &str) {
     let _ = sqlx::query(
         "DELETE FROM container_expected_stops WHERE server_id = $1 AND container_name = $2",
@@ -114,7 +114,7 @@ pub async fn clear_if_older_than(
 /// keeps skipping its `container_down` branch, the auto-heal restart leg keeps
 /// skipping it, and the Apps page keeps calling it "stopped on purpose" and
 /// naming whoever stopped the container that is gone. Not for a container that
-/// is absent — for the NEXT container of that name, which is the one that
+/// is absent - for the NEXT container of that name, which is the one that
 /// crashed.
 ///
 /// Removing an app and redeploying it under the same name is the supported way
@@ -130,7 +130,7 @@ pub async fn clear_if_older_than(
 /// ⚠ `observed` MUST be the host's complete listing, and an empty one does
 /// nothing. `container_name <> ALL('{}')` is true for every row, so a listing
 /// that is empty because the host could not be read would clear every
-/// expectation at once — and the next sweep would fire `container_down` for
+/// expectation at once - and the next sweep would fire `container_down` for
 /// every container the operator had deliberately stopped, which is the defect
 /// this table was created to remove. An empty listing is the one observation
 /// that cannot tell "nothing is here" from "I can see nothing", and the cost of
@@ -180,7 +180,7 @@ pub async fn expected_on_server(pool: &PgPool, server_id: Uuid) -> HashSet<Strin
 
 /// The reason a container is stopped (plus who stopped it, if a person did),
 /// for the operator-facing surfaces. `actor_email` is NULL for auto_sleep,
-/// which no person initiates — see `record()`'s own doc comment.
+/// which no person initiates - see `record()`'s own doc comment.
 pub async fn reasons_on_server(
     pool: &PgPool,
     server_id: Uuid,
@@ -200,7 +200,7 @@ pub async fn reasons_on_server(
 /// one the suppression models: the container CRASHES, `container_down` fires and
 /// an incident opens, and THEN the operator presses Stop to take it out of
 /// service while they investigate. From that moment the engine's exited arm is
-/// skipped, so nothing re-evaluates the row — the recovery arm cannot resolve it
+/// skipped, so nothing re-evaluates the row - the recovery arm cannot resolve it
 /// (the container is deliberately down) and the stale sweep cannot either (an
 /// exited container is still listed by the agent). The row would stay 'firing'
 /// for ever, escalating for seven days, with the incident published throughout.
@@ -254,8 +254,8 @@ pub async fn resolve_open_container_down(pool: &PgPool, server_id: Uuid, contain
     )
     .await;
 
-    // `resolve_alert` writes to `alerts` and nothing else — it has no reference
-    // to `managed_incidents` — so an incident auto-opened for this container
+    // `resolve_alert` writes to `alerts` and nothing else - it has no reference
+    // to `managed_incidents` - so an incident auto-opened for this container
     // would otherwise stay `investigating` on the public status page until a
     // human closed it by hand. Matched on the EXACT generated title for both
     // terminal states, never a LIKE, so a container whose name is a prefix of

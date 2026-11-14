@@ -52,8 +52,8 @@ async fn system_info(State(state): State<AppState>) -> Json<SystemInfo> {
     sys.refresh_memory();
 
     // CPU is NOT refreshed here. A per-request refresh measures the interval
-    // since whichever unrelated caller last hit this endpoint — and this
-    // handler's own work lands inside that interval — so the answer tracked the
+    // since whichever unrelated caller last hit this endpoint - and this
+    // handler's own work lands inside that interval - so the answer tracked the
     // request pattern instead of the load. The sampler owns a fixed window.
     let cpu_usage = state.cpu.usage();
     let mem_total = sys.total_memory();
@@ -76,7 +76,7 @@ async fn system_info(State(state): State<AppState>) -> Json<SystemInfo> {
         .map(|c| c.brand().to_string())
         .unwrap_or_default();
 
-    // CPU temperature — find the highest package/core/tctl reading
+    // CPU temperature - find the highest package/core/tctl reading
     let components = Components::new_with_refreshed_list();
     let cpu_temp = components
         .iter()
@@ -95,7 +95,7 @@ async fn system_info(State(state): State<AppState>) -> Json<SystemInfo> {
     let swap_used = sys.used_swap();
 
     // Process count, counted from /proc directly. Getting it from sysinfo means
-    // refreshing every process's stats — a full walk that cost ~70 ms of CPU per
+    // refreshing every process's stats - a full walk that cost ~70 ms of CPU per
     // call and was the contaminant in the CPU window described above.
     let process_count = crate::services::cpu_sampler::process_count();
 
@@ -212,7 +212,7 @@ async fn network(State(state): State<AppState>) -> Json<Vec<NetworkInfo>> {
     Json(interfaces)
 }
 
-/// GET /system/disk-io — Get disk I/O stats from /proc/diskstats.
+/// GET /system/disk-io - Get disk I/O stats from /proc/diskstats.
 async fn disk_io() -> Json<serde_json::Value> {
     // Take two snapshots 1 second apart to calculate rate
     let read1 = read_diskstats().await;
@@ -253,11 +253,11 @@ async fn read_diskstats() -> (u64, u64) {
     (reads, writes)
 }
 
-/// POST /system/cleanup — Free disk space by clearing caches and temp files.
+/// POST /system/cleanup - Free disk space by clearing caches and temp files.
 async fn disk_cleanup() -> Json<serde_json::Value> {
     let mut freed = Vec::new();
 
-    // 1. apt cache — unsandboxed because /var/cache/apt is outside the
+    // 1. apt cache - unsandboxed because /var/cache/apt is outside the
     // agent unit's ReadWritePaths and apt-get clean would silently no-op.
     if safe_command_unsandboxed("apt-get", &[]).args(["clean"]).output().await.is_ok() {
         freed.push("apt cache");
@@ -292,7 +292,7 @@ async fn disk_cleanup() -> Json<serde_json::Value> {
     }))
 }
 
-/// POST /system/hostname — Change server hostname.
+/// POST /system/hostname - Change server hostname.
 async fn change_hostname(Json(body): Json<serde_json::Value>) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, Json<serde_json::Value>)> {
     let hostname = body.get("hostname").and_then(|v| v.as_str()).unwrap_or("");
     if hostname.is_empty() || hostname.len() > 63 || !hostname.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.') {
@@ -303,11 +303,11 @@ async fn change_hostname(Json(body): Json<serde_json::Value>) -> Result<Json<ser
     Ok(Json(serde_json::json!({ "ok": true, "hostname": hostname })))
 }
 
-/// GET /system/port-check?port=8080 — Is this host port free to publish on?
+/// GET /system/port-check?port=8080 - Is this host port free to publish on?
 ///
 /// Answers the one question the deploy preflight cannot answer from the panel's
-/// own records: a port can be held by something DockPanel doesn't manage — the
-/// operator's own service, a stray container, a system daemon — and the only
+/// own records: a port can be held by something CyberHunter - Panel doesn't manage - the
+/// operator's own service, a stray container, a system daemon - and the only
 /// authority on that is the host itself.
 ///
 /// Probes `127.0.0.1` because that is exactly where `docker_apps::deploy`

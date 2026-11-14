@@ -1,6 +1,6 @@
 #!/bin/bash
-# Post-push gate reminder hook for DockPanel
-# Fires on Stop event — checks if a git push happened and prints reminders
+# Post-push gate reminder hook for CyberHunter - Panel
+# Fires on Stop event - checks if a git push happened and prints reminders
 
 INPUT=$(cat)
 
@@ -38,6 +38,6 @@ if [ "$REMOTE_HEAD" = "$LOCAL_HEAD" ] 2>/dev/null; then
   fi
 fi
 
-# No push detected — silent exit
+# No push detected - silent exit
 echo "{}"
 exit 0

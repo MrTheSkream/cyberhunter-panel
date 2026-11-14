@@ -1,11 +1,11 @@
 //! Paired-sidecar deployments.
 //!
 //! A one-click template can need a companion container it must never talk to
-//! the outside world through directly — the motivating case is Dozzle (#125):
+//! the outside world through directly - the motivating case is Dozzle (#125):
 //! it needs live Docker API access, and `deploy_app` deliberately never
 //! mounts the host socket into ANY one-click app, because that is a full
 //! host-escape vector regardless of who was allowed to trigger the deploy.
-//! The fix is not to loosen that policy — it is to give the app a sidecar
+//! The fix is not to loosen that policy - it is to give the app a sidecar
 //! that holds the real socket and exposes only a filtered slice of its API
 //! over a network nothing else can reach: the industry-standard
 //! `docker-socket-proxy` pattern, which Dozzle's own docs recommend for
@@ -17,10 +17,10 @@
 //! alias and publishes no host port; the main container joins the SAME
 //! network in place of the default bridge, so its existing host-port publish
 //! keeps working unchanged (port publishing does not care which bridge-driver
-//! network a container is on — `compose.rs`'s services already prove this),
+//! network a container is on - `compose.rs`'s services already prove this),
 //! and reaches the sidecar at `tcp://<alias>:<port>`. The sidecar is labelled
 //! `dockpanel.sidecar_of=<app>`, never `dockpanel.app.template`, so
-//! `list_deployed_apps`'s existing filter excludes it without any change —
+//! `list_deployed_apps`'s existing filter excludes it without any change -
 //! the operator manages exactly one thing.
 
 use bollard::Docker;
@@ -38,25 +38,25 @@ use tokio_stream::StreamExt;
 pub struct SidecarDef {
     pub image: &'static str,
     /// Network alias the main container reaches this sidecar by, on the
-    /// private per-app network — safe to keep short and generic (e.g.
+    /// private per-app network - safe to keep short and generic (e.g.
     /// "dockerproxy") because the network holds only this one app-pair.
     pub alias: &'static str,
     /// TCP port the sidecar listens on inside that network.
     pub port: u16,
     /// Env vars the sidecar itself needs, written explicitly and
-    /// deny-by-default rather than left to the image's own defaults — see
+    /// deny-by-default rather than left to the image's own defaults - see
     /// `docker_apps.rs`'s `DOZZLE_PROXY_ENV` for why every toggle is spelled
     /// out instead of omitted.
     pub proxy_env: &'static [(&'static str, &'static str)],
     /// Env var the panel injects into the MAIN container so it finds this
-    /// sidecar. Never exposed as a user-editable `EnvVarDef` — pointing it
+    /// sidecar. Never exposed as a user-editable `EnvVarDef` - pointing it
     /// anywhere else defeats the sandboxing this whole module exists for.
     pub client_env_var: &'static str,
 }
 
 impl SidecarDef {
     /// The `KEY=value` entry the main container's env gets, on every deploy
-    /// AND every recreate — reasserted, not merely defaulted, so an operator
+    /// AND every recreate - reasserted, not merely defaulted, so an operator
     /// editing the app's env cannot silently disconnect it by touching a row
     /// that looks like ordinary configuration but is actually wiring: there
     /// is no other value that resolves, because the alias only exists on
@@ -73,7 +73,7 @@ pub fn network_name(app_name: &str) -> String {
     format!("dockpanel-appnet-{app_name}")
 }
 
-/// The sidecar's own container name — a namespace disjoint from
+/// The sidecar's own container name - a namespace disjoint from
 /// `dockpanel-app-*`, so no app name can ever collide with it (every app name
 /// is already refused if it starts with that prefix; this one starts with a
 /// different prefix entirely, not a suffix of it).
@@ -87,7 +87,7 @@ fn container_name(app_name: &str) -> String {
 ///
 /// On a failure after the sidecar container exists but fails to start, that
 /// container is removed here (mirrors `deploy_app`'s own orphan cleanup). A
-/// network created just before that failure is left in place — harmless, and
+/// network created just before that failure is left in place - harmless, and
 /// reused rather than recreated on a retry (see the existence check below).
 pub async fn deploy(
     docker: &Docker,
@@ -165,7 +165,7 @@ pub async fn deploy(
             security_opt: Some(vec!["no-new-privileges:true".to_string()]),
             // No cap_add: this container touches no bind-mounted app data of
             // its own, so none of the CHOWN/SETUID/DAC_OVERRIDE grants the
-            // main container's hardening needs apply here — it only opens a
+            // main container's hardening needs apply here - it only opens a
             // unix socket and serves HTTP over the private network above.
             cap_drop: Some(vec!["ALL".to_string()]),
             ..Default::default()
@@ -292,7 +292,7 @@ pub async fn teardown(app_name: &str) {
 
 /// Mirror a stop onto this app's sidecar, if it has one. Best-effort: the
 /// operator asked to stop their app, and that already succeeded by the time
-/// this runs — a sidecar that fails to stop is logged, never surfaced as the
+/// this runs - a sidecar that fails to stop is logged, never surfaced as the
 /// action's own error.
 pub async fn mirror_stop(docker: &Docker, app_name: &str) {
     if let Some(id) = find(docker, app_name).await {
@@ -305,7 +305,7 @@ pub async fn mirror_stop(docker: &Docker, app_name: &str) {
     }
 }
 
-/// Mirror a start onto this app's sidecar, if it has one — run BEFORE the
+/// Mirror a start onto this app's sidecar, if it has one - run BEFORE the
 /// main container starts, so the sidecar is already reachable instead of
 /// making the app's first connection attempt race a cold start.
 pub async fn mirror_start(docker: &Docker, app_name: &str) {

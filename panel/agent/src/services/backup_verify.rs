@@ -20,7 +20,7 @@ pub struct VerificationCheck {
 /// is informational (a valid non-web backup legitimately has no index.*) and must not gate
 /// the verdict. The previous `checks_passed >= checks_run - 1` slack certified a corrupt,
 /// non-extractable archive as passed=true whenever `extract_success` was the single failing
-/// check (only 2 checks run in that case) — the lesson-#51 EOF-as-success trap re-introduced
+/// check (only 2 checks run in that case) - the lesson-#51 EOF-as-success trap re-introduced
 /// in the verify safety net itself. Extracted so the decision is unit-testable.
 fn site_backup_passed(checks: &[VerificationCheck]) -> bool {
     checks.iter().all(|c| c.name == "has_entry_point" || c.passed)
@@ -287,12 +287,12 @@ async fn verify_mysql_restore(
                     .unwrap_or(false);
                     // A truncated/corrupt .gz makes zcat exit non-zero while mariadb can read
                     // a clean EOF at a statement boundary and exit 0 (lesson #51 EOF-as-success).
-                    // Require the decompressor to have succeeded too — mirrors the hardened
+                    // Require the decompressor to have succeeded too - mirrors the hardened
                     // database_backup.rs::restore_mysql. Without it the verify safety net
                     // certifies a corrupt backup as passed.
                     // Bound the decompressor wait: safe_command sets no kill_on_drop, so a
                     // timed-out (dropped) docker future leaves docker orphaned holding zcat's
-                    // pipe read-end — an UNbounded zcat.wait() could then hang the task forever.
+                    // pipe read-end - an UNbounded zcat.wait() could then hang the task forever.
                     // zcat exits ~instantly on every non-hang path (docker drained the stream on
                     // success; zcat already errored on truncation), so 5s is ample headroom.
                     let zcat_ok = tokio::time::timeout(std::time::Duration::from_secs(5), zcat.wait())
@@ -440,7 +440,7 @@ async fn verify_postgres_restore(
                                 "psql", "-U", "verify", "-d", db_name, "--quiet",
                                 // Without these, psql reports success for a dump
                                 // whose statements failed, and leaves the partial
-                                // result behind — so a truncated backup that still
+                                // result behind - so a truncated backup that still
                                 // produced *some* tables passes the table-count
                                 // check below and is reported "verified" (lesson
                                 // #51). The dumps restored here are written by
@@ -458,10 +458,10 @@ async fn verify_postgres_restore(
                     // ON_ERROR_STOP+single-transaction catch a mid-statement truncation, but a
                     // .gz cut on a clean statement boundary still lets psql see EOF and COMMIT
                     // the partial prefix (exit 0). Require the decompressor to have succeeded
-                    // too (lesson #51) — mirrors database_backup.rs::restore_postgres.
+                    // too (lesson #51) - mirrors database_backup.rs::restore_postgres.
                     // Bound the decompressor wait: safe_command sets no kill_on_drop, so a
                     // timed-out (dropped) docker future leaves docker orphaned holding zcat's
-                    // pipe read-end — an UNbounded zcat.wait() could then hang the task forever.
+                    // pipe read-end - an UNbounded zcat.wait() could then hang the task forever.
                     // zcat exits ~instantly on every non-hang path (docker drained the stream on
                     // success; zcat already errored on truncation), so 5s is ample headroom.
                     let zcat_ok = tokio::time::timeout(std::time::Duration::from_secs(5), zcat.wait())
@@ -620,7 +620,7 @@ mod tests {
 
     #[test]
     fn site_backup_passes_when_only_entry_point_missing() {
-        // A valid non-web backup (no index.*) must still pass — has_entry_point is informational.
+        // A valid non-web backup (no index.*) must still pass - has_entry_point is informational.
         let checks = vec![
             chk("file_exists", true),
             chk("extract_success", true),

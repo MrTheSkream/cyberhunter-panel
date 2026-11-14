@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Regression pins for the s366 ship — backends that worked and nothing could reach.
+# Regression pins for the s366 ship - backends that worked and nothing could reach.
 #
 # Three complete, ownership-scoped, server-pinned handlers had zero callers in the
 # product: a database backup could be listed and drilled but never restored or
 # deleted, a volume backup could be listed and drilled but never restored, and an
 # operator who suspected a leaked agent token had no control to rotate it. This
-# suite pins the CALLERS, because the handlers were never the missing half — and a
+# suite pins the CALLERS, because the handlers were never the missing half - and a
 # severed pair is invisible to every test that exercises only one end.
 #
 # It also pins the two claims withdrawn in the same ship. The Withdrawn Claims
@@ -17,7 +17,7 @@ cd "$(dirname "$0")/.." || exit 1
 
 PASS=0; FAIL=0
 ok()  { printf '\033[32m✓\033[0m %s\n' "$1"; PASS=$((PASS+1)); }
-bad() { printf '\033[31m✗\033[0m %s — %s\n' "$1" "$2"; FAIL=$((FAIL+1)); }
+bad() { printf '\033[31m✗\033[0m %s - %s\n' "$1" "$2"; FAIL=$((FAIL+1)); }
 eq()  { [ "$2" = "$3" ] && ok "$1" || bad "$1" "expected '$3', got '$2'"; }
 
 # ugrep's --ignore-files shim honours .gitignore, so every count below uses the
@@ -37,13 +37,13 @@ done
 # An arm that measures an empty subject prints green for every absence below, so
 # the subjects are asserted before they are measured (lesson #143).
 ORCH_LINES=$($G -c '' "$ORCH")
-[ "$ORCH_LINES" -gt 800 ] && ok "A0 subject extracted — $ORCH is $ORCH_LINES lines" \
-  || bad "A0 subject extracted" "$ORCH is only $ORCH_LINES lines — §A examined nothing"
+[ "$ORCH_LINES" -gt 800 ] && ok "A0 subject extracted - $ORCH is $ORCH_LINES lines" \
+  || bad "A0 subject extracted" "$ORCH is only $ORCH_LINES lines - §A examined nothing"
 
 echo "── A. The restore and delete controls exist and reach the right routes ─"
 
 # A1-A3: the severed-pair guards. Each counts the CALL, and each path is spelled
-# exactly once in the page — a second spelling in a comment would satisfy the arm
+# exactly once in the page - a second spelling in a comment would satisfy the arm
 # on its own, which is the trap that has bitten this repo before (s346).
 eq "A1 the DB-backup restore control calls its endpoint" \
    "$($G -c 'backup-orchestrator/db-backups/\${b\.id}/restore' "$ORCH")" "1"
@@ -73,7 +73,7 @@ VOL_DELETE=$($G -c 'volume-backups/\${b\.id}`' "$ORCH")
 if [ "$VOL_DELETE" = "0" ]; then
   ok "A6 no volume-backup delete control (no such endpoint exists)"
 else
-  bad "A6 no volume-backup delete control" "found $VOL_DELETE — the endpoint does not exist, so this would 404"
+  bad "A6 no volume-backup delete control" "found $VOL_DELETE - the endpoint does not exist, so this would 404"
 fi
 eq "A6-control the same pattern shape DOES match the db-backups delete" \
    "$($G -c 'db-backups/\${b\.id}`' "$ORCH")" "1"
@@ -110,7 +110,7 @@ AUTOSCALE_README=$($G -ci 'auto-scaling\|autoscal' README.md)
 eq "C1 README no longer advertises horizontal auto-scaling" "$AUTOSCALE_README" "0"
 README_CTL=$($G -ci 'WHMCS' README.md)
 [ "$README_CTL" -gt 0 ] && ok "C1-control the same command finds a claim that IS still made ($README_CTL)" \
-  || bad "C1-control" "found 0 WHMCS lines in README.md — C1 examined nothing"
+  || bad "C1-control" "found 0 WHMCS lines in README.md - C1 examined nothing"
 
 # FEATURES.md keeps the words inside the Withdrawn Claims table on purpose. The
 # arm therefore measures the CAPABILITY tables only: everything above the
@@ -120,9 +120,9 @@ eq "C2 no capability table above the register still claims auto-scaling" \
    "$(printf '%s' "$FEAT_ABOVE" | $G -ci 'auto-scaling')" "0"
 FEAT_CTL=$(printf '%s' "$FEAT_ABOVE" | $G -ci 'auto-sleep')
 [ "$FEAT_CTL" -gt 0 ] && ok "C2-control the same slice finds a capability that IS still claimed ($FEAT_CTL)" \
-  || bad "C2-control" "found 0 auto-sleep lines above the register — C2 examined nothing"
+  || bad "C2-control" "found 0 auto-sleep lines above the register - C2 examined nothing"
 
-# Scoped to the register the same way C2 is scoped to everything above it — the
+# Scoped to the register the same way C2 is scoped to everything above it - the
 # tunnel row also exists as a (corrected) capability row, so an unscoped count
 # reads 3 and would go green for the wrong reason if a register row were deleted.
 FEAT_REGISTER=$(sed -n '/^## Withdrawn Claims/,$p' FEATURES.md)
@@ -141,7 +141,7 @@ echo "── D. The background-services table cannot drift again ─────
 SUPERVISED=$($G -cE '^ *spawn_supervised\("' "$MAIN")
 TABLE_ROWS=$(awk '/^## Background Services/{f=1;next} f&&/^## /{exit} f&&/^\| `/{n++} END{print n+0}' FEATURES.md)
 [ "$SUPERVISED" -gt 10 ] && ok "D0 the derivation found $SUPERVISED supervised services" \
-  || bad "D0 the derivation found $SUPERVISED supervised services" "implausibly low — the parse failed"
+  || bad "D0 the derivation found $SUPERVISED supervised services" "implausibly low - the parse failed"
 eq "D1 the FEATURES.md table has one row per supervised service" "$TABLE_ROWS" "$SUPERVISED"
 eq "D2 the heading states the same number" \
    "$($G -c "^## Background Services ($SUPERVISED supervised)$" FEATURES.md)" "1"
@@ -150,8 +150,8 @@ echo "── E. The SITE restore is armed too (s378) ─────────
 
 # A5 above pins "a restore overwrites a live database or volume… these two must
 # not be one press" for the orchestrator's two controls. The site restore is the
-# widest of the family — `docs/guides/backups.md` says it drops and recreates
-# every database's tables over the live one, with no automatic safety net — and
+# widest of the family - `docs/guides/backups.md` says it drops and recreates
+# every database's tables over the live one, with no automatic safety net - and
 # it was the only one of the seven that fired on a single click. Its own row
 # already armed the strictly smaller Delete, six lines below it.
 SITE=panel/frontend/src/pages/Backups.tsx
@@ -164,7 +164,7 @@ eq "E1c Delete keeps its own armed state, not the restore's" \
    "$($G -c 'setDeleteTarget(backup\.id)' "$SITE")" "1"
 
 # E2: the ordering is the claim. One call to the destructive handler, and it
-# must sit BELOW the armed branch — a `handleRestore` still reachable from the
+# must sit BELOW the armed branch - a `handleRestore` still reachable from the
 # unarmed button is the defect with a confirm bolted beside it. Both anchors
 # asserted before they are compared (lesson #582).
 ARMED_LINE=$($G -n 'restoreTarget === backup\.id' "$SITE" | head -1 | cut -d: -f1)
@@ -178,8 +178,8 @@ else
 fi
 
 # E3: the armed state DISCLOSES, and does it without the reassuring branch.
-# `backupContents().title` keys on `databases_expected` — what the site had when
-# the backup RAN — while the backend decides on a live count, so a site that
+# `backupContents().title` keys on `databases_expected` - what the site had when
+# the backup RAN - while the backend decides on a live count, so a site that
 # gained a database since would read "no database was attached" over exactly the
 # case the restore then reports as an error.
 eq "E3 the armed state renders the disclosure" \

@@ -16,8 +16,8 @@ pub struct PaginationQuery {
 }
 
 /// `alert_slack_url`/`alert_discord_url` are encrypted at rest (see `create`/
-/// `update` below). The caller reading their own monitor back — to pre-fill
-/// the edit form, or in the list view — is the expected same-account case
+/// `update` below). The caller reading their own monitor back - to pre-fill
+/// the edit form, or in the list view - is the expected same-account case
 /// `decrypt_credential_or_legacy` exists for.
 fn decrypt_monitor_alert_urls(m: &mut Monitor, jwt_secret: &str) {
     if let Some(ref v) = m.alert_slack_url {
@@ -85,7 +85,7 @@ pub struct UpdateMonitor {
     pub custom_headers: Option<serde_json::Value>,
 }
 
-/// GET /api/monitors — List user's monitors.
+/// GET /api/monitors - List user's monitors.
 pub async fn list(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -110,7 +110,7 @@ pub async fn list(
     Ok(Json(monitors))
 }
 
-/// POST /api/monitors — Create a new monitor.
+/// POST /api/monitors - Create a new monitor.
 pub async fn create(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -177,7 +177,7 @@ pub async fn create(
 
         if let Some((global_slack, global_discord)) = global {
             // `global_slack`/`global_discord` are ciphertext (alert_rules.notify_slack_url/
-            // notify_discord_url are encrypted at rest) — decrypt before the SSRF
+            // notify_discord_url are encrypted at rest) - decrypt before the SSRF
             // check below, which needs a real URL, not base64.
             let global_slack = global_slack.as_deref().map(|v| {
                 crate::services::secrets_crypto::decrypt_credential_or_legacy(v, &state.config.jwt_secret)
@@ -195,7 +195,7 @@ pub async fn create(
     }
 
     // SSRF protection: per-monitor alert webhook URLs must not target internal
-    // addresses (parity with alerts.rs::upsert_rules — body values are otherwise
+    // addresses (parity with alerts.rs::upsert_rules - body values are otherwise
     // unvalidated; inherited-from-global values were already vetted but are cheap to re-check).
     if let Some(ref u) = slack_url {
         if !u.is_empty() {
@@ -225,7 +225,7 @@ pub async fn create(
 
     // Encrypt at rest, now that SSRF validation above has already run on the
     // plaintext. Empty stays empty (COALESCE-free INSERT, no "leave alone"
-    // case here — this is a fresh row).
+    // case here - this is a fresh row).
     let encrypt_opt = |v: &Option<String>| -> Result<Option<String>, ApiError> {
         match v {
             Some(s) if !s.is_empty() => crate::services::secrets_crypto::encrypt_credential(s, &state.config.jwt_secret)
@@ -263,7 +263,7 @@ pub async fn create(
     Ok((StatusCode::CREATED, Json(monitor)))
 }
 
-/// PUT /api/monitors/{id} — Update a monitor.
+/// PUT /api/monitors/{id} - Update a monitor.
 pub async fn update(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -285,7 +285,7 @@ pub async fn update(
         None => return Err(err(StatusCode::NOT_FOUND, "Monitor not found")),
     };
 
-    // A type change must be to a known type — create checks this, update did not, so a
+    // A type change must be to a known type - create checks this, update did not, so a
     // monitor could be moved to an arbitrary string and fall through the check dispatcher.
     if let Some(ref mt) = body.monitor_type {
         if !matches!(mt.as_str(), "http" | "tcp" | "ping" | "heartbeat") {
@@ -295,7 +295,7 @@ pub async fn update(
 
     // SSRF protection: validate the target if the URL/host is being updated, against the
     // EFFECTIVE type after this update (the new type if one is supplied, else the stored
-    // one) — otherwise switching http→tcp, or setting a host on a tcp monitor, skips the
+    // one) - otherwise switching http→tcp, or setting a host on a tcp monitor, skips the
     // guard the create path enforces.
     let effective_type = body
         .monitor_type
@@ -397,7 +397,7 @@ pub async fn update(
     Ok(Json(monitor))
 }
 
-/// DELETE /api/monitors/{id} — Delete a monitor.
+/// DELETE /api/monitors/{id} - Delete a monitor.
 pub async fn remove(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -426,7 +426,7 @@ pub struct CheckRecord {
     pub checked_at: chrono::DateTime<chrono::Utc>,
 }
 
-/// GET /api/monitors/{id}/checks — Get recent check history.
+/// GET /api/monitors/{id}/checks - Get recent check history.
 pub async fn checks(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -467,7 +467,7 @@ pub struct Incident {
     pub cause: Option<String>,
 }
 
-/// GET /api/monitors/{id}/incidents — Get incident history.
+/// GET /api/monitors/{id}/incidents - Get incident history.
 pub async fn incidents(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -498,7 +498,7 @@ pub async fn incidents(
     Ok(Json(records))
 }
 
-/// GET /api/monitors/{id}/uptime — Calculate uptime percentage.
+/// GET /api/monitors/{id}/uptime - Calculate uptime percentage.
 pub async fn uptime_stats(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -561,7 +561,7 @@ pub async fn uptime_stats(
     })))
 }
 
-/// GET /api/monitors/{id}/chart — Get response time history for charting.
+/// GET /api/monitors/{id}/chart - Get response time history for charting.
 pub async fn response_chart(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -594,7 +594,7 @@ pub async fn response_chart(
     Ok(Json(serde_json::json!({ "points": data })))
 }
 
-/// POST /api/monitors/{id}/check — Force an immediate check.
+/// POST /api/monitors/{id}/check - Force an immediate check.
 pub async fn force_check(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -617,7 +617,7 @@ pub async fn force_check(
     Ok(Json(serde_json::json!({ "ok": true, "message": "Check will run within 60 seconds" })))
 }
 
-/// GET /api/status-page — Public status page data (no auth required).
+/// GET /api/status-page - Public status page data (no auth required).
 pub async fn status_page(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
@@ -627,10 +627,10 @@ pub async fn status_page(
     // ⚠ SECURITY (s430): this handler is unauthenticated, and the query below
     // MUST be scoped to the status page's owner. Created at v2.173.0, TWO
     // releases after the identical bug was found and fixed in the sibling
-    // `incidents::public_status_page` (v2.171.0, s418) — that fix scopes every
+    // `incidents::public_status_page` (v2.171.0, s418) - that fix scopes every
     // query to `owner_id` resolved from `status_page_config`; this route
     // instead put an unscoped `WHERE enabled = true` behind a comment saying
-    // "no user filter — this is public," which on any multi-tenant install
+    // "no user filter - this is public," which on any multi-tenant install
     // serves every OTHER tenant's monitor names/statuses to an anonymous
     // caller of the FIRST tenant's status page. No UI ever calls this route
     // (dead to the frontend), which is exactly why it sat unnoticed while its
@@ -645,7 +645,7 @@ pub async fn status_page(
     // most reassuring page the product can serve and the one a reader consults
     // precisely when they suspect something is. `require_enabled` above already
     // returns on a dead pool, so what reached this line was a failure of this
-    // query alone — a statement timeout, a type mismatch — and the honest answer
+    // query alone - a statement timeout, a type mismatch - and the honest answer
     // to "I could not read the monitors" is never "there are no monitors".
     let monitors: Vec<(String, String, String, Option<i32>, Option<chrono::DateTime<chrono::Utc>>)> = match owner_id {
         Some(uid) => sqlx::query_as(
@@ -675,14 +675,14 @@ pub async fn status_page(
 /// The one severity ladder both certificate lists use.
 ///
 /// `None` is `unknown`, and that rung exists because its absence was a defect: a
-/// missing expiry became 999 days and therefore the green OK badge — the most
+/// missing expiry became 999 days and therefore the green OK badge - the most
 /// reassuring answer on the page, produced by an absence of information. Every
 /// certificate the panel did not issue arrives that way.
 ///
 /// `renewal_failing` is the same argument applied to the other axis. Every rung
 /// but that one is a function of the clock alone, so a certificate whose renewal
 /// is failing right now still read `ok` for its first three hundred days and
-/// `warning` for the next twenty-three — the page described the certificate and
+/// `warning` for the next twenty-three - the page described the certificate and
 /// never the machinery that is supposed to replace it. v2.157.0 made
 /// `ssl_renewal_failure` resolve itself on a successful renewal, which sharpened
 /// the gap rather than closing it: a failure that gets fixed now disappears from
@@ -713,7 +713,7 @@ pub(crate) fn expiry_status(days_left: Option<i64>, renewal_failing: bool) -> &'
 /// doc gives the reason the two questions have one answer: those three are exactly
 /// the keys that say a renewal DID NOT HAPPEN, which is what makes a later success
 /// contradict them. Re-listing the keys here would be a second classification of
-/// the same six keys, free to drift from the first — and its fall-through is
+/// the same six keys, free to drift from the first - and its fall-through is
 /// `false`, so a key added later is excluded from both until somebody decides.
 ///
 /// The other three describe the certificate installed now, not a failure to
@@ -724,14 +724,14 @@ pub(crate) fn expiry_status(days_left: Option<i64>, renewal_failing: bool) -> &'
 ///
 /// ⚠ `status = 'firing'` ONLY, and that is a constraint rather than a
 /// simplification. `resolve_alert` matches `status = 'firing'` in every arm, so
-/// an ACKNOWLEDGED renewal alert is never resolved by a later success — including
+/// an ACKNOWLEDGED renewal alert is never resolved by a later success - including
 /// it here would pin the rung on permanently for any operator who acknowledged
 /// the alert before fixing the cause, and the page would keep asserting a failure
 /// that a successful renewal had already disproved.
 ///
 /// Scoped by `site_id` alone, for both callers. The per-caller list is already
 /// filtered to its owner's sites and the admin list to one server, so the ids ARE
-/// the scope — and routing this through a `user_id`/`server_id` arm would
+/// the scope - and routing this through a `user_id`/`server_id` arm would
 /// reproduce the shape that made `resolve_alert` miss every row the security
 /// scanner raises with no server id.
 async fn renewal_failing_sites(
@@ -763,7 +763,7 @@ async fn renewal_failing_sites(
 
 /// `renewal_failing_sites`'s sibling for stacks, scoped by `user_id` instead of
 /// `server_id`. `certificate_dashboard` (this function's only caller) has no
-/// server scope of its own — unlike `certificate_dashboard_for_admin`, whose
+/// server scope of its own - unlike `certificate_dashboard_for_admin`, whose
 /// own inline stack lookup is scoped to one server because `ServerScope` gives
 /// it one. `alerts.user_id` is always the stack's real owner
 /// (`renew_stack_certificate` resolves it off the `docker_stacks` row before
@@ -797,16 +797,16 @@ async fn renewal_failing_stacks_for_user(
     Ok(rows.into_iter().map(|(k,)| k).collect())
 }
 
-/// GET /api/monitors/certificates — List all SSL certificates with expiry status.
+/// GET /api/monitors/certificates - List all SSL certificates with expiry status.
 pub async fn certificate_dashboard(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     // No `require_admin`. The query below is already `WHERE user_id = $1`, so the
-    // gate never decided WHAT this returns — only WHO is refused their own rows.
+    // gate never decided WHAT this returns - only WHO is refused their own rows.
     // The Dashboard tile that links here reads the same certificates out of
     // `dashboard::intelligence`, which is `AuthUser` and user-scoped, so a client
-    // was told "SSL — 2 certs, expires in 9 days" and then met "Admin access
+    // was told "SSL - 2 certs, expires in 9 days" and then met "Admin access
     // required" over "No SSL certificates found" on the page the tile points at.
     // One of those two screens was lying about the same rows; it was this one.
     type SiteCertRow = (uuid::Uuid, String, bool, Option<chrono::DateTime<chrono::Utc>>, Option<chrono::DateTime<chrono::Utc>>);
@@ -817,7 +817,7 @@ pub async fn certificate_dashboard(
     // A certificate whose expiry the panel does not know is `unknown`, not `ok`.
     //
     // The missing date used to become `999` days and therefore the green OK
-    // badge — the most reassuring answer available, produced by an absence of
+    // badge - the most reassuring answer available, produced by an absence of
     // information. Every certificate the panel did not issue itself arrives
     // that way: until v2.139.0 `upload_ssl` stored `ssl_enabled` alone, so an
     // operator's own certificate had a NULL expiry by construction, and it is
@@ -835,7 +835,7 @@ pub async fn certificate_dashboard(
         // `renewal_at` is the CA-suggested ARI renewal window start (RFC 9773),
         // fetched and stored by the auto-healer's renewal cycle. Always on the
         // wire (null on a stack row, or a site row the healer hasn't checked
-        // yet) for the same reason `stack_id` is — see above.
+        // yet) for the same reason `stack_id` is - see above.
         serde_json::json!({ "site_id": id, "stack_id": serde_json::Value::Null, "domain": domain, "expiry": expiry, "days_left": days_left, "status": expiry_status(days_left, failing.contains(id)), "renewal_at": renewal_at })
     }).collect();
 
@@ -843,7 +843,7 @@ pub async fn certificate_dashboard(
     // has read this table since s412; this endpoint's `stack_id` field was
     // already on the wire (as `null` on every row above) with nothing behind
     // it, and the frontend's `Certificate` interface has documented the field
-    // since then too — this was the missing half of that wiring. ACME-mode
+    // since then too - this was the missing half of that wiring. ACME-mode
     // only, through `effective_tls_mode`: the same rule the admin list and the
     // alert ladder both enforce.
     let stacks: Vec<(
@@ -888,7 +888,7 @@ pub async fn certificate_dashboard(
                     &crate::services::security_scanner::stack_renewal_state_key(domain),
                 ),
             ),
-            // `docker_stacks` has no ssl_renewal_at column — ARI is only tracked
+            // `docker_stacks` has no ssl_renewal_at column - ARI is only tracked
             // per `sites` row today. Always on the wire, null here, for the same
             // reason `site_id` is null on a stack row.
             "renewal_at": serde_json::Value::Null,
@@ -898,7 +898,7 @@ pub async fn certificate_dashboard(
     Ok(Json(serde_json::json!({ "certificates": items })))
 }
 
-/// GET /api/admin/certificates — every certificate on this server, admin only.
+/// GET /api/admin/certificates - every certificate on this server, admin only.
 ///
 /// A SEPARATE route rather than a role branch inside `certificate_dashboard`,
 /// because that is the shape this codebase already chose for the identical
@@ -908,15 +908,15 @@ pub async fn certificate_dashboard(
 ///
 /// **Why it had to exist.** The agent's diagnostics walks `/etc/dockpanel/ssl`
 /// on the HOST and raises "SSL certificate expiring soon: {domain}" for anything
-/// it finds, so an administrator on a multi-tenant box was shown a finding — with
-/// a Fix button — about a certificate that appeared on no list they could open.
+/// it finds, so an administrator on a multi-tenant box was shown a finding - with
+/// a Fix button - about a certificate that appeared on no list they could open.
 /// The API would already let them renew it (`SITE_CALLER_PREDICATE` carries an
 /// admin arm); only the list refused. The finding and the list disagreed about
 /// what existed.
 ///
 /// So this returns the union of two populations, and says which is which:
 ///   * every SSL-enabled site row on this server, with its owner resolved, and
-///   * every certificate the host actually holds that no such row explains —
+///   * every certificate the host actually holds that no such row explains -
 ///     a DNS-01 wildcard apex, a Docker app's certificate (Docker apps have no
 ///     table at all), one installed by hand.
 ///
@@ -954,7 +954,7 @@ pub async fn certificate_dashboard_for_admin(
                 "site_id": id,
                 // Always on the wire, even as null. A field that is present on
                 // some rows and absent on others reaches TypeScript as
-                // `undefined`, and `undefined !== null` is true — which would
+                // `undefined`, and `undefined !== null` is true - which would
                 // hand every ordinary site row the control meant for stacks.
                 "stack_id": serde_json::Value::Null,
                 "domain": domain,
@@ -964,7 +964,7 @@ pub async fn certificate_dashboard_for_admin(
                 "owner_email": owner,
                 "managed": true,
                 // CA-suggested ARI renewal window start (RFC 9773). `sites`-only
-                // column — see the site-scoped dashboard above for the same note.
+                // column - see the site-scoped dashboard above for the same note.
                 "renewal_at": renewal_at,
             })
         })
@@ -988,7 +988,7 @@ pub async fn certificate_dashboard_for_admin(
 
     // Stack-level `ssl_renewal_failure` alerts carry `site_id = NULL` (there is
     // no sites row to name) and are keyed instead by
-    // `stack_renewal_state_key(domain)` under this server — see that
+    // `stack_renewal_state_key(domain)` under this server - see that
     // function's own doc. `renewal_failing_sites` above filters
     // `site_id = ANY($1)`, which a NULL site_id can never satisfy, so it is the
     // wrong lookup for these rows; this is `renewal_failing_sites`'s sibling,
@@ -1016,7 +1016,7 @@ pub async fn certificate_dashboard_for_admin(
 
     // ⛔ Only an ACME stack is ours. A `provided` stack serves its certificate from
     //    the registry, and the file this walk finds under /etc/dockpanel/ssl is a
-    //    LEFTOVER from before the switch — offering to renew it, or stamping the
+    //    LEFTOVER from before the switch - offering to renew it, or stamping the
     //    row with its expiry, would be the panel describing a certificate the
     //    stack does not serve. Read through the one spelling of the rule.
     let acme_stack = |domain: &str| -> Option<(Uuid, Option<chrono::DateTime<chrono::Utc>>)> {
@@ -1050,7 +1050,7 @@ pub async fn certificate_dashboard_for_admin(
 
                     // BOOTSTRAP. The agent's walk is the only thing that knows when
                     // a stack's certificate expires, and until now the panel read
-                    // that answer, rendered it, and threw it away — so nothing in
+                    // that answer, rendered it, and threw it away - so nothing in
                     // Postgres could ever answer the question, and the arm below
                     // had nothing to fall back on.
                     //
@@ -1060,7 +1060,7 @@ pub async fn certificate_dashboard_for_admin(
                     //    retries it.
                     // ⚠ Only when it actually MOVED. This runs per certificate on
                     //    disk, on every load of this page, and a row that already
-                    //    holds the right date does not need writing — an admin
+                    //    holds the right date does not need writing - an admin
                     //    refreshing would otherwise issue one UPDATE per stack
                     //    certificate every time, for ever, to change nothing.
                     if let (Some((id, recorded)), Some(exp)) = (stack, expiry) {
@@ -1100,13 +1100,13 @@ pub async fn certificate_dashboard_for_admin(
             true
         }
         Err(e) => {
-            tracing::warn!("Admin certificate list: this server's agent could not enumerate certificates ({e}) — falling back to what the panel recorded");
+            tracing::warn!("Admin certificate list: this server's agent could not enumerate certificates ({e}) - falling back to what the panel recorded");
 
             // ⭐ THE OFFLINE ANSWER, and the reason `docker_stacks.ssl_expiry`
             //    exists. A site keeps its row in the list when the agent is
             //    unreachable, because the panel stores `sites.ssl_expiry`. A stack
             //    had no such column, so every stack certificate simply VANISHED
-            //    from this page for as long as the agent was down — at exactly the
+            //    from this page for as long as the agent was down - at exactly the
             //    moment an operator is most likely to be looking at it.
             //
             //    These rows are the panel's own record, not a live read. They
@@ -1149,14 +1149,14 @@ pub async fn certificate_dashboard_for_admin(
     Ok(Json(serde_json::json!({ "certificates": items, "host_scan": host_scan })))
 }
 
-/// POST /api/monitors/maintenance — Create a maintenance window.
+/// POST /api/monitors/maintenance - Create a maintenance window.
 pub async fn create_maintenance(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    // Maintenance windows are per-caller in all three statements — this INSERT
-    // stamps `user_id`, the list filters on it, the delete requires it — and what
+    // Maintenance windows are per-caller in all three statements - this INSERT
+    // stamps `user_id`, the list filters on it, the delete requires it - and what
     // a window does is silence THAT caller's alerts. A site owner who has alerts
     // (`alerts` is user-scoped for every role) is exactly who needs to silence
     // them while they work on their own site.
@@ -1177,17 +1177,17 @@ pub async fn create_maintenance(
     Ok(Json(serde_json::json!({ "ok": true, "id": id.0 })))
 }
 
-/// GET /api/monitors/maintenance — List maintenance windows.
+/// GET /api/monitors/maintenance - List maintenance windows.
 pub async fn list_maintenance(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    // Per-caller by `WHERE user_id = $1` — see `create_maintenance` above.
+    // Per-caller by `WHERE user_id = $1` - see `create_maintenance` above.
     //
     // ⚠ The error is propagated because an empty list is not a neutral answer
     // here. `uptime.rs` skips every monitor belonging to a user with a currently
     // active window, so a failed read used to show an operator no windows while
-    // one of them was still suppressing their alerting — the screen said nothing
+    // one of them was still suppressing their alerting - the screen said nothing
     // was muting anything, and the delete control that is the way out was not
     // offered, because the row it belongs to was never drawn.
     let windows: Vec<(uuid::Uuid, String, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
@@ -1209,14 +1209,14 @@ pub async fn delete_maintenance(
     AuthUser(claims): AuthUser,
     Path(id): Path<uuid::Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    // `AND user_id = $2` is the authorization — a caller can only delete a window
+    // `AND user_id = $2` is the authorization - a caller can only delete a window
     // they own, which is the same rule the gate above used to approximate.
     //
     // The result is checked rather than discarded, and the reason is not tidiness.
     // `uptime.rs` skips EVERY monitor belonging to a user with a currently-active
     // window, so a window that outlives its "Maintenance window deleted" message
     // leaves that whole account with no uptime checks, no downtime detection and no
-    // alerts — and the ordinary trigger for pressing delete is finishing maintenance
+    // alerts - and the ordinary trigger for pressing delete is finishing maintenance
     // early to resume exactly those. Reporting success for a row that is still there
     // is the one answer the panel must not give here.
     let deleted = sqlx::query("DELETE FROM maintenance_windows WHERE id = $1 AND user_id = $2")
@@ -1230,14 +1230,14 @@ pub async fn delete_maintenance(
         return Err(err(
             StatusCode::NOT_FOUND,
             "That maintenance window no longer exists, or it belongs to another account. \
-             Monitoring is unchanged — reload the list before retrying.",
+             Monitoring is unchanged - reload the list before retrying.",
         ));
     }
 
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// POST /api/heartbeat/{monitor_id}/{token} — Receive heartbeat ping (no auth).
+/// POST /api/heartbeat/{monitor_id}/{token} - Receive heartbeat ping (no auth).
 pub async fn heartbeat(
     State(state): State<AppState>,
     Path((monitor_id, token)): Path<(uuid::Uuid, String)>,

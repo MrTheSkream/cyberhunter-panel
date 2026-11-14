@@ -115,8 +115,8 @@ export default function AtlasLayout() {
               </svg>
             </div>
             <span className="text-sm font-bold">
-              <span className="text-rust-400">Dock</span>
-              <span className="text-dark-50">Panel</span>
+              <span className="text-rust-400">CyberHunter</span>
+              <span className="text-dark-50"> - Panel</span>
             </span>
           </Link>
 
@@ -202,7 +202,7 @@ export default function AtlasLayout() {
               </Link>
             )}
 
-            {/* Health dot — admins only; see `canSeeHealth` in useLayoutState. */}
+            {/* Health dot - admins only; see `canSeeHealth` in useLayoutState. */}
             {canSeeHealth && (
               <div
                 className={`w-2 h-2 rounded-full ${
@@ -389,8 +389,8 @@ export default function AtlasLayout() {
                   </svg>
                 </div>
                 <span className="text-sm font-bold">
-                  <span className="text-rust-400">Dock</span>
-                  <span className="text-dark-50">Panel</span>
+                  <span className="text-rust-400">CyberHunter</span>
+                  <span className="text-dark-50"> - Panel</span>
                 </span>
               </Link>
               <button

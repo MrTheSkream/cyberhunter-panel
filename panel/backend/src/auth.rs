@@ -11,7 +11,7 @@ use crate::error::{err, err_coded, ApiError, CODE_SESSION_INVALID};
 use crate::services::agent::AgentHandle;
 use crate::AppState;
 
-/// The caller has no usable session — the only refusal in this codebase that
+/// The caller has no usable session - the only refusal in this codebase that
 /// entitles the frontend to navigate someone to `/login`.
 ///
 /// Every such refusal is minted here rather than inline, so that "which 401s
@@ -22,7 +22,7 @@ use crate::AppState;
 /// caller just presented, not the session itself.
 ///
 /// The agent-token refusals at the bottom of this file are deliberately NOT
-/// minted here — an agent is not a browser and has no session to lose.
+/// minted here - an agent is not a browser and has no session to lose.
 fn session_invalid(msg: &str) -> ApiError {
     err_coded(StatusCode::UNAUTHORIZED, msg, CODE_SESSION_INVALID)
 }
@@ -46,7 +46,7 @@ pub struct Claims {
     pub key_id: Option<Uuid>,
 }
 
-/// JWT extractor — reads token from Authorization header or `token` cookie.
+/// JWT extractor - reads token from Authorization header or `token` cookie.
 pub struct AuthUser(pub Claims);
 
 impl FromRequestParts<AppState> for AuthUser {
@@ -65,7 +65,7 @@ impl FromRequestParts<AppState> for AuthUser {
             .map(|t| t.to_string());
 
         // A `dp_`-prefixed bearer token is a long-lived API key (routes/api_keys.rs),
-        // not a session JWT — authenticate it against `api_keys` directly. Trying to
+        // not a session JWT - authenticate it against `api_keys` directly. Trying to
         // `decode::<Claims>` it below would always fail, so without this branch every
         // API key request would 401 as "Invalid or expired token" for the wrong
         // reason and this scaffold would stay unwired, exactly as FEATURES.md's
@@ -148,11 +148,11 @@ impl FromRequestParts<AppState> for AuthUser {
 /// Authenticate a `dp_`-prefixed API key (routes/api_keys.rs) and build the same
 /// `Claims` shape a JWT would, so it works for free on every `AuthUser`-gated
 /// handler. Unlike a JWT, a key has no `jti` of its own and is never on the
-/// per-token blacklist — it is revoked by deleting the `api_keys` row (or, for
+/// per-token blacklist - it is revoked by deleting the `api_keys` row (or, for
 /// the global "revoke all sessions" / Panic Button controls below, by having
 /// been minted before that revocation fired: see the `created_at` check).
 ///
-/// Failures here deliberately do NOT use `session_invalid()` — that marker
+/// Failures here deliberately do NOT use `session_invalid()` - that marker
 /// means "the caller has no usable *session*" and its own doc comment says the
 /// same of the agent-token refusals below: a key is not a browser session that
 /// can be lost, so a bad key gets a plain 401 like `authenticate_agent` does,
@@ -173,7 +173,7 @@ async fn authenticate_api_key(state: &AppState, key: &str) -> Result<Claims, Api
     let (key_id, user_id, created_at) =
         row.ok_or_else(|| err(StatusCode::UNAUTHORIZED, "Invalid or expired token"))?;
 
-    // Parity with the JWT path's own revocation check (above) — "Revoke all
+    // Parity with the JWT path's own revocation check (above) - "Revoke all
     // sessions" and the Panic Button both promise a total logout, and a key
     // minted before that moment fired is exactly the credential class an
     // incident responder reaching for either control means to kill. A key
@@ -196,13 +196,13 @@ async fn authenticate_api_key(state: &AppState, key: &str) -> Result<Claims, Api
     let (email, role) =
         user.ok_or_else(|| err(StatusCode::UNAUTHORIZED, "Invalid or expired token"))?;
 
-    // Parity with the JWT path's own post-decode check (this file, below) — an
+    // Parity with the JWT path's own post-decode check (this file, below) - an
     // account suspended after a key was minted must not keep authenticating.
     if role == "suspended" {
         return Err(err(StatusCode::FORBIDDEN, "Account suspended"));
     }
 
-    // Best-effort bookkeeping — a failed UPDATE must not fail the request that
+    // Best-effort bookkeeping - a failed UPDATE must not fail the request that
     // is itself proof the key still works.
     let _ = sqlx::query("UPDATE api_keys SET last_used_at = NOW() WHERE id = $1")
         .bind(key_id)
@@ -215,7 +215,7 @@ async fn authenticate_api_key(state: &AppState, key: &str) -> Result<Claims, Api
         email,
         role,
         key_id: Some(key_id),
-        // An API key has no session lifetime of its own — it lives until its
+        // An API key has no session lifetime of its own - it lives until its
         // `api_keys` row is deleted (or the revocation check above fires).
         // `exp` still has to be a value in the future because nothing
         // downstream re-checks how this Claims was built; it is never
@@ -227,7 +227,7 @@ async fn authenticate_api_key(state: &AppState, key: &str) -> Result<Claims, Api
     })
 }
 
-/// Admin-only JWT extractor — extracts Claims then verifies role == "admin".
+/// Admin-only JWT extractor - extracts Claims then verifies role == "admin".
 pub struct AdminUser(pub Claims);
 
 impl FromRequestParts<AppState> for AdminUser {
@@ -237,7 +237,7 @@ impl FromRequestParts<AppState> for AdminUser {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        // Propagate the inner rejection verbatim — flattening it to a generic
+        // Propagate the inner rejection verbatim - flattening it to a generic
         // 401 hid "Missing CSRF header" (403) and "Invalid or expired token"
         // behind "Authentication required" on every admin endpoint, which sends
         // clients debugging a stale session instead of the real cause.
@@ -251,7 +251,7 @@ impl FromRequestParts<AppState> for AdminUser {
     }
 }
 
-/// Reseller-or-admin JWT extractor — allows role == "admin" OR role == "reseller".
+/// Reseller-or-admin JWT extractor - allows role == "admin" OR role == "reseller".
 /// Used for endpoints accessible to both admins and resellers.
 pub struct ResellerUser(pub Claims);
 
@@ -273,7 +273,7 @@ impl FromRequestParts<AppState> for ResellerUser {
     }
 }
 
-/// Server scope extractor — reads `X-Server-Id` header to determine which server
+/// Server scope extractor - reads `X-Server-Id` header to determine which server
 /// the request targets. Falls back to the local server if the header is absent.
 ///
 /// Usage in handlers:
@@ -387,7 +387,7 @@ impl FromRequestParts<AppState> for ServerScope {
 ///
 /// It lives here, as the single implementation, because it used to live in
 /// `routes/agent_commands.rs` while `routes/agent_updates.rs` guarded the very
-/// same class of caller with `AuthUser` — so `/api/agent/version` demanded a JWT
+/// same class of caller with `AuthUser` - so `/api/agent/version` demanded a JWT
 /// from a caller that structurally cannot hold one and 401'd on every request
 /// for four releases. One copy, used by every agent route (s233).
 pub async fn authenticate_agent(

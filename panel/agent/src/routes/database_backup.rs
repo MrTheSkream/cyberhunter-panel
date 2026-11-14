@@ -33,7 +33,7 @@ pub struct RestoreRequest {
     pub encryption_key: Option<String>,
 }
 
-/// POST /db-backups/dump — Dump a database.
+/// POST /db-backups/dump - Dump a database.
 async fn dump(
     Json(req): Json<DumpRequest>,
 ) -> Result<Json<BackupInfo>, ApiErr> {
@@ -92,7 +92,7 @@ async fn dump(
     Ok(Json(info))
 }
 
-/// GET /db-backups/{db_name}/list — List database backups.
+/// GET /db-backups/{db_name}/list - List database backups.
 async fn list(
     Path(db_name): Path<String>,
 ) -> Result<Json<Vec<BackupInfo>>, ApiErr> {
@@ -105,7 +105,7 @@ async fn list(
     Ok(Json(list))
 }
 
-/// DELETE /db-backups/{db_name}/{filename} — Delete a database backup.
+/// DELETE /db-backups/{db_name}/{filename} - Delete a database backup.
 async fn remove(
     Path((db_name, filename)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
@@ -118,7 +118,7 @@ async fn remove(
     Ok(Json(serde_json::json!({ "success": true })))
 }
 
-/// POST /db-backups/{db_name}/restore/{filename} — Restore a database from backup.
+/// POST /db-backups/{db_name}/restore/{filename} - Restore a database from backup.
 async fn restore(
     Path((db_name, filename)): Path<(String, String)>,
     Json(req): Json<RestoreRequest>,
@@ -179,12 +179,12 @@ async fn restore(
     }
 
     // ⛔ 422, not 500, and the difference is the whole diagnosis. Everything that fails
-    // here fails because of the FILE the caller named — a dump that is truncated, was
+    // here fails because of the FILE the caller named - a dump that is truncated, was
     // never gzipped, targets a different engine, or contains SQL the database rejects.
     // That is a caller-fixable answer, and the panel only preserves an agent's sentence
     // for 4xx (`error.rs`'s `agent_error`): a 5xx is replaced with "Operation failed.
-    // Reference: {uuid}". Returning 500 here meant psql's "relation already exists" —
-    // the one line that says what to do next — was minted into an incident id and
+    // Reference: {uuid}". Returning 500 here meant psql's "relation already exists" -
+    // the one line that says what to do next - was minted into an incident id and
     // thrown away, on both this route's callers.
     result.map_err(|e| err(StatusCode::UNPROCESSABLE_ENTITY, &e))?;
 
@@ -196,7 +196,7 @@ async fn restore(
     })))
 }
 
-/// GET /db-backups/{db_name}/{filename}/path — Get filesystem path for upload.
+/// GET /db-backups/{db_name}/{filename}/path - Get filesystem path for upload.
 async fn get_path(
     Path((db_name, filename)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
@@ -209,7 +209,7 @@ async fn get_path(
     Ok(Json(serde_json::json!({ "path": path })))
 }
 
-/// DELETE /db-backups/{db_name} — drop a dump directory nothing owns any more.
+/// DELETE /db-backups/{db_name} - drop a dump directory nothing owns any more.
 ///
 /// Whether it is unowned is the PANEL's question: the name is unique only per
 /// site, so the same directory can serve two live databases. This end answers
@@ -228,7 +228,7 @@ async fn purge(Path(db_name): Path<String>) -> Result<Json<serde_json::Value>, A
     })))
 }
 
-/// DELETE /db-backups/dump — the same door, for the one database name that
+/// DELETE /db-backups/dump - the same door, for the one database name that
 /// collides with this router's own static segment.
 ///
 /// `dump` is a legal database name, so the static route has to carry the delete
@@ -238,7 +238,7 @@ async fn purge(Path(db_name): Path<String>) -> Result<Json<serde_json::Value>, A
 /// handler runs. This supplies the segment the URL cannot.
 ///
 /// Delegating rather than re-implementing keeps the name validation on exactly
-/// one path — there is a pin counting those call sites.
+/// one path - there is a pin counting those call sites.
 async fn purge_dump() -> Result<Json<serde_json::Value>, ApiErr> {
     purge(Path("dump".to_string())).await
 }
@@ -247,7 +247,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         // ⚠ Both verbs on the STATIC path. A static segment wins the match outright,
         // so registering the purge only on the parameter path leaves `DELETE
-        // /db-backups/dump` answering 405 — and `dump` is a legal database name.
+        // /db-backups/dump` answering 405 - and `dump` is a legal database name.
         .route("/db-backups/dump", post(dump).delete(purge_dump))
         .route("/db-backups/{db_name}", delete(purge))
         .route("/db-backups/{db_name}/list", get(list))

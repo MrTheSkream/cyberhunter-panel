@@ -1,6 +1,6 @@
 # Memory leak suspected
 
-A process's resident memory has grown monotonically over the last several hours without dropping. This pattern matches a leak — memory acquired but never released.
+A process's resident memory has grown monotonically over the last several hours without dropping. This pattern matches a leak - memory acquired but never released.
 
 ## Why this fired
 
@@ -19,7 +19,7 @@ The agent's anomaly detector tracks per-process RSS over a rolling window. A lea
 ## Common causes
 
 - Web app with circular references the GC can't break (Python, Node)
-- Connection pool not bounded — opening forever
+- Connection pool not bounded - opening forever
 - Cache without eviction policy
 - Native extension leaking outside the GC's view
 - Worker process configured `pm.max_requests=0` (PHP-FPM)

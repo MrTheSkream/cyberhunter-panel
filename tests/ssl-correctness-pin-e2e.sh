@@ -2,24 +2,24 @@
 # Regression pins for the s258 SSL-correctness ship.
 #
 # Everything here had already shipped broken once, in a way a green unit suite
-# could not see — none of these assertions can be made by a test that only knows
+# could not see - none of these assertions can be made by a test that only knows
 # about Rust:
 #
 #   A. The npm audit gate must WAIVE the reviewed advisory and still FAIL on
 #      anything else. An always-red gate and an always-green gate fail the same
-#      way — neither can report a new advisory — so both directions are pinned,
+#      way - neither can report a new advisory - so both directions are pinned,
 #      along with there being exactly ONE allowlist.
 #   B. A site is installed at the scheme it can actually serve.
-#   C. …and the promotion to HTTPS only ever touches the URL DockPanel itself set.
+#   C. …and the promotion to HTTPS only ever touches the URL CyberHunter - Panel itself set.
 #   D. A certificate that stops renewing is announced, not just logged.
 #   E. The installer does not read "I could not ask systemd" as "the service
-#      failed" — which aborted a real fresh install four steps from the end.
+#      failed" - which aborted a real fresh install four steps from the end.
 #   F. A renewal records the certificate it installed.
 #
 # ── s338: every arm above was comment-blind, and eight of them were measured ──
 #
 # A pin greps RAW source, so a line that has been turned into an explanation
-# still satisfies it. That is not a hypothetical here — it was executed against
+# still satisfies it. That is not a hypothetical here - it was executed against
 # this file, one mutation at a time:
 #
 #   * commenting out the single call site that promotes the canonical URL after
@@ -40,7 +40,7 @@
 # were reproduced by editing nothing but a comment.
 #
 # So every arm that reads SOURCE now reads it through `code_lines`, defined at
-# the top of this file rather than beside the section that first needed it — a
+# the top of this file rather than beside the section that first needed it - a
 # check placed below its call sites inherits that position as a defect however
 # good the check is. Arms that read PROSE by design (a JSON manifest, a lockfile)
 # stay raw and say so where they are.
@@ -78,7 +78,7 @@ trap 'rm -rf "$TMP" "$FIXDIR"' EXIT
 # ── the comment strippers, ABOVE every arm that needs them (s337) ────────────
 #
 # A check placed below the thing it must run before inherits that position as a
-# defect even when the check itself is perfect — the s336 lesson, and the reason
+# defect even when the check itself is perfect - the s336 lesson, and the reason
 # these functions are the first thing in the file rather than the middle. The
 # draft this replaced defined its own stripper two thirds of the way down, with
 # eighteen raw arms above it.
@@ -111,7 +111,7 @@ code_lines() {
     # over it passed on code the stripper had merely removed.
     #
     # A trailing `//` is stripped, but only when the text before it has BALANCED
-    # double quotes — otherwise `let u = "https://host"` would lose its tail.
+    # double quotes - otherwise `let u = "https://host"` would lose its tail.
     # Backslash escapes are skipped so `\"` does not flip the parity.
     awk '
       /^[[:space:]]*\/\*/ &&  /\*\/[[:space:]]*$/ { print ""; next }
@@ -144,7 +144,7 @@ code_lines() {
 # into twice. Under `set -o pipefail`, `code_lines f | grep -q PATTERN` reports
 # FAILURE on a successful match: grep -q exits at the first hit, the producer
 # upstream dies of SIGPIPE (141), and pipefail takes the pipeline's status from
-# it. The effect is silent and selective — a file whose match is near the top gets
+# it. The effect is silent and selective - a file whose match is near the top gets
 # dropped while one whose match is near the bottom survives, because the producer
 # had already finished. `grep -c` consumes all of its input, so there is no early
 # exit and no signal. (s336 #365 is the same operator lying in the other
@@ -198,7 +198,7 @@ echo "── A: the npm audit gate waives what was reviewed and blocks what was 
 # bumped. What must now be true is the OPPOSITE of what this arm used to assert:
 # the advisory is no longer excused, so it blocks like any other.
 #
-# Deleting the arm was the tempting move and the wrong one — a retired waiver
+# Deleting the arm was the tempting move and the wrong one - a retired waiver
 # needs the same evidence a live one does, or nothing distinguishes "we fixed it"
 # from "we stopped looking".
 mkreport "GHSA-qwww-vcr4-c8h2" "high" "react-router"
@@ -215,7 +215,7 @@ for lock in panel/frontend/package-lock.json website/client/package-lock.json; d
   if [ -n "$v" ] && [ "$(printf '%s\n7.18.2\n' "$v" | sort -V | head -1)" = "7.18.2" ]; then
     ok "$(basename "$(dirname "$lock")") locks react-router $v (>= 7.18.2, the fix)"
   else
-    bad "$(basename "$(dirname "$lock")") locks react-router ${v:-nothing} — below the fix, and the waiver that covered it is gone"
+    bad "$(basename "$(dirname "$lock")") locks react-router ${v:-nothing} - below the fix, and the waiver that covered it is gone"
   fi
 done
 
@@ -227,7 +227,7 @@ check "un-reviewed CRITICAL advisory fails the build" "$(run_gate)" "1"
 
 # s467 CORR: the default floor dropped from `high` to `moderate` after it hid
 # two real `qs` advisories from every manifest since the gate was written (see
-# npm-audit-gate.mjs's own s467 comment) — so a moderate advisory now DOES fail
+# npm-audit-gate.mjs's own s467 comment) - so a moderate advisory now DOES fail
 # at the default, and `low` is the new "does not fail" floor.
 mkreport "GHSA-0000-0000-0003" "moderate" "some-lib"
 check "moderate advisory fails at the default level" "$(run_gate)" "1"
@@ -252,7 +252,7 @@ fi
 # raw read cannot tell a commented-out entry from a live one.
 code_lines "$GATE" > "$TMP/gate-code.mjs"
 if [ "$(node -e "const s=require('fs').readFileSync('$TMP/gate-code.mjs','utf8');const m=s.match(/const ALLOWLIST = \\[([\\s\\S]*?)\\n\\];/);process.stdout.write(String(m?(m[1].match(/^\\s*\\{/gm)||[]).length:'no-block'))")" = "0" ]; then
-  ok "nothing is currently waived — the allowlist is empty"
+  ok "nothing is currently waived - the allowlist is empty"
 else
   printf '  \033[0;33m•\033[0m %s\n' "an advisory is currently waived; check its reason is still true"
 fi
@@ -267,7 +267,7 @@ printf '{"error":{"summary":"registry unreachable"}}' > "$TMP/report.json"
 check "an unreachable registry is its own outcome, not a pass" "$(run_gate)" "3"
 
 # One allowlist, not two. This hook used to carry its own copy and waive the
-# advisory locally while CI — which had none — failed on it for six releases.
+# advisory locally while CI - which had none - failed on it for six releases.
 #
 # The strongest measured case in the s338 batch, and the one that needed no
 # planted prose: the hook already carries a line of explanation naming the shared
@@ -293,7 +293,7 @@ fi
 # inside ^7?). Nothing checked the half the waiver actually rests on: that no
 # frontend here runs the server runtime GHSA-qwww-vcr4-c8h2 needs. Add
 # @react-router/node or framework mode and the waiver silently becomes false
-# while still suppressing a HIGH advisory — the worst direction for a security
+# while still suppressing a HIGH advisory - the worst direction for a security
 # gate to fail in, and invisible to every other check we own.
 #
 # Discover the frontends from the manifests that actually depend on
@@ -312,7 +312,7 @@ RR_COUNT=$(printf '%s' "$RR_MANIFESTS" | grep -c . || true)
 if [ "$RR_COUNT" -gt 0 ]; then
   ok "found $RR_COUNT frontend(s) depending on react-router-dom to check the waiver against"
 else
-  bad "no manifest depends on react-router-dom — either the dependency is gone (drop the waiver) or this discovery broke"
+  bad "no manifest depends on react-router-dom - either the dependency is gone (drop the waiver) or this discovery broke"
 fi
 
 # The source scan behind the third arm below. `grep -r` reads raw, so it is
@@ -321,7 +321,7 @@ fi
 # Only extensions the marker map knows are worth stripping. A `.css` file is
 # excluded rather than handled: unknown extensions fall through to the shell
 # marker, and a stylesheet's id selectors start with the character that marker
-# blanks — over-stripping, on a NEGATIVE arm, is the silent direction. `.jsx`
+# blanks - over-stripping, on a NEGATIVE arm, is the silent direction. `.jsx`
 # stays in and is deliberately UNDER-stripped for the same asymmetry: a missed
 # comment can only make this arm shout, never make it sleep.
 server_runtime_files() { # $1 = src dir; echoes the number of files whose CODE matches
@@ -339,17 +339,17 @@ for m in $RR_MANIFESTS; do
 
   # RAW ON PURPOSE, as above: a manifest is JSON.
   grep -q '"@react-router/' "$m" \
-    && bad "$rel now depends on a @react-router/* server package — RE-ASSESS the waiver in scripts/npm-audit-gate.mjs, it assumes there is no server runtime" \
+    && bad "$rel now depends on a @react-router/* server package - RE-ASSESS the waiver in scripts/npm-audit-gate.mjs, it assumes there is no server runtime" \
     || ok "$rel has no @react-router/* server runtime package"
 
   if compgen -G "$d/react-router.config.*" >/dev/null 2>&1; then
-    bad "$rel has a react-router.config.* — framework mode is on, so RSC is reachable; RE-ASSESS the waiver"
+    bad "$rel has a react-router.config.* - framework mode is on, so RSC is reachable; RE-ASSESS the waiver"
   else
     ok "$rel has no react-router.config.* (framework mode absent)"
   fi
 
   if [ "$(server_runtime_files "$d/src")" -gt 0 ]; then
-    bad "$rel now has a request handler or a server action — the waiver's core premise is gone; RE-ASSESS it"
+    bad "$rel now has a request handler or a server action - the waiver's core premise is gone; RE-ASSESS it"
   else
     ok "$rel has no createRequestHandler and no server actions"
   fi
@@ -383,9 +383,9 @@ else
 fi
 
 echo
-echo "── C: the promotion only ever touches the URL DockPanel itself set ──"
+echo "── C: the promotion only ever touches the URL CyberHunter - Panel itself set ──"
 
-# Extracted so it can be tested at all — the surrounding function shells out to
+# Extracted so it can be tested at all - the surrounding function shells out to
 # wp-cli. A settable canonical URL is a site-takeover primitive, so the guard
 # matters more than the rewrite.
 #
@@ -416,7 +416,7 @@ echo "── D: a certificate that stops renewing is announced, not just logged 
 if has_code "$NOTIF" -F -e 'fn fire_alert_deduped'; then
   ok "there is a deduped alert path"
 else
-  bad "no deduped alert path — an alert from a 120s loop is a flood"
+  bad "no deduped alert path - an alert from a 120s loop is a flood"
 fi
 
 # The bail-outs. These run BEFORE any attempt is made, which is exactly the
@@ -430,9 +430,9 @@ fi
 check "auto-healer alerts when a renewal cannot be attempted" \
   "$(code_count "$HEALER" -F -e 'ssl_renewal_blocked(')" "3"
 # Still four, and the count is load-bearing in a new way since v2.139.0. A fifth
-# outcome exists — a renewal deliberately NOT attempted, because the installed
+# outcome exists - a renewal deliberately NOT attempted, because the installed
 # certificate was issued by someone other than Let's Encrypt and renewing would
-# have REPLACED it — but it announces through `ssl_renewal_declined_alert`, not
+# have REPLACED it - but it announces through `ssl_renewal_declined_alert`, not
 # this helper. That split is deliberate: this helper says "SSL renewal failed"
 # and pages at `critical`, and neither is true of a refusal the panel made on
 # purpose. If this count reaches five, check whether a declined renewal has been
@@ -461,7 +461,7 @@ fi
 # Driven out of a real fresh-box install (s258): a dbus hiccup made
 # `systemctl is-active` exit non-zero with an empty answer, and the installer
 # aborted at step 11/15 blaming a service that was running. Stubbed here because
-# a transient bus failure cannot be summoned on demand — but the three answers it
+# a transient bus failure cannot be summoned on demand - but the three answers it
 # has to tell apart can.
 echo
 echo "── E: the installer's unit readiness check ──"
@@ -488,7 +488,7 @@ runhelper() { ( PATH="$TMP/bin:$PATH"; . "$TMP/helper.sh"; wait_for_unit some-un
 mkstub 'echo active'
 check "an active unit is accepted"                       "$(runhelper)" "0"
 
-# THE REGRESSION: dbus down — non-zero exit, nothing on stdout, unit is fine.
+# THE REGRESSION: dbus down - non-zero exit, nothing on stdout, unit is fine.
 mkstub 'echo "Failed to retrieve unit state: Message recipient disconnected from message bus without replying" >&2; exit 1'
 check "a bus that cannot answer is not a failed service"  "$(runhelper 2)" "1"
 mkstub 'if [ -f "$0.seen" ]; then echo active; else touch "$0.seen"; echo "Failed to retrieve unit state" >&2; exit 1; fi'
@@ -500,7 +500,7 @@ mkstub 'if [ -f "$0.seen" ]; then echo active; else touch "$0.seen"; echo activa
 rm -f "$TMP/bin/systemctl.seen"
 check "an activating unit is waited for"                 "$(runhelper 5)" "0"
 
-# And a genuinely dead one still fails — the check must keep its teeth.
+# And a genuinely dead one still fails - the check must keep its teeth.
 mkstub 'echo failed; exit 3'
 check "a failed unit fails immediately"                  "$(runhelper 3)" "1"
 mkstub 'echo inactive; exit 3'
@@ -515,7 +515,7 @@ echo "── F: a renewal records the certificate it installed (s306) ──"
 # agent returned, so the site's stored expiry stayed at the value written when the
 # certificate was first issued. The dashboard countdown ran to zero and the
 # warning ladder walked down to the EXPIRED sentinel on a certificate that had
-# renewed perfectly — with no way back, because the resolve branch fires only
+# renewed perfectly - with no way back, because the resolve branch fires only
 # when the remaining days RISE.
 #
 # These arms were the only ones in the file already stripping comments, because
@@ -525,7 +525,7 @@ echo "── F: a renewal records the certificate it installed (s306) ──"
 #
 # THE SUBJECTS ARE DERIVED. Every backend file that asks an agent to issue or
 # renew a certificate FOR A ROW IN `sites` must store what came back. A
-# hardcoded list is the arm that cannot see the next one — and the path that
+# hardcoded list is the arm that cannot see the next one - and the path that
 # carried this defect is one a list written from memory would have missed,
 # because it is a security scanner rather than an SSL route (lesson #182).
 #
@@ -534,7 +534,7 @@ echo "── F: a renewal records the certificate it installed (s306) ──"
 #
 #   * the AGENT call. Matching the bare path also matches the panel's own route
 #     table (`mod.rs` registers the renew endpoint), which issues nothing.
-#   * a reference to the `sites` table — the certificate must be one the panel
+#   * a reference to the `sites` table - the certificate must be one the panel
 #     TRACKS. `mail.rs` provisions for a mail host and works entirely in
 #     `mail_domains`; it holds no `sites` row, so there is no expiry column for
 #     it to write and demanding one would be a false red for ever.
@@ -544,12 +544,12 @@ echo "── F: a renewal records the certificate it installed (s306) ──"
 #
 # BOTH halves are counted from CODE. Discovery through a raw `grep -r` is a
 # membership decision made on prose: a file could join the class on the strength
-# of a commented-out call, or — worse, because it is the quiet direction — be
+# of a commented-out call, or - worse, because it is the quiet direction - be
 # excluded from it because its only `sites` reference had been commented out.
 #
 # ⚠ s348: `mail.rs`'s exclusion is now EXPLICIT, and it had to become explicit.
 # The paragraph above always intended it out of the class, but the mechanism was
-# incidental — mail.rs simply happened to contain no `sites` reference. GitHub
+# incidental - mail.rs simply happened to contain no `sites` reference. GitHub
 # #106 gave it one: `create_domain` reads `sites` to name the account that a new
 # mail domain hands its mailboxes to. The membership test then pulled mail.rs in
 # and this suite went red on correct code, for a cert it has nowhere to record.
@@ -579,9 +579,9 @@ done < <(find "$REPO/panel/backend/src" -name '*.rs' 2>/dev/null | sort)
 # `mail_domains` ever grows a place to put an expiry, mail.rs stops being a file
 # with nowhere to write one and belongs back in the class above.
 if [ "$RENEW_EXCLUDED" -eq 0 ]; then
-  bad "mail.rs no longer calls an agent SSL route — remove its exclusion above rather than leaving a carve-out for a file that left the class"
+  bad "mail.rs no longer calls an agent SSL route - remove its exclusion above rather than leaving a carve-out for a file that left the class"
 elif grep -rqE 'mail_domains[^;]*ssl_expiry|ssl_expiry[^;]*mail_domains' "$REPO/panel/backend/migrations/" 2>/dev/null; then
-  bad "mail_domains now carries an expiry column — mail.rs has somewhere to record its certificate, so its exclusion from the renewal class is stale"
+  bad "mail_domains now carries an expiry column - mail.rs has somewhere to record its certificate, so its exclusion from the renewal class is stale"
 else
   ok "mail.rs is excluded for a reason that still holds: no expiry column exists for a mail domain"
 fi
@@ -589,14 +589,14 @@ fi
   echo "  · $RENEW_SKIPPED agent SSL caller(s) hold no sites row and are out of this class"
 
 if [ "${#RENEW_CALLERS[@]}" -lt 3 ]; then
-  bad "enumerated only ${#RENEW_CALLERS[@]} backend callers of an agent SSL issue/renew route — implausible, so the arms below would pass having examined nothing"
+  bad "enumerated only ${#RENEW_CALLERS[@]} backend callers of an agent SSL issue/renew route - implausible, so the arms below would pass having examined nothing"
 else
   ok "enumerated ${#RENEW_CALLERS[@]} backend callers of an agent SSL issue/renew route"
   for f in "${RENEW_CALLERS[@]}"; do
     if [ "$(prod_count "$f" -E -e 'ssl_expiry[ ]*=[ ]*\$')" -gt 0 ]; then
       ok "$(basename "$f") stores the expiry it was handed"
     else
-      bad "$(basename "$f") renews a certificate and never records it — the panel keeps describing the retired one, down to a false EXPIRED it cannot resolve"
+      bad "$(basename "$f") renews a certificate and never records it - the panel keeps describing the retired one, down to a false EXPIRED it cannot resolve"
     fi
   done
 fi
@@ -617,13 +617,13 @@ done
 
 # And the host-blind re-read that already wrote across hosts. `domain` is unique
 # only per server, so a post-renewal lookup keyed on it can return another
-# host's row — which this path then pushes as a vhost through THIS host's agent.
+# host's row - which this path then pushes as a vhost through THIS host's agent.
 #
 # NEGATIVE arm. Controlled in §I.
 if [ "$(prod_count "$SCAN" -F -e 'FROM sites WHERE domain')" -eq 0 ]; then
   ok "the scanner's post-renewal re-read is not keyed on a domain"
 else
-  bad "the scanner re-reads the site by domain after renewing — on a fleet that can rebuild another host's vhost through this host's agent"
+  bad "the scanner re-reads the site by domain after renewing - on a fleet that can rebuild another host's vhost through this host's agent"
 fi
 
 echo
@@ -632,7 +632,7 @@ echo "── G: the strippers strip comments, and nothing else (s338) ──"
 # Everything above now depends on code_lines. A stripper that under-strips
 # restores the whole defect silently; one that OVER-strips turns the five
 # negative arms green on broken code. So it gets its own fixtures, and they are
-# hermetic — no repository file is involved, because a fixture that shares a
+# hermetic - no repository file is involved, because a fixture that shares a
 # subject with the thing it validates cannot tell the two apart.
 cat > "$FIXDIR/f.sh" <<'FIX'
 #!/usr/bin/env bash
@@ -664,7 +664,7 @@ fi
 if [ "$(code_count "$FIXDIR/f.sh" -F -e 'TOKENSTR')" -eq 1 ]; then
   ok "shell: a '#' inside a string literal is left alone (no trailing-comment stripping)"
 else
-  bad "shell: the stripper ate a '#' inside a string — a negative arm would now pass on broken code"
+  bad "shell: the stripper ate a '#' inside a string - a negative arm would now pass on broken code"
 fi
 
 if [ "$(code_count "$FIXDIR/f.rs" -F -e 'TOKENWORD')" -eq 1 ]; then
@@ -674,18 +674,18 @@ else
 fi
 
 if [ "$(code_count "$FIXDIR/f.rs" -F -e 'TOKENURL')" -eq 1 ]; then
-  ok "rust: '//' inside a quoted string survives — a URL is not a comment"
+  ok "rust: '//' inside a quoted string survives - a URL is not a comment"
 else
   bad "rust: the stripper cut a line at the '//' of a URL inside a string literal"
 fi
 
 # s294: a `/*` inside a string literal opened a block comment that ran to the
 # next `*/` and deleted 485 lines of git_build.rs. The guard is that a block is
-# recognised only where one is WRITTEN — opening at line start.
+# recognised only where one is WRITTEN - opening at line start.
 if [ "$(code_count "$FIXDIR/f.rs" -F -e 'TOKENAFTER')" -eq 1 ]; then
   ok "rust: a '/*' inside a string literal does not open a block (the s294 guard holds)"
 else
-  bad "rust: a string containing '/*' swallowed the code after it — the s294 stripper defect is back"
+  bad "rust: a string containing '/*' swallowed the code after it - the s294 stripper defect is back"
 fi
 
 if [ "$(code_count "$FIXDIR/f.json" -F -e 'TOKENWORD')" -eq 1 ]; then
@@ -705,7 +705,7 @@ done
 if [ -z "$LINEDRIFT" ]; then
   ok "blanking preserves the line count of all ${#SUBJECTS[@]} subjects, so line numbers stay true"
 else
-  bad "code_lines changed the line count of:$LINEDRIFT — §E's helper slice is now cutting the wrong lines"
+  bad "code_lines changed the line count of:$LINEDRIFT - §E's helper slice is now cutting the wrong lines"
 fi
 
 # The most direct over-strip control available: if the stripper removed part of a
@@ -773,7 +773,7 @@ PINNED=(
 # section produces when a pin has gone prose-only: an EMPTY hit list. With no
 # records in the first file, the first record of the SECOND file also satisfies
 # NR == FNR, so the whole subject is consumed as hit numbers and the copy comes
-# out empty — which then reads as "the stripper is not reaching this subject"
+# out empty - which then reads as "the stripper is not reaching this subject"
 # when the truth is "this pattern has no code lines left to comment out".
 comment_out_matches() {
   local src="$1" dst="$2" mode="$3" pat="$4" marker
@@ -807,13 +807,13 @@ for subj in $PIN_SUBJECTS; do
   if [ -z "$dead" ]; then
     ok "$rel: every pattern this suite pins is present in CODE, not only in prose"
   else
-    bad "$rel: pinned pattern(s) present only as prose —$dead — the arm reading it is passing on a comment"
+    bad "$rel: pinned pattern(s) present only as prose -$dead - the arm reading it is passing on a comment"
   fi
 
   if [ -z "$survived" ]; then
     ok "$rel: commenting out the matching code lines drives every pinned pattern to zero"
   else
-    bad "$rel: pattern(s) still counted after their code lines were commented out —$survived — the stripper is not reaching this subject"
+    bad "$rel: pattern(s) still counted after their code lines were commented out -$survived - the stripper is not reaching this subject"
   fi
 done
 
@@ -823,7 +823,7 @@ echo "── I: each negative arm still fires when the real defect is in code (s
 # ONE PLANTED REAL DEFECT PER NEGATIVE ARM, and this is the section that matters
 # most. Stripping makes a check see LESS. For a positive arm that is loudly red;
 # for a NEGATIVE arm (match ⇒ bad) it is silently green on broken code, and a
-# green run looks identical either way. §H cannot catch it — commenting a line
+# green run looks identical either way. §H cannot catch it - commenting a line
 # out is exactly what a negative arm wants to survive. So the defect goes back in
 # as CODE, in a copy, and the grep is required to fire.
 #
@@ -835,7 +835,7 @@ printf '\nNPM_AUDIT_ALLOWLIST="GHSA-0000-0000-0000"\n' >> "$FIXDIR/pre-push"
 if has_code "$FIXDIR/pre-push" -F -e 'NPM_AUDIT_ALLOWLIST'; then
   ok "§A's second-allowlist arm still fires when the override is really in code"
 else
-  bad "§A's second-allowlist arm no longer fires on a real local allowlist — the stripper is eating code"
+  bad "§A's second-allowlist arm no longer fires on a real local allowlist - the stripper is eating code"
 fi
 
 cp "$REPO/panel/frontend/package.json" "$FIXDIR/manifest.json"
@@ -852,7 +852,7 @@ printf '\nexport const handler = createRequestHandler({ build });\n' >> "$FIXDIR
 if has_code "$FIXDIR/probe.tsx" -E -e 'createRequestHandler|"use server"'; then
   ok "§A's server-runtime arm still fires when a request handler is really in code"
 else
-  bad "§A's server-runtime arm no longer fires on a real request handler — the stripper is eating code"
+  bad "§A's server-runtime arm no longer fires on a real request handler - the stripper is eating code"
 fi
 
 cp "$SITES" "$FIXDIR/x_sites.rs"
@@ -860,7 +860,7 @@ printf '\n        "url": format!("https://{cms_domain}"),\n' >> "$FIXDIR/x_sites
 if has_code "$FIXDIR/x_sites.rs" -F -e '"url": format!("https'; then
   ok "§B's secure-install-URL arm still fires when the URL is really in code"
 else
-  bad "§B's secure-install-URL arm no longer fires on a real https install URL — the stripper is eating code"
+  bad "§B's secure-install-URL arm no longer fires on a real https install URL - the stripper is eating code"
 fi
 
 cp "$SETUP" "$FIXDIR/x_setup.sh"
@@ -868,7 +868,7 @@ printf '\nif systemctl is-active --quiet dockpanel; then :; fi\n' >> "$FIXDIR/x_
 if [ "$(code_count "$FIXDIR/x_setup.sh" -F -e 'if systemctl is-active --quiet dockpanel')" -gt 0 ]; then
   ok "§E's bare-is-active arm still fires when the one-liner is really in code"
 else
-  bad "§E's bare-is-active arm no longer fires on a real bare is-active — the stripper is eating code"
+  bad "§E's bare-is-active arm no longer fires on a real bare is-active - the stripper is eating code"
 fi
 
 cp "$SCAN" "$FIXDIR/x_scanner.rs"
@@ -876,7 +876,7 @@ cp "$SCAN" "$FIXDIR/x_scanner.rs"
 # literal EOF: `prod_count` blanks everything from that marker onward (see the
 # K7 comment above), so a plain `>>` would land the planted defect inside the
 # blanked region for any subject whose own test module sits at the true end of
-# the file — which security_scanner.rs does since the s413 stack-SSL work.
+# the file - which security_scanner.rs does since the s413 stack-SSL work.
 SCAN_TEST_LINE=$(grep -n '^#\[cfg(test)\]' "$FIXDIR/x_scanner.rs" | head -1 | cut -d: -f1)
 if [ -n "$SCAN_TEST_LINE" ]; then
   {
@@ -891,7 +891,7 @@ fi
 if [ "$(prod_count "$FIXDIR/x_scanner.rs" -F -e 'FROM sites WHERE domain')" -gt 0 ]; then
   ok "§F's host-blind-re-read arm still fires when the query is really in code"
 else
-  bad "§F's host-blind-re-read arm no longer fires on a real domain-keyed re-read — the stripper is eating code"
+  bad "§F's host-blind-re-read arm no longer fires on a real domain-keyed re-read - the stripper is eating code"
 fi
 
 echo
@@ -915,7 +915,7 @@ else
 fi
 
 # s336 #364: a check placed below an early exit inherits that exit's blind spot.
-# The stripper this file used to carry had the same shape — defined two thirds of
+# The stripper this file used to carry had the same shape - defined two thirds of
 # the way down, used by nothing above it. Assert the definition precedes the
 # first section rather than trusting it.
 DEF_LINE=$(code_lineno "$SELF" -E -e '^code_lines\(\) \{')
@@ -923,7 +923,7 @@ SEC1_LINE=$(code_lineno "$SELF" -F -e '── A: the npm audit gate waives')
 if [ -n "$DEF_LINE" ] && [ -n "$SEC1_LINE" ] && [ "$DEF_LINE" -lt "$SEC1_LINE" ]; then
   ok "code_lines is defined (line $DEF_LINE) above the first section (line $SEC1_LINE)"
 else
-  bad "code_lines is no longer defined above section A — the arms above its definition are reading raw source again (def=${DEF_LINE:-none} §A=${SEC1_LINE:-none})"
+  bad "code_lines is no longer defined above section A - the arms above its definition are reading raw source again (def=${DEF_LINE:-none} §A=${SEC1_LINE:-none})"
 fi
 
 echo
@@ -933,13 +933,13 @@ echo "── K: a mail host's certificate never destroys the one already there �
 # the agent, and that file is not the mail host's private property: a DNS-01
 # WILDCARD is stored under the zone apex, which is exactly the name a mail domain
 # is normally created at. Every arm here is scoped with `prod_lines`, because this
-# file carries unit tests that spell each of these symbols — counting raw source
+# file carries unit tests that spell each of these symbols - counting raw source
 # would let the TEST DATA satisfy the pin (the trap that has cost this repo a
 # green suite over a restored defect more than once).
 MAILF="$REPO/panel/backend/src/routes/mail.rs"
 
 if [ ! -f "$MAILF" ]; then
-  bad "K0 mail.rs is missing — every arm below would pass having examined nothing"
+  bad "K0 mail.rs is missing - every arm below would pass having examined nothing"
 else
   # Extract the guarded issuer's own body. Everything below reads THIS, not the
   # file, so an arm cannot be satisfied by a sibling function 1500 lines away.
@@ -947,37 +947,37 @@ else
     | awk '/^async fn provision_mail_host_cert\(/ {inb=1} inb {print} inb && /^\}$/ {exit}')
   PROV_N=$(grep -c . <<< "$PROV_BODY")
 
-  # H0 — the extractor's own control. An anchor that stops matching yields an
+  # H0 - the extractor's own control. An anchor that stops matching yields an
   # EMPTY body, under which every `hasnt`-shaped arm below passes green. Floor it
   # and make the break say so in its own words.
   if [ "$PROV_N" -ge 20 ]; then
-    ok "K0 provision_mail_host_cert extracted — $PROV_N lines"
+    ok "K0 provision_mail_host_cert extracted - $PROV_N lines"
   else
-    bad "K0 provision_mail_host_cert extracted — only $PROV_N lines (the extractor broke; the arms below examined nothing)"
+    bad "K0 provision_mail_host_cert extracted - only $PROV_N lines (the extractor broke; the arms below examined nothing)"
   fi
 
-  # H1 — ONE door. The raw agent provision call must exist exactly once in the
+  # H1 - ONE door. The raw agent provision call must exist exactly once in the
   # file, i.e. only inside the guarded helper. Two auto-DNS providers reached this
   # through byte-identical blocks before v2.156.0, and a guard applied to one leg
   # and not the other is this project's most-repeated regression shape.
   RAW_PROV=$(prod_count "$MAILF" -cE 'format!\("/ssl/provision/')
   if [ "$RAW_PROV" -eq 1 ]; then
-    ok "K1 the agent provision call appears once in mail.rs — both providers share the guarded path"
+    ok "K1 the agent provision call appears once in mail.rs - both providers share the guarded path"
   else
-    bad "K1 the agent provision call appears once in mail.rs — found $RAW_PROV, so a leg issues unguarded"
+    bad "K1 the agent provision call appears once in mail.rs - found $RAW_PROV, so a leg issues unguarded"
   fi
 
-  # H2 — and both legs actually reach it. One definition plus two call sites.
+  # H2 - and both legs actually reach it. One definition plus two call sites.
   # Counted on the bare name so rustfmt wrapping the argument list cannot make a
   # correct tree read as a broken one.
   PROV_REFS=$(prod_count "$MAILF" -c 'provision_mail_host_cert')
   if [ "$PROV_REFS" -eq 3 ]; then
     ok "K2 provision_mail_host_cert is defined once and called from both auto-DNS legs"
   else
-    bad "K2 provision_mail_host_cert is defined once and called from both auto-DNS legs — $PROV_REFS references (expected 3)"
+    bad "K2 provision_mail_host_cert is defined once and called from both auto-DNS legs - $PROV_REFS references (expected 3)"
   fi
 
-  # H3 — the verdict is consulted BEFORE the call, not after it and not at all.
+  # H3 - the verdict is consulted BEFORE the call, not after it and not at all.
   # Position, because a guard whose result is computed and then ignored reads
   # identically to one that is absent.
   V_AT=$(grep -n 'mail_cert_verdict' <<< "$PROV_BODY" | head -1 | cut -d: -f1)
@@ -985,15 +985,15 @@ else
   if [ -n "$V_AT" ] && [ -n "$P_AT" ] && [ "$V_AT" -lt "$P_AT" ]; then
     ok "K3 the verdict is taken before the certificate is ordered (verdict line $V_AT, order line $P_AT)"
   else
-    bad "K3 the verdict is taken before the certificate is ordered — verdict=${V_AT:-absent} order=${P_AT:-absent}"
+    bad "K3 the verdict is taken before the certificate is ordered - verdict=${V_AT:-absent} order=${P_AT:-absent}"
   fi
 
-  # H4 — the guard returns rather than falling through. A verdict that refuses and
+  # H4 - the guard returns rather than falling through. A verdict that refuses and
   # then orders anyway is the shape a mutation of the branch produces, and it is
   # invisible to a presence-shaped arm.
   # ⚠ Written first as `grep -A 3` and it was RED against correct code: rustfmt
   # wraps the verdict's argument list, so the `return;` sits six lines below the
-  # match, not three. A fixed -A window is not a branch (#172) — this asks the
+  # match, not three. A fixed -A window is not a branch (#172) - this asks the
   # only question that matters and cannot be fooled by formatting: the refusal
   # returns BEFORE the order is placed.
   R_AT=$(grep -n 'MailCertVerdict::Refuse' <<< "$PROV_BODY" | head -1 | cut -d: -f1)
@@ -1002,10 +1002,10 @@ else
      && [ "$R_AT" -lt "$RET_AT" ] && [ "$RET_AT" -lt "$P_AT" ]; then
     ok "K4 a refusal returns before the certificate is ordered (refuse $R_AT, return $RET_AT, order $P_AT)"
   else
-    bad "K4 a refusal returns before the certificate is ordered — refuse=${R_AT:-absent} return=${RET_AT:-absent} order=${P_AT:-absent}"
+    bad "K4 a refusal returns before the certificate is ordered - refuse=${R_AT:-absent} return=${RET_AT:-absent} order=${P_AT:-absent}"
   fi
 
-  # H5 — BOTH inputs survive. The columns catch the LE wildcard the issuer probe
+  # H5 - BOTH inputs survive. The columns catch the LE wildcard the issuer probe
   # is blind to (foreign_cert_issuer collapses ours-and-unknown to None); the
   # issuer catches the uploaded certificate the columns cannot see. Deleting
   # either half leaves a guard that still looks like a guard.
@@ -1013,11 +1013,11 @@ else
     | awk '/^pub fn mail_cert_verdict\(/ {inb=1} inb {print} inb && /^\}$/ {exit}')
   VERDICT_N=$(grep -c . <<< "$VERDICT_BODY")
   if [ "$VERDICT_N" -lt 8 ]; then
-    bad "K5-control mail_cert_verdict extracted — only $VERDICT_N lines (the extractor broke)"
+    bad "K5-control mail_cert_verdict extracted - only $VERDICT_N lines (the extractor broke)"
   else
-    ok "K5-control mail_cert_verdict extracted — $VERDICT_N lines"
+    ok "K5-control mail_cert_verdict extracted - $VERDICT_N lines"
     # ⚠ FIRST CUT OF THIS ARM WAS WEAK AND A MUTATION PROVED IT. It grepped the
-    # three INPUT NAMES, and `foreign_issuer` is also the parameter's name — so
+    # three INPUT NAMES, and `foreign_issuer` is also the parameter's name - so
     # deleting the whole issuer check left the signature behind and the arm passed
     # over a guard with half its cases gone. #766's family, in an arm written to
     # catch exactly that. What is asserted now is that each input reaches a
@@ -1030,26 +1030,26 @@ else
     grep -qE 'MailCertBlocker::Wildcard' <<< "$VERDICT_BODY" || K5_MISS="$K5_MISS refuses-wildcard"
     grep -qE 'MailCertBlocker::Foreign'  <<< "$VERDICT_BODY" || K5_MISS="$K5_MISS refuses-foreign"
     if [ -z "$K5_MISS" ]; then
-      ok "K5 the verdict consults the wildcard columns AND the issuer — neither half alone covers the other's case"
+      ok "K5 the verdict consults the wildcard columns AND the issuer - neither half alone covers the other's case"
     else
-      bad "K5 the verdict consults the wildcard columns AND the issuer — missing:$K5_MISS"
+      bad "K5 the verdict consults the wildcard columns AND the issuer - missing:$K5_MISS"
     fi
   fi
 
-  # H6 — a refusal is ANNOUNCED. Silence here is indistinguishable from the ACME
+  # H6 - a refusal is ANNOUNCED. Silence here is indistinguishable from the ACME
   # failure the Err arm reports, so the operator could not tell a refusal that
   # saved their wildcard from a network error they should retry.
   if grep -qE 'announce_mail_cert_conflict' <<< "$PROV_BODY"; then
     ok "K6 a refusal is announced to the operator, not skipped silently"
   else
-    bad "K6 a refusal is announced to the operator — the refuse branch tells nobody"
+    bad "K6 a refusal is announced to the operator - the refuse branch tells nobody"
   fi
 
-  # H7 — severed-pair. A dedup key nothing raises decides nothing, and a key
+  # H7 - severed-pair. A dedup key nothing raises decides nothing, and a key
   # raised under a name nothing defines is an inline literal by another route.
   # ⚠ The definition side is read from the KEY MODULE'S OWN RANGE, not from the
   # whole file. `prod_lines` blanks from the first `#[cfg(test)]` to EOF, and
-  # notifications.rs carried one at line 136 of 1463 — so a whole-file `prod_count`
+  # notifications.rs carried one at line 136 of 1463 - so a whole-file `prod_count`
   # here answered 0 for a constant that is plainly defined at 1107, and this arm
   # was RED against correct code. The module was moved to the end of that file in
   # the same commit; scoping to the range as well means the arm survives it coming
@@ -1059,34 +1059,34 @@ else
   if [ "$DEF_MHC" -ge 1 ] && [ "$USE_MHC" -ge 1 ]; then
     ok "K7 the mail-conflict dedup key is both defined and raised (def=$DEF_MHC use=$USE_MHC)"
   else
-    bad "K7 the mail-conflict dedup key is both defined and raised — def=$DEF_MHC use=$USE_MHC"
+    bad "K7 the mail-conflict dedup key is both defined and raised - def=$DEF_MHC use=$USE_MHC"
   fi
 
-  # H8 — the no-`sites`-row leg is announced too, not just the site leg. Until
+  # H8 - the no-`sites`-row leg is announced too, not just the site leg. Until
   # s411 `announce_mail_cert_conflict` took a non-optional site id and owner, so
-  # a Compose stack or Docker app domain (which can never own a `sites` row —
+  # a Compose stack or Docker app domain (which can never own a `sites` row -
   # `domain_claim::find_occupant` guarantees it) hit only a `tracing::warn!`
   # with no alert behind it: the exact severed-pair shape K6/K7 already guard
   # against for the site-owning leg, just on the other branch of the same `if`.
   # Two calls in one function body is the only shape that proves both branches
-  # reach it — K6 alone is satisfied by either one.
+  # reach it - K6 alone is satisfied by either one.
   ANNOUNCE_N=$(grep -c 'announce_mail_cert_conflict' <<< "$PROV_BODY")
   if [ "$ANNOUNCE_N" -eq 2 ]; then
     ok "K8 both the site leg and the no-site leg announce a refusal ($ANNOUNCE_N call sites)"
   else
-    bad "K8 both the site leg and the no-site leg announce a refusal — found $ANNOUNCE_N call sites (expected 2)"
+    bad "K8 both the site leg and the no-site leg announce a refusal - found $ANNOUNCE_N call sites (expected 2)"
   fi
 
-  # H9 — the signature the fix actually depends on. K8 would stay green even if
+  # H9 - the signature the fix actually depends on. K8 would stay green even if
   # `site_id` were forced back to a non-optional `Uuid` and the no-site branch
-  # invented an id to satisfy it — a shape that compiles, calls the function
+  # invented an id to satisfy it - a shape that compiles, calls the function
   # twice, and reintroduces exactly what H8's comment describes. Pin the type.
   ANNOUNCE_SIG=$(prod_lines "$MAILF" \
     | awk '/^async fn announce_mail_cert_conflict\(/ {inb=1} inb {print} inb && /^\) \{$/ {exit}')
   if grep -qE 'site_id: Option<uuid::Uuid>' <<< "$ANNOUNCE_SIG"; then
-    ok "K9 announce_mail_cert_conflict's site id is Option — the no-site leg cannot be served by an invented id"
+    ok "K9 announce_mail_cert_conflict's site id is Option - the no-site leg cannot be served by an invented id"
   else
-    bad "K9 announce_mail_cert_conflict's site id is no longer Option — the no-site leg may be back to inventing one, or gone"
+    bad "K9 announce_mail_cert_conflict's site id is no longer Option - the no-site leg may be back to inventing one, or gone"
   fi
 fi
 

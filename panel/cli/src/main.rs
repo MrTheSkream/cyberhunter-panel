@@ -7,7 +7,7 @@ use clap::{CommandFactory, Parser, Subcommand};
 #[derive(Parser)]
 #[command(
     name = "dockpanel",
-    about = "DockPanel CLI — self-hosted server management",
+    about = "CyberHunter - Panel CLI - self-hosted server management",
     version
 )]
 struct Cli {
@@ -161,7 +161,7 @@ enum DbCmd {
         #[arg(long)]
         engine: String,
         /// Root/admin password. Prefer --password-stdin or the interactive
-        /// prompt — a value given here is visible to other local users via
+        /// prompt - a value given here is visible to other local users via
         /// `ps`/`/proc` for the life of the process and lands in shell history.
         #[arg(long, conflicts_with = "password_stdin")]
         password: Option<String>,
@@ -254,7 +254,7 @@ enum SslCmd {
         #[arg(long)]
         proxy_port: Option<u16>,
         /// Issue even if the certificate already installed for this domain was
-        /// obtained somewhere else — it will be REPLACED.
+        /// obtained somewhere else - it will be REPLACED.
         #[arg(long)]
         force: bool,
     },
@@ -299,7 +299,7 @@ enum BackupCmd {
         #[arg(long, default_value = "root")]
         user: String,
         /// Database password. Prefer --password-stdin or the interactive
-        /// prompt — a value given here is visible to other local users via
+        /// prompt - a value given here is visible to other local users via
         /// `ps`/`/proc` for the life of the process and lands in shell history.
         #[arg(long, conflicts_with = "password_stdin")]
         password: Option<String>,

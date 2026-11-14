@@ -14,8 +14,8 @@ pub struct TerminalQuery {
     pub site_id: Option<String>,
 }
 
-/// Marks a ticket as a server (root) shell. Not a valid domain — it contains an
-/// `@`, which the agent's own domain validation rejects — so it cannot collide
+/// Marks a ticket as a server (root) shell. Not a valid domain - it contains an
+/// `@`, which the agent's own domain validation rejects - so it cannot collide
 /// with a site's name.
 pub const SERVER_SHELL_SCOPE: &str = "@server";
 
@@ -27,13 +27,13 @@ pub const SERVER_SHELL_SCOPE: &str = "@server";
 ///
 /// **Both columns, never one of them.** `activate_lockdown` writes
 /// `terminals_disabled = TRUE` in the same statement that sets `active = TRUE`,
-/// but `deactivate_lockdown` clears only `active` — nothing in the codebase ever
+/// but `deactivate_lockdown` clears only `active` - nothing in the codebase ever
 /// writes the terminal column back to FALSE. The migration compounds this: it
 /// declares the column `DEFAULT TRUE` while seeding the singleton row with
 /// `active = FALSE`, so on a panel that has never once been locked down the
 /// column already reads TRUE. A gate keyed on `terminals_disabled` alone would
 /// therefore refuse every shell on a fresh install, and would keep refusing them
-/// for ever after the first unlock — a kill switch with no off position, wearing
+/// for ever after the first unlock - a kill switch with no off position, wearing
 /// the name of an emergency measure. `active` is what makes the flag mean
 /// anything at a given moment; the flag is what says whether THIS lockdown was
 /// one that reaches terminals. `is_locked_down` answers neither question: it
@@ -52,7 +52,7 @@ pub async fn lockdown_terminal_state(pool: &sqlx::PgPool) -> (bool, bool) {
         // terminals were meant to stay open, so it is not read as permission.
         // Underneath an inactive lockdown it decides nothing either way.
         Some((active, disabled)) => (active, disabled.unwrap_or(true)),
-        // No singleton row at all — the migration has not run, or somebody
+        // No singleton row at all - the migration has not run, or somebody
         // deleted it. `is_locked_down` answers the same shape of question with
         // `false`, and disagreeing here would mean a panel mid-migration has no
         // terminals rather than no lockdown.
@@ -63,8 +63,8 @@ pub async fn lockdown_terminal_state(pool: &sqlx::PgPool) -> (bool, bool) {
 /// Whether a shell may be opened right now: a lockdown is active AND it is one
 /// that disabled terminals.
 ///
-/// The doors this closes are the two that CREATE something — the ticket mint and
-/// the share writer — plus the unauthenticated viewer that serves what the share
+/// The doors this closes are the two that CREATE something - the ticket mint and
+/// the share writer - plus the unauthenticated viewer that serves what the share
 /// writer stored. `revoke_share` and `list_shares` are deliberately left open:
 /// they are how an operator sees a live share and closes it, and refusing them
 /// during a lockdown would withdraw the remedy at the same moment as the risk.
@@ -79,7 +79,7 @@ struct TerminalTicket {
     purpose: String,
     exp: usize,
     /// Carries `security_session_recording` to the agent. It rides INSIDE the
-    /// signed ticket because the browser dials the agent directly — as a query
+    /// signed ticket because the browser dials the agent directly - as a query
     /// param the user could suppress the recording of their own session.
     record: bool,
     /// The shell this ticket authorises: a site's domain, or `@server` for the
@@ -95,7 +95,7 @@ struct TerminalTicket {
     scope: String,
 }
 
-/// GET /api/terminal/token — Generate a short-lived terminal ticket.
+/// GET /api/terminal/token - Generate a short-lived terminal ticket.
 /// Returns a 60-second JWT signed with the agent token (never exposes the raw agent token).
 pub async fn ws_token(
     State(state): State<AppState>,
@@ -106,7 +106,7 @@ pub async fn ws_token(
     // Feature 9/11: the lockdown's terminal switch, finally read by somebody.
     //
     // This is THE door into a shell. The browser dials the agent's WebSocket
-    // directly — the panel deliberately does not proxy it — so this handler is
+    // directly - the panel deliberately does not proxy it - so this handler is
     // not one gate among several on the way to a terminal, it is the only one
     // the panel ever gets to apply. Nothing downstream can refuse: the ticket it
     // returns is signed with the agent's own token, and an agent that verifies
@@ -115,7 +115,7 @@ pub async fn ws_token(
     // `activate_lockdown` has written `terminals_disabled = TRUE` since the
     // column existed and nothing anywhere has ever read it. Meanwhile the panic
     // button revokes every session on purpose and the design lets an admin log
-    // straight back in — that concession is correct, it is how an operator keeps
+    // straight back in - that concession is correct, it is how an operator keeps
     // control of a panel under attack. What made it dangerous was that logging
     // back in also restored the ability to mint a fresh root shell, seconds
     // after the button whose entire promise was that root shells had been
@@ -125,8 +125,8 @@ pub async fn ws_token(
     //
     // Placed above every other check in this handler, including the role gate
     // and the per-site branch, because `terminals_disabled` does not mean "no
-    // server shell". The sweep it belongs to kills SITE shells too — `killed` is
-    // the total and `server_terminals_killed` is only the root subset — so a
+    // server shell". The sweep it belongs to kills SITE shells too - `killed` is
+    // the total and `server_terminals_killed` is only the root subset - so a
     // site owner's shell is exactly as much a live session on the host as an
     // admin's, and refusing one while minting the other would leave the flag
     // half-honoured in the direction that helps an intruder.
@@ -141,7 +141,7 @@ pub async fn ws_token(
     // Answer here rather than minting a ticket the receiving agent must reject.
     crate::helpers::require_local_agent_scope(&state, server_id, "The web terminal").await?;
 
-    // Server-level terminal requires admin role. This gate is load-bearing — see
+    // Server-level terminal requires admin role. This gate is load-bearing - see
     // v2.75.0, where it guarded only the MINTING of a site-less ticket and the
     // decision never travelled to the agent, so a site owner could drop the scope
     // and reach a root shell. It stays exactly as strict as it is.
@@ -207,7 +207,7 @@ pub async fn ws_token(
     )
     .await;
     // `domain` is Some only for a site shell whose ownership was checked above,
-    // and None only on the admin-gated server-shell branch — so this is the
+    // and None only on the admin-gated server-shell branch - so this is the
     // authorisation decision, signed, not a hint the client can override.
     let scope = domain
         .clone()
@@ -249,20 +249,20 @@ fn valid_share_id(id: &str) -> bool {
 /// **Both readers must go through here.** Until this was written they disagreed:
 /// the operator's own share list skipped anything past its hour, while the public
 /// viewer computed the same number, clamped it to zero and rendered the content
-/// regardless — so the panel reported a share as gone while an unauthenticated
+/// regardless - so the panel reported a share as gone while an unauthenticated
 /// URL still served it. What it serves is root terminal output, and the only
 /// thing that eventually removed the row was a retention sweep that runs once a
 /// day. A daily sweep is a housekeeper, not an access control; expiry has to be
 /// decided by whoever answers the request.
 ///
 /// `owner_id` is the creating admin's `claims.sub`, added so `list_shares` and
-/// `revoke_share` can scope to it — a multi-admin/reseller install must not let
+/// `revoke_share` can scope to it - a multi-admin/reseller install must not let
 /// one admin enumerate (and, via the share_id, read) another admin's root
 /// terminal output. A row written before this field existed has no second `|`,
-/// so it parses with `owner_id == ""` — matching no real admin, it simply
+/// so it parses with `owner_id == ""` - matching no real admin, it simply
 /// becomes invisible to `list_shares`/`revoke_share` until it expires within
 /// `SHARE_TTL_SECS`, which is the correct fail-closed behavior for a value this
-/// short-lived. `view_shared` never reads `owner_id` — its link-based access
+/// short-lived. `view_shared` never reads `owner_id` - its link-based access
 /// is unauthenticated by design and unaffected by this scoping.
 fn share_lifetime(raw: &str, now: i64) -> Option<(i64, i64, &str, &str)> {
     let (created_ts, rest) = match raw.find('|') {
@@ -288,7 +288,7 @@ fn share_lifetime(raw: &str, now: i64) -> Option<(i64, i64, &str, &str)> {
     Some((created_ts, remaining, owner, content))
 }
 
-/// POST /api/terminal/share — Save terminal output for sharing (temporary, 1 hour expiry).
+/// POST /api/terminal/share - Save terminal output for sharing (temporary, 1 hour expiry).
 pub async fn share_output(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -347,7 +347,7 @@ pub async fn share_output(
     })))
 }
 
-/// DELETE /api/terminal/share/{id} — Revoke (delete) a terminal share early.
+/// DELETE /api/terminal/share/{id} - Revoke (delete) a terminal share early.
 pub async fn revoke_share(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -363,7 +363,7 @@ pub async fn revoke_share(
     let key = format!("terminal_share_{id}");
     // Scoped to the calling admin's own share (see share_lifetime). 0 rows
     // affected covers "doesn't exist", "already expired", AND "belongs to a
-    // different admin" — this file's own established pattern is to never let
+    // different admin" - this file's own established pattern is to never let
     // a response distinguish those cases (see view_shared's identical choice).
     let result = sqlx::query(
         "DELETE FROM settings WHERE key = $1 AND split_part(value, '|', 2) = $2",
@@ -381,7 +381,7 @@ pub async fn revoke_share(
     Ok(Json(serde_json::json!({ "ok": true, "share_id": id })))
 }
 
-/// GET /api/terminal/shares — List active terminal shares (admin only).
+/// GET /api/terminal/shares - List active terminal shares (admin only).
 pub async fn list_shares(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -407,7 +407,7 @@ pub async fn list_shares(
         let Some((created_ts, remaining, owner, _content)) = share_lifetime(value, now) else {
             continue;
         };
-        // Scope to the calling admin's own shares (see share_lifetime) — a
+        // Scope to the calling admin's own shares (see share_lifetime) - a
         // multi-admin/reseller install must not let one admin enumerate (and
         // then, via the exposed share_id, read) another admin's root
         // terminal output.
@@ -426,7 +426,7 @@ pub async fn list_shares(
     Ok(Json(serde_json::json!({ "shares": shares })))
 }
 
-/// GET /api/terminal/shared/{id} — View shared terminal output (public, no auth).
+/// GET /api/terminal/shared/{id} - View shared terminal output (public, no auth).
 pub async fn view_shared(
     State(state): State<AppState>,
     axum::extract::Path(id): axum::extract::Path<String>,
@@ -439,7 +439,7 @@ pub async fn view_shared(
 
     // The panic button deletes every share, so on that path there is nothing
     // here to serve. A manually activated lockdown does not delete them, and
-    // this route carries no authentication at all — during a declared emergency
+    // this route carries no authentication at all - during a declared emergency
     // an anonymous URL still handing out root terminal output is the exact thing
     // the lockdown was declared about.
     //
@@ -467,7 +467,7 @@ pub async fn view_shared(
 
     // Expiry is enforced HERE, on the way out, not by the daily retention sweep.
     // A row that outlived its hour is answered exactly like a row that never
-    // existed — same status, same wording, so the response cannot be used to
+    // existed - same status, same wording, so the response cannot be used to
     // tell an expired share apart from an unknown id.
     let now = chrono::Utc::now().timestamp();
     let (_created_ts, remaining, _owner, content) = share_lifetime(&raw, now)
@@ -478,7 +478,7 @@ pub async fn view_shared(
     let html = format!(
         r#"<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>DockPanel — Shared Terminal Output</title>
+<title>CyberHunter - Panel - Shared Terminal Output</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
@@ -517,7 +517,7 @@ pre::-webkit-scrollbar-thumb:hover{{background:#585b70}}
 <div class="container">
   <div class="header">
     <div class="brand">
-      <span class="brand-name">DockPanel</span>
+      <span class="brand-name">CyberHunter - Panel</span>
       <span class="badge">Read-Only Snapshot</span>
     </div>
     <div class="actions">
@@ -532,7 +532,7 @@ pre::-webkit-scrollbar-thumb:hover{{background:#585b70}}
     </div>
     <pre id="output">{escaped}</pre>
   </div>
-  <div class="footer">Shared via DockPanel &mdash; self-hosted server management</div>
+  <div class="footer">Shared via CyberHunter - Panel - self-hosted server management</div>
 </div>
 <div class="toast" id="toast">Copied to clipboard</div>
 <script>

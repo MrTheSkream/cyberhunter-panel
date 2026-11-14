@@ -12,18 +12,18 @@
 //! in the direction that matters least to whoever is editing at the time. The
 //! audit that opened v2.30.0 found the manual telling operators to publish
 //! `default._domainkey` while the product has deployed the selector `dockpanel`
-//! for its entire life — a user who followed the documentation got a DKIM record
+//! for its entire life - a user who followed the documentation got a DKIM record
 //! that could never verify, and a panel that then correctly reported it missing.
 //!
 //! So the rule is not "keep them in sync". The rule is **there is one copy of
-//! each fact, and the manual is generated from it** — see [`manual`]. A
+//! each fact, and the manual is generated from it** - see [`manual`]. A
 //! hand-written page cannot contradict the product if it does not contain the
 //! product's facts.
 //!
 //! # The three tiers are one system
 //!
 //! Brief §3.9 asks for tooltips and callouts to be the same content rendered at
-//! different urgencies. That is why [`FIELDS`] (the passive tier — the line under
+//! different urgencies. That is why [`FIELDS`] (the passive tier - the line under
 //! a form field, and the longer text behind its (i)) sits in this file beside
 //! [`PREREQS`] (the reactive and blocking tiers). A field's quiet explanation and
 //! the loud callout it escalates into are two renderings of one concern, and
@@ -37,7 +37,7 @@
 //! UPDATE_GUIDANCE_DOCS=1 cargo test -p dockpanel-api guidance
 //! ```
 //!
-//! That failure is the mechanism. It is not a reminder to keep docs updated — it
+//! That failure is the mechanism. It is not a reminder to keep docs updated - it
 //! is the reason they cannot be out of date.
 
 use super::{PrereqResult, PrereqSeverity, PrereqState};
@@ -76,7 +76,7 @@ pub struct Outcome {
     /// The explanation, in the user's terms.
     pub detail: &'static str,
     /// Doc-facing: what the operator does about it. Empty for outcomes that need
-    /// nothing done — the manual renders those as "nothing to do".
+    /// nothing done - the manual renders those as "nothing to do".
     pub fix: &'static str,
     pub vars: &'static [Var],
 }
@@ -98,7 +98,7 @@ pub struct Prereq {
     pub vertical: &'static str,
     /// The question the check answers, in one line.
     pub question: &'static str,
-    /// Why an operator should care — the consequence, not the mechanism.
+    /// Why an operator should care - the consequence, not the mechanism.
     pub why: &'static str,
     /// Why this check blocks, warns or merely explains. Recorded because severity
     /// here is chosen by consequence rather than by confidence, and that choice is
@@ -113,7 +113,7 @@ impl Prereq {
     /// Build the runtime result for one outcome, filling its placeholders.
     ///
     /// The only way a check produces a `PrereqResult`. `expected`, `observed` and
-    /// `remediation` are attached by the caller afterwards — those are measured
+    /// `remediation` are attached by the caller afterwards - those are measured
     /// data, not copy, and do not belong in this file.
     pub fn result(&self, outcome: &Outcome, vars: &[(&str, &str)]) -> PrereqResult {
         debug_assert!(
@@ -150,7 +150,7 @@ impl Prereq {
     }
 }
 
-/// A form field's passive guidance — the quiet tier.
+/// A form field's passive guidance - the quiet tier.
 pub struct Field {
     /// Stable id, e.g. `sites.create.domain`. The frontend keys off it.
     pub id: &'static str,
@@ -162,13 +162,13 @@ pub struct Field {
     pub label: &'static str,
     /// The line under the field. Must stay short.
     ///
-    /// Empty means this entry exists for its (i) alone — the standing line is
+    /// Empty means this entry exists for its (i) alone - the standing line is
     /// computed from the form's own state (which runtime is selected, which
     /// domain is open) and belongs in the component. Static copy that pretends
     /// to be dynamic is worse than no entry.
     pub help: &'static str,
     /// The longer explanation behind the (i). Empty means the field has no
-    /// tooltip — most don't, and inventing one for every field is how a help
+    /// tooltip - most don't, and inventing one for every field is how a help
     /// system becomes noise.
     pub more: &'static str,
     /// The prerequisite key this field's guidance escalates into when the quiet
@@ -183,7 +183,7 @@ pub struct Field {
 ///
 /// Deliberately not a templating engine: a registry of product copy that needs
 /// conditionals or loops has stopped being a registry.
-/// Single-pass, and that matters — a sequence of `str::replace` calls re-reads
+/// Single-pass, and that matters - a sequence of `str::replace` calls re-reads
 /// its own output, so a value containing `{something}` would be substituted
 /// again by a later variable. Several of these values are named by the operator
 /// (a backup policy, a container), and copy that rewrites what the user typed is
@@ -237,7 +237,7 @@ pub static DNS_ENTER_A_DOMAIN: Outcome = Outcome {
     severity: PrereqSeverity::Info,
     title: "Enter a domain",
     title_plural: "",
-    detail: "Once you enter a domain, DockPanel checks whether it already points here.",
+    detail: "Once you enter a domain, CyberHunter - Panel checks whether it already points here.",
     fix: "",
     vars: &[],
 };
@@ -248,9 +248,9 @@ pub static DNS_NO_PUBLIC_IP: Outcome = Outcome {
     severity: PrereqSeverity::Info,
     title: "Couldn't determine this server's public address",
     title_plural: "",
-    detail: "DockPanel could not detect its own public IP, so it can't check whether the domain \
+    detail: "CyberHunter - Panel could not detect its own public IP, so it can't check whether the domain \
              points here. SSL issuance will still be attempted.",
-    fix: "Nothing, usually — the check is unavailable, not failing. If issuance then fails, \
+    fix: "Nothing, usually - the check is unavailable, not failing. If issuance then fails, \
           confirm the server can reach the internet.",
     vars: &[],
 };
@@ -264,7 +264,7 @@ pub static DNS_NOT_RESOLVING: Outcome = Outcome {
     detail: "No DNS record was found for {domain}. Create the record below at whoever manages \
              this domain's DNS, then check again. New records usually appear within a few \
              minutes.",
-    fix: "Create the A (or AAAA) record DockPanel shows, at whoever manages the domain's DNS. \
+    fix: "Create the A (or AAAA) record CyberHunter - Panel shows, at whoever manages the domain's DNS. \
           The gate opens by itself once the record goes live.",
     vars: &[Var { name: "domain", example: "example.com" }],
 };
@@ -291,11 +291,11 @@ pub static DNS_POINTS_ELSEWHERE: Outcome = Outcome {
     title_plural: "",
     detail: "{domain} resolves to {resolved} rather than this server ({server_ip}).\n\n\
              If you use Cloudflare's proxy (the orange cloud), this is expected and certificate \
-             issuance normally still works — Cloudflare passes the validation request through to \
+             issuance normally still works - Cloudflare passes the validation request through to \
              this server. You can continue.\n\n\
              Otherwise the domain is pointed at a different host. Update the record below and \
              check again.",
-    fix: "If the domain is behind a proxy such as Cloudflare, nothing — issuance works through \
+    fix: "If the domain is behind a proxy such as Cloudflare, nothing - issuance works through \
           it. Otherwise point the record at this server.",
     vars: &[
         Var { name: "domain", example: "example.com" },
@@ -312,10 +312,10 @@ pub static DNS_POINTS_ELSEWHERE_SUBDOMAIN: Outcome = Outcome {
     title_plural: "",
     detail: "{domain} resolves to {resolved} rather than this server ({server_ip}).\n\n\
              If you use Cloudflare's proxy (the orange cloud), this is expected and certificate \
-             issuance normally still works — Cloudflare passes the validation request through to \
+             issuance normally still works - Cloudflare passes the validation request through to \
              this server. You can continue.\n\n\
              Otherwise the domain is pointed at a different host. Update the record below and \
-             check again — note this is the record for {domain}, not for {apex}.",
+             check again - note this is the record for {domain}, not for {apex}.",
     fix: "Same as above, with one trap: edit the record for the subdomain itself. Pointing the \
           apex somewhere new does not move a subdomain that has its own record.",
     vars: &[
@@ -332,7 +332,7 @@ pub static DNS_POINTS_HERE_CHECK: Prereq = Prereq {
     question: "Does this domain point at this server yet?",
     why: "An HTTP-01 certificate order sends the certificate authority to your domain to fetch a \
           file from this server. If the domain resolves nowhere, the CA has nowhere to connect \
-          and the order fails — after the panel has already told you the site was created.",
+          and the order fails - after the panel has already told you the site was created.",
     severity_policy: "Blocking when the domain resolves to nothing at all, because issuance \
                       cannot possibly succeed. Only a warning when it resolves somewhere else: a \
                       Cloudflare-proxied domain resolves to Cloudflare and is indistinguishable \
@@ -375,10 +375,10 @@ pub static APPS_ENV_MISSING_SECRETS: Outcome = Outcome {
     title: "{first_label} needs a value",
     title_plural: "{count} required settings have no value",
     detail: "{template_id} needs a value for {names}. These are passwords or keys with no safe \
-             default — the container is started without them entirely, which usually means it \
+             default - the container is started without them entirely, which usually means it \
              refuses to start or comes up with no protection at all.\n\n\
-             Use Generate to have DockPanel pick a strong value.",
-    fix: "Press Generate beside the field. DockPanel picks a strong value so there is nothing to \
+             Use Generate to have CyberHunter - Panel pick a strong value.",
+    fix: "Press Generate beside the field. CyberHunter - Panel picks a strong value so there is nothing to \
           invent and nothing to remember.",
     vars: &[
         Var { name: "first_label", example: "POSTGRES_PASSWORD" },
@@ -395,7 +395,7 @@ pub static APPS_ENV_MISSING_SETTINGS: Outcome = Outcome {
     title: "{first_label} needs a value",
     title_plural: "{count} required settings have no value",
     detail: "{template_id} needs a value for {names}. Without it the setting is not passed to \
-             the container at all, so the app starts misconfigured — usually failing minutes \
+             the container at all, so the app starts misconfigured - usually failing minutes \
              later, after the image has finished downloading.",
     fix: "Fill in the marked fields before deploying.",
     vars: &[
@@ -411,7 +411,7 @@ pub static APPS_ENV_CHECK: Prereq = Prereq {
     vertical: "Docker apps",
     question: "Does every setting this app requires have a value?",
     why: "104 of the shipped templates declare at least one setting that is required and has no \
-          default — database passwords, signing keys, and so on. The agent resolves each setting \
+          default - database passwords, signing keys, and so on. The agent resolves each setting \
           as \"the value you gave, otherwise the default\", and **drops it entirely when the \
           result is empty**. The variable is not passed as blank; it is not passed at all. \
           Postgres refuses to initialise, Grafana quietly keeps its built-in password, and you \
@@ -444,7 +444,7 @@ pub static APPS_PORT_HELD_BY_KNOWN: Outcome = Outcome {
     title_plural: "",
     detail: "Port {port} is taken by {holder}. Two things cannot publish on the same host port, \
              so this deploy would fail once the image finished downloading.",
-    fix: "Use the free port DockPanel suggests, or stop whatever holds this one.",
+    fix: "Use the free port CyberHunter - Panel suggests, or stop whatever holds this one.",
     vars: &[
         Var { name: "port", example: "5432" },
         Var { name: "holder", example: "the app `pg-old`" },
@@ -458,7 +458,7 @@ pub static APPS_PORT_HELD_BY_UNKNOWN: Outcome = Outcome {
     title: "Port {port} is already in use",
     title_plural: "",
     detail: "Something on this server is already listening on port {port}. It isn't managed by \
-             DockPanel, so it may be another service you installed yourself. Pick a different \
+             CyberHunter - Panel, so it may be another service you installed yourself. Pick a different \
              port, or stop whatever is using this one.",
     fix: "Pick a different port. `ss -lntp | grep :{port}` on the server names the process.",
     vars: &[Var { name: "port", example: "5432" }],
@@ -481,7 +481,7 @@ pub static APPS_PORT_UNPROBEABLE: Outcome = Outcome {
     severity: PrereqSeverity::Info,
     title: "Couldn't check the port",
     title_plural: "",
-    detail: "DockPanel couldn't ask this server whether port {port} is free, so it will be \
+    detail: "CyberHunter - Panel couldn't ask this server whether port {port} is free, so it will be \
              attempted as-is.",
     fix: "Nothing. This happens on a fleet member running an agent older than the port-check \
           route; a check that cannot run must never turn into a refusal.",
@@ -496,7 +496,7 @@ pub static APPS_PORT_CHECK: Prereq = Prereq {
           colliding ports for years; apps never got the equivalent, so a collision surfaced as a \
           Docker error after the image pull rather than before it.",
     severity_policy: "Blocking when something is known to hold the port, because the deploy will \
-                      certainly fail. Unknown — never a refusal — when the server could not be \
+                      certainly fail. Unknown - never a refusal - when the server could not be \
                       asked.",
     surfaces: &[
         "The Docker app deploy dialog, above the Deploy button",
@@ -530,7 +530,7 @@ pub static APPS_NAME_TAKEN: Outcome = Outcome {
     title_plural: "",
     detail: "This server already runs an app named {name}. Container names have to be unique, so \
              this deploy would be refused. Pick a different name.",
-    fix: "Use the name DockPanel suggests, or choose your own.",
+    fix: "Use the name CyberHunter - Panel suggests, or choose your own.",
     vars: &[Var { name: "name", example: "postgres" }],
 };
 
@@ -550,7 +550,7 @@ pub static APPS_NAME_CHECK: Prereq = Prereq {
     vertical: "Docker apps",
     question: "Is this app name already taken on this server?",
     why: "Container names are unique per host, and the deploy form pre-fills the name with the \
-          template id — so deploying a second Postgres collides by default.",
+          template id - so deploying a second Postgres collides by default.",
     severity_policy: "Blocking. Docker will refuse the name outright.",
     surfaces: &[
         "The Docker app deploy dialog, above the Deploy button",
@@ -578,7 +578,7 @@ pub static APPS_MEM_OVER_TOTAL: Outcome = Outcome {
     title_plural: "",
     detail: "This app is limited to {want} MB, but the server only has {total} MB in total \
              ({free} MB currently free). The limit will be accepted, but the container can never \
-             reach it — and the server will start swapping first.",
+             reach it - and the server will start swapping first.",
     fix: "Lower the limit, or resize the server. Nothing stops you deploying as-is.",
     vars: &[
         Var { name: "want", example: "8192" },
@@ -596,7 +596,7 @@ pub static APPS_MEM_OVER_FREE: Outcome = Outcome {
     detail: "This app is allowed {want} MB but only {free} MB of the server's {total} MB is free \
              right now. It will still start; if it actually uses its full limit, the kernel will \
              have to reclaim memory from something else.",
-    fix: "Usually nothing — over-committing memory is normal. Worth a second look if the box is \
+    fix: "Usually nothing - over-committing memory is normal. Worth a second look if the box is \
           already swapping.",
     vars: &[
         Var { name: "want", example: "1024" },
@@ -624,7 +624,7 @@ pub static APPS_MEM_CHECK: Prereq = Prereq {
     vertical: "Docker apps",
     question: "Does this server have the memory this app is being given?",
     why: "A container whose limit exceeds what the box can supply does not fail at deploy time. \
-          It fails later, under load, as an OOM kill — which is the worst possible moment to \
+          It fails later, under load, as an OOM kill - which is the worst possible moment to \
           learn the number was never achievable.",
     severity_policy: "Warning, never blocking. Over-committing memory is ordinary practice, the \
                       kernel will page, and the operator may know what is about to be freed. \
@@ -680,11 +680,11 @@ pub static MAIL_DNS_NO_PUBLIC_IP: Outcome = Outcome {
     severity: PrereqSeverity::Info,
     title: "Couldn't determine this server's public address",
     title_plural: "",
-    detail: "DockPanel could not determine the public address of the server this domain is on, \
+    detail: "CyberHunter - Panel could not determine the public address of the server this domain is on, \
              so it can't tell you which records the domain needs.",
     fix: "Nothing to do at the registrar. If the domain is on this server, confirm it can reach \
           the internet; if it is on another server in the fleet, confirm that server's agent is \
-          online — its address is recorded when the agent checks in.",
+          online - its address is recorded when the agent checks in.",
     vars: &[],
 };
 
@@ -694,7 +694,7 @@ pub static MAIL_DNS_UNREADABLE: Outcome = Outcome {
     severity: PrereqSeverity::Info,
     title: "Couldn't check DNS",
     title_plural: "",
-    detail: "DockPanel couldn't run DNS lookups on this server, so it can't verify these \
+    detail: "CyberHunter - Panel couldn't run DNS lookups on this server, so it can't verify these \
              records. Create them if you haven't already.",
     fix: "Create the records shown. They are correct whether or not the lookup ran.",
     vars: &[],
@@ -721,8 +721,8 @@ pub static MAIL_DNS_MISSING_ALL: Outcome = Outcome {
     detail: "{count} of {total} records for {domain} are missing or point somewhere else: \
              {missing}.\n\n\
              Until they are correct, receiving servers can't verify that this server may send \
-             mail for {domain} — messages are likely to be filed as spam or rejected. Create the \
-             records below at whoever manages this domain's DNS; DockPanel re-checks \
+             mail for {domain} - messages are likely to be filed as spam or rejected. Create the \
+             records below at whoever manages this domain's DNS; CyberHunter - Panel re-checks \
              automatically.",
     fix: "Create every record shown. Each card says whether that record is published or missing, \
           so you never have to re-do the ones already correct.",
@@ -743,8 +743,8 @@ pub static MAIL_DNS_MISSING_SOME: Outcome = Outcome {
     detail: "{count} of {total} records for {domain} are missing or point somewhere else: \
              {missing}.\n\n\
              Until they are correct, receiving servers can't verify that this server may send \
-             mail for {domain} — messages are likely to be filed as spam or rejected. Create the \
-             records below at whoever manages this domain's DNS; DockPanel re-checks \
+             mail for {domain} - messages are likely to be filed as spam or rejected. Create the \
+             records below at whoever manages this domain's DNS; CyberHunter - Panel re-checks \
              automatically.",
     fix: "Create the records marked missing. The published ones need no attention.",
     vars: &[
@@ -759,15 +759,15 @@ pub static MAIL_DNS_CHECK: Prereq = Prereq {
     key: "mail.dns_published",
     vertical: "Mail",
     question: "Are this domain's mail records published, and do they point at this server?",
-    why: "Mail leaves the server whether or not these records exist — it just doesn't arrive. \
+    why: "Mail leaves the server whether or not these records exist - it just doesn't arrive. \
           Receiving servers use SPF, DKIM and DMARC to decide whether to believe a message came \
           from your domain, and a domain missing them lands in spam folders with nothing anywhere \
           saying so.\n\nThis check verifies **correctness, not existence**, which is the whole \
           point of it: through v2.29.0 the older DNS check passed on any MX record at all \
           (including a competitor's), any string beginning `v=spf1` (including one that forbids \
           this server), and any DKIM record containing `p=` (including a stale key from a \
-          previous install). Run against `gmail.com` — a domain whose mail goes to Google and \
-          whose SPF does not authorise us at all — the old logic reported MX, SPF and DMARC all \
+          previous install). Run against `gmail.com` - a domain whose mail goes to Google and \
+          whose SPF does not authorise us at all - the old logic reported MX, SPF and DMARC all \
           passing.",
     severity_policy: "Warning, never blocking, and this follows the rule rather than ducking it: \
                       nothing in the panel is gated on these records. There is no control to \
@@ -824,7 +824,7 @@ pub static BACKUPS_DEST_LOCAL_WITH_OPTIONS: Outcome = Outcome {
     title: "Backups never leave this server",
     title_plural: "",
     detail: "'{policy}' writes its backups to this server's own disk and nowhere else. You \
-             already have {available} destination(s) configured — choosing one means these \
+             already have {available} destination(s) configured - choosing one means these \
              backups survive losing this machine.",
     fix: "Edit the policy and pick one of the destinations you have already configured.",
     vars: &[
@@ -856,7 +856,7 @@ pub static BACKUPS_DEST_CHECK: Prereq = Prereq {
           insuring. That protects against a bad deploy or a dropped table, and against nothing \
           else: disk failure, a deleted instance, ransomware or a closed provider account take \
           the backups with the data.",
-    severity_policy: "Warning, not blocking — and this one is worth defending. Local-only \
+    severity_policy: "Warning, not blocking - and this one is worth defending. Local-only \
                       backups are a legitimate choice for a box whose real protection is provider \
                       snapshots, and refusing to save the policy would be the panel overriding a \
                       decision that is not its to make. What is not legitimate is making that \
@@ -876,7 +876,7 @@ pub static BACKUPS_POLICY_NOTHING: Outcome = Outcome {
     severity: PrereqSeverity::Info,
     title: "Nothing to back up yet",
     title_plural: "",
-    detail: "Once you add a site or a database, DockPanel can back it up on a schedule.",
+    detail: "Once you add a site or a database, CyberHunter - Panel can back it up on a schedule.",
     fix: "",
     vars: &[],
 };
@@ -910,7 +910,7 @@ pub static BACKUPS_POLICY_CHECK: Prereq = Prereq {
     key: "backups.policy_configured",
     vertical: "Backups",
     question: "Is anything being backed up on a schedule at all?",
-    why: "Prior to, and distinct from, the destination question — a panel with no enabled policy \
+    why: "Prior to, and distinct from, the destination question - a panel with no enabled policy \
           has nothing to send anywhere. Manual backups still work, but they only exist when \
           somebody remembers.",
     severity_policy: "Warning when the server actually hosts something. A panel with no sites is \
@@ -933,14 +933,14 @@ pub static PREREQS: &[&Prereq] = &[
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
-// The passive tier — form-field help and the text behind an (i)
+// The passive tier - form-field help and the text behind an (i)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Every field whose passive guidance is owned by this registry.
 ///
 /// Not every field in the product: a registry that must grow by one entry per
 /// input is a registry nobody maintains. These are the fields where getting it
-/// wrong costs the user a failed deploy, a lost credential or an afternoon —
+/// wrong costs the user a failed deploy, a lost credential or an afternoon -
 /// which is the same test that decides whether something deserves a check.
 pub static FIELDS: &[Field] = &[
     Field {
@@ -950,7 +950,7 @@ pub static FIELDS: &[Field] = &[
         // The very first field a new operator ever types into. The 8-character
         // rule was previously enforced only by the browser's native minLength,
         // which rejects the form before any of our own text can explain why.
-        help: "At least 8 characters. This signs you in to the panel itself — not to any site \
+        help: "At least 8 characters. This signs you in to the panel itself - not to any site \
                you host with it.",
         more: "This is the panel's first account and a full administrator: it can reach every \
                site, database and container on this server. There is no password-reset email \
@@ -963,10 +963,10 @@ pub static FIELDS: &[Field] = &[
         surface: "Create a site",
         label: "Domain",
         help: "Your site's public domain name (e.g. example.com). It needs to point at this \
-               server before HTTPS can be issued — DockPanel checks that for you below.",
+               server before HTTPS can be issued - CyberHunter - Panel checks that for you below.",
         more: "You can create the site before the domain resolves; only the certificate needs \
                DNS. If you are moving a live site, create it here first, confirm it serves \
-               correctly, and change the DNS record last — that way the switchover has no gap.",
+               correctly, and change the DNS record last - that way the switchover has no gap.",
         escalates_to: "dns.points_here",
     },
     Field {
@@ -978,16 +978,16 @@ pub static FIELDS: &[Field] = &[
         help: "",
         more: "Static serves files as they are. PHP runs them through PHP-FPM. Node and Python \
                get a managed systemd process with nginx in front. Reverse Proxy is the one to \
-               pick when something else already listens on a port — a Docker app, or a service \
-               you run yourself — and DockPanel then owns only the front end and the certificate.",
+               pick when something else already listens on a port - a Docker app, or a service \
+               you run yourself - and CyberHunter - Panel then owns only the front end and the certificate.",
         escalates_to: "",
     },
     Field {
         id: "sites.create.admin_password",
         surface: "Create a site",
         label: "Admin Password",
-        help: "Leave blank and DockPanel generates one, then stores it in this site's Secrets \
-               vault — it is not shown again anywhere else.",
+        help: "Leave blank and CyberHunter - Panel generates one, then stores it in this site's Secrets \
+               vault - it is not shown again anywhere else.",
         more: "Open the site, then Secrets, to read it back. Earlier versions generated this \
                password, used it and discarded it, which left you unable to log in to the site \
                you had just created.",
@@ -1006,7 +1006,7 @@ pub static FIELDS: &[Field] = &[
         id: "apps.deploy.name",
         surface: "Deploy a Docker app",
         label: "Container Name",
-        help: "Names the container on this server. Must be unique — DockPanel suggests a free \
+        help: "Names the container on this server. Must be unique - CyberHunter - Panel suggests a free \
                one if it isn't.",
         more: "The container is created as `dockpanel-app-<name>`, so this name is what you will \
                see in `docker ps` minus that prefix.",
@@ -1016,10 +1016,10 @@ pub static FIELDS: &[Field] = &[
         id: "apps.deploy.port",
         surface: "Deploy a Docker app",
         label: "Host Port",
-        help: "The port on this server the app will answer on. DockPanel checks it is free \
+        help: "The port on this server the app will answer on. CyberHunter - Panel checks it is free \
                before the image is pulled.",
         more: "Published on 127.0.0.1 by default. To expose the app publicly, put a Reverse \
-               Proxy site in front of it — that gets you a certificate and a domain instead of a \
+               Proxy site in front of it - that gets you a certificate and a domain instead of a \
                port number.",
         escalates_to: "apps.port_available",
     },
@@ -1028,8 +1028,8 @@ pub static FIELDS: &[Field] = &[
         surface: "Deploy a Docker app",
         label: "Memory (MB)",
         help: "Hard ceiling for this container. Leave blank for no limit.",
-        more: "A limit above what the server has is accepted but unreachable — the box swaps \
-               first. DockPanel warns rather than refuses, because over-committing is ordinary \
+        more: "A limit above what the server has is accepted but unreachable - the box swaps \
+               first. CyberHunter - Panel warns rather than refuses, because over-committing is ordinary \
                and you may know what is about to be freed.",
         escalates_to: "apps.resource_headroom",
     },
@@ -1046,7 +1046,7 @@ pub static FIELDS: &[Field] = &[
                get it automatically, but a panel upgraded in place does not, because update.sh \
                upgrades binaries and installs no packages. When it is missing, Test Connection \
                now says so in those words and Settings can install it onto that server for \
-               you — you are no longer asked to run a package manager by hand. \
+               you - you are no longer asked to run a package manager by hand. \
                Key-authenticated SFTP and every S3 destination are unaffected.",
         escalates_to: "backups.destination_configured",
     },
@@ -1056,9 +1056,9 @@ pub static FIELDS: &[Field] = &[
         label: "Required DNS Records",
         // Tooltip-only: the standing line names the domain being viewed.
         help: "",
-        more: "These are the records DockPanel publishes for you when it manages the zone, and \
+        more: "These are the records CyberHunter - Panel publishes for you when it manages the zone, and \
                the ones to create by hand when it doesn't. Verify DNS checks that each points at \
-               this server rather than merely that something exists — a domain whose MX belongs \
+               this server rather than merely that something exists - a domain whose MX belongs \
                to another provider is reported as such, not as a pass.",
         escalates_to: "mail.dns_published",
     },
@@ -1070,7 +1070,7 @@ pub static FIELDS: &[Field] = &[
 
 /// The header every generated artefact carries.
 const GENERATED_BANNER: &str =
-    "DO NOT EDIT — generated from panel/backend/src/services/prerequisites/copy.rs";
+    "DO NOT EDIT - generated from panel/backend/src/services/prerequisites/copy.rs";
 
 /// Render the registry as the documentation page.
 ///
@@ -1081,10 +1081,10 @@ pub fn manual() -> String {
     let mut out = String::new();
 
     out.push_str(&format!("<!-- {GENERATED_BANNER} -->\n\n"));
-    out.push_str("# What DockPanel checks before you commit\n\n");
+    out.push_str("# What CyberHunter - Panel checks before you commit\n\n");
     out.push_str(
-        "Some things have to be true before a feature can work — a domain has to resolve, a port \
-         has to be free, a backup has to have somewhere to go. DockPanel checks these for you and \
+        "Some things have to be true before a feature can work - a domain has to resolve, a port \
+         has to be free, a backup has to have somewhere to go. CyberHunter - Panel checks these for you and \
          says so on the screen where it matters, rather than letting the action fail and leaving \
          you to work out why.\n\n\
          This page is generated from the same source the product renders its messages from, so \
@@ -1096,12 +1096,12 @@ pub fn manual() -> String {
         "| Tier | What it looks like | What it means |\n\
          |---|---|---|\n\
          | Passive | A line under a field, or text behind an (i) | Context. Nothing is wrong. |\n\
-         | Warning | An amber callout | It probably won't work, or it will leave a mess — but \
+         | Warning | An amber callout | It probably won't work, or it will leave a mess - but \
          the choice is yours and the control stays usable. |\n\
          | Blocking | A red callout, and the button is disabled | It *will* fail. The gate opens \
          by itself once the condition is met. |\n\n\
-         A check DockPanel could not run never blocks anything and never accuses you of \
-         anything — it says so and gets out of the way.\n\n",
+         A check CyberHunter - Panel could not run never blocks anything and never accuses you of \
+         anything - it says so and gets out of the way.\n\n",
     );
 
     let mut current_vertical = "";
@@ -1122,7 +1122,7 @@ pub fn manual() -> String {
         }
         out.push('\n');
 
-        out.push_str("| | What DockPanel says | What to do |\n|---|---|---|\n");
+        out.push_str("| | What CyberHunter - Panel says | What to do |\n|---|---|---|\n");
         for outcome in prereq.outcomes {
             let vars: Vec<(&str, &str)> =
                 outcome.vars.iter().map(|v| (v.name, v.example)).collect();
@@ -1143,7 +1143,7 @@ pub fn manual() -> String {
             let detail = fill(outcome.detail, &vars).replace('\n', " ");
             let fix = if outcome.fix.is_empty() { "Nothing." } else { outcome.fix };
             out.push_str(&format!(
-                "| {tier} | **{}** — {} | {} |\n",
+                "| {tier} | **{}** - {} | {} |\n",
                 escape_table(&title),
                 escape_table(&detail),
                 escape_table(fix)
@@ -1168,7 +1168,7 @@ pub fn manual() -> String {
         if field.help.is_empty() {
             out.push_str(&format!("**{}**\n\n", field.label));
         } else {
-            out.push_str(&format!("**{}** — {}\n\n", field.label, field.help));
+            out.push_str(&format!("**{}** - {}\n\n", field.label, field.help));
         }
         if !field.more.is_empty() {
             out.push_str(&format!("{}\n\n", field.more));
@@ -1235,7 +1235,7 @@ mod tests {
     ///
     /// Policy and container names are typed by the operator. Under a
     /// replace-in-sequence fill, a policy called `{available}` would come back
-    /// rendered as a number — the product quietly correcting what someone
+    /// rendered as a number - the product quietly correcting what someone
     /// deliberately typed.
     #[test]
     fn a_value_containing_a_placeholder_is_not_substituted_again() {
@@ -1282,7 +1282,7 @@ mod tests {
     }
 
     /// Every placeholder must be declared, or the user is shown a literal
-    /// `{domain}` — the exact class of defect this registry exists to make
+    /// `{domain}` - the exact class of defect this registry exists to make
     /// impossible.
     #[test]
     fn rendering_an_outcome_with_its_declared_vars_leaves_no_placeholder() {
@@ -1371,7 +1371,7 @@ mod tests {
         assert_eq!(many.title, "3 required settings have no value");
     }
 
-    /// The runtime result must carry the check's key, not the outcome's id —
+    /// The runtime result must carry the check's key, not the outcome's id -
     /// the frontend and every test selector key off the former.
     #[test]
     fn a_rendered_result_carries_the_check_key_and_its_outcome_tier() {
@@ -1486,7 +1486,7 @@ mod tests {
             .expect("repo root")
     }
 
-    /// Assert a generated artefact matches what the registry emits — or rewrite
+    /// Assert a generated artefact matches what the registry emits - or rewrite
     /// it when explicitly asked to.
     ///
     /// This is the mechanism the whole exercise exists for. It is not a reminder
@@ -1527,7 +1527,7 @@ mod tests {
                     )
                 });
             panic!(
-                "{relative} is out of date — the copy registry changed and this file did not.\n\
+                "{relative} is out of date - the copy registry changed and this file did not.\n\
                  First difference at line {line}:\n  committed: {f}\n  registry:  {e}\n\n\
                  Regenerate it:\n    UPDATE_GUIDANCE_DOCS=1 cargo test -p dockpanel-api guidance"
             );
@@ -1554,7 +1554,7 @@ mod tests {
     /// renders still lands in the manual, so the manual describes a helper line
     /// the user will look for and not find.
     ///
-    /// Deliberately a cross-tree assertion — the backend owns the copy and the
+    /// Deliberately a cross-tree assertion - the backend owns the copy and the
     /// frontend renders it, so nothing inside either tree alone can catch this.
     #[test]
     fn every_field_entry_is_rendered_by_the_frontend() {
@@ -1577,7 +1577,7 @@ mod tests {
             assert!(
                 rendered.contains(&needle),
                 "field `{}` is in the registry (and therefore in the manual) but no .tsx renders \
-                 it — either wire it with <FieldHelp id={needle}/> or remove the entry",
+                 it - either wire it with <FieldHelp id={needle}/> or remove the entry",
                 f.id
             );
         }

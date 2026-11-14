@@ -1,10 +1,10 @@
 //! Phase 4 W5: fleet configuration-drift admin API (read-only).
 //!
 //! Two admin endpoints:
-//!   - `GET /api/drift/servers`               — the comparable server list (picker source).
-//!   - `GET /api/drift?reference=&targets=`   — the computed `DriftReport`.
+//!   - `GET /api/drift/servers`               - the comparable server list (picker source).
+//!   - `GET /api/drift?reference=&targets=`   - the computed `DriftReport`.
 //!
-//! Pure reads from the hub DB — no writes, no scheduler, no remote agent call.
+//! Pure reads from the hub DB - no writes, no scheduler, no remote agent call.
 //! Reconcile/push is deferred to W5.2 (see `services::drift`).
 
 use std::collections::HashSet;
@@ -32,12 +32,12 @@ pub struct DriftServer {
     pub agent_version: Option<String>,
 }
 
-/// GET /api/drift/servers — comparable servers, local first. Drives the
+/// GET /api/drift/servers - comparable servers, local first. Drives the
 /// reference/target pickers in the UI.
 ///
 /// ⚠ SECURITY (s432): was `WHERE user_id = $1`, the same admin-scoping bug
 /// class `servers::list` and `dashboard::fleet_overview` already document and
-/// fix — `servers.user_id` names whoever registered the row, not a tenant
+/// fix - `servers.user_id` names whoever registered the row, not a tenant
 /// boundary. This route only ever takes `AdminUser`, so (as with
 /// `fleet_overview`) there is no narrower case to preserve: the comparable
 /// servers are simply every server on the install.
@@ -76,17 +76,17 @@ pub struct DriftQuery {
     pub targets: Option<String>,
 }
 
-/// GET /api/drift — compute the fleet configuration-drift report.
+/// GET /api/drift - compute the fleet configuration-drift report.
 ///
 /// ⚠ SECURITY (s432): the candidate-server query was `WHERE user_id = $1`, the
-/// same admin-scoping bug as `servers()` above — see that function's comment.
+/// same admin-scoping bug as `servers()` above - see that function's comment.
 /// `AdminUser`-only, so the comparable set is fleet-wide.
 pub async fn report(
     State(state): State<AppState>,
     AdminUser(_claims): AdminUser,
     Query(q): Query<DriftQuery>,
 ) -> Result<Json<DriftReport>, ApiError> {
-    // The comparable servers, local first — used to validate ids and to
+    // The comparable servers, local first - used to validate ids and to
     // default the reference/target selection.
     let all: Vec<(Uuid,)> = sqlx::query_as(
         "SELECT id FROM servers ORDER BY is_local DESC, created_at DESC LIMIT 500",
@@ -107,7 +107,7 @@ pub async fn report(
             }
             r
         }
-        None => all[0].0, // local server (or newest) — ordered is_local DESC first
+        None => all[0].0, // local server (or newest) - ordered is_local DESC first
     };
 
     let targets: Vec<Uuid> = match q.targets.as_deref() {

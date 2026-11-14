@@ -12,7 +12,7 @@ This guide says plainly what it can and cannot do, and what to use instead.
 | Move thousands of files | `rsync` or `scp` over the server's own SSH |
 | Load a database dump into a database | `scp` it to the server, then **Databases → Import** |
 | Move a whole site from another panel | The Migration wizard |
-| Let a customer upload their own site | **Not available yet** — see the end |
+| Let a customer upload their own site | **Not available yet** - see the end |
 
 ## The file manager's limit is 1.5 MB per file
 
@@ -28,8 +28,8 @@ agent, so both would have to change together.
 **You are told before you spend the upload.** Since v2.137.0 the browser checks
 the size first and names the limit, and if a request does reach the server
 oversize the server answers with the same sentence instead of an unreadable
-`413`. Two larger numbers used to sit in the code — 100 MB in the panel, 50 MB
-in the agent — and neither could ever fire, so the panel advertised a limit
+`413`. Two larger numbers used to sit in the code - 100 MB in the panel, 50 MB
+in the agent - and neither could ever fire, so the panel advertised a limit
 forty times the one it enforced and then refused in silence. That was
 [issue #121](https://github.com/ovexro/dockpanel/issues/121); both numbers now
 read 1.5 MB.
@@ -60,7 +60,7 @@ quote-heavy file just under 2 MB can open and then fail to save.
 ## There is no archive extraction
 
 The file manager cannot unzip or untar. It lists, reads, writes, creates,
-renames, deletes, downloads and uploads — that is the whole set. Uploading a
+renames, deletes, downloads and uploads - that is the whole set. Uploading a
 `.zip` gets you a `.zip` sitting on disk.
 
 An administrator with a server shell can extract normally. A site-scoped shell
@@ -102,7 +102,7 @@ The **Migration** wizard imports from cPanel, Plesk and HestiaCP, and moves
 **sites and databases**. It is administrator-only.
 
 If all you have is a `.sql` dump rather than a whole panel backup, you do not
-need the wizard — see [Importing a dump you already have](databases.md#importing-a-dump-you-already-have).
+need the wizard - see [Importing a dump you already have](databases.md#importing-a-dump-you-already-have).
 It takes the same shape: you put the file on the server, the panel takes its
 name, and the upload limit above never enters into it.
 
@@ -116,7 +116,7 @@ section.
 Today there are two ways into a site's files: the file manager, with the limits
 above, and shell access. Both mean the operator does the work.
 
-There is no per-site SFTP account, and no per-site system user to hang one on —
+There is no per-site SFTP account, and no per-site system user to hang one on -
 every site's files are owned by the web server user. Giving a customer scoped
 upload access is a decided direction rather than an open question, and it is the
 most-requested missing piece, but it is not built and this guide will not pretend

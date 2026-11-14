@@ -73,7 +73,7 @@ struct FirewallRuleExport {
     action: String,
 }
 
-/// GET /iac/export — Export full server configuration as structured JSON.
+/// GET /iac/export - Export full server configuration as structured JSON.
 async fn export() -> Result<Json<ServerExport>, (StatusCode, Json<serde_json::Value>)> {
     let _map_err = |e: String| {
         (
@@ -292,7 +292,7 @@ async fn read_crontab_entries() -> Vec<CronExport> {
                 None => (after.trim().to_string(), None),
             };
 
-            // Split "schedule command" — first 5 fields are schedule, rest is command
+            // Split "schedule command" - first 5 fields are schedule, rest is command
             let parts: Vec<&str> = before.splitn(6, ' ').collect();
             if parts.len() < 6 {
                 return None;

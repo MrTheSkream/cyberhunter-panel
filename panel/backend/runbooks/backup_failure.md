@@ -4,7 +4,7 @@ A scheduled backup did not complete successfully. The most recent run for this p
 
 ## Why this fired
 
-The backup-policy executor ran the schedule and either the agent reported a non-zero exit code, the destination upload failed, or a verification step (sha256 chain) detected drift. Failed backups silently accumulate risk — every day without a fresh artifact is a day closer to a recovery scenario you can't recover from.
+The backup-policy executor ran the schedule and either the agent reported a non-zero exit code, the destination upload failed, or a verification step (sha256 chain) detected drift. Failed backups silently accumulate risk - every day without a fresh artifact is a day closer to a recovery scenario you can't recover from.
 
 ## First check
 
@@ -15,7 +15,7 @@ The backup-policy executor ran the schedule and either the agent reported a non-
    df -h /var/backups
    ls -lh /var/backups/dockpanel/
    ```
-3. If the destination is remote (S3 / B2 / SSH), test creds independently — the agent rotates short-lived tokens and a stale config is the most common silent failure.
+3. If the destination is remote (S3 / B2 / SSH), test creds independently - the agent rotates short-lived tokens and a stale config is the most common silent failure.
 
 ## Common causes
 

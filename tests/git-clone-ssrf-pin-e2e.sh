@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# git-clone-ssrf-pin-e2e.sh — s442
+# git-clone-ssrf-pin-e2e.sh - s442
 #
 # ONE PROPERTY: before THIS process (panel/agent) invokes a `git clone`/
 # subprocess against a caller-supplied `repo_url`, it resolves that host
 # itself and refuses an internal/private address.
 #
 # `panel/backend/src/helpers.rs::validate_repo_url_not_internal` already
-# checks `git_deploys.repo_url` — but it runs on the PANEL host, at WRITE
+# checks `git_deploys.repo_url` - but it runs on the PANEL host, at WRITE
 # time. The actual clone is dispatched later (immediately, on a scheduled
-# pull, or on a redeploy — an unbounded interval) to THIS process, on a
+# pull, or on a redeploy - an unbounded interval) to THIS process, on a
 # DIFFERENT host, via a plain `git clone`/`git fetch` subprocess with no
 # validation of its own. A DNS answer that differs between "how the panel
 # resolved this hostname" and "how this fleet member resolves it right now"
-# sails straight through untouched — the two checks don't even share a
+# sails straight through untouched - the two checks don't even share a
 # network vantage point, let alone a moment in time. This is the exact class
 # `helpers.rs`'s `resolve_validated`/`pinned_client` were built to close for
 # `reqwest` call sites; a subprocess `git clone` has no equivalent hook, so
@@ -40,7 +40,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
 echo
 echo "=================================================="
-echo "  agent git-clone SSRF/DNS-rebind guard — source pins (s442)"
+echo "  agent git-clone SSRF/DNS-rebind guard - source pins (s442)"
 echo "=================================================="
 echo
 
@@ -106,7 +106,7 @@ echo "── §A ssrf_guard exists and knows the ranges that matter most ──"
 if [ -f "$GUARD" ]; then
   ok "A1 $GUARD exists"
 else
-  bad "A1 $GUARD is missing — every arm below measures nothing"
+  bad "A1 $GUARD is missing - every arm below measures nothing"
 fi
 
 if has "$GUARD_C" 'pub async fn validate_repo_url_not_internal'; then
@@ -124,7 +124,7 @@ fi
 if has "$GUARD_C" 'o\[0\] == 169'; then
   ok "A4 the cloud-metadata block (169.254.x, the most commonly abused SSRF target) is covered"
 else
-  bad "A4 no explicit 169.x check — cloud metadata endpoints would not be blocked"
+  bad "A4 no explicit 169.x check - cloud metadata endpoints would not be blocked"
 fi
 
 if has "$GUARD_C" 'o\[0\] == 100 && \(o\[1\] & 0xC0\) == 0x40'; then
@@ -136,13 +136,13 @@ fi
 if has "$GUARD_C" 'fn v6_is_internal'; then
   ok "A6 IPv6 has its own guard (not just IPv4)"
 else
-  bad "A6 no IPv6 handling — a v6 literal or AAAA record would sail through"
+  bad "A6 no IPv6 handling - a v6 literal or AAAA record would sail through"
 fi
 
 if has "$GUARD_C" 'tokio::net::lookup_host'; then
   ok "A7 the guard actually resolves the hostname (not just literal-IP checks)"
 else
-  bad "A7 no DNS resolution — a hostname-based repo_url would bypass every check above"
+  bad "A7 no DNS resolution - a hostname-based repo_url would bypass every check above"
 fi
 
 # ── §B the agent crate can parse repo_url ─────────────────────────────────
@@ -151,13 +151,13 @@ echo "── §B panel/agent depends on url (for https/http/ssh parsing) ──"
 if grep -qE '^url\s*=' panel/agent/Cargo.toml; then
   ok "B1 panel/agent/Cargo.toml depends on url"
 else
-  bad "B1 no url dependency in panel/agent/Cargo.toml — the guard would not compile"
+  bad "B1 no url dependency in panel/agent/Cargo.toml - the guard would not compile"
 fi
 
 if has "$GUARD_C" "strip_prefix\\(\"git@\"\\)"; then
   ok "B2 the scp-like git@host:path shorthand is hand-parsed (the url crate has no scheme for it)"
 else
-  bad "B2 no scp-like shorthand handling — git@host:path repo_urls would be misparsed or rejected"
+  bad "B2 no scp-like shorthand handling - git@host:path repo_urls would be misparsed or rejected"
 fi
 
 # ── §C the module is registered and reachable ─────────────────────────────
@@ -166,7 +166,7 @@ echo "── §C ssrf_guard is registered as a module ──"
 if grep -qE '^pub mod ssrf_guard;' "$MOD"; then
   ok "C1 pub mod ssrf_guard; is registered in services/mod.rs"
 else
-  bad "C1 ssrf_guard is not registered — it exists on disk but is unreachable from the crate"
+  bad "C1 ssrf_guard is not registered - it exists on disk but is unreachable from the crate"
 fi
 
 # ── §D all three reachable clone paths call the guard, in position ────────
@@ -199,7 +199,7 @@ fi
 if has "$DEP_ATOMIC_BODY" 'ssrf_guard::validate_repo_url_not_internal\(repo_url\)\.await\?'; then
   ok "D5 deploy.rs::atomic_deploy calls the guard (its own inline clone, not a clone_or_pull call)"
 else
-  bad "D5 deploy.rs::atomic_deploy does not call the guard — its inline clone would stay unguarded"
+  bad "D5 deploy.rs::atomic_deploy does not call the guard - its inline clone would stay unguarded"
 fi
 
 if before "$DEP_ATOMIC_BODY" "validate_repo_url_not_internal" "cmd.output()"; then

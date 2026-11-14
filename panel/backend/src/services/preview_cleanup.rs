@@ -62,7 +62,7 @@ async fn cleanup_expired_previews(db: &PgPool, agents: &AgentRegistry) -> Result
                 // tear the container down somewhere else.
                 tracing::warn!(
                     "Preview {container_name} belongs to server {server_id}, which is \
-                     unreachable ({e}) — not cleaning up. Refusing to act on a different host."
+                     unreachable ({e}) - not cleaning up. Refusing to act on a different host."
                 );
                 continue;
             }
@@ -80,7 +80,7 @@ async fn cleanup_expired_previews(db: &PgPool, agents: &AgentRegistry) -> Result
         );
         if let Err(e) = agent.post("/git/cleanup", Some(body)).await {
             // KEEP THE ROW. It is the only record that this container, this
-            // port and this vhost exist — deleting it anyway frees the port for
+            // port and this vhost exist - deleting it anyway frees the port for
             // reallocation while the container still holds it, and leaves the
             // container invisible to every list, cleanup and delete path there
             // is. The sweep runs every five minutes and the agent reports
@@ -112,7 +112,7 @@ async fn cleanup_expired_previews(db: &PgPool, agents: &AgentRegistry) -> Result
     // `preview_ttl_hours = 0` is the documented opt-out from automatic preview
     // cleanup, and the TTL loop above honours it. This one did not join
     // git_deploys at all, so the operator who switched auto-cleanup off still
-    // had previews destroyed — just by the other sweep, an hour after a failed
+    // had previews destroyed - just by the other sweep, an hour after a failed
     // deploy, which is exactly when the container is worth keeping to look at.
     let stuck: Vec<(uuid::Uuid, String, Option<String>, i32, uuid::Uuid)> = sqlx::query_as(
         "SELECT p.id, p.container_name, p.domain, p.host_port, d.server_id FROM git_previews p \
@@ -131,7 +131,7 @@ async fn cleanup_expired_previews(db: &PgPool, agents: &AgentRegistry) -> Result
             Err(e) => {
                 tracing::warn!(
                     "Stuck preview {container_name} belongs to server {server_id}, which is \
-                     unreachable ({e}) — not cleaning up. Refusing to act on a different host."
+                     unreachable ({e}) - not cleaning up. Refusing to act on a different host."
                 );
                 continue;
             }

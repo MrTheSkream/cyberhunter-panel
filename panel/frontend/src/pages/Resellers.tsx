@@ -7,8 +7,8 @@ import ConfirmDialog from "../components/ConfirmDialog";
 /**
  * The admin's door onto /api/resellers.
  *
- * Those eight handlers — list, create, get, update, remove, list_servers,
- * allocate_server, deallocate_server — shipped complete, routed and AdminUser-
+ * Those eight handlers - list, create, get, update, remove, list_servers,
+ * allocate_server, deallocate_server - shipped complete, routed and AdminUser-
  * gated, and had ZERO callers in this SPA. So the only reseller-shaped control
  * the panel offered an admin was the role dropdown in Users, which sets
  * `role='reseller'` without inserting a profile: the account it produces gets
@@ -17,7 +17,7 @@ import ConfirmDialog from "../components/ConfirmDialog";
  * described reseller accounts, quotas, white-label branding and per-reseller
  * server allocation as working. An operator went looking for the creation form
  * those pages promise, found the sidebar's "Reseller Panel", clicked it, and got
- * `403 This endpoint is for resellers only` — which is issue #112.
+ * `403 This endpoint is for resellers only` - which is issue #112.
  *
  * Two contract details worth keeping in view while editing this file:
  *  - The LIST row and the DETAIL row are different shapes. `ResellerListItem`
@@ -26,8 +26,8 @@ import ConfirmDialog from "../components/ConfirmDialog";
  *    email comes down from the row that was clicked, the rest from a GET.
  *  - `update` distinguishes THREE states on the three text columns since #117:
  *    an absent key keeps the stored value, an empty string clears it to NULL,
- *    and a value writes it. So the branding fields — panel name, logo, accent
- *    colour — can now be taken off again, which they could not before.
+ *    and a value writes it. So the branding fields - panel name, logo, accent
+ *    colour - can now be taken off again, which they could not before.
  *    The NUMERIC quotas are still COALESCE-only: `null` means KEEP, and a blank
  *    box cannot restore "unlimited", because the empty-string sentinel has no
  *    numeric spelling. The form still says so for those, and only those.
@@ -87,7 +87,7 @@ interface ServerRow {
 
 // Numeric quotas only. The API cannot clear a NUMBER, so an empty box means
 // "leave as it is" on edit and "no limit" on create. One helper so both
-// directions agree. (The three text columns are clearable since #117 — they
+// directions agree. (The three text columns are clearable since #117 - they
 // send the empty string rather than null and do not go through this helper.)
 const numOrNull = (s: string): number | null => {
   const t = s.trim();
@@ -136,7 +136,7 @@ export default function Resellers() {
   const [allocPick, setAllocPick] = useState("");
   const [pendingDealloc, setPendingDealloc] = useState<ResellerServer | null>(null);
 
-  // Demote confirmation — a banner rather than a row swap, because the
+  // Demote confirmation - a banner rather than a row swap, because the
   // consequences are worth spelling out before the click.
   const [pendingDelete, setPendingDelete] = useState<ResellerListItem | null>(null);
 
@@ -178,8 +178,8 @@ export default function Resellers() {
   const openEdit = async (r: ResellerListItem) => {
     setMessage({ text: "", type: "" });
     try {
-      // The list row does not carry the branding or disk fields — only the
-      // detail response does — so opening the editor from the list alone would
+      // The list row does not carry the branding or disk fields - only the
+      // detail response does - so opening the editor from the list alone would
       // silently blank half the form on save.
       const p = await api.get<ResellerProfile>(`/resellers/${r.id}`);
       setEditId(p.id);
@@ -207,7 +207,7 @@ export default function Resellers() {
         await api.put(`/resellers/${editId}`, {
           // On an UPDATE the empty string means "clear it"; null means "leave it
           // alone" (see the three-state contract on the handler). Sending null
-          // for a blank box made the white-label fields one-way — an operator
+          // for a blank box made the white-label fields one-way - an operator
           // could set a panel name, a logo and an accent colour and never take
           // any of them off again. The create payload below keeps `|| null`,
           // where a blank box genuinely does mean "never set".
@@ -295,7 +295,7 @@ export default function Resellers() {
     const target = pendingDealloc;
     setPendingDealloc(null);
     try {
-      // The path takes the SERVER id, not the allocation row id — and note the
+      // The path takes the SERVER id, not the allocation row id - and note the
       // `reseller_id` on this row is a USER id (reseller_servers references
       // users), so it must not be round-tripped as the profile id in the URL.
       await api.delete(`/resellers/${expanded}/servers/${target.server_id}`);
@@ -527,7 +527,7 @@ export default function Resellers() {
                   className="w-full px-3 py-2 border border-dark-500 rounded-lg text-sm focus:ring-2 focus:ring-accent-500 focus:border-accent-500"
                   placeholder="Acme Hosting"
                 />
-                <p className="text-xs text-dark-400 mt-1">Shown to this reseller in place of the DockPanel name. Up to 100 characters.</p>
+                <p className="text-xs text-dark-400 mt-1">Shown to this reseller in place of the CyberHunter - Panel name. Up to 100 characters.</p>
               </div>
 
               <div className="grid grid-cols-3 gap-3">
@@ -582,13 +582,13 @@ export default function Resellers() {
 
               <label className="flex items-center gap-2 text-sm text-dark-100">
                 <input type="checkbox" checked={hideBranding} onChange={(e) => setHideBranding(e.target.checked)} className="rounded border-dark-500" />
-                Hide DockPanel branding for this reseller
+                Hide CyberHunter - Panel branding for this reseller
               </label>
 
               {editId && (
                 <p className="text-xs text-dark-400">
                   Clearing the panel name, logo or accent colour removes it. A blank
-                  quota leaves the stored number unchanged — those cannot be reset to
+                  quota leaves the stored number unchanged - those cannot be reset to
                   unlimited here.
                 </p>
               )}

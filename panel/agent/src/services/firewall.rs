@@ -2,7 +2,7 @@
 //!
 //! The agent only ever spoke `ufw`. On the RHEL family the running firewall is
 //! **firewalld**, so every `ufw allow` was either a no-op or landed in a
-//! rule set nothing was consulting — while the caller logged success anyway
+//! rule set nothing was consulting - while the caller logged success anyway
 //! (s265). `setup.sh` has the same distinction as `FW_MGR`; this is its
 //! agent-side counterpart.
 
@@ -14,8 +14,8 @@ use tokio::sync::OnceCell;
 pub enum Firewall {
     Firewalld,
     Ufw,
-    /// No firewall is running. Opening a port is vacuously fine — the port is
-    /// already reachable — so callers should treat this as success, not
+    /// No firewall is running. Opening a port is vacuously fine - the port is
+    /// already reachable - so callers should treat this as success, not
     /// failure, or they will warn about a problem the box does not have.
     None,
 }
@@ -43,7 +43,7 @@ pub async fn detect() -> Firewall {
 /// Open `port`/tcp. Returns whether the port is now allowed.
 ///
 /// Unlike the code this replaces, the result is **returned** rather than
-/// discarded — a caller that logs "ports opened" without checking is stating
+/// discarded - a caller that logs "ports opened" without checking is stating
 /// something it does not know.
 pub async fn allow_tcp(port: &str) -> bool {
     match detect().await {
@@ -67,7 +67,7 @@ pub async fn reload() {
     }
 }
 
-/// Open `port`/`proto` — like [`allow_tcp`] but not tcp-only, for the
+/// Open `port`/`proto` - like [`allow_tcp`] but not tcp-only, for the
 /// Security page's own "add rule" feature rather than a service installer.
 pub async fn add_port(port: &str, proto: &str) -> bool {
     match detect().await {
@@ -107,10 +107,10 @@ pub async fn remove_service(name: &str) -> bool {
 }
 
 /// The canonical `firewall-cmd` rich-rule spec for a port-scoped allow/deny,
-/// optionally source-restricted — firewalld's equivalent of a ufw rule with
+/// optionally source-restricted - firewalld's equivalent of a ufw rule with
 /// a `deny` action or a `from <source>` clause, neither of which a plain
 /// `--add-port` can express. Family is inferred from whether `from` looks
-/// like an IPv6 address (contains `:`) — the same shape `security.rs`'s own
+/// like an IPv6 address (contains `:`) - the same shape `security.rs`'s own
 /// source-address validator already accepts for both address families.
 pub fn rich_rule_spec(port: &str, proto: &str, action: &str, from: Option<&str>) -> String {
     let verdict = if action.eq_ignore_ascii_case("deny") { "reject" } else { "accept" };
@@ -140,7 +140,7 @@ pub async fn add_rich_rule_raw(spec: &str) -> bool {
     permanent && runtime
 }
 
-/// Remove a rich rule by its exact spec string — pass back the line
+/// Remove a rich rule by its exact spec string - pass back the line
 /// `--list-rich-rules` itself reported (not a rebuilt string) when removing
 /// an existing rule, since firewalld's rich-rule parser must resolve the
 /// text to the same internal rule it stored.

@@ -10,11 +10,11 @@ import ConfirmDialog from "../components/ConfirmDialog";
  * Hide credentials embedded in a repository URL before it reaches the screen.
  *
  * `is_valid_repo_url` on the agent accepts any https:// URL, userinfo included,
- * and nothing on the panel side strips it — so an operator who pastes
+ * and nothing on the panel side strips it - so an operator who pastes
  * `https://ghp_xxx@github.com/me/app.git` (the workaround people reach for when
  * a private HTTPS clone fails) stores a live token in `git_deploys.repo_url`.
- * This page then printed it back in three places, one of which — the deploy
- * approval queue — is read by an ADMINISTRATOR looking at somebody else's
+ * This page then printed it back in three places, one of which - the deploy
+ * approval queue - is read by an ADMINISTRATOR looking at somebody else's
  * deployment. Masking here does not un-store the token, and the guide now says
  * so; it stops the panel being the thing that shows it around.
  *
@@ -24,7 +24,7 @@ import ConfirmDialog from "../components/ConfirmDialog";
 export function maskRepoCredentials(url: string): string {
   // Anchored on the scheme so a path containing '@' cannot be mistaken for
   // userinfo, and non-greedy up to the LAST '@' before the first '/' of the
-  // path — which is where a parser puts the authority boundary.
+  // path - which is where a parser puts the authority boundary.
   return url.replace(
     /^([a-zA-Z][a-zA-Z0-9+.-]*:\/\/)([^/@]*@)/,
     (_m, scheme) => `${scheme}•••@`,
@@ -51,7 +51,7 @@ interface GitDeploy {
   memory_mb: number | null;
   cpu_percent: number | null;
   ssl_email: string | null;
-  // NULL on a row an older panel wrote — the effective mode is then whether
+  // NULL on a row an older panel wrote - the effective mode is then whether
   // ssl_email is set, exactly as the backend's `effective_tls_mode` reads it.
   tls_mode: "none" | "acme" | "provided" | null;
   tls_certificate: string | null;
@@ -68,7 +68,7 @@ interface GitDeploy {
   build_method: string;
   preview_ttl_hours: number;
   // Container paths bind-mounted durably under GIT_DATA_DIR/{name} on the agent
-  // (#118) — the host side is never operator-supplied. Always empty for
+  // (#118) - the host side is never operator-supplied. Always empty for
   // anything the panel deploys as a preview.
   volumes: string[];
 }
@@ -86,7 +86,7 @@ interface GitPreview {
   created_at: string;
 }
 
-// A protected deployment does not deploy when its owner presses Deploy — it files
+// A protected deployment does not deploy when its owner presses Deploy - it files
 // one of these, and a DIFFERENT administrator has to resolve it. The three
 // endpoints behind it (list / approve / reject) shipped fully built and scoped and
 // no screen ever called them, so the only way to finish a protected deploy was a
@@ -203,7 +203,7 @@ export default function GitDeploys() {
     }
   };
 
-  // Approvals are not scoped to the selected row — the server returns every
+  // Approvals are not scoped to the selected row - the server returns every
   // pending request on the machines this administrator operates, and the bell
   // notification an approver follows links here with nothing selected. So it
   // loads with the page, not with the detail panel.
@@ -304,7 +304,7 @@ export default function GitDeploys() {
       // the handler COALESCEs a null onto the stored value, so the old command
       // survived, the hook kept running, and the save still answered
       // "Deploy configuration updated." Same defect and same remedy as the
-      // notification destinations in v2.120.0 — the empty string is the
+      // notification destinations in v2.120.0 - the empty string is the
       // sentinel at both ends, and every reader guards on non-empty before it
       // acts (the two that did not, domain and ssl_email, now do).
       domain: formDomain.trim(),
@@ -327,7 +327,7 @@ export default function GitDeploys() {
       deploy_cron: formCron.trim(),
       deploy_protected: formProtected,
       preview_ttl_hours: formPreviewTtl,
-      // Takes effect on the NEXT deploy, not this save — the field only
+      // Takes effect on the NEXT deploy, not this save - the field only
       // changes what a future container's HostConfig binds, and this request
       // never talks to the agent. Sent in full every time, empty included, so
       // clearing every row here removes the last volume on the next deploy
@@ -356,7 +356,7 @@ export default function GitDeploys() {
   // Both Deploy buttons land here, and the response has two shapes. Only one of
   // them carries a `deploy_id`: a protected deployment answers 202 with the reason
   // instead. Reading only the id is what left the button spinning while the
-  // server's own sentence — the one naming the second administrator — was thrown
+  // server's own sentence - the one naming the second administrator - was thrown
   // away, so the branch is written once and both call sites use it.
   const startDeploy = async (id: string) => {
     setDeploying(id);
@@ -382,7 +382,7 @@ export default function GitDeploys() {
       setPendingConfirm({
         type: "deploy",
         id,
-        label: `"${deploy.name}" is protected — this files a request for another administrator. It does not deploy now.`,
+        label: `"${deploy.name}" is protected - this files a request for another administrator. It does not deploy now.`,
       });
       return;
     }
@@ -392,7 +392,7 @@ export default function GitDeploys() {
   };
 
   // Approving IS the production deploy the protected flag deferred, and rejecting
-  // is terminal — `reject_deploy` refuses anything not 'pending', so the requester
+  // is terminal - `reject_deploy` refuses anything not 'pending', so the requester
   // must start over. Both are routed through the page's own confirmation bar for
   // that reason, the same way Delete and Rollback are.
   const resolveApproval = async (approvalId: string, action: "approve" | "reject") => {
@@ -573,7 +573,7 @@ export default function GitDeploys() {
         </div>
       )}
 
-      {/* Portals to document.body (issue #120): the triggers that arm this — per-entry Rollback most of all — sit far below this point. */}
+      {/* Portals to document.body (issue #120): the triggers that arm this - per-entry Rollback most of all - sit far below this point. */}
       {pendingConfirm && (
         <ConfirmDialog
           label={pendingConfirm.label}
@@ -598,8 +598,8 @@ export default function GitDeploys() {
       )}
 
       {/* Pending deploy approvals.
-          Installation-wide for the machines this administrator operates — not a
-          property of the selected row — and the bell notification an approver
+          Installation-wide for the machines this administrator operates - not a
+          property of the selected row - and the bell notification an approver
           follows links to this page with nothing selected. So it sits above the
           list, where it is the first thing on screen. */}
       {approvals.length > 0 && (
@@ -637,12 +637,12 @@ export default function GitDeploys() {
                   <div className="flex items-center gap-2 shrink-0">
                     {own ? (
                       // Not a dead end. `reject_deploy` has no self-rejection ban, so
-                      // the requester may withdraw — and on a single-admin install
+                      // the requester may withdraw - and on a single-admin install
                       // that is the ONLY exit: nobody else exists to approve, and the
                       // one-pending-per-deployment index means pressing Deploy again
                       // cannot replace the row either.
                       <>
-                        <span className="text-xs text-dark-300 font-mono hidden md:inline">your request — another admin must approve it</span>
+                        <span className="text-xs text-dark-300 font-mono hidden md:inline">your request - another admin must approve it</span>
                         <button
                           onClick={() => setPendingConfirm({
                             type: "reject-request",
@@ -672,7 +672,7 @@ export default function GitDeploys() {
                           onClick={() => setPendingConfirm({
                             type: "reject-request",
                             id: a.id,
-                            label: `Reject the deploy request for "${a.deploy_name}"? This is final — the requester has to ask again.`,
+                            label: `Reject the deploy request for "${a.deploy_name}"? This is final - the requester has to ask again.`,
                           })}
                           disabled={resolving === a.id}
                           className="px-3 py-1 bg-danger-500/10 text-danger-400 rounded-md text-xs font-medium hover:bg-danger-500/20 disabled:opacity-50 transition-colors"
@@ -741,14 +741,14 @@ export default function GitDeploys() {
                     {maskRepoCredentials(d.repo_url).replace(/^https?:\/\//, "").replace(/\.git$/, "")}
                   </td>
                   <td className="px-5 py-4 text-sm text-dark-200 font-mono hidden sm:table-cell">{d.branch}</td>
-                  <td className="px-5 py-4 text-sm text-dark-200 font-mono hidden lg:table-cell">{d.domain || "\u2014"}</td>
+                  <td className="px-5 py-4 text-sm text-dark-200 font-mono hidden lg:table-cell">{d.domain || "-"}</td>
                   <td className="px-5 py-4">
                     <span className={`inline-flex px-2.5 py-0.5 rounded-full text-xs font-medium ${statusBadge(d.status)}`}>
                       {d.status}
                     </span>
                   </td>
                   <td className="px-5 py-4 text-sm text-dark-200 hidden lg:table-cell">
-                    {d.last_deploy ? new Date(d.last_deploy).toLocaleString() : "\u2014"}
+                    {d.last_deploy ? new Date(d.last_deploy).toLocaleString() : "-"}
                   </td>
                   <td className="px-5 py-4 text-right">
                     <div className="flex items-center justify-end gap-2" onClick={(e) => e.stopPropagation()}>
@@ -797,28 +797,28 @@ export default function GitDeploys() {
                   { label: "Dockerfile", value: selected.dockerfile },
                   { label: "Container Port", value: String(selected.container_port) },
                   { label: "Host Port", value: String(selected.host_port) },
-                  { label: "Domain", value: selected.domain || "\u2014" },
+                  { label: "Domain", value: selected.domain || "-" },
                   { label: "Auto-deploy", value: selected.auto_deploy ? "Enabled" : "Disabled" },
                   { label: "Status", value: selected.status },
-                  { label: "Last Commit", value: selected.last_commit ? selected.last_commit.substring(0, 8) : "\u2014" },
+                  { label: "Last Commit", value: selected.last_commit ? selected.last_commit.substring(0, 8) : "-" },
                   { label: "Memory Limit", value: selected.memory_mb ? `${selected.memory_mb} MB` : "None" },
                   { label: "CPU Limit", value: selected.cpu_percent ? `${selected.cpu_percent}%` : "None" },
                   {
                     label: "HTTPS",
                     value:
                       (selected.tls_mode ?? (selected.ssl_email ? "acme" : "none")) === "provided"
-                        ? `Registered certificate (${selected.tls_certificate || "\u2014"})`
+                        ? `Registered certificate (${selected.tls_certificate || "-"})`
                         : (selected.tls_mode ?? (selected.ssl_email ? "acme" : "none")) === "acme"
-                        ? `Let's Encrypt (${selected.ssl_email || "\u2014"})`
+                        ? `Let's Encrypt (${selected.ssl_email || "-"})`
                         : "None",
                   },
-                  { label: "Pre-build Cmd", value: selected.pre_build_cmd || "\u2014" },
-                  { label: "Post-deploy Cmd", value: selected.post_deploy_cmd || "\u2014" },
+                  { label: "Pre-build Cmd", value: selected.pre_build_cmd || "-" },
+                  { label: "Post-deploy Cmd", value: selected.post_deploy_cmd || "-" },
                   { label: "Build Method", value: selected.build_method === "nixpacks" ? "Nixpacks" : selected.build_method === "auto-detect" ? "Auto-detect" : selected.build_method === "compose" ? "Docker Compose" : "Dockerfile" },
                   { label: "Preview TTL", value: selected.preview_ttl_hours > 0 ? `${selected.preview_ttl_hours}h` : "No auto-cleanup" },
                   { label: "Build Context", value: selected.build_context || "." },
                   { label: "GitHub", value: selected.github_token ? "Connected" : "Not configured" },
-                  { label: "Deploy Schedule", value: selected.deploy_cron || "\u2014" },
+                  { label: "Deploy Schedule", value: selected.deploy_cron || "-" },
                   { label: "Deploy Protection", value: selected.deploy_protected ? "Second admin must approve" : "Disabled" },
                 ].map((field) => (
                   <div key={field.label}>
@@ -1039,7 +1039,7 @@ export default function GitDeploys() {
                           <span className="text-xs text-dark-200 font-mono">{(entry.duration_ms / 1000).toFixed(1)}s</span>
                         )}
                         <span className="text-xs text-dark-300">{new Date(entry.created_at).toLocaleString()}</span>
-                        {/* Rollback button — not on the first (latest) entry if it's running */}
+                        {/* Rollback button - not on the first (latest) entry if it's running */}
                         {!(idx === 0 && (entry.status === "deploying" || entry.status === "running")) && (
                           <button
                             onClick={(e) => { e.stopPropagation(); handleRollback(entry.id); }}
@@ -1149,7 +1149,7 @@ export default function GitDeploys() {
               {/* The other half of what #118 was promised. The guide has carried
                   this warning since v2.135.0, but the reporter's own accepted
                   fallback was "documenting it AND surfacing it in the UI", and
-                  only the doc shipped — so the person who most needs it, the one
+                  only the doc shipped - so the person who most needs it, the one
                   filling in this form for the first time, was the one person not
                   shown it. Deliberately above the first field and on the edit
                   path too: the loss lands on the SECOND deploy, so an operator
@@ -1157,8 +1157,8 @@ export default function GitDeploys() {
               <div className="px-3 py-2 bg-warn-500/10 border border-warn-500/20 rounded-lg">
                 <p className="text-xs text-warn-400">
                   Git Deploys have no persistent storage. Every deploy replaces the
-                  container, so anything the app writes to its own filesystem —
-                  uploads, generated files, a SQLite database — is lost on the next
+                  container, so anything the app writes to its own filesystem -
+                  uploads, generated files, a SQLite database - is lost on the next
                   deploy, not this one.
                 </p>
                 <p className="text-xs text-warn-400/80 mt-1">
@@ -1236,7 +1236,7 @@ export default function GitDeploys() {
                     onChange={(e) => {
                       setFormDomain(e.target.value);
                       // A TLS choice is meaningless without a domain, and the
-                      // backend refuses a mode other than none for one — so
+                      // backend refuses a mode other than none for one - so
                       // emptying the box takes the choice with it rather than
                       // leaving a hidden "acme"/"provided" behind a disabled select.
                       if (!e.target.value.trim()) {
@@ -1281,7 +1281,7 @@ export default function GitDeploys() {
                     }}
                     className="w-full px-3 py-2 border border-dark-500 rounded-lg text-sm focus:ring-2 focus:ring-accent-500 outline-none"
                   >
-                    <option value="none">No HTTPS — plain HTTP, or TLS terminated upstream</option>
+                    <option value="none">No HTTPS - plain HTTP, or TLS terminated upstream</option>
                     <option value="acme">Let's Encrypt certificate</option>
                     <option value="provided">Registered certificate</option>
                   </select>
@@ -1306,7 +1306,7 @@ export default function GitDeploys() {
                         </option>
                         {(registeredCerts ?? []).map((c) => (
                           <option key={c.id} value={c.alias}>
-                            {c.alias}{c.dns_names.length > 0 ? ` — ${c.dns_names.join(", ")}` : ""}
+                            {c.alias}{c.dns_names.length > 0 ? ` - ${c.dns_names.join(", ")}` : ""}
                           </option>
                         ))}
                       </select>
@@ -1428,7 +1428,7 @@ export default function GitDeploys() {
                   </button>
                 </div>
                 <p className="text-xs text-dark-300 mb-2">
-                  Container paths only — DockPanel manages the host location for you. Without one,
+                  Container paths only - CyberHunter - Panel manages the host location for you. Without one,
                   every deploy replaces the container and anything it wrote to its own filesystem is
                   lost. Takes effect on the next deploy; adding a path here carries over whatever the
                   running container already has there.
@@ -1493,11 +1493,11 @@ export default function GitDeploys() {
                 {/* The copy here used to describe a client-side are-you-sure dialog.
                     The server does something else entirely: it files a request and
                     refuses to build until a DIFFERENT administrator signs it off.
-                    (The old wording is not quoted — a pin arm greps raw source and
+                    (The old wording is not quoted - a pin arm greps raw source and
                     would match the quotation.) */}
                 <p className="text-xs text-dark-300 mt-1 ml-6">
                   Pressing Deploy files a request instead of building. A different administrator must approve it under
-                  Pending Approvals — nobody can approve their own request. Webhook, scheduled and rollback deploys are
+                  Pending Approvals - nobody can approve their own request. Webhook, scheduled and rollback deploys are
                   not covered.
                 </p>
               </div>
@@ -1520,7 +1520,7 @@ export default function GitDeploys() {
                 <label className="block text-sm font-medium text-dark-100 mb-1">Pre-build Command</label>
                 <input type="text" value={formPreBuild} onChange={(e) => setFormPreBuild(e.target.value)}
                   placeholder="npm install, composer install, etc." className="w-full px-3 py-2 border border-dark-500 rounded-lg text-sm font-mono focus:ring-2 focus:ring-accent-500 outline-none" />
-                <p className="text-xs text-dark-300 mt-1">Only applies when DockPanel generates the Dockerfile for you — becomes an install step inside the built image (add it as a RUN line yourself if you commit your own Dockerfile)</p>
+                <p className="text-xs text-dark-300 mt-1">Only applies when CyberHunter - Panel generates the Dockerfile for you - becomes an install step inside the built image (add it as a RUN line yourself if you commit your own Dockerfile)</p>
               </div>
 
               {/* Post-deploy Command */}

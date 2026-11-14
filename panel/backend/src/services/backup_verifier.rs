@@ -4,12 +4,12 @@ use uuid::Uuid;
 use crate::services::agent::AgentRegistry;
 use crate::services::notifications;
 
-/// Run the backup verifier — every 6 hours, picks unverified backups and verifies them.
+/// Run the backup verifier - every 6 hours, picks unverified backups and verifies them.
 ///
 /// Every driving query is fleet-wide, so the verifier gets the REGISTRY: an archive is
 /// read on the host that wrote it. Verifying a member's backup against the panel's disk
-/// finds nothing, marks a good archive `failed`, and — because the driving queries skip
-/// any backup that already has a verification row — never looks at it again.
+/// finds nothing, marks a good archive `failed`, and - because the driving queries skip
+/// any backup that already has a verification row - never looks at it again.
 pub async fn run(db: PgPool, agents: AgentRegistry, mut shutdown_rx: tokio::sync::broadcast::Receiver<()>) {
     tracing::info!("Backup verifier started");
 
@@ -51,7 +51,7 @@ async fn tick(db: &PgPool, agents: &AgentRegistry) -> Result<(), String> {
     }
 
     // Pick up to 3 unverified site backups (created in last 7 days, not yet verified).
-    // `s.server_id` rides the JOIN this query already makes — the same shape
+    // `s.server_id` rides the JOIN this query already makes - the same shape
     // `preview_cleanup` uses, and the reason no migration is needed for `backups`.
     // It is NOT NULL (20260319000000_multi_server.sql:76) and a site never moves
     // hosts: nothing in the codebase issues `UPDATE sites SET server_id`.
@@ -87,7 +87,7 @@ async fn tick(db: &PgPool, agents: &AgentRegistry) -> Result<(), String> {
     }
 
     // A volume backup has no site to join through, so `vb.server_id` is the only
-    // handle — which is why `create_volume_backup` had to stop stamping it from
+    // handle - which is why `create_volume_backup` had to stop stamping it from
     // "some online server". Rows written before that fix may still carry a wrong or
     // NULL id; NULL ones are skipped below rather than silently verified here.
     let vol_backups: Vec<(Uuid, String, String, Option<Uuid>)> = sqlx::query_as(
@@ -104,7 +104,7 @@ async fn tick(db: &PgPool, agents: &AgentRegistry) -> Result<(), String> {
             // row we cannot place, and defaulting it to this host is exactly the
             // wrong-host read being removed. Leaving it unverified keeps it eligible.
             tracing::warn!(
-                "Volume backup {backup_id} ({filename}) has no server_id — leaving it \
+                "Volume backup {backup_id} ({filename}) has no server_id - leaving it \
                  unverified rather than reading this host's disk for it."
             );
             continue;

@@ -20,7 +20,7 @@ use crate::auth::ServerScope;
 use crate::error::{internal_error, err, agent_error, paginate, ApiError};
 use crate::models::Site;
 
-/// `SELECT s.*` over [`crate::helpers::SITE_CALLER_PREDICATE`] — the full-row read
+/// `SELECT s.*` over [`crate::helpers::SITE_CALLER_PREDICATE`] - the full-row read
 /// used by every per-site handler in this module. Built once; the predicate itself
 /// is shared with the five other modules that resolve a site by caller.
 static SITE_FOR_CALLER_ALL: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
@@ -36,8 +36,8 @@ use crate::services::domain_claim;
 ///
 /// Visible to the crate since v2.110.0, when the staging module became the third
 /// caller. It was private while two of the four site-creating handlers lived in
-/// this file, which is precisely why the third one — in another module, and
-/// therefore unable to call this even had its author looked — was written with a
+/// this file, which is precisely why the third one - in another module, and
+/// therefore unable to call this even had its author looked - was written with a
 /// ceiling of its own: none.
 pub(crate) async fn site_rate_limit(pool: &sqlx::PgPool) -> i64 {
     match crate::services::security_hardening::get_setting_i64(pool, "security_site_rate_limit", 3)
@@ -137,17 +137,17 @@ fn emit_step(
     }
 }
 
-/// Store a credential DockPanel generated on the user's behalf into the site's
+/// Store a credential CyberHunter - Panel generated on the user's behalf into the site's
 /// auto-created vault.
 ///
-/// Encrypts with `secrets::get_encryption_key` — the same derivation the Secrets
+/// Encrypts with `secrets::get_encryption_key` - the same derivation the Secrets
 /// Manager decrypts with, so the value is actually retrievable in the UI rather
 /// than merely written somewhere.
 ///
 /// Best-effort by design: provisioning must not fail because bookkeeping did.
 /// But every failure is logged at error level, because the failure mode this
 /// exists to kill (s252 F3) was a password generated, handed to wp-cli, and
-/// dropped on the floor beside an empty vault — with nothing said anywhere.
+/// dropped on the floor beside an empty vault - with nothing said anywhere.
 async fn store_site_secret(
     pool: &sqlx::PgPool,
     jwt_secret: &str,
@@ -215,10 +215,10 @@ pub struct CreateSiteRequest {
     pub ip_id: Option<Uuid>,
 }
 
-/// GET /api/sites — List all sites for the current user.
+/// GET /api/sites - List all sites for the current user.
 ///
 /// Scoped to the caller, with no role branch, and every per-site read below is
-/// the same. That is the single ownership axis the `client` role rests on — an
+/// the same. That is the single ownership axis the `client` role rests on - an
 /// account that OWNS the row passes all of it natively. See `list_for_admin`
 /// for the one read that is allowed to look past it, and why it had to exist.
 pub async fn list(
@@ -272,17 +272,17 @@ pub struct AdminSiteRow {
     pub bind_ip: Option<String>,
 }
 
-/// GET /api/admin/sites — every site on this server, with its owner. Admin only.
+/// GET /api/admin/sites - every site on this server, with its owner. Admin only.
 ///
 /// **This route exists because `transfer` was a one-way door.** Ownership is one
-/// axis and `list` above is scoped to the caller with no role branch — so the
+/// axis and `list` above is scoped to the caller with no role branch - so the
 /// moment an admin handed a site to a client, the row left their list, `get_one`
 /// answered 404, and the Transfer control, which is rendered only on the site's
 /// own page, became unreachable. There was no way back through the panel at all,
 /// while `docs/guides/roles-and-ownership.md` promised the opposite in print.
 /// Reported from the field on #51 by the operator who had just used the feature.
 ///
-/// It is a READ, and only a read — this route lists, and nothing more. What it is
+/// It is a READ, and only a read - this route lists, and nothing more. What it is
 /// no longer doing is standing in for the capability: when it shipped, seeing a
 /// site and handing it back was the whole of what an administrator could do with
 /// one they did not own, and the operator it was built for said that was not
@@ -321,7 +321,7 @@ pub async fn list_for_admin(
     Ok(Json(sites))
 }
 
-/// POST /api/sites — Create a new site.
+/// POST /api/sites - Create a new site.
 pub async fn create(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -337,7 +337,7 @@ pub async fn create(
     // Feature 3: Rate limit site creation (max N per user per hour).
     // `security_site_rate_limit` is a COUNT, not a flag: the migration seeds it
     // '3', but until v2.46.0 it was read with get_setting_bool, so '3' != "true"
-    // read as false and the limit became 999 — the seed disabled the very
+    // read as false and the limit became 999 - the seed disabled the very
     // feature it configures, on every install that ran the migration. 0 = off.
     {
         let max_sites: i64 = site_rate_limit(&state.db).await;
@@ -361,7 +361,7 @@ pub async fn create(
         }
     }
 
-    // Format, reserved and every ownership check, in one call — see
+    // Format, reserved and every ownership check, in one call - see
     // services::domain_claim. `body.domain` is not used past this point; the
     // normalised form is what gets stored and sent to the agent.
     let domain = domain_claim::ensure_claimable(
@@ -467,7 +467,7 @@ pub async fn create(
         }
     }
 
-    // Domain uniqueness — sites, git deploys AND Docker apps — was checked by
+    // Domain uniqueness - sites, git deploys AND Docker apps - was checked by
     // `domain_claim::ensure_claimable` above, before any of this work started.
 
     // Multi-IP: the address must be declared on THIS server. Choosing one is an
@@ -589,7 +589,7 @@ pub async fn create(
     }
     if let Some(ref php) = body.php_version {
         // Backend can't know the target server's distro; this Debian-shaped string is
-        // a VERSION CARRIER, not a literal path — the agent resolves the real socket
+        // a VERSION CARRIER, not a literal path - the agent resolves the real socket
         // (Debian or RHEL's unversioned one) via services::pkg::resolve_php_fpm_socket
         // before ever touching a filesystem path.
         agent_body["php_socket"] = serde_json::json!(format!("unix:/run/php/php{php}-fpm.sock"));
@@ -608,7 +608,7 @@ pub async fn create(
     }
 
     // Atomically reserve the reseller site-quota slot BEFORE the agent creates the
-    // nginx vhost — closes the check-then-increment TOCTOU without orphaning an nginx
+    // nginx vhost - closes the check-then-increment TOCTOU without orphaning an nginx
     // config on a quota-race (the open tx below rolls back the uncommitted site row if
     // this rejects). The early check_reseller_quota above is a fast-path UX pre-check.
     let site_slot_reserved = reserve_reseller_site_slot(&state, claims.sub).await?;
@@ -619,7 +619,7 @@ pub async fn create(
         Ok(_) => {
             emit_step(&logs, site_id, "nginx", "Configuring web server", "done", None);
 
-            // Agent succeeded — commit the transaction so the site record is persisted
+            // Agent succeeded - commit the transaction so the site record is persisted
             // (background tasks like monitors, backups, SSL need the site to exist)
             if let Err(e) = tx.commit().await {
                 if site_slot_reserved {
@@ -674,7 +674,7 @@ pub async fn create(
 
             // Reseller site counter already incremented atomically by the reserve above.
 
-            // NOTE: Auto-monitor creation disabled — on fresh installs without DNS
+            // NOTE: Auto-monitor creation disabled - on fresh installs without DNS
             // configured, auto-created monitors immediately show "down" which confuses
             // new users. Users can create monitors manually when ready.
             // See: https://github.com/ovexro/dockpanel/issues/XX
@@ -696,7 +696,7 @@ pub async fn create(
             //
             // Created INLINE (not in a spawned task) so its id is available to the
             // CMS installer below. Until v2.28.0 this was fire-and-forget, and the
-            // CMS task raced it — which is part of why the auto-generated admin
+            // CMS task raced it - which is part of why the auto-generated admin
             // password was never stored anywhere and the vault sat empty (F3).
             let site_vault_id: Option<Uuid> = sqlx::query_scalar(
                 "INSERT INTO secret_vaults (user_id, name, description, site_id) \
@@ -772,7 +772,7 @@ pub async fn create(
                 let dns_logs = logs.clone();
                 let dns_user_id = claims.sub;
                 // The host this site is being created ON. Auto-DNS must publish
-                // THIS machine's address, not the panel's — see
+                // THIS machine's address, not the panel's - see
                 // `helpers::public_ip_for_server`. Here the two agree only on a
                 // single-box install; on a fleet the record used to point every
                 // member's site at the panel, which made the site unreachable at
@@ -855,7 +855,7 @@ pub async fn create(
             // Resolve the ACME contact BEFORE spawning. A contact address in a
             // reserved TLD (the operator registered the panel as e.g.
             // admin@box.test) makes Let's Encrypt refuse the account, so every
-            // order fails — and before s253 that failed four times in total
+            // order fails - and before s253 that failed four times in total
             // silence: nothing in the UI, nothing in journalctl, then a permanent
             // give-up. Resolving here lets the real reason become a visible step.
             let acme_contact =
@@ -872,7 +872,7 @@ pub async fn create(
                 }
             };
             let ssl_runtime = runtime.to_string();
-            // Version carrier, not a literal path — see the comment on the create-site call site.
+            // Version carrier, not a literal path - see the comment on the create-site call site.
             let ssl_php_socket = body.php_version.as_ref().map(|v| format!("unix:/run/php/php{v}-fpm.sock"));
             let ssl_proxy_port = body.proxy_port;
             let ssl_php_preset = body.php_preset.clone();
@@ -916,7 +916,7 @@ pub async fn create(
 
                             // The body above carries the runtime, the root and the
                             // PHP socket, but NOT the per-site limits or the
-                            // hardening fields — and the agent re-renders the whole
+                            // hardening fields - and the agent re-renders the whole
                             // vhost from it. This task retries with delays, so a
                             // limit the operator sets between creation and a later
                             // attempt is published and then silently dropped.
@@ -975,7 +975,7 @@ pub async fn create(
                         }
                         Err(e) => {
                             if i == delays.len() - 1 {
-                                // Last attempt failed. Say WHY — this used to read
+                                // Last attempt failed. Say WHY - this used to read
                                 // "Skipped", which described neither the four
                                 // attempts that had just happened nor their cause.
                                 tracing::info!("Auto-SSL failed for {ssl_domain} after {} attempts: {e}", i + 1);
@@ -995,7 +995,7 @@ pub async fn create(
                     }
                 }
 
-                // If no CMS install, this is the final step — emit complete
+                // If no CMS install, this is the final step - emit complete
                 // (For WordPress, the WP task emits complete)
             });
 
@@ -1071,11 +1071,11 @@ pub async fn create(
 
                         let encrypted_db_password = crate::services::secrets_crypto::encrypt_credential(&db_password, &cms_jwt_secret)
                             .unwrap_or_else(|_| db_password.clone());
-                        // The site id is already in hand — this used to resolve it
+                        // The site id is already in hand - this used to resolve it
                         // again from the domain, and `sites.domain` is unique only
                         // per server (`idx_sites_domain_server`). On a fleet holding
                         // the same domain twice the subquery could attach this
-                        // database — credentials included — to the OTHER host's site
+                        // database - credentials included - to the OTHER host's site
                         // row, i.e. to a different owner's account. If it matched no
                         // row at all the NOT NULL insert simply failed into the
                         // `let _`, leaving a running container with no row: an
@@ -1121,7 +1121,7 @@ pub async fn create(
                     // Install at the scheme the site can actually serve RIGHT NOW.
                     //
                     // Auto-SSL is still running in a task beside this one and may
-                    // yet fail — DNS not pointed at the box is the ordinary first
+                    // yet fail - DNS not pointed at the box is the ordinary first
                     // site. Committing WordPress to the secure URL regardless used
                     // to leave it 302ing to a scheme with no certificate, i.e.
                     // dead on both, while the panel called it active. Plain HTTP
@@ -1160,7 +1160,7 @@ pub async fn create(
 
                             // Take custody of the credentials we just generated.
                             // The form says "Auto-generated if blank", so a user who
-                            // takes that at its word has no other copy — before
+                            // takes that at its word has no other copy - before
                             // v2.28.0 the password went to wp-cli and nowhere else,
                             // locking them out of the site they had just made.
                             if let Some(vault_id) = cms_vault_id {
@@ -1186,7 +1186,7 @@ pub async fn create(
 
                                 // Reveal a password we generated exactly once, at
                                 // the moment it is created. It is also in the vault,
-                                // so this is convenience, not the system of record —
+                                // so this is convenience, not the system of record -
                                 // and the provisioning stream is owner-scoped
                                 // (provision_log checks user_id).
                                 if stored_pass && cms_pass_generated {
@@ -1194,7 +1194,7 @@ pub async fn create(
                                         &cms_logs, site_id, "credentials",
                                         &format!("{cms_label} admin credentials"), "done",
                                         Some(format!(
-                                            "Username {cms_admin_user} · password {cms_pass} — \
+                                            "Username {cms_admin_user} · password {cms_pass} - \
                                              saved to the \"{cms_domain} secrets\" vault. \
                                              Copy it now; this is the only time it is shown here."
                                         )),
@@ -1211,7 +1211,7 @@ pub async fn create(
                                     emit_step(
                                         &cms_logs, site_id, "credentials",
                                         &format!("{cms_label} admin credentials"), "error",
-                                        Some("Could not be saved to the site vault — \
+                                        Some("Could not be saved to the site vault - \
                                               reset the admin password from the site's tools.".into()),
                                     );
                                 }
@@ -1226,7 +1226,7 @@ pub async fn create(
                                     // No `> /dev/null 2>&1`: the agent's cron
                                     // filter blocks "> /dev/", and this row is
                                     // INSERTed straight into the database
-                                    // without passing through that filter — so
+                                    // without passing through that filter - so
                                     // the product was writing a job its own
                                     // guard rejects, and every later cron sync
                                     // failed for the whole box. cron discards
@@ -1254,13 +1254,13 @@ pub async fn create(
                     }
 
                     // The terminal step must report what happened. It used to say
-                    // "Site ready / done" unconditionally — including for an
+                    // "Site ready / done" unconditionally - including for an
                     // install that had just failed on the line above (s252 F2).
                     //
                     // It also has to account for SSL, which is the half of F2 that
                     // bites most often: the CMS installs fine, auto-SSL doesn't, and
                     // "Site ready" over a site with no HTTPS is the same false claim
-                    // in a different costume. Bounded wait — the site is genuinely
+                    // in a different costume. Bounded wait - the site is genuinely
                     // usable meanwhile, so past the bound we say HTTPS is still in
                     // progress rather than guessing either way.
                     let ssl_outcome = tokio::time::timeout(Duration::from_secs(45), ssl_rx).await;
@@ -1294,7 +1294,7 @@ pub async fn create(
                                         );
                                         emit_step(
                                             &cms_logs, site_id, "complete",
-                                            &format!("{cms_label} installed — HTTPS live, site still set to HTTP"),
+                                            &format!("{cms_label} installed - HTTPS live, site still set to HTTP"),
                                             "error",
                                             Some(format!(
                                                 "The certificate is installed, but the site's address \
@@ -1308,7 +1308,7 @@ pub async fn create(
                             Ok(Ok(false)) => {
                                 emit_step(
                                     &cms_logs, site_id, "complete",
-                                    &format!("{cms_label} installed — HTTPS not configured"), "error",
+                                    &format!("{cms_label} installed - HTTPS not configured"), "error",
                                     Some("The site is served over HTTP. See the SSL step above for \
                                           the reason, and retry from the site's SSL section.".into()),
                                 );
@@ -1316,8 +1316,8 @@ pub async fn create(
                             _ => {
                                 emit_step(
                                     &cms_logs, site_id, "complete",
-                                    &format!("{cms_label} installed — HTTPS still in progress"), "done",
-                                    Some("DockPanel is still trying to issue a certificate. \
+                                    &format!("{cms_label} installed - HTTPS still in progress"), "done",
+                                    Some("CyberHunter - Panel is still trying to issue a certificate. \
                                           The site's SSL section shows the result.".into()),
                                 );
                             }
@@ -1325,7 +1325,7 @@ pub async fn create(
                     } else {
                         emit_step(
                             &cms_logs, site_id, "complete",
-                            &format!("Site created — {cms_label} install failed"), "error",
+                            &format!("Site created - {cms_label} install failed"), "error",
                             Some("The site and its database exist, but the application was not \
                                   installed. See the failed step above.".into()),
                         );
@@ -1336,7 +1336,7 @@ pub async fn create(
             } else {
                 // Non-CMS site: the terminal step reports the SSL outcome rather
                 // than assuming it. This used to sleep a flat 12s and declare
-                // "Site ready / done" — while Auto-SSL was still retrying at 30s,
+                // "Site ready / done" - while Auto-SSL was still retrying at 30s,
                 // 120s and 300s behind that success claim, and often never
                 // succeeded at all (s252 F2).
                 let final_logs = logs.clone();
@@ -1352,7 +1352,7 @@ pub async fn create(
                         Ok(Ok(false)) => {
                             emit_step(
                                 &final_logs, site_id, "complete",
-                                "Site created — HTTPS not configured", "error",
+                                "Site created - HTTPS not configured", "error",
                                 Some("The site is served over HTTP. Open the site's SSL section \
                                       for the reason and to retry.".into()),
                             );
@@ -1362,8 +1362,8 @@ pub async fn create(
                         _ => {
                             emit_step(
                                 &final_logs, site_id, "complete",
-                                "Site created — HTTPS still in progress", "done",
-                                Some("DockPanel is still trying to issue a certificate. \
+                                "Site created - HTTPS still in progress", "done",
+                                Some("CyberHunter - Panel is still trying to issue a certificate. \
                                       The site's SSL section shows the result.".into()),
                             );
                         }
@@ -1378,7 +1378,7 @@ pub async fn create(
             Ok((StatusCode::CREATED, Json(updated)))
         }
         Err(e) => {
-            // Agent call failed — roll back the transaction (INSERT is undone)
+            // Agent call failed - roll back the transaction (INSERT is undone)
             tracing::error!("Agent error creating site {}: {e}", body.domain);
 
             crate::services::system_log::log_event(
@@ -1412,7 +1412,7 @@ pub async fn create(
     }
 }
 
-/// GET /api/sites/{id}/provision-log — SSE stream of provisioning steps.
+/// GET /api/sites/{id}/provision-log - SSE stream of provisioning steps.
 pub async fn provision_log(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -1461,7 +1461,7 @@ pub async fn provision_log(
         });
 
     // The underlying channel closes (and this stream ends) once the job
-    // finishes and its map entry is dropped — but a job in progress at
+    // finishes and its map entry is dropped - but a job in progress at
     // shutdown time can still run well past the graceful-drain window, so
     // race it against the panel's own shutdown signal too.
     let stream = snapshot_stream
@@ -1475,7 +1475,7 @@ pub async fn provision_log(
     ))
 }
 
-/// GET /api/sites/{id} — Get site details.
+/// GET /api/sites/{id} - Get site details.
 pub async fn get_one(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -1483,7 +1483,7 @@ pub async fn get_one(
 ) -> Result<Json<Site>, ApiError> {
     // The two arms of [`crate::helpers::site_domain_for_caller`], for the whole
     // row rather than the domain. This is the read the site's own page makes, so
-    // it is what decides whether an administrator can open a site at all — and
+    // it is what decides whether an administrator can open a site at all - and
     // until now it could not, which left the operator who had just handed a site
     // to a client with a page that answered 404 and a control that lived only on
     // it (#51).
@@ -1504,14 +1504,14 @@ pub async fn get_one(
 ///
 /// One list for both handlers below, where there were two identical literals.
 /// It is still a second copy of the agent's own `ALLOWED_VERSIONS`, and
-/// deliberately so — this side has to reject a bad version before it spawns
+/// deliberately so - this side has to reject a bad version before it spawns
 /// anything, and cannot ask an agent that may be a release behind. The
 /// frontend no longer carries a third and fourth copy: both pickers read the
 /// live list from `GET /api/php/versions`, which is the agent's answer for the
 /// server the site actually runs on.
 pub(crate) const PHP_VERSIONS: &[&str] = &["8.1", "8.2", "8.3", "8.4", "8.5"];
 
-/// PUT /api/sites/{id}/php — Switch PHP version for a site.
+/// PUT /api/sites/{id}/php - Switch PHP version for a site.
 #[derive(serde::Deserialize)]
 pub struct SwitchPhpRequest {
     pub version: String,
@@ -1584,12 +1584,12 @@ pub async fn switch_php(
     Ok(Json(updated))
 }
 
-/// The runtimes this switch will move a site BETWEEN — deliberately only two.
+/// The runtimes this switch will move a site BETWEEN - deliberately only two.
 ///
 /// `proxy`, `node` and `python` are excluded, and not for caution's sake: they
 /// are a different shape of change. Each needs a `proxy_port`, node/python
 /// additionally need an `app_command` that `create_site` puts through a
-/// per-runtime prefix whitelist, and — the part that actually bites — the agent's
+/// per-runtime prefix whitelist, and - the part that actually bites - the agent's
 /// `document_root_for` (`agent/src/services/nginx.rs:52`) maps those three to the
 /// site directory itself while `static` and `php` BOTH map to `{site_dir}/public`.
 /// So static⇄php is purely a vhost rebuild, whereas anything involving a proxying
@@ -1599,7 +1599,7 @@ pub async fn switch_php(
 /// version of this list.
 const SWITCHABLE_RUNTIMES: &[&str] = &["static", "php"];
 
-/// PUT /api/sites/{id}/runtime — Switch a site between the static and PHP runtimes.
+/// PUT /api/sites/{id}/runtime - Switch a site between the static and PHP runtimes.
 #[derive(serde::Deserialize)]
 pub struct SwitchRuntimeRequest {
     pub runtime: String,
@@ -1687,7 +1687,7 @@ pub async fn switch_runtime(
     // The agent side needs no new code. `put_site` already refuses a PHP version
     // the server does not have (with the message that offers to install it),
     // writes the per-site FPM pool, reloads PHP-FPM, and only re-points nginx once
-    // the pool socket actually exists — the fail-safe that stops a switch from
+    // the pool socket actually exists - the fail-safe that stops a switch from
     // 502-ing the site, which is the failure the reporter had already hit by hand.
     let mut updated_site = site.clone();
     updated_site.runtime = target.to_string();
@@ -1740,7 +1740,7 @@ pub async fn switch_runtime(
     Ok(Json(updated))
 }
 
-/// GET /api/php/versions — List available PHP versions (proxy to agent).
+/// GET /api/php/versions - List available PHP versions (proxy to agent).
 pub async fn php_versions(
     State(_state): State<AppState>,
     AuthUser(_claims): AuthUser,
@@ -1754,13 +1754,13 @@ pub async fn php_versions(
     Ok(Json(result))
 }
 
-/// POST /api/php/install — Install a PHP version (admin only).
+/// POST /api/php/install - Install a PHP version (admin only).
 ///
 /// Accepted, not performed: returns `202 { install_id }` and streams the outcome
 /// over the same `/api/services/install/{id}/log` SSE the Services page already
 /// uses. Installing a PHP version can mean adding deb.sury.org or a module
-/// stream and then unpacking fifteen packages, which is minutes — comfortably
-/// past the panel's own 300s `TimeoutLayer`, never mind Cloudflare — so holding
+/// stream and then unpacking fifteen packages, which is minutes - comfortably
+/// past the panel's own 300s `TimeoutLayer`, never mind Cloudflare - so holding
 /// the request open could only ever produce a timeout for the installs that
 /// needed the most time.
 #[derive(serde::Deserialize)]
@@ -1801,7 +1801,7 @@ pub async fn php_install(
     .await
 }
 
-/// POST /api/php/uninstall — Uninstall a specific PHP version (admin only).
+/// POST /api/php/uninstall - Uninstall a specific PHP version (admin only).
 ///
 /// Accepted and logged, like the install: same 202 + `install_id`, same SSE.
 pub async fn php_uninstall(
@@ -1823,7 +1823,7 @@ pub async fn php_uninstall(
 
     // Same inversion the install had, in the other direction: the agent budgets
     // 300s for the purge and its `apt-get autoremove` afterwards, and this side
-    // was giving it 60. The purge is not cancelled by that — only the account of
+    // was giving it 60. The purge is not cancelled by that - only the account of
     // it is, which is worse for a destructive operation than for an additive one.
     crate::routes::system::install_service_with_log(
         &state,
@@ -1837,7 +1837,7 @@ pub async fn php_uninstall(
     .await
 }
 
-/// PUT /api/sites/{id}/limits — Update per-site resource limits.
+/// PUT /api/sites/{id}/limits - Update per-site resource limits.
 #[derive(serde::Deserialize)]
 pub struct UpdateLimitsRequest {
     pub rate_limit: Option<i32>,
@@ -1847,7 +1847,7 @@ pub struct UpdateLimitsRequest {
     pub custom_nginx: Option<String>,
     /// NULL = unlimited. Mirrors `rate_limit`'s convention: the settings form
     /// always echoes this back on save, so its absence means "unlimited" the
-    /// same way an unset `rate_limit` means "no rate limit" — never "leave
+    /// same way an unset `rate_limit` means "no rate limit" - never "leave
     /// whatever was there".
     pub bandwidth_quota_mb: Option<i32>,
 }
@@ -1902,7 +1902,7 @@ pub async fn update_limits(
 
     // A quota edit that lifts a site out of over-quota territory (raised the
     // cap, or removed it) shouldn't leave the site disabled until the
-    // traffic_accounting_scheduler's next tick (up to 5 minutes) notices —
+    // traffic_accounting_scheduler's next tick (up to 5 minutes) notices -
     // recover it here, in the same request, when that's now the case.
     let recovering = if site.bandwidth_suspended_at.is_some() {
         match body.bandwidth_quota_mb {
@@ -1986,7 +1986,7 @@ pub async fn update_limits(
     Ok(Json(updated))
 }
 
-/// GET /api/sites/{id}/bandwidth-usage — current-month bytes used against
+/// GET /api/sites/{id}/bandwidth-usage - current-month bytes used against
 /// quota, suspension state, and up to 12 months of history for the usage chart.
 pub async fn bandwidth_usage(
     State(state): State<AppState>,
@@ -2032,7 +2032,7 @@ pub async fn bandwidth_usage(
     })))
 }
 
-/// DELETE /api/sites/{id} — Delete a site and all associated resources.
+/// DELETE /api/sites/{id} - Delete a site and all associated resources.
 pub async fn remove(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -2052,7 +2052,7 @@ pub async fn remove(
     // Every destructive step below names this site by DOMAIN and runs on whichever host
     // this handle points at. Taking the handle from the caller's selection meant a site on
     // a fleet member had its databases, its firewall rule, its Redis index and its webroot
-    // aimed at the panel host instead — and the firewall arm is the one step that is not
+    // aimed at the panel host instead - and the firewall arm is the one step that is not
     // domain-namespaced, so it could match an unrelated rule there. The row names the host.
     let agent =
         crate::helpers::agent_for_site_server(&state, site.server_id, &site.domain).await?;
@@ -2060,15 +2060,15 @@ pub async fn remove(
     // Pre-delete backup: snapshot the site BEFORE anything destructive runs.
     //
     // This used to sit forty lines further down, AFTER `DELETE /nginx/sites/{domain}`
-    // — whose agent handler does `remove_dir_all("/var/www/{domain}")` — and after the
+    // - whose agent handler does `remove_dir_all("/var/www/{domain}")` - and after the
     // database containers were destroyed. `create_backup` opens with
     // `if !site_root.exists() { return Err(...) }`, so by the time it ran the site root
     // was always gone: the call returned an error 100% of the time, and `let _ =`
     // discarded it. The "backup before permanent deletion" had never written a byte on
     // this path, and the comment above it said it had.
     //
-    // It is still best-effort — a failed snapshot must not strand a site the operator
-    // asked to delete — but a failure is now LOGGED rather than swallowed, and the
+    // It is still best-effort - a failed snapshot must not strand a site the operator
+    // asked to delete - but a failure is now LOGGED rather than swallowed, and the
     // databases are included, since they are still alive at this point.
     let predelete_dbs = crate::routes::backups::site_databases(&state, id).await;
     match agent
@@ -2087,7 +2087,7 @@ pub async fn remove(
             info.get("filename").and_then(|v| v.as_str()).unwrap_or("(unnamed)")
         ),
         Err(e) => tracing::warn!(
-            "Pre-delete backup for {} FAILED — continuing with deletion: {e}",
+            "Pre-delete backup for {} FAILED - continuing with deletion: {e}",
             site.domain
         ),
     }
@@ -2144,7 +2144,7 @@ pub async fn remove(
     }
 
     // Tear down the SFTP account (if any) BEFORE the site directory itself is
-    // removed below — detaching the bind mount and reverting ownership on a
+    // removed below - detaching the bind mount and reverting ownership on a
     // directory that is about to be deleted anyway is redundant work, but it
     // keeps `deprovision`'s contract simple (it always leaves the box in a
     // fully-reverted state) rather than growing a delete-vs-disable branch.
@@ -2164,7 +2164,7 @@ pub async fn remove(
                 "uid": uid, "gid": gid, "last_sftp_site": last_sftp_site.0 == 0,
             })),
         ).await {
-            tracing::warn!("SFTP teardown failed for {} during site deletion — continuing: {e}", site.domain);
+            tracing::warn!("SFTP teardown failed for {} during site deletion - continuing: {e}", site.domain);
         }
     }
 
@@ -2199,7 +2199,7 @@ pub async fn remove(
     //
     // Scoped to the owner. `status_page_components.name` is free text with no
     // unique constraint, and the owning module's own delete keys on
-    // `id = $1 AND user_id = $2` (incidents.rs) — this statement had dropped
+    // `id = $1 AND user_id = $2` (incidents.rs) - this statement had dropped
     // both, so deleting a site removed every OTHER account's component that
     // happened to carry the same name, taking its monitor links with it through
     // the ON DELETE CASCADE and logging nothing against the actor.
@@ -2210,7 +2210,7 @@ pub async fn remove(
         .await
         .ok();
 
-    // (The pre-delete backup used to be here — see the note above the version that
+    // (The pre-delete backup used to be here - see the note above the version that
     // now runs before the destructive steps.)
 
     // Delete from DB (CASCADE removes databases, backups, crons, etc.)
@@ -2225,7 +2225,7 @@ pub async fn remove(
     // about themselves.
     //
     // ⛔ THE ORDER IS THE GUARD. Above this line every one of these names is
-    // still claimed — by the very row being deleted — so the probe answers
+    // still claimed - by the very row being deleted - so the probe answers
     // "shared", nothing is purged, and the log reads like a correct decision.
     // There is no error, no failing request and no symptom; the only evidence
     // would be the dumps still on disk. This is pinned.
@@ -2278,7 +2278,7 @@ pub async fn remove(
         // The host this site actually ran on. The cleanup below deletes a record
         // only when its content matches this address, so reading the PANEL's
         // address here meant a fleet member's record never matched and outlived
-        // the site — a dangling A record still resolving to a machine that no
+        // the site - a dangling A record still resolving to a machine that no
         // longer serves the name, which is a subdomain-takeover surface and not
         // merely untidy.
         let dns_server_id = site.server_id;
@@ -2306,7 +2306,7 @@ pub async fn remove(
                 let Some(server_ip) =
                     crate::services::server_ips::site_dns_address(&dns_db, dns_server_id, dns_ip_id).await
                 else {
-                    tracing::warn!("Auto-DNS cleanup: could not resolve the public address of the server {dns_domain} lived on — leaving the record in place rather than deleting one that may belong to another host");
+                    tracing::warn!("Auto-DNS cleanup: could not resolve the public address of the server {dns_domain} lived on - leaving the record in place rather than deleting one that may belong to another host");
                     return;
                 };
 
@@ -2364,12 +2364,12 @@ pub async fn remove(
 ///
 /// Now one line over [`crate::helpers::site_domain_for_caller`], which is shared
 /// with the five modules that each carried their own copy of this query. Read the
-/// rules there — in particular why only the admin arm is scoped by server.
+/// rules there - in particular why only the admin arm is scoped by server.
 async fn site_domain(state: &AppState, site_id: Uuid, claims: &Claims) -> Result<String, ApiError> {
     crate::helpers::site_domain_for_caller(state, site_id, claims).await
 }
 
-/// GET /api/sites/{id}/redirects — List redirects.
+/// GET /api/sites/{id}/redirects - List redirects.
 pub async fn list_redirects(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -2395,7 +2395,7 @@ fn default_301() -> String {
     "301".to_string()
 }
 
-/// POST /api/sites/{id}/redirects — Add a redirect.
+/// POST /api/sites/{id}/redirects - Add a redirect.
 pub async fn add_redirect(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -2430,7 +2430,7 @@ pub async fn add_redirect(
     Ok(Json(result))
 }
 
-/// POST /api/sites/{id}/redirects/remove — Remove a redirect.
+/// POST /api/sites/{id}/redirects/remove - Remove a redirect.
 pub async fn remove_redirect(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -2452,7 +2452,7 @@ pub async fn remove_redirect(
 // Password Protection (proxy to agent)
 // ──────────────────────────────────────────────────────────────
 
-/// GET /api/sites/{id}/password-protect — List protected paths.
+/// GET /api/sites/{id}/password-protect - List protected paths.
 pub async fn list_protected(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -2473,7 +2473,7 @@ pub struct PasswordProtectBody {
     pub password: String,
 }
 
-/// POST /api/sites/{id}/password-protect — Enable password protection.
+/// POST /api/sites/{id}/password-protect - Enable password protection.
 pub async fn add_password_protect(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -2505,7 +2505,7 @@ pub async fn add_password_protect(
     Ok(Json(result))
 }
 
-/// POST /api/sites/{id}/password-protect/remove — Remove password protection.
+/// POST /api/sites/{id}/password-protect/remove - Remove password protection.
 pub async fn remove_password_protect(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -2527,7 +2527,7 @@ pub async fn remove_password_protect(
 // Domain Aliases (proxy to agent)
 // ──────────────────────────────────────────────────────────────
 
-/// GET /api/sites/{id}/aliases — List domain aliases.
+/// GET /api/sites/{id}/aliases - List domain aliases.
 pub async fn list_aliases(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -2546,7 +2546,7 @@ pub struct AddAliasBody {
     pub alias: String,
 }
 
-/// POST /api/sites/{id}/aliases — Add a domain alias.
+/// POST /api/sites/{id}/aliases - Add a domain alias.
 pub async fn add_alias(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -2594,7 +2594,7 @@ pub async fn add_alias(
     Ok(Json(result))
 }
 
-/// POST /api/sites/{id}/aliases/remove — Remove a domain alias.
+/// POST /api/sites/{id}/aliases/remove - Remove a domain alias.
 pub async fn remove_alias(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -2616,7 +2616,7 @@ pub async fn remove_alias(
 // Access Logs, Traffic Stats, PHP Errors, Health Check
 // ──────────────────────────────────────────────────────────────
 
-/// GET /api/sites/{id}/access-logs — View nginx access/error logs for a site.
+/// GET /api/sites/{id}/access-logs - View nginx access/error logs for a site.
 pub async fn access_logs(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -2637,7 +2637,7 @@ pub async fn access_logs(
     Ok(Json(result))
 }
 
-/// GET /api/sites/{id}/stats — Basic traffic stats from access log.
+/// GET /api/sites/{id}/stats - Basic traffic stats from access log.
 pub async fn site_stats(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -2651,7 +2651,7 @@ pub async fn site_stats(
     Ok(Json(result))
 }
 
-/// GET /api/sites/{id}/php-errors — View PHP-FPM error log for a site.
+/// GET /api/sites/{id}/php-errors - View PHP-FPM error log for a site.
 pub async fn php_errors(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -2665,7 +2665,7 @@ pub async fn php_errors(
     Ok(Json(result))
 }
 
-/// GET /api/sites/{id}/health — Check if site is responding.
+/// GET /api/sites/{id}/health - Check if site is responding.
 pub async fn health_check(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -2724,7 +2724,7 @@ pub async fn health_check(
 // Composite Health Summary
 // ──────────────────────────────────────────────────────────────
 
-/// GET /api/sites/{id}/health-summary — Composite site health score.
+/// GET /api/sites/{id}/health-summary - Composite site health score.
 pub async fn health_summary(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -2832,7 +2832,7 @@ pub async fn health_summary(
 // Site Cloning
 // ──────────────────────────────────────────────────────────────
 
-/// POST /api/sites/{id}/clone — Clone site to a new domain.
+/// POST /api/sites/{id}/clone - Clone site to a new domain.
 pub async fn clone_site(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -2856,7 +2856,7 @@ pub async fn clone_site(
 
     // A clone is ONE agent operation: `/nginx/clone-site` reads the source
     // docroot and writes the target docroot on the same box. So unlike the other
-    // handlers in this family the fix is not "dispatch from the row" — the target
+    // handlers in this family the fix is not "dispatch from the row" - the target
     // is genuinely a new site on the selected server, and the source is genuinely
     // wherever it already lives. When those differ there is no host that can do
     // the job, and the old code asked the SELECTED one, which has no such
@@ -2870,13 +2870,13 @@ pub async fn clone_site(
     if source.server_id != Some(server_id) {
         return Err(err(
             StatusCode::CONFLICT,
-            "This site lives on a different server. Select that server to clone it — \
+            "This site lives on a different server. Select that server to clone it - \
              cloning across servers is not supported yet.",
         ));
     }
 
     // clone_site creates a brand-new site and must enforce the SAME admission
-    // controls create() does — otherwise it is a create() with none of the
+    // controls create() does - otherwise it is a create() with none of the
     // guards: it bypassed lockdown, the per-hour rate limit, the reseller quota,
     // the reserved-domain block, and the cross-table (git_deploys) uniqueness
     // check, letting a tenant mass-create sites during a lockdown and even
@@ -2975,7 +2975,7 @@ pub async fn clone_site(
         nginx_body["proxy_port"] = serde_json::json!(port);
     }
     if let Some(ref php) = source.php_version {
-        // Version carrier, not a literal path — see the comment on the create-site call site.
+        // Version carrier, not a literal path - see the comment on the create-site call site.
         nginx_body["php_socket"] = serde_json::json!(format!("unix:/run/php/php{php}-fpm.sock"));
     }
     if let Some(ref preset) = source.php_preset {
@@ -3073,7 +3073,7 @@ pub async fn clone_site(
 // Custom SSL Upload
 // ──────────────────────────────────────────────────────────────
 
-/// POST /api/sites/{id}/ssl/upload — Upload custom SSL certificate.
+/// POST /api/sites/{id}/ssl/upload - Upload custom SSL certificate.
 pub async fn upload_ssl(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -3098,20 +3098,20 @@ pub async fn upload_ssl(
     // `ssl_expiry IS NOT NULL`: the Dashboard SSL tile, `alert_engine`'s
     // `check_ssl_expiry` ladder, and `auto_healer::auto_renew_ssl`. So an
     // operator-supplied certificate was invisible to the countdown, to the
-    // pager and to the healer alike — and the certificate list, which reads
+    // pager and to the healer alike - and the certificate list, which reads
     // the same NULL, called it OK. An uploaded certificate is precisely the
     // kind nobody renews for you; it was the one class the panel watched least.
     //
     // The agent hands back the paths it wrote. The expiry needs one more
     // question, asked of the route every agent has carried since the beginning
-    // rather than of a new field only a fresh agent would return — this fix has
+    // rather than of a new field only a fresh agent would return - this fix has
     // to reach installs whose agent nobody has updated.
     let cert_path = uploaded.get("cert_path").and_then(|v| v.as_str()).map(str::to_string);
     let key_path = uploaded.get("key_path").and_then(|v| v.as_str()).map(str::to_string);
     // Prefer the expiry the upload itself reported: it describes the certificate
     // that was just written, needs no second round trip, and cannot fail
     // separately from the write it belongs to. The `/ssl/status` call behind it is
-    // the compatibility path for an agent older than this release — every agent
+    // the compatibility path for an agent older than this release - every agent
     // has carried that route since the beginning, so the fix reaches installs
     // nobody has updated.
     let expiry = uploaded
@@ -3132,7 +3132,7 @@ pub async fn upload_ssl(
         },
     };
     if expiry.is_none() {
-        tracing::warn!("Uploaded certificate for {domain} stored with no new expiry — the previous value is kept rather than cleared, so the site stays visible to the expiry ladder and the auto-healer");
+        tracing::warn!("Uploaded certificate for {domain} stored with no new expiry - the previous value is kept rather than cleared, so the site stays visible to the expiry ladder and the auto-healer");
     }
 
     // The profile column describes how the PANEL ordered the certificate that used
@@ -3142,7 +3142,7 @@ pub async fn upload_ssl(
     // terms to whatever the operator just installed. Cleared, not preserved:
     // absent means the next order resolves its own profile, which is what an
     // uploaded certificate honestly implies. Unlike its three siblings this one
-    // is NOT wrapped in COALESCE — for those, keeping a known value beats erasing
+    // is NOT wrapped in COALESCE - for those, keeping a known value beats erasing
     // it, and here the stored value is precisely what has stopped being true.
     if let Err(e) = sqlx::query(
         "UPDATE sites SET ssl_enabled = true, ssl_cert_path = COALESCE($1, ssl_cert_path), \
@@ -3162,13 +3162,13 @@ pub async fn upload_ssl(
         tracing::warn!("Failed to record uploaded certificate for site {id}: {e}");
     }
 
-    // Re-render the FULL vhost from the site's DB config — the same compensation
+    // Re-render the FULL vhost from the site's DB config - the same compensation
     // every other SSL path already performs.
     //
     // The agent's `/ssl/upload` handler receives only {domain, certificate,
     // private_key} and has to invent the other nineteen fields of the SiteConfig it
     // renders, so it writes a vhost with WAF off, bot-protection off, no CSP, no
-    // Permissions-Policy, no custom_nginx, default rate limits — and, because it
+    // Permissions-Policy, no custom_nginx, default rate limits - and, because it
     // cannot know the site's PHP version, an unversioned `php-fpm.sock` that exists
     // on no modern Debian or Ubuntu. So uploading a certificate did not merely strip
     // a hardened site's security directives (with the panel's own toggles still
@@ -3176,7 +3176,7 @@ pub async fn upload_ssl(
     // OFF THE AIR with a 502.
     //
     // v2.18.0 introduced this compensation for exactly this reason and applied it to
-    // provision, renew and force-renew. Upload is the fourth sibling and was missed —
+    // provision, renew and force-renew. Upload is the fourth sibling and was missed -
     // a fix to one instance of a pattern owes a grep for the pattern.
     crate::routes::ssl::rebuild_vhost_after_ssl(&state, &agent, id).await;
 
@@ -3196,7 +3196,7 @@ pub async fn upload_ssl(
 // PHP Extensions Manager
 // ──────────────────────────────────────────────────────────────
 
-/// GET /api/php/extensions/{version} — List PHP extensions.
+/// GET /api/php/extensions/{version} - List PHP extensions.
 pub async fn php_extensions(
     State(_state): State<AppState>,
     AuthUser(_claims): AuthUser,
@@ -3208,7 +3208,7 @@ pub async fn php_extensions(
     Ok(Json(result))
 }
 
-/// POST /api/php/extensions/install — Install a PHP extension.
+/// POST /api/php/extensions/install - Install a PHP extension.
 pub async fn install_php_extension(
     State(_state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -3229,7 +3229,7 @@ pub async fn install_php_extension(
 // Environment Variables
 // ──────────────────────────────────────────────────────────────
 
-/// GET /api/sites/{id}/env — Read environment variables.
+/// GET /api/sites/{id}/env - Read environment variables.
 pub async fn get_env_vars(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -3241,7 +3241,7 @@ pub async fn get_env_vars(
     Ok(Json(result))
 }
 
-/// PUT /api/sites/{id}/env — Write environment variables.
+/// PUT /api/sites/{id}/env - Write environment variables.
 pub async fn set_env_vars(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -3254,7 +3254,7 @@ pub async fn set_env_vars(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// PUT /api/sites/{id}/domain — Rename a site's domain.
+/// PUT /api/sites/{id}/domain - Rename a site's domain.
 pub async fn rename_domain(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -3273,7 +3273,7 @@ pub async fn rename_domain(
     .map_err(|e| internal_error("rename domain", e))?
     .ok_or_else(|| err(StatusCode::NOT_FOUND, "Site not found"))?;
 
-    // ⚠ The scope binding this replaces was spelled `_server_id` and was NOT unused —
+    // ⚠ The scope binding this replaces was spelled `_server_id` and was NOT unused -
     // the underscore silenced the warning while the value was still being passed to
     // the claim check below. Renaming a domain rewrites this site's vhost, so both
     // the check and the write have to name the host the row does.
@@ -3285,7 +3285,7 @@ pub async fn rename_domain(
         .trim()
         .to_string();
 
-    // Format, reserved, and every owner — including Docker apps, whose domain the
+    // Format, reserved, and every owner - including Docker apps, whose domain the
     // panel could not see before and which the agent's 8-step rename below would
     // have walked straight over (it checks that the SOURCE vhost exists and never
     // that the DESTINATION is free).
@@ -3307,7 +3307,7 @@ pub async fn rename_domain(
     let old_domain = site.domain.clone();
 
     // An agent older than the carry release renames the vhost, the webroot, the
-    // certificates, the logs, the pools and the jail — and silently leaves every
+    // certificates, the logs, the pools and the jail - and silently leaves every
     // backup tree behind under the old name. It answers success either way, so
     // there is nothing in the response to notice. Refuse instead, and only for a
     // site that actually has archives to lose: a site with none renames on any
@@ -3330,7 +3330,7 @@ pub async fn rename_domain(
                 StatusCode::PRECONDITION_FAILED,
                 &format!(
                     "This site has {backup_rows} backup(s) and the agent on its server reports \
-                     {}, which does not move a site's archives when the domain changes — they \
+                     {}, which does not move a site's archives when the domain changes - they \
                      would be left on disk under {old_domain} where nothing can restore them. \
                      Update that server's agent to {BACKUP_CARRY_MIN_AGENT} or later, then \
                      rename.",
@@ -3352,7 +3352,7 @@ pub async fn rename_domain(
     //
     // ⛔ `ssl_cert_path`/`ssl_key_path` MUST move with the domain. The agent has
     // just renamed `/etc/dockpanel/ssl/{old}` to `{new}` (or copied it, when the
-    // directory is shared), and this statement used to write the domain alone —
+    // directory is shared), and this statement used to write the domain alone -
     // so a renamed site kept a path naming a directory it no longer uses, for
     // ever, since no renewal door rewrites the column either. That is not
     // cosmetic: `build_nginx_body` sends `ssl_cert_path` verbatim to the agent on
@@ -3361,7 +3361,7 @@ pub async fn rename_domain(
     //
     // ⚠ Scoped to the site's OWN directory on purpose. A site whose certificate
     // is a DNS-01 wildcard has `ssl_cert_path` naming the ZONE, which the agent
-    // does not touch on rename and which must not be rewritten to the new name —
+    // does not touch on rename and which must not be rewritten to the new name -
     // that path is correct exactly as it stands. The `LIKE` therefore matches
     // only a path under the OLD domain's own directory.
     sqlx::query(
@@ -3420,7 +3420,7 @@ pub async fn rename_domain(
                 if left > 0 {
                     tracing::error!(
                         "Rename {old_domain} to {new_domain} completed, but the agent still \
-                         lists {left} backup(s) under {old_domain} — the carry did not take \
+                         lists {left} backup(s) under {old_domain} - the carry did not take \
                          everything and those archives are unreachable from the panel."
                     );
                 }
@@ -3434,7 +3434,7 @@ pub async fn rename_domain(
     // Update monitors linked to this site.
     //
     // Keep whatever scheme the monitor already had. This used to rebuild the URL
-    // as `https://{new_domain}` unconditionally, which is not a rename — it also
+    // as `https://{new_domain}` unconditionally, which is not a rename - it also
     // switched the monitor onto a scheme nobody asked it to check. That is wrong
     // for a site with no certificate, and it is not recoverable from
     // `sites.ssl_enabled` either, because a monitor's URL is editable by hand
@@ -3450,7 +3450,7 @@ pub async fn rename_domain(
     .await
     .ok();
 
-    // Update status page components — the mutating twin of the unscoped delete
+    // Update status page components - the mutating twin of the unscoped delete
     // in `remove`, and the same fix: without `user_id` a rename renamed every
     // other account's component that shared the old domain string.
     sqlx::query("UPDATE status_page_components SET name = $1 WHERE name = $2 AND user_id = $3")
@@ -3463,7 +3463,7 @@ pub async fn rename_domain(
 
     tracing::info!("Domain renamed: {old_domain} → {new_domain}");
     // Multi-IP: the old name's automatic mail domain loses its site, the new
-    // name's gains one — both change sending address.
+    // name's gains one - both change sending address.
     if let Some(sid) = site.server_id {
         crate::routes::mail::resync_if_mail_follows(&state, sid, &[&old_domain, &new_domain], &agent).await;
     }
@@ -3485,7 +3485,7 @@ pub async fn rename_domain(
     })))
 }
 
-/// PUT /api/sites/{id}/toggle — Enable or disable a site without deleting it.
+/// PUT /api/sites/{id}/toggle - Enable or disable a site without deleting it.
 pub async fn toggle_enabled(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -3526,7 +3526,7 @@ pub async fn toggle_enabled(
     // this, `traffic_accounting_scheduler` would see a lingering suspended_at
     // and treat the site as still under active bandwidth suspension (never
     // re-checking its quota), even though a human just turned it back on. A
-    // manual disable leaves the flag untouched — that path never sets it.
+    // manual disable leaves the flag untouched - that path never sets it.
     sqlx::query(
         "UPDATE sites SET enabled = $1, bandwidth_suspended_at = CASE WHEN $1 THEN NULL ELSE bandwidth_suspended_at END, \
          updated_at = NOW() WHERE id = $2",
@@ -3557,7 +3557,7 @@ pub async fn toggle_enabled(
     })))
 }
 
-/// PUT /api/sites/{id}/fastcgi-cache — Toggle FastCGI cache for a PHP site.
+/// PUT /api/sites/{id}/fastcgi-cache - Toggle FastCGI cache for a PHP site.
 pub async fn toggle_fastcgi_cache(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -3591,7 +3591,7 @@ pub async fn toggle_fastcgi_cache(
         })));
     }
 
-    // Rebuild the FULL vhost with only fastcgi_cache changed — a hand-rolled
+    // Rebuild the FULL vhost with only fastcgi_cache changed - a hand-rolled
     // partial body used to drop the site's WAF/CSP/Permissions-Policy/bot-protection.
     let mut updated_site = site.clone();
     updated_site.fastcgi_cache = enabled;
@@ -3628,7 +3628,7 @@ pub async fn toggle_fastcgi_cache(
     })))
 }
 
-/// POST /api/sites/{id}/fastcgi-cache/purge — Purge FastCGI cache for a site.
+/// POST /api/sites/{id}/fastcgi-cache/purge - Purge FastCGI cache for a site.
 pub async fn purge_fastcgi_cache(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -3668,7 +3668,7 @@ pub async fn purge_fastcgi_cache(
     })))
 }
 
-/// PUT /api/sites/{id}/redis-cache — Toggle Redis object cache for a PHP site.
+/// PUT /api/sites/{id}/redis-cache - Toggle Redis object cache for a PHP site.
 pub async fn toggle_redis_cache(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -3735,7 +3735,7 @@ pub async fn toggle_redis_cache(
         ).await.map_err(|e| agent_error("Redis cache disable", e))?;
     }
 
-    // Rebuild the FULL vhost with only redis settings changed — a hand-rolled
+    // Rebuild the FULL vhost with only redis settings changed - a hand-rolled
     // partial body used to drop the site's WAF/CSP/Permissions-Policy/bot-protection.
     let mut updated_site = site.clone();
     updated_site.redis_cache = enabled;
@@ -3775,7 +3775,7 @@ pub async fn toggle_redis_cache(
     })))
 }
 
-/// POST /api/sites/{id}/redis-cache/purge — Flush Redis cache for a site.
+/// POST /api/sites/{id}/redis-cache/purge - Flush Redis cache for a site.
 pub async fn purge_redis_cache(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -3815,10 +3815,10 @@ pub async fn purge_redis_cache(
     })))
 }
 
-/// POST /api/sites/{id}/sftp/enable — Provision a per-site SFTP account.
+/// POST /api/sites/{id}/sftp/enable - Provision a per-site SFTP account.
 ///
 /// The one explicit, operator-triggered step that re-owns an existing site's
-/// content directory (see `panel/agent/src/services/sftp_accounts.rs`) — no
+/// content directory (see `panel/agent/src/services/sftp_accounts.rs`) - no
 /// site is ever migrated without this being clicked. `sftp_uid`/`sftp_gid`
 /// come from `sftp_id_seq`, an atomic Postgres sequence rather than a
 /// `MAX(sftp_uid)+1` read (which races under concurrent enables).
@@ -3869,7 +3869,7 @@ pub async fn enable_sftp(
         .await
         .map_err(|e| internal_error("enable sftp", e))?;
 
-    // Rebuild the vhost so the PHP-FPM pool picks up the new owner — mirrors
+    // Rebuild the vhost so the PHP-FPM pool picks up the new owner - mirrors
     // the redis toggle's own "rebuild the FULL vhost" step, for the same
     // reason (a hand-rolled partial body would drop WAF/CSP/bot-protection).
     let mut updated_site = site.clone();
@@ -3897,7 +3897,7 @@ pub async fn enable_sftp(
     Ok(Json(serde_json::json!({ "ok": true, "sftp_enabled": true })))
 }
 
-/// POST /api/sites/{id}/sftp/disable — Tear down a site's SFTP account and
+/// POST /api/sites/{id}/sftp/disable - Tear down a site's SFTP account and
 /// revert its content directory back to the shared `www-data` identity.
 pub async fn disable_sftp(
     State(state): State<AppState>,
@@ -3936,14 +3936,14 @@ pub async fn disable_sftp(
     .unwrap_or((1,)); // fail toward NOT removing the shared sshd drop-in
 
     // Revert the PHP-FPM pool (and reload it) BEFORE tearing down the SFTP
-    // account — live-verified this ordering matters: `userdel` refuses to
+    // account - live-verified this ordering matters: `userdel` refuses to
     // remove a uid with a running process, and the OLD pool's workers are
     // still alive under the SFTP uid at this point. `php-fpm reload` starts
     // fresh www-data-owned workers and gracefully stops the old ones, so by
     // the time the agent's disable endpoint runs, nothing is running as the
     // uid it is about to delete. The other order (userdel first) silently
     // failed the account/group removal every time, with no error surfaced
-    // anywhere — `deprovision()`'s userdel/groupdel calls are themselves
+    // anywhere - `deprovision()`'s userdel/groupdel calls are themselves
     // best-effort (matching every other cleanup step in that function), so
     // the failure produced a clean "disabled" response over a half-torn-down
     // box.
@@ -3981,9 +3981,9 @@ pub async fn disable_sftp(
     Ok(Json(serde_json::json!({ "ok": true, "sftp_enabled": false })))
 }
 
-/// POST /api/sites/{id}/sftp/reset-password — Generate a fresh SFTP password.
+/// POST /api/sites/{id}/sftp/reset-password - Generate a fresh SFTP password.
 ///
-/// Always generates, never accepts an operator-supplied value — matching
+/// Always generates, never accepts an operator-supplied value - matching
 /// `databases.rs::reset_password`'s pattern. No column stores it: a Linux
 /// account's password can be set again with no prior knowledge, so once this
 /// response leaves the panel, the plaintext is gone from every system that
@@ -4031,7 +4031,7 @@ pub async fn reset_sftp_password(
     Ok(Json(serde_json::json!({ "ok": true, "password": password })))
 }
 
-/// PUT /api/sites/{id}/waf — Toggle WAF and set mode for a site.
+/// PUT /api/sites/{id}/waf - Toggle WAF and set mode for a site.
 pub async fn toggle_waf(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -4066,7 +4066,7 @@ pub async fn toggle_waf(
         ).await.map_err(|e| agent_error("WAF configure", e))?;
     }
 
-    // Rebuild the FULL vhost with only WAF settings changed — a hand-rolled
+    // Rebuild the FULL vhost with only WAF settings changed - a hand-rolled
     // partial body used to drop the site's CSP/Permissions-Policy/bot-protection.
     let mut updated_site = site.clone();
     updated_site.waf_enabled = enabled;
@@ -4114,7 +4114,7 @@ pub async fn toggle_waf(
     })))
 }
 
-/// GET /api/sites/{id}/waf/logs — Get recent WAF events for a site.
+/// GET /api/sites/{id}/waf/logs - Get recent WAF events for a site.
 pub async fn waf_logs(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -4139,7 +4139,7 @@ pub async fn waf_logs(
     Ok(Json(result))
 }
 
-/// POST /api/sites/{id}/optimize-images — Convert site images to WebP/AVIF.
+/// POST /api/sites/{id}/optimize-images - Convert site images to WebP/AVIF.
 pub async fn optimize_images(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -4205,7 +4205,7 @@ fn is_safe_proxy_port(port: i32) -> bool {
 /// Shared new-domain guard for clone_site and add_alias.
 ///
 /// This used to hold the checks itself, with a comment saying it existed "so the
-/// guard set create() enforces cannot drift" — while `create()` did not call it
+/// guard set create() enforces cannot drift" - while `create()` did not call it
 /// and six other domain-introducing paths did not exist as far as it knew. The
 /// checks now live in [`crate::services::domain_claim`], which every path calls,
 /// and this is the thin adapter for the two callers that pass a `&AppState`.
@@ -4231,7 +4231,7 @@ async fn ensure_domain_available(
 /// `bind_ip` is an explicit argument, not read from the row, so that no rebuild
 /// path can forget it: a vhost re-rendered without the site's address would move
 /// an IP-bound site back to the primary address on its next SSL renewal. Callers
-/// get it from [`crate::services::server_ips::nginx_bind_ip`] — the declared
+/// get it from [`crate::services::server_ips::nginx_bind_ip`] - the declared
 /// address, or `"primary"`. `None` (the address could not be read) omits the key,
 /// and the agent then keeps the address already written in the vhost.
 pub(crate) fn build_nginx_body(site: &crate::models::Site, bind_ip: Option<&str>) -> serde_json::Value {
@@ -4257,7 +4257,7 @@ pub(crate) fn build_nginx_body(site: &crate::models::Site, bind_ip: Option<&str>
         body["custom_nginx"] = serde_json::json!(custom);
     }
     if let Some(ref php) = site.php_version {
-        // Version carrier, not a literal path — see the comment on the create-site call site.
+        // Version carrier, not a literal path - see the comment on the create-site call site.
         body["php_socket"] = serde_json::json!(format!("unix:/run/php/php{php}-fpm.sock"));
     }
     if site.ssl_enabled {
@@ -4275,7 +4275,7 @@ pub(crate) fn build_nginx_body(site: &crate::models::Site, bind_ip: Option<&str>
     if site.sftp_enabled
         && let (Some(uid), Some(gid)) = (site.sftp_uid, site.sftp_gid)
     {
-        // Backend and agent are separate binaries — this naming convention is
+        // Backend and agent are separate binaries - this naming convention is
         // duplicated (not shared code) on the agent side in
         // `services::sftp_accounts::{sftp_username, sftp_groupname}`, which is
         // the one place that actually creates these Linux accounts. Keep the
@@ -4288,7 +4288,7 @@ pub(crate) fn build_nginx_body(site: &crate::models::Site, bind_ip: Option<&str>
     if let Some(ip) = bind_ip {
         body["bind_ip"] = serde_json::json!(ip);
     }
-    // Per-site PHP pool (A1 of conception/02-php-contrats.md) — the single
+    // Per-site PHP pool (A1 of conception/02-php-contrats.md) - the single
     // constructor, also used by the hand-built create/clone/staging/import bodies.
     if let Some(pool) = crate::routes::php_settings::php_pool_for_site(site) {
         body["php_pool"] = pool;
@@ -4296,7 +4296,7 @@ pub(crate) fn build_nginx_body(site: &crate::models::Site, bind_ip: Option<&str>
     body
 }
 
-/// PUT /api/sites/{id}/security-headers — Update CSP and Permissions-Policy.
+/// PUT /api/sites/{id}/security-headers - Update CSP and Permissions-Policy.
 pub async fn update_security_headers(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -4373,7 +4373,7 @@ pub async fn update_security_headers(
     })))
 }
 
-/// PUT /api/sites/{id}/bot-protection — Toggle bot protection mode.
+/// PUT /api/sites/{id}/bot-protection - Toggle bot protection mode.
 pub async fn toggle_bot_protection(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -4446,20 +4446,20 @@ pub struct TransferSiteRequest {
 /// The tables that keep their own copy of `user_id` beside a `site_id`.
 ///
 /// Derived, not remembered: these are every table in the schema carrying BOTH
-/// columns. Everything else a site owns — `databases`, `crons`, `backups`,
-/// `ssl_certificates` — reaches its owner THROUGH `site_id`, so it follows the
+/// columns. Everything else a site owns - `databases`, `crons`, `backups`,
+/// `ssl_certificates` - reaches its owner THROUGH `site_id`, so it follows the
 /// transfer with no statement of its own. Getting this list wrong is the failure
 /// mode that matters: a row left behind keeps the previous owner able to see and
 /// act on part of a site they no longer hold, and nothing would report it.
 const OWNERSHIP_DENORMALIZED_TABLES: [&str; 4] =
     ["alerts", "monitors", "secret_vaults", "whmcs_service_map"];
 
-/// POST /api/sites/{id}/transfer — hand a site to another account. Admin only.
+/// POST /api/sites/{id}/transfer - hand a site to another account. Admin only.
 ///
-/// The point of the whole `client` design (GitHub #51). DockPanel has exactly one
+/// The point of the whole `client` design (GitHub #51). CyberHunter - Panel has exactly one
 /// ownership axis, `sites.user_id`, and 108 ownership-scoped reads that all say
 /// `WHERE user_id = $1`. Moving the row therefore moves the site completely, and
-/// every one of those reads keeps working without being touched — which is why
+/// every one of those reads keeps working without being touched - which is why
 /// this is a transfer rather than an access-control list. An ACL would have had
 /// to widen all 108, keep 57 `claims.sub` INSERTs in step, and get two name-keyed
 /// cleanups right whose own comments record that they already shipped a
@@ -4534,7 +4534,7 @@ pub async fn transfer(
     // `staging::create` inserts one (`routes/staging.rs:168`) carrying
     // `parent_site_id` (20260312700000_staging_sites.sql:2) and the CREATOR's
     // `user_id`. This statement was `WHERE id = $2`, so the clone did not move with
-    // its parent — and the previous owner kept, on a site they no longer hold: the
+    // its parent - and the previous owner kept, on a site they no longer hold: the
     // staging domain in their Sites list, a `www-data` shell inside a full copy of
     // the new owner's document root (`wp-config.php` and its database credentials
     // included), and the push-to-production control, which writes that copy OVER
@@ -4543,8 +4543,8 @@ pub async fn transfer(
     // names: "a row left behind keeps the previous owner able to see and act on
     // part of a site they no longer hold, and nothing would report it."
     //
-    // Staging cannot nest — `staging::create` refuses a parent that is itself
-    // staging (`staging.rs:106`) — so one `OR parent_site_id` is the whole tree,
+    // Staging cannot nest - `staging::create` refuses a parent that is itself
+    // staging (`staging.rs:106`) - so one `OR parent_site_id` is the whole tree,
     // not the first level of one.
     let moved_ids: Vec<Uuid> = sqlx::query_as::<_, (Uuid,)>(
         "UPDATE sites SET user_id = $1 WHERE id = $2 OR parent_site_id = $2 RETURNING id",
@@ -4566,7 +4566,7 @@ pub async fn transfer(
         // Keyed on the ids the UPDATE above actually moved, not on `site_id = $2`:
         // the staging row's alerts, monitors and vaults belong to the staging site,
         // and scoping this to the parent alone would move the parent's dependents
-        // while leaving the child's with the departed owner — the same split this
+        // while leaving the child's with the departed owner - the same split this
         // fix exists to close, one level down.
         let n = sqlx::query(&format!(
             "UPDATE {table} SET user_id = $1 WHERE site_id = ANY($2)"
@@ -4629,7 +4629,7 @@ pub struct SetSiteIpRequest {
     pub ip_id: Option<Uuid>,
 }
 
-/// PUT /api/sites/{id}/ip — Move a site to another address of its own server.
+/// PUT /api/sites/{id}/ip - Move a site to another address of its own server.
 ///
 /// Row → full vhost rebuild on the site's host → (best-effort) the panel-managed
 /// A record follows when it named the old address → a same-named mail domain in
@@ -4639,7 +4639,7 @@ pub struct SetSiteIpRequest {
 ///
 /// The row is written first so the rebuild reads one source of truth, and put
 /// back if the agent refuses (an address no longer on the interface is a 400
-/// from the agent) — the row must never claim an address the vhost does not use.
+/// from the agent) - the row must never claim an address the vhost does not use.
 pub async fn set_ip(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -4815,9 +4815,9 @@ fn swap_spf_ip4(content: &str, old: &str, new: &str) -> Option<String> {
 }
 
 /// Rewrite the `rtype` records named `domain` in the owner's panel-managed zone
-/// (Cloudflare or PowerDNS — the same two providers site creation publishes to),
+/// (Cloudflare or PowerDNS - the same two providers site creation publishes to),
 /// through `swap`. Best-effort; returns how many records changed. A zone the
-/// panel does not manage is left alone — the UI warns about that case.
+/// panel does not manage is left alone - the UI warns about that case.
 async fn replace_site_dns_records<F>(
     db: &sqlx::PgPool,
     owner: Uuid,
@@ -5028,7 +5028,7 @@ mod tests {
         assert!(build_nginx_body(&php, None).get("php_pool").is_none());
     }
 
-    // ── proxy_port validation — s241 H4 (SSRF + firewall-clobber DoS) ────
+    // ── proxy_port validation - s241 H4 (SSRF + firewall-clobber DoS) ────
 
     #[test]
     fn proxy_port_rejects_reserved_and_out_of_range() {

@@ -14,7 +14,7 @@ use crate::AppState;
 
 /// Escape a value for interpolation into `compliance_report`'s HTML. Findings
 /// come from filesystem paths under scanned websites (security_scanner.rs's
-/// malware/secrets scans) — an attacker who compromises any one hosted site
+/// malware/secrets scans) - an attacker who compromises any one hosted site
 /// can name a file so its path becomes a stored-XSS payload the admin's
 /// browser executes the next time they open the report.
 fn html_escape(s: &str) -> String {
@@ -25,7 +25,7 @@ fn html_escape(s: &str) -> String {
         .replace('\'', "&#39;")
 }
 
-/// GET /api/security/overview — Security overview.
+/// GET /api/security/overview - Security overview.
 pub async fn overview(
     State(_state): State<AppState>,
     AdminUser(_claims): AdminUser,
@@ -39,7 +39,7 @@ pub async fn overview(
     Ok(Json(result))
 }
 
-/// GET /api/security/firewall — Firewall status and rules.
+/// GET /api/security/firewall - Firewall status and rules.
 pub async fn firewall_status(
     State(_state): State<AppState>,
     AdminUser(_claims): AdminUser,
@@ -61,7 +61,7 @@ pub struct FirewallRuleRequest {
     pub from: Option<String>,
 }
 
-/// POST /api/security/firewall/rules — Add firewall rule.
+/// POST /api/security/firewall/rules - Add firewall rule.
 pub async fn add_firewall_rule(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -111,7 +111,7 @@ pub async fn add_firewall_rule(
     Ok(Json(result))
 }
 
-/// DELETE /api/security/firewall/rules/{number} — Delete firewall rule.
+/// DELETE /api/security/firewall/rules/{number} - Delete firewall rule.
 pub async fn delete_firewall_rule(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -140,7 +140,7 @@ pub async fn delete_firewall_rule(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// GET /api/security/fail2ban — Fail2ban status.
+/// GET /api/security/fail2ban - Fail2ban status.
 pub async fn fail2ban_status(
     State(_state): State<AppState>,
     AdminUser(_claims): AdminUser,
@@ -286,7 +286,7 @@ pub async fn fail2ban_banned(
     Ok(Json(result))
 }
 
-/// GET /api/security/login-audit — Recent login attempts (panel + SSH).
+/// GET /api/security/login-audit - Recent login attempts (panel + SSH).
 pub async fn login_audit(
     State(state): State<AppState>,
     AdminUser(_claims): AdminUser,
@@ -298,7 +298,7 @@ pub async fn login_audit(
     // can identify anything: the login writers pass `None` for both `target_type`
     // and `target_name`, so the `target_name` this used to select as "user" was
     // NULL on every row ever written. The account is in `user_email` and the
-    // origin is in `ip_address` — the two facts an operator looking at a failed
+    // origin is in `ip_address` - the two facts an operator looking at a failed
     // login actually needs, and neither was leaving the database.
     let panel_logins: Result<
         Vec<(
@@ -326,7 +326,7 @@ pub async fn login_audit(
     // panel query does not also cost the operator the SSH half.
     let panel_query_failed = panel_logins.is_err();
     if let Err(e) = &panel_logins {
-        tracing::warn!("login audit: panel login query failed — showing SSH half only: {e}");
+        tracing::warn!("login audit: panel login query failed - showing SSH half only: {e}");
     }
     let panel_logins = panel_logins.unwrap_or_default();
 
@@ -340,7 +340,7 @@ pub async fn login_audit(
                 "user": email,
                 "ip": ip,
                 // `details` is "unknown_user" exactly when the attempt named an
-                // email with no account — the enumeration signature. Surfaced as
+                // email with no account - the enumeration signature. Surfaced as
                 // its own flag so the UI does not have to parse a free-text field.
                 "unknown_user": details == "unknown_user",
                 "time": time,
@@ -352,8 +352,8 @@ pub async fn login_audit(
     // SSH logins, from every member of the fleet rather than from whichever one
     // the caller happens to have selected in the server picker.
     //
-    // The two halves of this response are rendered as siblings — one table
-    // headed "panel logins", one headed "SSH logins" — and until now they were
+    // The two halves of this response are rendered as siblings - one table
+    // headed "panel logins", one headed "SSH logins" - and until now they were
     // not comparable at all. The panel half is a query over `activity_logs`,
     // which is a single panel-wide table, so it has always meant every login to
     // this panel. The SSH half came from ONE agent. On a fleet that made "SSH
@@ -362,8 +362,8 @@ pub async fn login_audit(
     // operator happened to have that member picked. Nothing on the page said so.
     //
     // The subject list is the one `panic_button` below settled on for the same
-    // reason: `online_fleet()` — the list the security scanner, the image
-    // scanner, the alert engine and the auto-healer all sweep — plus the
+    // reason: `online_fleet()` - the list the security scanner, the image
+    // scanner, the alert engine and the auto-healer all sweep - plus the
     // caller-selected server even when it is not currently `online`, because
     // that host is the one this endpoint has always answered for and must not
     // silently stop answering for.
@@ -373,8 +373,8 @@ pub async fn login_audit(
     // auth.log, so its absence from the table is not evidence of anything. That
     // covers a member whose request failed, a member marked `offline`, and a
     // member whose agent will not resolve (which is what `online_fleet` skips).
-    // The last two are deliberately not dialled — a dead host costs a full
-    // request timeout — but they are named in the response rather than omitted
+    // The last two are deliberately not dialled - a dead host costs a full
+    // request timeout - but they are named in the response rather than omitted
     // from it, which is precisely what the old `Err(_) => json!([])` refused to
     // do: it folded a host that could not be asked into a host with nothing to
     // report, and those read identically on screen while meaning opposite things.
@@ -404,7 +404,7 @@ pub async fn login_audit(
 
     // Concurrently, so a fleet of N hosts costs one round trip rather than N.
     // The agent route is a GET (`/security/login-audit` is registered with
-    // `get`), so this cannot borrow the panic button's `post_long` verb — but it
+    // `get`), so this cannot borrow the panic button's `post_long` verb - but it
     // takes the bound that call was given for the same reason. `AgentHandle::get`
     // is capped at 60s, which is a defensible ceiling for one deliberate action
     // and an indefensible one for a table that loads with a page: a single
@@ -442,7 +442,7 @@ pub async fn login_audit(
                 for mut entry in entries {
                     // Stamp the host onto every row. `time` is a syslog stamp
                     // with no year in it, so rows from different machines cannot
-                    // be merged into one trustworthy chronology — which makes
+                    // be merged into one trustworthy chronology - which makes
                     // the origin the only thing that lets a reader tell two
                     // identical-looking failed logins apart. Rows keep their
                     // per-host order and the hosts keep `online_fleet`'s order.
@@ -463,7 +463,7 @@ pub async fn login_audit(
                 }));
             }
             Err(why) => {
-                tracing::warn!("login audit: {name} ({id}) did not answer — its SSH logins are missing from this view: {why}");
+                tracing::warn!("login audit: {name} ({id}) did not answer - its SSH logins are missing from this view: {why}");
                 ssh_servers.push(serde_json::json!({
                     "server_id": id,
                     "server_name": name,
@@ -490,7 +490,7 @@ pub async fn login_audit(
         let why = if status.as_str() == "online" {
             "no reachable agent configured for this server"
         } else {
-            "server is not online — not asked"
+            "server is not online - not asked"
         };
         ssh_servers.push(serde_json::json!({
             "server_id": id,
@@ -510,7 +510,7 @@ pub async fn login_audit(
     let ssh_servers_unreachable = unreachable.len();
 
     Ok(Json(serde_json::json!({
-        // Legacy pair — same names, same types. `ssh` is now the concatenation
+        // Legacy pair - same names, same types. `ssh` is now the concatenation
         // of every host that answered, with each row carrying its origin, so a
         // client that only understands the old shape gets strictly more of the
         // data it was already rendering rather than a different kind of data.
@@ -532,7 +532,7 @@ pub async fn login_audit(
     })))
 }
 
-/// POST /api/security/panel-jail/setup — Create DockPanel Fail2Ban jail.
+/// POST /api/security/panel-jail/setup - Create CyberHunter - Panel Fail2Ban jail.
 pub async fn setup_panel_jail(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -555,14 +555,14 @@ pub async fn setup_panel_jail(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// GET /api/security/canary-status — what the tripwire is actually watching.
+/// GET /api/security/canary-status - what the tripwire is actually watching.
 ///
 /// Deliberately does NOT take `ServerScope`, for the same reason
 /// `telemetry::preview` does not: `security_check_canary_files` runs inside this
 /// process and stats THIS host's filesystem, so the only honest answer is about
 /// this host. The frontend sends `X-Server-Id` from a global picker on every
 /// request, so accepting it here would report a fleet member as armed on the
-/// strength of the panel's own files — the same shape of lie this endpoint
+/// strength of the panel's own files - the same shape of lie this endpoint
 /// exists to end.
 pub async fn canary_status(
     State(state): State<AppState>,
@@ -614,11 +614,11 @@ pub async fn canary_status(
     })))
 }
 
-/// POST /api/security/canary/arm — plant the canary files the agent can write.
+/// POST /api/security/canary/arm - plant the canary files the agent can write.
 ///
 /// Local-only for the same reason as `canary_status`: planting a canary on a
 /// host nothing watches is not a tripwire. The agent answers per path, and both
-/// halves of its answer are passed through — an operator who gets "armed 3 of 4"
+/// halves of its answer are passed through - an operator who gets "armed 3 of 4"
 /// needs to see which one refused and why, because the version of this endpoint
 /// that swallowed refusals is what let the feature ship watching nothing.
 pub async fn canary_arm(
@@ -640,11 +640,11 @@ pub async fn canary_arm(
     //
     // Planting is a write, so the file's atime moves. `security_check_canary_files`
     // compares against `canary_atime_<path>` and treats any increase as an
-    // intrusion — so arming a host that already had canaries raised a CANARY
+    // intrusion - so arming a host that already had canaries raised a CANARY
     // TRIGGERED alert per existing file: a critical audit entry, a 🚨 notification
     // to every admin, and a `record_suspicious_event` that feeds auto-lockdown.
     // Four pre-existing canaries is four events, one short of the default 5-in-10-
-    // minutes lockdown threshold — the panel would have locked non-admins out for
+    // minutes lockdown threshold - the panel would have locked non-admins out for
     // 24 hours because the operator pressed the button it told them to press.
     //
     // Deleting the key puts the checker back on its `stored_atime == 0` first-run
@@ -694,7 +694,7 @@ pub async fn canary_arm(
     Ok(Json(result))
 }
 
-/// GET /api/security/panel-jail/status — Check if panel jail exists.
+/// GET /api/security/panel-jail/status - Check if panel jail exists.
 pub async fn panel_jail_status(
     State(_state): State<AppState>,
     AdminUser(_claims): AdminUser,
@@ -705,7 +705,7 @@ pub async fn panel_jail_status(
     Ok(Json(result))
 }
 
-/// POST /api/security/fix — Apply a recommended security fix.
+/// POST /api/security/fix - Apply a recommended security fix.
 pub async fn apply_security_fix(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -731,7 +731,7 @@ pub async fn apply_security_fix(
     Ok(Json(result))
 }
 
-/// GET /api/security/report — Generate security compliance report (HTML).
+/// GET /api/security/report - Generate security compliance report (HTML).
 pub async fn compliance_report(
     State(state): State<AppState>,
     AdminUser(_claims): AdminUser,
@@ -739,7 +739,7 @@ pub async fn compliance_report(
 ) -> Result<Html<String>, ApiError> {
     // Fetch the latest scan OF THIS SERVER. The handler already scoped the
     // agent it asks for the live overview below, then paired that answer with
-    // whichever server's scan finished most recently — a compliance document
+    // whichever server's scan finished most recently - a compliance document
     // built to be filed and forwarded, describing two machines as one.
     let scan: Option<(uuid::Uuid, String, i32, i32, i32, i32, Option<chrono::DateTime<chrono::Utc>>)> = sqlx::query_as(
         "SELECT id, status, findings_count, critical_count, warning_count, info_count, completed_at \
@@ -801,10 +801,10 @@ pub async fn compliance_report(
 
     let score_color = if score >= 80 { "#22c55e" } else if score >= 50 { "#f59e0b" } else { "#ef4444" };
 
-    let no_findings = if findings.is_empty() { "<p style=\"color:#525252;\">No findings — run a security scan first.</p>" } else { "" };
+    let no_findings = if findings.is_empty() { "<p style=\"color:#525252;\">No findings - run a security scan first.</p>" } else { "" };
 
     let html = format!(r#"<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>DockPanel Security Report</title>
+<html><head><meta charset="utf-8"><title>CyberHunter - Panel Security Report</title>
 <style>
 body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 900px; margin: 0 auto; padding: 40px 20px; background: #0a0a0a; color: #e5e5e5; }}
 h1 {{ color: #22c55e; font-size: 24px; }}
@@ -820,7 +820,7 @@ table {{ width: 100%; border-collapse: collapse; background: #1a1a1a; border: 1p
 th {{ text-align: left; padding: 8px; background: #111; color: #737373; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; }}
 .footer {{ margin-top: 40px; color: #525252; font-size: 12px; text-align: center; }}
 </style></head><body>
-<h1>DockPanel Security Report</h1>
+<h1>CyberHunter - Panel Security Report</h1>
 <p style="color:#737373;">Generated: {scan_date}</p>
 
 <h2>Security Score</h2>
@@ -851,7 +851,7 @@ th {{ text-align: left; padding: 8px; background: #111; color: #737373; font-siz
 {no_findings}
 
 <div class="footer">
-<p>Generated by DockPanel Security Scanner</p>
+<p>Generated by CyberHunter - Panel Security Scanner</p>
 </div>
 </body></html>"#,
         fw_class = if fw_active { "pass" } else { "fail" },
@@ -871,7 +871,7 @@ th {{ text-align: left; padding: 8px; background: #111; color: #737373; font-siz
 // Security Hardening Endpoints (Features 9, 10, 11, 8)
 // ═══════════════════════════════════════════════════════════════════════
 
-/// GET /api/security/lockdown — Get lockdown state.
+/// GET /api/security/lockdown - Get lockdown state.
 pub async fn lockdown_status(
     State(state): State<AppState>,
     AdminUser(_claims): AdminUser,
@@ -879,7 +879,7 @@ pub async fn lockdown_status(
     let mut lockdown = security_hardening::get_lockdown_state(&state.db).await;
 
     // `get_lockdown_state` returns whether a lockdown is on, who started it, when
-    // and why — and none of the three columns that say what it actually DOES.
+    // and why - and none of the three columns that say what it actually DOES.
     // `terminals_disabled` is the one an operator has a live reason to ask about:
     // the panic button sets it, the terminal ticket mint now refuses on it, and
     // between those two facts there was no surface anywhere that would show the
@@ -908,7 +908,7 @@ pub async fn lockdown_status(
     Ok(Json(lockdown))
 }
 
-/// POST /api/security/lockdown/activate — Manual lockdown (admin only).
+/// POST /api/security/lockdown/activate - Manual lockdown (admin only).
 pub async fn lockdown_activate(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -927,7 +927,7 @@ pub async fn lockdown_activate(
     Ok(Json(serde_json::json!({ "status": "locked", "reason": reason })))
 }
 
-/// POST /api/security/lockdown/deactivate — Unlock (admin only).
+/// POST /api/security/lockdown/deactivate - Unlock (admin only).
 pub async fn lockdown_deactivate(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -942,7 +942,7 @@ pub async fn lockdown_deactivate(
     Ok(Json(serde_json::json!({ "status": "unlocked" })))
 }
 
-/// POST /api/security/panic — Emergency panic button (Feature 11).
+/// POST /api/security/panic - Emergency panic button (Feature 11).
 /// Kills all terminal sessions, blocks non-admins, disables registration.
 pub async fn panic_button(
     State(state): State<AppState>,
@@ -967,8 +967,8 @@ pub async fn panic_button(
     // about the hosts it did not, which on an emergency control reads as a
     // complete result and is worse than no result at all.
     //
-    // The subject list is `online_fleet()` — the same list the security scanner,
-    // the image scanner, the alert engine and the auto-healer sweep — plus the
+    // The subject list is `online_fleet()` - the same list the security scanner,
+    // the image scanner, the alert engine and the auto-healer sweep - plus the
     // caller-selected server even when it is not currently `online`, because
     // that host was already being killed before this change and must not
     // silently stop being killed.
@@ -978,8 +978,8 @@ pub async fn panic_button(
     // is still holding. That covers a member whose kill request failed, a member
     // marked `offline`, and a member whose agent will not resolve (which is
     // precisely what `online_fleet` skips). Those last two are deliberately not
-    // dialled — a dead host costs a full request timeout each and this is the
-    // button an operator presses in a hurry — but they are named in the
+    // dialled - a dead host costs a full request timeout each and this is the
+    // button an operator presses in a hurry - but they are named in the
     // response rather than omitted from it. One unreachable member is enough to
     // make the legacy `agent_reached` field false for the whole call, so a
     // client that only understands the old single-host shape still shows its
@@ -1048,7 +1048,7 @@ pub async fn panic_button(
             Err(e) => {
                 let why = e.to_string();
                 tracing::error!(
-                    "PANIC: {name} ({id}) did not kill terminals — root shells may still be live there: {why}"
+                    "PANIC: {name} ({id}) did not kill terminals - root shells may still be live there: {why}"
                 );
                 server_results.push(serde_json::json!({
                     "server_id": id,
@@ -1077,9 +1077,9 @@ pub async fn panic_button(
         let why = if status.as_str() == "online" {
             "no reachable agent configured for this server"
         } else {
-            "server is not online — not dialled"
+            "server is not online - not dialled"
         };
-        tracing::error!("PANIC: {name} ({id}) not swept ({why}) — root shells may still be live there");
+        tracing::error!("PANIC: {name} ({id}) not swept ({why}) - root shells may still be live there");
         server_results.push(serde_json::json!({
             "server_id": id,
             "server_name": name,
@@ -1107,8 +1107,8 @@ pub async fn panic_button(
         (None, None)
     };
 
-    // Revoke every issued session. Lockdown is enforced at the doors — login,
-    // OAuth, passkey, site creation — and nothing tests it against a token that
+    // Revoke every issued session. Lockdown is enforced at the doors - login,
+    // OAuth, passkey, site creation - and nothing tests it against a token that
     // has already been minted. Without this leg, the stolen admin session that
     // got an intruder their root shell keeps working for the rest of its two
     // hours, and they simply request another terminal. This logs the pressing
@@ -1133,7 +1133,7 @@ pub async fn panic_button(
     // Revoke every terminal share. A share is an UNAUTHENTICATED public URL
     // (`GET /api/terminal/shared/{id}` carries no auth extractor) holding up to
     // 500KB of operator-supplied terminal output, and lockdown does not reach it
-    // — lockdown is tested at the doors, and this is not a door. So without this
+    // - lockdown is tested at the doors, and this is not a door. So without this
     // the panic button left the intruder's own share serving to the whole
     // internet for the rest of its hour, while the UI said "all sessions
     // revoked". `revoke_share`/`list_shares` exist and are correct, but have
@@ -1146,7 +1146,7 @@ pub async fn panic_button(
 
     // Audit + alert. Both carry the un-swept host list, not just the bare
     // reason. The response below is the most detailed account of this event that
-    // will ever exist and it is also the shortest-lived — the session revocation
+    // will ever exist and it is also the shortest-lived - the session revocation
     // above logs the pressing admin out, so the browser has one render in which
     // to show it and then the page is gone. The immutable audit row and the
     // out-of-band admin notification are the two places the answer to "which
@@ -1154,11 +1154,11 @@ pub async fn panic_button(
     // review to read it.
     let outcome = if unreachable_names.is_empty() {
         format!(
-            "{reason} — all {servers_total} server(s) swept, {terminals_total} terminal(s) killed ({root_total} server/root)"
+            "{reason} - all {servers_total} server(s) swept, {terminals_total} terminal(s) killed ({root_total} server/root)"
         )
     } else {
         format!(
-            "{reason} — {reached}/{servers_total} server(s) swept, {terminals_total} terminal(s) killed ({root_total} server/root). NOT SWEPT, root shells may still be live: {}",
+            "{reason} - {reached}/{servers_total} server(s) swept, {terminals_total} terminal(s) killed ({root_total} server/root). NOT SWEPT, root shells may still be live: {}",
             unreachable_names.join(", ")
         )
     };
@@ -1171,7 +1171,7 @@ pub async fn panic_button(
 
     Ok(Json(serde_json::json!({
         "status": "panic_activated",
-        // Legacy trio — same names, same types, now fleet-wide in meaning.
+        // Legacy trio - same names, same types, now fleet-wide in meaning.
         "agent_reached": agent_reached,
         "terminals_killed": terminals_killed,
         "server_terminals_killed": server_terminals_killed,
@@ -1189,7 +1189,7 @@ pub async fn panic_button(
     })))
 }
 
-/// POST /api/security/forensic-snapshot — Capture forensic state (Feature 10).
+/// POST /api/security/forensic-snapshot - Capture forensic state (Feature 10).
 pub async fn forensic_snapshot(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -1209,7 +1209,7 @@ pub async fn forensic_snapshot(
     Ok(Json(result))
 }
 
-/// GET /api/security/audit-log — Query immutable audit log.
+/// GET /api/security/audit-log - Query immutable audit log.
 pub async fn audit_log_list(
     State(state): State<AppState>,
     AdminUser(_claims): AdminUser,
@@ -1247,13 +1247,13 @@ pub async fn audit_log_list(
     Ok(Json(result))
 }
 
-/// GET /api/security/suspicious-events — Query the suspicious-event feed that
+/// GET /api/security/suspicious-events - Query the suspicious-event feed that
 /// feeds auto-lockdown.
 ///
 /// `security_hardening::record_suspicious_event[_at]` has written a real,
 /// per-event row to `suspicious_events` since the 2026-03-24 security-hardening
-/// migration — a proxy/datacenter login, a staging-clone abuse pattern, a
-/// deploy anomaly — but the only reader anywhere was a bare `COUNT(*)` used to
+/// migration - a proxy/datacenter login, a staging-clone abuse pattern, a
+/// deploy anomaly - but the only reader anywhere was a bare `COUNT(*)` used to
 /// trip the lockdown threshold. An admin could see the threshold fire and
 /// never see what actually happened; this is the same table
 /// `audit_log_list` above already renders a page for, just for suspicious
@@ -1286,7 +1286,7 @@ pub async fn suspicious_events_list(
     Ok(Json(result))
 }
 
-/// GET /api/security/recordings — List terminal session recordings (Feature 5).
+/// GET /api/security/recordings - List terminal session recordings (Feature 5).
 pub async fn recordings_list(
     State(_state): State<AppState>,
     AdminUser(_claims): AdminUser,
@@ -1312,7 +1312,7 @@ pub async fn recordings_list(
     Ok(Json(serde_json::json!({ "recordings": recordings })))
 }
 
-/// POST /api/security/users/{id}/approve — Approve a pending user (Feature 8).
+/// POST /api/security/users/{id}/approve - Approve a pending user (Feature 8).
 pub async fn approve_user(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -1340,7 +1340,7 @@ pub async fn approve_user(
     Ok(Json(serde_json::json!({ "status": "approved" })))
 }
 
-/// GET /api/security/pending-users — List users awaiting approval (Feature 8).
+/// GET /api/security/pending-users - List users awaiting approval (Feature 8).
 pub async fn pending_users(
     State(state): State<AppState>,
     AdminUser(_claims): AdminUser,
@@ -1359,7 +1359,7 @@ pub async fn pending_users(
     Ok(Json(result))
 }
 
-/// POST /api/security/users/{id}/verify-email — Mark an address verified without sending mail (#100).
+/// POST /api/security/users/{id}/verify-email - Mark an address verified without sending mail (#100).
 ///
 /// The recovery door for a verification that can never complete. `login` refuses an
 /// unverified account whenever `smtp_host` is non-empty, and every self-service exit
@@ -1369,7 +1369,7 @@ pub async fn pending_users(
 /// misconfigured therefore cannot mail their way out of a mail problem.
 ///
 /// `email_verified` had five writers before this one and every one of them was
-/// self-service or machine (`auth.rs` register/verify/reset, `oauth.rs`, `whmcs.rs`) —
+/// self-service or machine (`auth.rs` register/verify/reset, `oauth.rs`, `whmcs.rs`) -
 /// no administrator could set it for somebody else, while the sibling gate on the same
 /// table, `approved`, has had exactly this override since Feature 8. This is that
 /// primitive, one column over.
@@ -1402,7 +1402,7 @@ pub async fn verify_user_email(
     Ok(Json(serde_json::json!({ "status": "verified" })))
 }
 
-/// GET /api/security/unverified-users — List accounts blocked by the email gate (#100).
+/// GET /api/security/unverified-users - List accounts blocked by the email gate (#100).
 ///
 /// `can_self_verify` is the discriminator that matters to an operator: FALSE means the
 /// account holds no token, so no verification link exists or can be resent, and this

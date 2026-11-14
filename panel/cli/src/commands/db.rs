@@ -1,7 +1,7 @@
 use crate::client;
 use serde_json::json;
 
-/// Read one byte from `/dev/urandom`. Errors rather than silently returning 0 —
+/// Read one byte from `/dev/urandom`. Errors rather than silently returning 0 -
 /// a swallowed failure here used to make every generated password come back as
 /// the fully predictable `"aaaaaaaaaaaaaaaa"` with no signal to the operator.
 pub(crate) fn rand_byte() -> Result<u8, String> {

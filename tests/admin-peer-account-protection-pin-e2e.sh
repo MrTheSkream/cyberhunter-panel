@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# admin-peer-account-protection-pin-e2e.sh — s440
+# admin-peer-account-protection-pin-e2e.sh - s440
 #
 # ONE PROPERTY: an administrator can act on the user directory, but not on
 # ANOTHER administrator's account.
 #
 # The v2.176.0->v2.195.0 arc closed the "any admin can touch any OTHER
 # TENANT's resource" bug class across alerts/on_call/escalation_policies/
-# dashboard/drift/servers/monitors/incidents — but never applied it to the
+# dashboard/drift/servers/monitors/incidents - but never applied it to the
 # one resource whose compromise subsumes all the others: the user account
 # itself. Every mutation in `panel/backend/src/routes/users.rs` was gated
 # only on `AdminUser` (a role check, nothing else), so any two admin
@@ -30,7 +30,7 @@
 #     seeing the directory does not hand over an account).
 #   - `create` mints a NEW account; there is no existing one to hijack.
 #   - `reset_2fa` clears a factor but does not by itself grant sign-in (the
-#     password is untouched) — a materially different class from the four
+#     password is untouched) - a materially different class from the four
 #     that DO hand over full control, and it remains the only panel path
 #     back for an admin who has lost both their authenticator and their
 #     recovery codes (see users.rs's own doc comment on reset_2fa).
@@ -48,7 +48,7 @@
 #
 # Position arms (B2/C2/D2/E2), not just presence, because a check that
 # exists in the function but runs AFTER the mutation is a check that does
-# nothing — the same lesson project_dockpanel_tech_debt_p178's
+# nothing - the same lesson project_dockpanel_tech_debt_p178's
 # registry_login mutation drew: a text-presence arm alone cannot tell
 # "guarded" from "guarded too late".
 
@@ -57,7 +57,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
 echo
 echo "=================================================="
-echo "  Admin peer-account protection — source pins (s440)"
+echo "  Admin peer-account protection - source pins (s440)"
 echo "=================================================="
 echo
 
@@ -130,19 +130,19 @@ echo "── §A is_other_admin exists and checks role + identity ──"
 if [ -n "$HELPER_BODY" ]; then
   ok "A1 is_other_admin exists"
 else
-  bad "A1 is_other_admin is missing — every arm below is measuring nothing"
+  bad "A1 is_other_admin is missing - every arm below is measuring nothing"
 fi
 
 if has "$HELPER_BODY" 'role\s*==\s*"admin"'; then
   ok "A2 the guard checks the target's role against \"admin\""
 else
-  bad "A2 the guard does not check for role == \"admin\" — it cannot be the peer-admin gate"
+  bad "A2 the guard does not check for role == \"admin\" - it cannot be the peer-admin gate"
 fi
 
 if has "$HELPER_BODY" '!='; then
   ok "A3 the guard excludes the caller's OWN id (an inequality check is present)"
 else
-  bad "A3 the guard has no inequality check — it would also block an admin acting on themselves"
+  bad "A3 the guard has no inequality check - it would also block an admin acting on themselves"
 fi
 
 # ── §B update() ──────────────────────────────────────────────────────────────
@@ -151,19 +151,19 @@ echo "── §B update() is gated before either mutating branch ──"
 if has "$UPDATE_BODY" 'is_other_admin'; then
   ok "B1 update() calls is_other_admin"
 else
-  bad "B1 update() never calls is_other_admin — the role AND password branches are both still open"
+  bad "B1 update() never calls is_other_admin - the role AND password branches are both still open"
 fi
 
 if before "$UPDATE_BODY" "is_other_admin" "SET role"; then
   ok "B2 the guard runs before the role-change UPDATE"
 else
-  bad "B2 the guard does not precede the role-change UPDATE — present-but-too-late is the same as absent"
+  bad "B2 the guard does not precede the role-change UPDATE - present-but-too-late is the same as absent"
 fi
 
 if before "$UPDATE_BODY" "is_other_admin" "SET password_hash"; then
   ok "B3 the guard runs before the password-change UPDATE"
 else
-  bad "B3 the guard does not precede the password-change UPDATE — a second, ungated door to the same takeover"
+  bad "B3 the guard does not precede the password-change UPDATE - a second, ungated door to the same takeover"
 fi
 
 # ── §C reset_password() ─────────────────────────────────────────────────────
@@ -172,13 +172,13 @@ echo "── §C reset_password() is gated before the password UPDATE ──"
 if has "$RESET_PW_BODY" 'is_other_admin'; then
   ok "C1 reset_password() calls is_other_admin"
 else
-  bad "C1 reset_password() never calls is_other_admin — one admin can still take over another's account"
+  bad "C1 reset_password() never calls is_other_admin - one admin can still take over another's account"
 fi
 
 if before "$RESET_PW_BODY" "is_other_admin" "SET password_hash"; then
   ok "C2 the guard runs before the password UPDATE"
 else
-  bad "C2 the guard does not precede the password UPDATE — present-but-too-late is the same as absent"
+  bad "C2 the guard does not precede the password UPDATE - present-but-too-late is the same as absent"
 fi
 
 # ── §D remove() ──────────────────────────────────────────────────────────────
@@ -187,19 +187,19 @@ echo "── §D remove() is gated before the delete + server reassignment ─�
 if has "$REMOVE_BODY" 'is_other_admin'; then
   ok "D1 remove() calls is_other_admin"
 else
-  bad "D1 remove() never calls is_other_admin — deleting a peer admin still transfers their fleet to the caller"
+  bad "D1 remove() never calls is_other_admin - deleting a peer admin still transfers their fleet to the caller"
 fi
 
 if before "$REMOVE_BODY" "is_other_admin" "SET user_id = \$1"; then
   ok "D2 the guard runs before the server-reassignment UPDATE"
 else
-  bad "D2 the guard does not precede the server reassignment — present-but-too-late is the same as absent"
+  bad "D2 the guard does not precede the server reassignment - present-but-too-late is the same as absent"
 fi
 
 if before "$REMOVE_BODY" "is_other_admin" "DELETE FROM users"; then
   ok "D3 the guard runs before the DELETE"
 else
-  bad "D3 the guard does not precede the DELETE — present-but-too-late is the same as absent"
+  bad "D3 the guard does not precede the DELETE - present-but-too-late is the same as absent"
 fi
 
 # ── §E toggle_suspend() ──────────────────────────────────────────────────────
@@ -208,37 +208,37 @@ echo "── §E toggle_suspend() is gated before the role flip ──"
 if has "$TOGGLE_BODY" 'is_other_admin'; then
   ok "E1 toggle_suspend() calls is_other_admin"
 else
-  bad "E1 toggle_suspend() never calls is_other_admin — a peer admin can still be locked out unilaterally"
+  bad "E1 toggle_suspend() never calls is_other_admin - a peer admin can still be locked out unilaterally"
 fi
 
 if before "$TOGGLE_BODY" "is_other_admin" "suspend_account"; then
   ok "E2 the guard runs before the suspend/unsuspend helpers"
 else
-  bad "E2 the guard does not precede the suspend/unsuspend call — present-but-too-late is the same as absent"
+  bad "E2 the guard does not precede the suspend/unsuspend call - present-but-too-late is the same as absent"
 fi
 
-# ── §F reset_2fa() — deliberately UNGUARDED (control) ────────────────────────
+# ── §F reset_2fa() - deliberately UNGUARDED (control) ────────────────────────
 echo "── §F reset_2fa() deliberately does not call the guard ──"
 
 if ! has "$RESET_2FA_BODY" 'is_other_admin'; then
-  ok "F1 reset_2fa() does not call is_other_admin — deliberate, it does not grant sign-in by itself"
+  ok "F1 reset_2fa() does not call is_other_admin - deliberate, it does not grant sign-in by itself"
 else
-  bad "F1 reset_2fa() now calls is_other_admin — the documented recovery path for a locked-out peer admin is gone; if this was intentional, update this suite AND the doc comment together"
+  bad "F1 reset_2fa() now calls is_other_admin - the documented recovery path for a locked-out peer admin is gone; if this was intentional, update this suite AND the doc comment together"
 fi
 
-# ── §G list()/create() — deliberately UNGUARDED (control) ───────────────────
+# ── §G list()/create() - deliberately UNGUARDED (control) ───────────────────
 echo "── §G list()/create() deliberately do not call the guard ──"
 
 if ! has "$LIST_BODY" 'is_other_admin'; then
-  ok "G1 list() does not call is_other_admin — seeing the directory does not hand over an account"
+  ok "G1 list() does not call is_other_admin - seeing the directory does not hand over an account"
 else
-  bad "G1 list() now calls is_other_admin — an admin would no longer see the full user directory, a behaviour change beyond this fix's scope"
+  bad "G1 list() now calls is_other_admin - an admin would no longer see the full user directory, a behaviour change beyond this fix's scope"
 fi
 
 if ! has "$CREATE_BODY" 'is_other_admin'; then
-  ok "G2 create() does not call is_other_admin — there is no existing account to hijack when minting a new one"
+  ok "G2 create() does not call is_other_admin - there is no existing account to hijack when minting a new one"
 else
-  bad "G2 create() now calls is_other_admin — there is no target row yet for the guard to inspect"
+  bad "G2 create() now calls is_other_admin - there is no target row yet for the guard to inspect"
 fi
 
 # ── §H rejection messages name the action they refuse ────────────────────────

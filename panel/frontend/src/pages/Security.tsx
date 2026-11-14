@@ -76,7 +76,7 @@ interface SshLoginEntry {
   success: boolean;
   // Which machine's auth.log this row came from. The SSH half is now the
   // concatenation of every host in the fleet, and `time` is a year-less syslog
-  // stamp ("Mar 18 12:34:56") — so the origin is the only thing that tells two
+  // stamp ("Mar 18 12:34:56") - so the origin is the only thing that tells two
   // identical-looking failed logins apart. Optional so a panel whose backend
   // predates the fan-out still type-checks.
   server_id?: string;
@@ -104,7 +104,7 @@ interface SshServerCoverage {
  *
  * `panel` and `ssh` are the legacy pair; everything else says how much of the
  * fleet the SSH half actually covers and whether the panel half was readable at
- * all. Both degraded states are silent by default — an un-asked host and a
+ * all. Both degraded states are silent by default - an un-asked host and a
  * failed database query each render as an empty table, which is the single most
  * reassuring thing this page can show. The flags are what stops "we could not
  * ask" from reading as "nothing happened".
@@ -121,7 +121,7 @@ interface LoginAudit {
   /** Same shape as the panic button's un-swept list, and the same meaning. */
   ssh_unreachable_servers?: UnreachableServer[];
   ssh_unreachable_names?: string[];
-  /** The panel half cannot be partial by host — it can only fail outright. */
+  /** The panel half cannot be partial by host - it can only fail outright. */
   panel_query_failed?: boolean;
 }
 
@@ -131,11 +131,11 @@ interface PanelLoginEntry {
   success: boolean;
   user: string;
   ip: string | null;
-  /** The attempt named an email with no account — the enumeration signature. */
+  /** The attempt named an email with no account - the enumeration signature. */
   unknown_user: boolean;
 }
 
-// `target_type`, `target_name` and `details` are the payload — the WHICH and the
+// `target_type`, `target_name` and `details` are the payload - the WHICH and the
 // WHY. The endpoint has always sent all three (routes/security.rs:1020) and this
 // interface did not declare them, so they were dropped at parse and the table
 // showed six columns of metadata about events whose substance was never rendered.
@@ -157,7 +157,7 @@ interface AuditLogEntry {
 
 // The feed that trips auto-lockdown. Written by `record_suspicious_event[_at]`
 // (proxy/datacenter logins, staging-clone abuse, deploy anomalies) since the
-// 2026-03-24 security-hardening migration — until now the only reader
+// 2026-03-24 security-hardening migration - until now the only reader
 // anywhere was a bare COUNT() against the threshold, so an admin could see
 // lockdown fire and never see what actually happened.
 interface SuspiciousEvent {
@@ -186,7 +186,7 @@ interface UnverifiedUser {
   email: string;
   role: string;
   /** FALSE means the account holds no token, so no verification link exists or can
-   *  be resent — the admin override is the only way in short of a database edit. */
+   *  be resent - the admin override is the only way in short of a database edit. */
   can_self_verify: boolean;
   created_at: string;
 }
@@ -206,7 +206,7 @@ interface LockdownStatus {
   terminals_disabled?: boolean;
   /**
    * `active && terminals_disabled`, computed by the same function the terminal
-   * ticket mint gates on — so the page and the gate cannot drift apart. This is
+   * ticket mint gates on - so the page and the gate cannot drift apart. This is
    * the field that answers "can anyone open a shell right now". Render this one.
    */
   terminals_blocked?: boolean;
@@ -219,8 +219,8 @@ const SSH_ROWS_PER_SERVER = 10;
  * A degraded-coverage banner: something an operator is looking at is missing or
  * unreadable, and the surface it is missing from would otherwise look calm.
  *
- * Same grammar as <PanicReport/> — icon, one-line headline that names the
- * machines, detail underneath, then the per-host reasons — because it reports
+ * Same grammar as <PanicReport/> - icon, one-line headline that names the
+ * machines, detail underneath, then the per-host reasons - because it reports
  * the same class of fact: a host nobody reached. Used as a band inside a card
  * header (the default `className`) and as a standalone box on the lockdown tab.
  */
@@ -237,7 +237,7 @@ function WarningStrip({
   servers?: UnreachableServer[];
   className?: string;
 }) {
-  // Full literal class strings — Tailwind scans source text, so these cannot be
+  // Full literal class strings - Tailwind scans source text, so these cannot be
   // assembled from a token fragment.
   const t =
     tone === "danger"
@@ -283,8 +283,8 @@ export default function Security() {
   // Ahead of every hook, which is where the other nineteen administrator pages
   // put it. A redirect is itself an effect, so a guard placed BELOW the loaders
   // does not out-run them: the mount fires its whole request burst and collects
-  // a 403 for each before the navigation lands. Nothing was disclosed — the
-  // server refused every one — but a refused request is a line in the audit log
+  // a 403 for each before the navigation lands. Nothing was disclosed - the
+  // server refused every one - but a refused request is a line in the audit log
   // and a fright for whoever reads it.
   if (user?.role !== "admin") return <Navigate to="/" replace />;
   const [overview, setOverview] = useState<SecurityOverview | null>(null);
@@ -316,7 +316,7 @@ export default function Security() {
   }, [searchParams]);
   const [loginAudit, setLoginAudit] = useState<LoginAudit>({ panel: [], ssh: [] });
   const [auditLoading, setAuditLoading] = useState(false);
-  // A failed fetch left the two tables empty and said nothing — the same
+  // A failed fetch left the two tables empty and said nothing - the same
   // "empty reads as clean" fault the coverage flags exist to prevent, one level
   // up. Kept next to the tables rather than in `message` because it explains
   // what is (not) on screen right there.
@@ -340,7 +340,7 @@ export default function Security() {
   const [showPortInput, setShowPortInput] = useState(false);
   const [portValue, setPortValue] = useState("");
   // The panic button's per-host result. Kept out of `message` because the hosts
-  // it could not sweep need a block, not a line — see components/PanicReport.
+  // it could not sweep need a block, not a line - see components/PanicReport.
   const [panicResult, setPanicResult] = useState<PanicResult | null>(null);
 
   const loadData = async () => {
@@ -462,7 +462,7 @@ export default function Security() {
           const r = await api.post<PanicResult>("/security/panic", {});
           // Report what the server actually did. `sessions_revoked` was already
           // being computed honestly and thrown away here, while this string said
-          // "all sessions revoked" unconditionally — the same shape as the
+          // "all sessions revoked" unconditionally - the same shape as the
           // hardcoded `terminals_killed: true` that v2.65.0 removed, one field
           // to the left.
           const sess = r.sessions_revoked ? "all sessions revoked" : "SESSION REVOCATION FAILED";
@@ -483,12 +483,12 @@ export default function Security() {
             setMessage({ text: `Panic: locked down and ${sess}, but ${where}${swept}${shares}`, type: "error" });
           } else {
             const fleet = r.servers_total && r.servers_total > 1 ? ` across all ${r.servers_total} servers` : "";
-            setMessage({ text: `Panic mode activated — ${killed}${fleet}, ${sess}${shares}`, type: r.sessions_revoked ? "success" : "error" });
+            setMessage({ text: `Panic mode activated - ${killed}${fleet}, ${sess}${shares}`, type: r.sessions_revoked ? "success" : "error" });
           }
-          // Panic revokes THIS admin's session too (correct — they cannot know
+          // Panic revokes THIS admin's session too (correct - they cannot know
           // their own is not the stolen one). So do NOT call loadData(): its
           // requests 401 and api.ts hard-navigates to /login within one round
-          // trip, destroying the report above before it can be read — including
+          // trip, destroying the report above before it can be read - including
           // the "terminals may still be running" warning, the single most
           // important sentence here. Mirrors the existing self-revocation
           // handling in Settings.tsx ("Revoke all sessions").
@@ -527,7 +527,7 @@ export default function Security() {
   // Fetch when the audit tab becomes visible, including on a deep link
   // (/security?tab=audit). The fetch used to hang off the tab BUTTON only, so
   // arriving by URL showed two empty tables with nothing saying that nothing
-  // had been asked for — the same fault as an un-asked host, one layer out.
+  // had been asked for - the same fault as an un-asked host, one layer out.
   useEffect(() => {
     if (tab === "audit") loadLoginAudit();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -654,7 +654,7 @@ export default function Security() {
   // sorted globally: the agent's `time` is a year-less syslog stamp, so a
   // cross-host chronological merge would be a fiction with a timestamp on it.
   // Run-length grouping therefore preserves exactly the order the backend sent
-  // — each host's own ordering, hosts in `online_fleet` order — and gives the
+  // - each host's own ordering, hosts in `online_fleet` order - and gives the
   // volume somewhere to be capped.
   const sshGroups: { key: string; name: string; isLocal: boolean; rows: SshLoginEntry[] }[] = [];
   for (const e of loginAudit.ssh) {
@@ -732,7 +732,7 @@ export default function Security() {
         </div>
       )}
 
-      {/* Issue #120: the prompt portals to document.body — its eleven triggers are scattered across three tabs, so a bar rendered here was off-screen for most of them. */}
+      {/* Issue #120: the prompt portals to document.body - its eleven triggers are scattered across three tabs, so a bar rendered here was off-screen for most of them. */}
       {pendingConfirm && (
         <ConfirmDialog
           label={pendingConfirm.label}
@@ -1270,7 +1270,7 @@ export default function Security() {
                 {selectedScan === scan.id && (
                   <div className="border-t border-dark-600">
                     {findings.length === 0 ? (
-                      <div className="p-6 text-center text-sm text-dark-300">No findings — all checks passed</div>
+                      <div className="p-6 text-center text-sm text-dark-300">No findings - all checks passed</div>
                     ) : (
                       <div className="divide-y divide-dark-600">
                         {findings.map((f) => (
@@ -1360,7 +1360,7 @@ export default function Security() {
 
       {tab === "audit" && (
         <div className="space-y-6">
-          {/* SSH Logins — every server in the fleet, not just the selected one */}
+          {/* SSH Logins - every server in the fleet, not just the selected one */}
           <div className="bg-dark-800 rounded-lg border border-dark-500 overflow-hidden">
             <div className="px-5 py-3 border-b border-dark-600 flex items-start justify-between gap-4">
               <div className="min-w-0">
@@ -1386,7 +1386,7 @@ export default function Security() {
               <WarningStrip
                 tone="danger"
                 title="Login audit could not be loaded"
-                detail={`Both tables below are empty because the request failed, not because there were no logins — ${loginAuditError}. Use Re-check once the panel is reachable.`}
+                detail={`Both tables below are empty because the request failed, not because there were no logins - ${loginAuditError}. Use Re-check once the panel is reachable.`}
               />
             )}
 
@@ -1431,7 +1431,7 @@ export default function Security() {
                       )}
                       {rows.map((e, i) => (
                         <tr key={`${g.key}-${i}`} className="table-row-hover">
-                          <td className="px-5 py-2 text-xs text-dark-200 font-mono">{e.server_name ?? "—"}</td>
+                          <td className="px-5 py-2 text-xs text-dark-200 font-mono">{e.server_name ?? "-"}</td>
                           <td className="px-5 py-2 text-xs text-dark-200 font-mono">{e.time}</td>
                           <td className="px-5 py-2 text-sm text-dark-50 font-mono">{e.user}</td>
                           <td className="px-5 py-2 text-sm text-dark-100 font-mono">{e.ip}</td>
@@ -1464,7 +1464,7 @@ export default function Security() {
               {loginAudit.ssh.length === 0 && !loginAuditError && (
                 <p className="px-5 py-4 text-sm text-dark-300">
                   {loginAudit.ssh_partial
-                    ? `No SSH login attempts from the ${sshReached} server${sshReached === 1 ? "" : "s"} that answered — the ${sshUnreached.length === 1 ? "server" : `${sshUnreached.length} servers`} named above ${sshUnreached.length === 1 ? "was" : "were"} not asked at all.`
+                    ? `No SSH login attempts from the ${sshReached} server${sshReached === 1 ? "" : "s"} that answered - the ${sshUnreached.length === 1 ? "server" : `${sshUnreached.length} servers`} named above ${sshUnreached.length === 1 ? "was" : "were"} not asked at all.`
                     : "No SSH login attempts found"}
                 </p>
               )}
@@ -1478,14 +1478,14 @@ export default function Security() {
             </div>
 
             {/* The activity_logs query failed. The backend degrades to an empty
-                list so a broken panel query does not also cost the SSH half —
+                list so a broken panel query does not also cost the SSH half -
                 which means without this strip a database error renders as "no
                 panel logins", the most calming thing this page can say. */}
             {loginAudit.panel_query_failed && (
               <WarningStrip
                 tone="danger"
                 title="Panel login history could not be read"
-                detail="The query against activity_logs failed, so this table is empty because of a database error — NOT because nobody signed in. Check the panel logs before drawing any conclusion from it."
+                detail="The query against activity_logs failed, so this table is empty because of a database error - NOT because nobody signed in. Check the panel logs before drawing any conclusion from it."
               />
             )}
 
@@ -1503,7 +1503,7 @@ export default function Security() {
                     <tr key={i} className="table-row-hover">
                       <td className="px-5 py-2 text-xs text-dark-200 font-mono">{new Date(e.time).toLocaleString()}</td>
                       <td className="px-5 py-2 text-sm text-dark-50 font-mono">
-                        {e.user || "—"}
+                        {e.user || "-"}
                         {/* Repeated attempts against addresses that do not exist are
                             what credential stuffing and user enumeration look like.
                             Until v2.60.0 these rows were rejected by a foreign key
@@ -1514,7 +1514,7 @@ export default function Security() {
                           </span>
                         )}
                       </td>
-                      <td className="px-5 py-2 text-xs text-dark-200 font-mono">{e.ip || "—"}</td>
+                      <td className="px-5 py-2 text-xs text-dark-200 font-mono">{e.ip || "-"}</td>
                       <td className="px-5 py-2 text-sm text-dark-50">{e.action}</td>
                       <td className="px-5 py-2">
                         <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${e.success ? "bg-rust-500/15 text-rust-400" : "bg-danger-500/15 text-danger-400"}`}>
@@ -1592,9 +1592,9 @@ export default function Security() {
                   <div className={`mt-2 flex items-center gap-2 text-xs ${isBlocked ? "text-danger-400" : info?.safety === "caution" ? "text-warn-400" : "text-rust-400"}`}>
                     <span className={`w-2 h-2 rounded-full ${isBlocked ? "bg-danger-400" : info?.safety === "caution" ? "bg-warn-400" : "bg-rust-400"}`} />
                     {info ? (
-                      <span>{info.service} — {isBlocked ? "Blocked (security risk)" : info.safety === "caution" ? "Use with caution (restrict source IP if possible)" : "Safe to open"}</span>
+                      <span>{info.service} - {isBlocked ? "Blocked (security risk)" : info.safety === "caution" ? "Use with caution (restrict source IP if possible)" : "Safe to open"}</span>
                     ) : (
-                      <span>Custom port — safe to open</span>
+                      <span>Custom port - safe to open</span>
                     )}
                   </div>
                 )}
@@ -1619,7 +1619,7 @@ export default function Security() {
               </div>
 
               <div>
-                <label htmlFor="rule-from" className="block text-xs font-medium text-dark-100 mb-1">From IP <span className="text-dark-300">(optional — leave empty for any)</span></label>
+                <label htmlFor="rule-from" className="block text-xs font-medium text-dark-100 mb-1">From IP <span className="text-dark-300">(optional - leave empty for any)</span></label>
                 <input id="rule-from" type="text" value={ruleFrom} onChange={(e) => setRuleFrom(e.target.value)} className="w-full px-3 py-2 border border-dark-500 rounded-lg text-sm focus:ring-2 focus:ring-accent-500 outline-none" placeholder="Any" />
               </div>
             </div>
@@ -1668,7 +1668,7 @@ export default function Security() {
             </div>
 
             {/* What this lockdown is actually DOING to terminals.
-                Rendered from `terminals_blocked` — the computed answer — and
+                Rendered from `terminals_blocked` - the computed answer - and
                 never from the stored `terminals_disabled` column: that column is
                 DEFAULT TRUE in the migration and `deactivate_lockdown` never
                 clears it, so it reads TRUE on a panel that has never been locked
@@ -1684,11 +1684,11 @@ export default function Security() {
                 className="mb-4 px-4 py-3 rounded-lg border"
               />
             )}
-            {/* Active, but this lockdown left terminals open — the one case
+            {/* Active, but this lockdown left terminals open - the one case
                 where a shell is still available during an incident. */}
             {lockdown?.active && lockdown.terminals_blocked === false && (
               <p className="mb-4 text-xs font-mono text-dark-300">
-                This lockdown did not disable terminals — shells can still be opened.
+                This lockdown did not disable terminals - shells can still be opened.
               </p>
             )}
 
@@ -1698,14 +1698,14 @@ export default function Security() {
             </div>
           </div>
 
-          {/* Suspicious Events — the feed the threshold above actually counts.
+          {/* Suspicious Events - the feed the threshold above actually counts.
               Sits ahead of the immutable audit log on purpose: this is the
               "why is lockdown close to firing" narrative, the log below is
               the "what already happened" record. */}
           <div className="bg-dark-800 rounded-lg border border-dark-500 overflow-hidden">
             <div className="px-5 py-3 border-b border-dark-600">
               <h3 className="text-xs font-medium text-dark-300 uppercase font-mono tracking-widest">Suspicious Events</h3>
-              <p className="text-xs text-dark-200 mt-0.5">Events counted toward the auto-lockdown threshold above — proxy/datacenter logins, staging-clone abuse, deploy anomalies.</p>
+              <p className="text-xs text-dark-200 mt-0.5">Events counted toward the auto-lockdown threshold above - proxy/datacenter logins, staging-clone abuse, deploy anomalies.</p>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -1812,12 +1812,12 @@ export default function Security() {
             </table>
           </div>
 
-          {/* Email verification — the recovery door for a verification that can never
+          {/* Email verification - the recovery door for a verification that can never
               complete (#100). Sits beside Approvals because it is the same shape: an
               administrator releasing an account the account cannot release itself. */}
           <p className="text-sm text-dark-400 pt-2">
             Accounts blocked by email verification. Sign-in is refused for an unverified
-            account whenever an SMTP host is set — even if that SMTP host does not work.
+            account whenever an SMTP host is set - even if that SMTP host does not work.
             <span className="text-dark-300"> No link can be resent</span> to an account
             marked <span className="font-mono text-xs">no link exists</span>, so this
             button is the only way in besides editing the database.

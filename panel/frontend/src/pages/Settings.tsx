@@ -22,7 +22,7 @@ import {
 // exactly, and a pin arm compares them.
 //
 // It was ten entries while the panel had grown to twenty producers, so half the
-// alert types that page an operator had no control here at all — including
+// alert types that page an operator had no control here at all - including
 // every certificate-renewal failure. Adding a producer means adding it here.
 //
 // No exemptions: a pin arm compares this list against the alert types the
@@ -57,7 +57,7 @@ const SUPPRESSIBLE_ALERT_TYPES: { key: string; label: string }[] = [
  * Distinct from muting, and the distinction is the whole point of the two
  * columns in the grid below. `muted_types` suppresses the external send while
  * the `alerts` row and the admin bell still happen; these columns are read by
- * `is_alert_enabled` BEFORE the INSERT, so the event never exists — no row, no
+ * `is_alert_enabled` BEFORE the INSERT, so the event never exists - no row, no
  * bell, no status-page incident. A type absent from this map has no such
  * column and is always recorded.
  *
@@ -86,14 +86,14 @@ const RECORD_COLUMN_BY_TYPE: Record<string, string> = {
  *    bg → --color-dark-900 · sidebar → --color-dark-950 · card → --color-dark-800
  *    bar → --color-dark-700 · text → --color-dark-500
  *    accent → --color-rust-400 on the dark themes, --color-rust-500 on the two
- *             light ones (arctic, clean) — rust-400 is a light tint there and
+ *             light ones (arctic, clean) - rust-400 is a light tint there and
  *             would not clear the 3.0 non-text floor against the swatch card.
  *
  *  It is a copy on purpose: a getComputedStyle probe cannot work while terminal's
  *  ramp lives in @theme on :root with no [data-theme="terminal"] block, because a
  *  probe element inherits the CURRENT theme and would report ember's colours for
  *  Terminal while you are on ember. A pin asserts these stay in step with
- *  index.css — update both together, or the pin goes red.
+ *  index.css - update both together, or the pin goes red.
  *
  *  Previously drifted: every one of ember's six fields was invented (none of the
  *  values appeared in index.css at all), terminal's and midnight's `text` had been
@@ -109,7 +109,7 @@ const THEME_SWATCHES = [
   { id: "clean", name: "Clean Light", desc: "Modern SaaS, blue", bg: "#f8fafc", sidebar: "#ffffff", accent: "#2563eb", card: "#f1f5f9", text: "#94a3b8", bar: "#e2e8f0" },
 ] as const;
 
-const DEFAULT_SWATCH = THEME_SWATCHES[1]; // midnight — the default theme
+const DEFAULT_SWATCH = THEME_SWATCHES[1]; // midnight - the default theme
 
 interface HealthStatus {
   db: string;
@@ -134,7 +134,7 @@ interface CleanupResult {
  * The setting is panel-global, so the push is fleet-wide: `smtp` says where the
  * config actually landed, host by host, and `warning` is the API's own sentence
  * for the partial case. Everything below `ok` is absent when the save touched no
- * SMTP key or when no host was configured — hence every field optional.
+ * SMTP key or when no host was configured - hence every field optional.
  */
 interface SmtpSaveResult {
   ok: boolean;
@@ -145,7 +145,7 @@ interface SmtpSaveResult {
     configured: string[];
     /** Hosts that were asked and refused. */
     failed: { server: string; error: string }[];
-    /** Registered hosts no agent could be resolved for — never asked at all. */
+    /** Registered hosts no agent could be resolved for - never asked at all. */
     not_asked: { server: string; status: string }[];
   };
 }
@@ -159,7 +159,7 @@ interface OAuthRedirects {
   redirect_uris: Record<string, string>;
 }
 
-/** Must stay the set routes/oauth.rs::OAUTH_PROVIDERS accepts — a card for a
+/** Must stay the set routes/oauth.rs::OAUTH_PROVIDERS accepts - a card for a
  *  provider `get_provider` does not know is a control that cannot work. */
 const OAUTH_PROVIDERS = [
   { id: "google", label: "Google", console: "https://console.cloud.google.com/apis/credentials" },
@@ -176,7 +176,7 @@ const NOTIF_CHANNELS = [
 ] as const;
 
 /** Placeholders services/notifications.rs::format_message substitutes. Anything
- *  else is passed through verbatim — an operator typing {{host}} gets "{{host}}". */
+ *  else is passed through verbatim - an operator typing {{host}} gets "{{host}}". */
 const NOTIF_PLACEHOLDERS = ["{{title}}", "{{message}}", "{{severity}}", "{{timestamp}}"] as const;
 
 export default function Settings() {
@@ -231,7 +231,7 @@ export default function Settings() {
   const [webhookResult, setWebhookResult] = useState<{ type: string; msg: string }>({ type: "", msg: "" });
   const [mutedTypes, setMutedTypes] = useState<string[]>([]);
   // Defaults mirror the schema, which declares every one of these NOT NULL
-  // DEFAULT TRUE — so an unsaved page shows what the backend would do.
+  // DEFAULT TRUE - so an unsaved page shows what the backend would do.
   const [recordTypes, setRecordTypes] = useState<Record<string, boolean>>({
     alert_cpu: true,
     alert_memory: true,
@@ -260,7 +260,7 @@ export default function Settings() {
   const [hostname, setHostname] = useState("");
 
   // Theme. Read through readStoredTheme so a legacy stored id ("nexus", "dark")
-  // resolves to the theme actually on screen — this used to be the one reader
+  // resolves to the theme actually on screen - this used to be the one reader
   // that skipped the migration, so such a user saw NO swatch marked active.
   const [currentTheme, setCurrentTheme] = useState(readStoredTheme);
   const [showHeader, setShowHeader] = useState(() => localStorage.getItem("dp-show-header") === "true");
@@ -270,7 +270,7 @@ export default function Settings() {
 
   // OAuth sign-in providers. The keys behind these were writable through the
   // settings API and read by routes/oauth.rs since the feature shipped, with no
-  // control anywhere — so the panel's only unconfigurable door was an
+  // control anywhere - so the panel's only unconfigurable door was an
   // authentication one. Same shape as the s275 note on OAuth Auto-Registration
   // below: the switch existed, the operator could not see it.
   const [oauthCreds, setOauthCreds] = useState<Record<string, { id: string; secret: string }>>(
@@ -279,7 +279,7 @@ export default function Settings() {
   const [oauthRedirects, setOauthRedirects] = useState<OAuthRedirects | null>(null);
   const [copiedRedirect, setCopiedRedirect] = useState<string | null>(null);
 
-  // Notification templates (Gap #70) — read by services/notifications.rs.
+  // Notification templates (Gap #70) - read by services/notifications.rs.
   const [notifTemplates, setNotifTemplates] = useState<Record<string, string>>(
     Object.fromEntries(NOTIF_CHANNELS.map(c => [c.id, ""]))
   );
@@ -402,15 +402,15 @@ export default function Settings() {
         setNotifyPagerdutyKey(r.notify_pagerduty_key || "");
         if (r.muted_types) {
           // Drop tokens this build cannot suppress before they reach the
-          // checkboxes. A stale one would otherwise survive every Save — it
-          // round-trips through the payload untouched — and the backend now
+          // checkboxes. A stale one would otherwise survive every Save - it
+          // round-trips through the payload untouched - and the backend now
           // refuses the write, so a settings page carrying one could never be
           // saved again. Filtering here lets the next Save heal the row.
           const known = new Set(SUPPRESSIBLE_ALERT_TYPES.map(t => t.key));
           setMutedTypes(r.muted_types.split(',').map((t: string) => t.trim()).filter((t: string) => known.has(t)));
         }
         // `!== false` so an absent column reads as the schema default (TRUE)
-        // rather than as "switched off" — the reassuring direction here is the
+        // rather than as "switched off" - the reassuring direction here is the
         // WRONG one: showing a box ticked for a type the operator had silenced
         // would invite them to save it back on without noticing.
         setRecordTypes({
@@ -429,7 +429,7 @@ export default function Settings() {
         if (r.gpu_vram_threshold) setGpuVramThreshold(r.gpu_vram_threshold);
       }
     } catch { /* ignore */ }
-    // A missing policy list must not break the notification tab — the picker just has
+    // A missing policy list must not break the notification tab - the picker just has
     // nothing to offer, which is also the honest state when no policies exist yet.
     try {
       const policies = await api.get<{ id: string; name: string }[]>("/escalation-policies");
@@ -481,7 +481,7 @@ export default function Settings() {
       // Saving SMTP pushes the config at EVERY member of the fleet, and the
       // write to `settings` succeeding says nothing about whether it landed.
       // `warning` is a complete sentence from the API naming the hosts that
-      // rejected it and the hosts that were never asked — the ones whose mail
+      // rejected it and the hosts that were never asked - the ones whose mail
       // will keep using stale credentials until SMTP is saved again. Same
       // response shape and same handling as BackupOrchestrator's deleteDest.
       const res = await api.put<SmtpSaveResult>("/settings", {
@@ -553,7 +553,7 @@ export default function Settings() {
   // Deep-linkable tab, the same shape Monitoring.tsx and Security.tsx already
   // use. Without it this page always opened on "general", so every control
   // anywhere in the panel that said "configure X in Settings" landed the
-  // operator one tab short of X and left them to find it — and there was no way
+  // operator one tab short of X and left them to find it - and there was no way
   // to write a correct link even if you wanted to, because nothing here read the
   // URL. "Configure alert channels →" on the notifications page was the instance
   // that surfaced it; there are several more.
@@ -629,7 +629,7 @@ export default function Settings() {
       {/* Issue #120: this used to be an inline bar rendered here, at the top of
           the page. The Reverse Proxy control that arms it sits near the bottom,
           so switching back to nginx looked like it did nothing at all. It is a
-          portalled dialog now — see components/ConfirmDialog. */}
+          portalled dialog now - see components/ConfirmDialog. */}
       {pendingConfirm && (
         <ConfirmDialog
           label={pendingConfirm.label}
@@ -655,7 +655,7 @@ export default function Settings() {
                 value={panelName}
                 onChange={(e) => setPanelName(e.target.value)}
                 className="w-full px-3 py-2 border border-dark-500 rounded-lg text-sm focus:ring-2 focus:ring-accent-500 focus:border-accent-500"
-                placeholder="DockPanel"
+                placeholder="CyberHunter - Panel"
               />
             </div>
             <div>
@@ -670,7 +670,7 @@ export default function Settings() {
               />
               <p className="text-xs text-dark-200 mt-1">
                 Where this panel is reachable. Alert notifications use it to link to the
-                matching runbook — leave it empty and alerts are still delivered, but
+                matching runbook - leave it empty and alerts are still delivered, but
                 without the link.
               </p>
             </div>
@@ -686,7 +686,7 @@ export default function Settings() {
           </div>
         </div>
 
-        {/* Auto-Healing — part of General tab */}
+        {/* Auto-Healing - part of General tab */}
         <div className="bg-dark-800 rounded-lg border border-dark-500 overflow-hidden">
           <div className="px-5 py-3 border-b border-dark-600">
             <h3 className="text-xs font-medium text-dark-300 uppercase font-mono tracking-widest">Auto-Healing</h3>
@@ -723,7 +723,7 @@ export default function Settings() {
               <>
                 <div className="text-xs text-dark-300 space-y-1 pl-4 border-l-2 border-dark-600">
                   <p>Crashed services are restarted (max once per 10 minutes)</p>
-                  <p>Oversized logs and <span className="font-mono">/tmp</span> files older than 7 days are cleaned when a server crosses its disk threshold (default 85%) — on that server, at most once per hour</p>
+                  <p>Oversized logs and <span className="font-mono">/tmp</span> files older than 7 days are cleaned when a server crosses its disk threshold (default 85%) - on that server, at most once per hour</p>
                   <p>SSL certs are renewed on the CA's ACME Renewal Information (ARI) schedule, or a profile-aware fallback (2d for shortlived, 15d for tlsserver, 30d for classic). Max once per 6 hours per domain.</p>
                   <p>All actions are logged in the Audit Log page</p>
                 </div>
@@ -734,8 +734,8 @@ export default function Settings() {
                   <div className="pr-4">
                     <p className="text-sm text-dark-100">Also reclaim unused Docker resources</p>
                     <p className="text-xs text-dark-300 mt-0.5">
-                      When a disk alert triggers cleanup, additionally remove <span className="font-medium">dangling images, build cache and unattached networks that DockPanel does not manage</span>.
-                      Containers, volumes and images belonging to your apps are never touched — including apps that are only sleeping.
+                      When a disk alert triggers cleanup, additionally remove <span className="font-medium">dangling images, build cache and unattached networks that CyberHunter - Panel does not manage</span>.
+                      Containers, volumes and images belonging to your apps are never touched - including apps that are only sleeping.
                     </p>
                   </div>
                   <button
@@ -762,7 +762,7 @@ export default function Settings() {
           </div>
         </div>
 
-        {/* Reverse Proxy — Traefik option */}
+        {/* Reverse Proxy - Traefik option */}
         <div className="bg-dark-800 rounded-lg border border-dark-500 overflow-hidden">
           <div className="px-5 py-3 border-b border-dark-600">
             <h3 className="text-xs font-medium text-dark-300 uppercase font-mono tracking-widest">Reverse Proxy</h3>
@@ -848,11 +848,11 @@ export default function Settings() {
           </div>
         </div>
 
-        {/* Public Status Page — part of General tab */}
+        {/* Public Status Page - part of General tab */}
         <div className="bg-dark-800 rounded-lg border border-dark-500 overflow-hidden">
           <div className="px-5 py-3 border-b border-dark-600">
             <h3 className="text-xs font-medium text-dark-300 uppercase font-mono tracking-widest">Public Status Page</h3>
-            <p className="text-xs text-dark-200 mt-0.5">The master switch for everything served publicly at /status — off by default</p>
+            <p className="text-xs text-dark-200 mt-0.5">The master switch for everything served publicly at /status - off by default</p>
           </div>
           <div className="p-5">
             <div className="flex items-center justify-between">
@@ -860,7 +860,7 @@ export default function Settings() {
                 <p className="text-sm text-dark-100">Enable public status page</p>
                 <p className="text-xs text-dark-300 mt-0.5">
                   Publishes, to anyone on the internet with no login: every enabled monitor's name and
-                  status, your status-page components, and any incident marked visible on the status page —
+                  status, your status-page components, and any incident marked visible on the status page -
                   including the ones the alert engine files for you, whose titles name your servers and
                   services. Appearance and history are configured under Incidents.
                 </p>
@@ -888,8 +888,8 @@ export default function Settings() {
         </div>
 
         {/* A timezone selector lived here until v2.46.0, claiming to "affect
-            displayed timestamps throughout the panel". Nothing read the key —
-            not the backend, not this frontend — so every timestamp stayed UTC.
+            displayed timestamps throughout the panel". Nothing read the key -
+            not the backend, not this frontend - so every timestamp stayed UTC.
             Removed rather than left lying; re-add it together with the
             formatting it promises, not before. */}
 
@@ -902,7 +902,7 @@ export default function Settings() {
             <div>
               <label className="block text-sm font-medium text-dark-100 mb-1">Logo URL</label>
               <input type="url" value={settings.logo_url || ""} onChange={e => setSettings({ ...settings, logo_url: e.target.value })}
-                placeholder="https://example.com/logo.png — or upload below" className="w-full px-3 py-2 border border-dark-500 rounded-lg text-sm focus:ring-2 focus:ring-accent-500 outline-none" />
+                placeholder="https://example.com/logo.png - or upload below" className="w-full px-3 py-2 border border-dark-500 rounded-lg text-sm focus:ring-2 focus:ring-accent-500 outline-none" />
               <div className="mt-2 flex items-center gap-3">
                 <label className="px-3 py-1.5 bg-dark-700 hover:bg-dark-600 border border-dark-500 rounded-lg text-xs font-medium cursor-pointer">
                   Upload image…
@@ -934,7 +934,7 @@ export default function Settings() {
                     }
                   }} />
                 </label>
-                <span className="text-xs text-dark-300">PNG, JPEG, or WebP — up to 2 MB</span>
+                <span className="text-xs text-dark-300">PNG, JPEG, or WebP - up to 2 MB</span>
               </div>
             </div>
             <div>
@@ -949,15 +949,15 @@ export default function Settings() {
             </div>
             {/* hide_branding was the third key in this card's own family with no
                 control: GET /api/branding returns it, and NexusLayout,
-                CommandLayout and Login all hide the DockPanel mark when it is
-                set — a white-label switch every consumer honoured and nobody
+                CommandLayout and Login all hide the CyberHunter - Panel mark when it is
+                set - a white-label switch every consumer honoured and nobody
                 could throw. Default is closed (an absent row reads false), so
                 this compares === "true", unlike the default-open toggles in the
                 Security Hardening card. */}
             <div className="flex items-center justify-between pt-1">
               <div>
-                <p className="text-sm text-dark-100">Hide DockPanel Branding</p>
-                <p className="text-xs text-dark-400">Remove the DockPanel name from the sidebar, header and login page</p>
+                <p className="text-sm text-dark-100">Hide CyberHunter - Panel Branding</p>
+                <p className="text-xs text-dark-400">Remove the CyberHunter - Panel name from the sidebar, header and login page</p>
               </div>
               <button onClick={() => setSettings({ ...settings, hide_branding: settings.hide_branding === "true" ? "false" : "true" })}
                 className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${settings.hide_branding === "true" ? "bg-rust-500" : "bg-dark-600"}`}>
@@ -1348,7 +1348,7 @@ export default function Settings() {
                   value={smtpFromName}
                   onChange={(e) => setSmtpFromName(e.target.value)}
                   className="w-full px-3 py-2 border border-dark-500 rounded-lg text-sm focus:ring-2 focus:ring-accent-500 focus:border-accent-500 outline-none"
-                  placeholder="DockPanel"
+                  placeholder="CyberHunter - Panel"
                 />
               </div>
             </div>
@@ -1375,12 +1375,12 @@ export default function Settings() {
 
         {/* The self-service cards below are SHARED with `pages/Account.tsx`, the
             non-adminOnly door every role can reach. One implementation, two
-            callers — a copy here would drift the moment either side changed. */}
+            callers - a copy here would drift the moment either side changed. */}
         {tab === "account" && (<>
         <TwoFactorCard />
 
         {/* 2FA Enforcement. The "(admin only)" in this comment was the ONLY
-            thing asserting it — no role check existed, so the toggle rendered
+            thing asserting it - no role check existed, so the toggle rendered
             for every account that reached /settings by URL. `PUT /api/settings`
             is `AdminUser`, so it always refused; a control that refuses is a
             broken promise rather than a leak, which is why it survived. */}
@@ -1413,10 +1413,10 @@ export default function Settings() {
 
         <PasskeysCard />
 
-        {/* SSH Keys — Security tab */}
+        {/* SSH Keys - Security tab */}
         <SSHKeys />
 
-        {/* Auto-Updates — Security tab */}
+        {/* Auto-Updates - Security tab */}
         <AutoUpdates />
 
         {/* The "Panel IP Whitelist" card that stood here was removed in v2.90.0: it
@@ -1484,7 +1484,7 @@ export default function Settings() {
             </div>
             {/* OAuth Auto-Registration.
                 Surfaced at s275. This setting existed and was writable through
-                the settings API, but had NO control anywhere in the panel — so
+                the settings API, but had NO control anywhere in the panel - so
                 an operator could turn Self-Registration off above and still have
                 new accounts created by anyone who could reach a configured OAuth
                 provider, through a switch they could not see.
@@ -1492,7 +1492,7 @@ export default function Settings() {
                 Note the comparison: `!== "false"`, not `=== "true"`. The backend
                 default for this key is OPEN (an absent row means allowed), which
                 is the opposite of the toggle above it. Rendering it the same way
-                would show OFF while the server still said yes — a control that
+                would show OFF while the server still said yes - a control that
                 lies in the reassuring direction. */}
             <div className="px-5 py-3 flex items-center justify-between">
               <div>
@@ -1554,7 +1554,7 @@ export default function Settings() {
                 <p className="text-xs text-dark-400">Record all terminal sessions for forensic replay</p>
                 {/* The toggle is one row in settings, but each server's agent enforces
                     it. An agent older than the gate release ignores the signed claim
-                    and records regardless — so without this, switching recording off
+                    and records regardless - so without this, switching recording off
                     reports a fleet-wide success that is false for those members. */}
                 {recordingLagging.length > 0 && (
                   <p className="text-xs text-warn-400 mt-1">
@@ -1562,7 +1562,7 @@ export default function Settings() {
                       ? "Still recording on "
                       : "Not controlled by this toggle on "}
                     {recordingLagging.map((s) => `${s.name} (agent ${s.agent_version})`).join(", ")}
-                    {" — update the agent there for this setting to apply."}
+                    {" - update the agent there for this setting to apply."}
                   </p>
                 )}
               </div>
@@ -1618,18 +1618,18 @@ export default function Settings() {
               {/* The switch above reports the SETTING. This reports the TRIPWIRE.
                   They were the same control until v2.132.0, and because nothing in
                   the product planted a canary, "on" meant "watching nothing" on
-                  every install — an intrusion detector whose only observable
+                  every install - an intrusion detector whose only observable
                   behaviour was silence, which is what a working one looks like. */}
               {settings.security_canary_enabled !== "false" && (
                 <div className="mt-2.5">
                   {canaryErr ? (
-                    <p className="text-xs text-warn-400">Armed state unavailable ({canaryErr}) — this screen cannot confirm anything is being watched.</p>
+                    <p className="text-xs text-warn-400">Armed state unavailable ({canaryErr}) - this screen cannot confirm anything is being watched.</p>
                   ) : canary ? (
                     <>
                       <div className="flex items-center justify-between gap-3">
                         <p className={`text-xs ${canary.watching === 0 ? "text-danger-400" : "text-dark-300"}`}>
                           {canary.watching === 0
-                            ? "NOT ARMED — no canary file is being watched, so no alert can ever fire."
+                            ? "NOT ARMED - no canary file is being watched, so no alert can ever fire."
                             : `Watching ${canary.watching} of ${canary.total} canary paths.`}
                         </p>
                         {canary.armable > 0 && (
@@ -1667,7 +1667,7 @@ export default function Settings() {
                                 : "text-warn-400"
                             }>{p.state === "watching" ? "watching" : p.state}</span>
                             <span className="text-dark-300">{p.path}</span>
-                            {p.detail && <span className="text-dark-400 font-sans">— {p.detail}</span>}
+                            {p.detail && <span className="text-dark-400 font-sans">- {p.detail}</span>}
                           </li>
                         ))}
                       </ul>
@@ -1695,7 +1695,7 @@ export default function Settings() {
                 className="w-16 px-2 py-1 border border-dark-500 rounded text-sm text-center focus:ring-2 focus:ring-accent-500 outline-none bg-dark-700"
               />
             </div>
-            {/* Lockdown window — the other half of the threshold rule. It had no
+            {/* Lockdown window - the other half of the threshold rule. It had no
                 control at all until v2.46.0, so the sentence "5 in 10 min" was
                 only half adjustable. Default mirrors the server's own (10). */}
             <div className="px-5 py-3 flex items-center justify-between">
@@ -1732,7 +1732,7 @@ export default function Settings() {
             </div>
             {/* Server terminal kill switch. The stored key is INVERTED
                 (`server_terminal_disabled`) and the server treats an absent row as
-                "not disabled", so the toggle reads `!== "true"` — writing it the
+                "not disabled", so the toggle reads `!== "true"` - writing it the
                 other way round would draw this OFF on every fresh install while
                 the terminal was in fact open. */}
             <div className="px-5 py-3 flex items-center justify-between">
@@ -1767,7 +1767,7 @@ export default function Settings() {
                   try {
                     await api.put("/settings", { allowed_panel_ips: panelIps });
                     setSettings(prev => ({ ...prev, allowed_panel_ips: panelIps }));
-                    setMessage({ text: panelIps.trim() ? "IP allowlist saved" : "IP allowlist cleared — all addresses allowed", type: "success" });
+                    setMessage({ text: panelIps.trim() ? "IP allowlist saved" : "IP allowlist cleared - all addresses allowed", type: "success" });
                   } catch (e) { setMessage({ text: e instanceof Error ? e.message : "Failed", type: "error" }); }
                 }} className="px-4 py-2 bg-rust-500 text-white rounded-lg text-sm font-medium hover:bg-rust-600">Save</button>
               </div>
@@ -1778,7 +1778,7 @@ export default function Settings() {
 
         {/* Data retention windows. The reader (auto_healer.rs's run_retention_cleanup,
             GAP 67) has existed for a while but had no ALLOWED_KEYS entry and no
-            control here — every install was stuck at the hardcoded defaults with no
+            control here - every install was stuck at the hardcoded defaults with no
             way to change them. Found by the first dockpanel loose-ends audit. */}
         {user?.role === "admin" && (
         <div className="bg-dark-800 rounded-lg border border-dark-500 overflow-hidden mt-4">
@@ -1907,7 +1907,7 @@ export default function Settings() {
 
         {/* OAuth Sign-In Providers.
             The six oauth_*_client_id/_client_secret keys were in ALLOWED_KEYS,
-            masked on read, encrypted on write and consumed by routes/oauth.rs —
+            masked on read, encrypted on write and consumed by routes/oauth.rs -
             every part of the path built except the screen. So the panel's one
             unconfigurable setting was a login door, which s277 had just finished
             putting the IP allowlist and lockdown gates on.
@@ -2000,10 +2000,10 @@ export default function Settings() {
                         // branding endpoint lists a provider as soon as its
                         // client_id is non-empty, so a half-save puts a working
                         // button on the login page that dead-ends at the callback
-                        // with "OAuth not fully configured" — visible to every
+                        // with "OAuth not fully configured" - visible to every
                         // logged-out visitor, diagnosable by nobody.
                         if (id && !secret) {
-                          setMessage({ text: `${p.label}: a client secret is required — with only a client ID the button appears on the login page and sign-in fails at the callback`, type: "error" });
+                          setMessage({ text: `${p.label}: a client secret is required - with only a client ID the button appears on the login page and sign-in fails at the callback`, type: "error" });
                           return;
                         }
                         if (!id && secret && secret !== "********") {
@@ -2011,7 +2011,7 @@ export default function Settings() {
                           return;
                         }
                         const body: Record<string, string> = { [`oauth_${p.id}_client_id`]: id };
-                        // The mask means "unchanged" — the backend skips it. Send
+                        // The mask means "unchanged" - the backend skips it. Send
                         // the secret only when it is a real new value, and clear
                         // it explicitly when the ID is being removed, so disabling
                         // a provider does not leave its secret behind.
@@ -2139,7 +2139,7 @@ export default function Settings() {
               />
               <p className="text-xs text-dark-300 mt-1">Events API v2 integration key. Get it from PagerDuty &gt; Services &gt; Integrations.</p>
             </div>
-            {/* Escalation policy — attached through its own admin-only endpoint, so it
+            {/* Escalation policy - attached through its own admin-only endpoint, so it
                 applies the moment it is picked rather than waiting on Save below. */}
             <div className="bg-dark-800 rounded-lg border border-dark-600 p-5 space-y-2">
               <label htmlFor="escalation-policy" className="block text-sm font-medium text-dark-100">Escalation Policy</label>
@@ -2155,7 +2155,7 @@ export default function Settings() {
                     await api.put(`/alert-rules/${alertRuleId}/escalation-policy`, { policy_id: next || null });
                     setMessage({ text: next ? "Escalation policy attached" : "Escalation policy removed", type: "success" });
                   } catch (err) {
-                    // Put the picker back where it was — leaving it showing a policy the
+                    // Put the picker back where it was - leaving it showing a policy the
                     // rule does not carry is the same lie this release is about.
                     setEscalationPolicyId(previous);
                     setMessage({ text: err instanceof Error ? err.message : "Failed to attach policy", type: "error" });
@@ -2170,16 +2170,16 @@ export default function Settings() {
                 {!alertRuleId
                   ? "Save your notification settings once to create an alert rule, then choose a policy."
                   : escalationPolicies.length === 0
-                    ? "No policies yet — build one on the Alerts page under Escalation."
+                    ? "No policies yet - build one on the Alerts page under Escalation."
                     : "Unacknowledged alerts follow this chain instead of the built-in reminder cadence, then keep re-paging its last step every 30 minutes until acknowledged."}
               </p>
             </div>
-            {/* Alert Behaviour — one row per type, Record and Notify side by side.
+            {/* Alert Behaviour - one row per type, Record and Notify side by side.
                 These are two different switches and were previously two different
                 shapes: a checkbox grid for muting, and nothing at all for the
                 record columns, which were reachable only through Export/Import
                 Config. A single row per type is what makes the difference
-                legible — the alternative on the table was a second grid beside
+                legible - the alternative on the table was a second grid beside
                 the first, one meaning "don't page me" and the other "don't
                 record it".
                 Both columns read positively: ticked = it happens. The mute grid
@@ -2188,9 +2188,9 @@ export default function Settings() {
             <div className="bg-dark-800 rounded-lg border border-dark-600 p-5 space-y-3">
               <h3 className="text-sm font-medium text-dark-100 font-mono">Alert Behaviour</h3>
               <p className="text-xs text-dark-400">
-                <span className="text-dark-200">Record</span> keeps the alert inside the panel — the alert row, the
+                <span className="text-dark-200">Record</span> keeps the alert inside the panel - the alert row, the
                 bell, and any status-page incident. Switched off, the event is never created at all.{" "}
-                <span className="text-dark-200">Notify</span> governs only the external send — Slack, Discord,
+                <span className="text-dark-200">Notify</span> governs only the external send - Slack, Discord,
                 PagerDuty, webhooks. Switched off, the alert is still recorded; you just are not paged for it.
               </p>
               <div className="overflow-x-auto">
@@ -2222,7 +2222,7 @@ export default function Settings() {
                                 className="rounded border-dark-500 bg-dark-900 text-rust-500 focus:ring-rust-500"
                               />
                             ) : (
-                              <span className="text-dark-500" title="Always recorded — this type has no record switch">&mdash;</span>
+                              <span className="text-dark-500" title="Always recorded - this type has no record switch">-</span>
                             )}
                           </td>
                           <td className="py-2 text-center">
@@ -2243,7 +2243,7 @@ export default function Settings() {
                 </table>
               </div>
               <p className="text-xs text-dark-500">
-                &mdash; means the type is always recorded and has no switch. The three GPU rows share a single
+                - means the type is always recorded and has no switch. The three GPU rows share a single
                 switch, the same one the GPU card below uses.
               </p>
             </div>
@@ -2252,7 +2252,7 @@ export default function Settings() {
               <div className="flex items-center justify-between">
                 <div>
                   <h3 className="text-sm font-medium text-dark-100 font-mono">GPU Alert Thresholds</h3>
-                  <p className="text-xs text-dark-400 mt-0.5">Configure when GPU alerts fire. Only applies to servers with NVIDIA GPUs. The Enabled box is the same switch as the three GPU rows in the grid above &mdash; one value, shown in both places.</p>
+                  <p className="text-xs text-dark-400 mt-0.5">Configure when GPU alerts fire. Only applies to servers with NVIDIA GPUs. The Enabled box is the same switch as the three GPU rows in the grid above - one value, shown in both places.</p>
                 </div>
                 <label className="flex items-center gap-2 text-sm text-dark-200 cursor-pointer">
                   <input type="checkbox" checked={gpuAlertEnabled} onChange={e => setGpuAlertEnabled(e.target.checked)}
@@ -2308,7 +2308,7 @@ export default function Settings() {
                     // impossible: the handler COALESCEs a null onto the stored value, so
                     // the old webhook survived, alerts kept being posted to it, and the
                     // save still answered "Notification channels saved". An empty string
-                    // is the safe sentinel at both ends — the SSRF validators skip a
+                    // is the safe sentinel at both ends - the SSRF validators skip a
                     // blank field rather than rejecting it, and every sender guards on
                     // the value being non-empty before it delivers.
                     await api.put("/alert-rules", {
@@ -2355,14 +2355,14 @@ export default function Settings() {
         {/* An "Additional Settings" card lived here until v2.46.0 with two inputs:
             an email footer "appended to notification emails" and an events webhook
             that "receives POST for site.create, app.deploy, security.scan". Both
-            saved successfully and neither was ever read — no code appends the
+            saved successfully and neither was ever read - no code appends the
             footer, and nothing POSTs anywhere. Removed rather than left lying;
             they come back with the code that honours them. */}
 
         {/* Notification Templates (Gap #70).
             The mirror image of the card removed above: these four keys ARE read
-            — services/notifications.rs::format_message looks up
-            notif_template_{channel} on every alert and substitutes into it — and
+            - services/notifications.rs::format_message looks up
+            notif_template_{channel} on every alert and substitutes into it - and
             had no control, so the feature existed only for whoever could reach
             the settings API by hand. */}
         {user?.role === "admin" && (
@@ -2377,7 +2377,7 @@ export default function Settings() {
               {NOTIF_PLACEHOLDERS.map(ph => (
                 <code key={ph} className="px-1.5 py-0.5 bg-dark-900 rounded text-xs font-mono text-rust-400">{ph}</code>
               ))}
-              <span className="text-xs text-dark-400">— anything else is sent literally.</span>
+              <span className="text-xs text-dark-400">- anything else is sent literally.</span>
             </div>
             {NOTIF_CHANNELS.map(c => (
               <div key={c.id}>
@@ -2446,17 +2446,17 @@ export default function Settings() {
         {/* Prometheus metrics endpoint */}
         <PrometheusSettings setMessage={setMessage} />
 
-        {/* ACME contact — rendered BEFORE the profile card, and independent of it:
+        {/* ACME contact - rendered BEFORE the profile card, and independent of it:
             a bad contact is one reason the profile card's directory call fails. */}
         <AcmeContactSettings setMessage={setMessage} />
 
-        {/* ACME profile selection — 2026-ready Let's Encrypt */}
+        {/* ACME profile selection - 2026-ready Let's Encrypt */}
         <AcmeSettings setMessage={setMessage} />
 
         {/* AI-assisted build/deploy failure diagnosis (BYO API key) */}
         <AiDiagnosisSettings setMessage={setMessage} />
 
-        {/* MCP server (dockpanel-mcp) — read-only introspection for AI agents */}
+        {/* MCP server (dockpanel-mcp) - read-only introspection for AI agents */}
         <McpServerSettings setMessage={setMessage} onManageKeys={() => setTab("account")} />
 
         {/* System Health */}
@@ -2604,9 +2604,9 @@ function ServiceInstallers({ pdnsApiUrl, setPdnsApiUrl, pdnsApiKey, setPdnsApiKe
     { id: "redis", label: "Redis", desc: "In-memory cache and data store for PHP applications", field: "redis", checkInstalled: (s: ServiceStatus) => s?.redis?.installed, checkRunning: (s: ServiceStatus) => s?.redis?.running, extra: () => null },
     { id: "nodejs", label: "Node.js", desc: "JavaScript runtime for builds, SSR, and npm packages", field: "nodejs", checkInstalled: (s: ServiceStatus) => s?.nodejs?.installed, checkRunning: () => null, extra: () => null },
     { id: "composer", label: "Composer", desc: "PHP dependency manager for Laravel, Symfony, Drupal", field: "composer", checkInstalled: (s: ServiceStatus) => s?.composer?.installed, checkRunning: () => null, extra: () => null },
-    { id: "waf", label: "WAF (ModSecurity)", desc: "Web Application Firewall with OWASP CRS — blocks SQL injection, XSS, and OWASP Top 10", field: "waf", checkInstalled: (s: ServiceStatus) => s?.waf?.installed, checkRunning: () => null, extra: () => null },
-    { id: "cloudflared", label: "Cloudflare Tunnel", desc: "Expose sites without port forwarding — zero-trust access via Cloudflare's network", field: "cloudflared", checkInstalled: (s: ServiceStatus) => s?.cloudflared?.installed, checkRunning: (s: ServiceStatus) => s?.cloudflared?.running, extra: () => null },
-    { id: "sshpass", label: "sshpass", desc: "Required for password-authenticated SFTP backup destinations — not needed for SSH-key or S3 destinations", field: "sshpass", checkInstalled: (s: ServiceStatus) => s?.sshpass?.installed, checkRunning: () => null, extra: () => null },
+    { id: "waf", label: "WAF (ModSecurity)", desc: "Web Application Firewall with OWASP CRS - blocks SQL injection, XSS, and OWASP Top 10", field: "waf", checkInstalled: (s: ServiceStatus) => s?.waf?.installed, checkRunning: () => null, extra: () => null },
+    { id: "cloudflared", label: "Cloudflare Tunnel", desc: "Expose sites without port forwarding - zero-trust access via Cloudflare's network", field: "cloudflared", checkInstalled: (s: ServiceStatus) => s?.cloudflared?.installed, checkRunning: (s: ServiceStatus) => s?.cloudflared?.running, extra: () => null },
+    { id: "sshpass", label: "sshpass", desc: "Required for password-authenticated SFTP backup destinations - not needed for SSH-key or S3 destinations", field: "sshpass", checkInstalled: (s: ServiceStatus) => s?.sshpass?.installed, checkRunning: () => null, extra: () => null },
   ];
 
   return (
@@ -2635,7 +2635,7 @@ function ServiceInstallers({ pdnsApiUrl, setPdnsApiUrl, pdnsApiKey, setPdnsApiKe
 
         {/* Issue #120: this detached uninstall bar rendered here, above the
             service list, while the Uninstall buttons that arm it sit in the rows
-            below. It is a portalled dialog now — see components/ConfirmDialog. */}
+            below. It is a portalled dialog now - see components/ConfirmDialog. */}
         {svcPendingConfirm && (
           <ConfirmDialog
             label={`Uninstall ${svcPendingConfirm.label}?`}
@@ -2660,15 +2660,15 @@ function ServiceInstallers({ pdnsApiUrl, setPdnsApiUrl, pdnsApiKey, setPdnsApiKe
 
         {showGuide && (
           <div className="bg-dark-900 border border-dark-500 p-4 text-xs text-dark-200 space-y-2">
-            <p><span className="text-dark-100 font-medium">PHP</span> — Installs PHP-FPM + common extensions (mysql, curl, gd, mbstring, xml, zip, opcache). Required for WordPress and PHP sites.</p>
-            <p><span className="text-dark-100 font-medium">Certbot</span> — Installs Let's Encrypt certbot with nginx plugin. Enables auto-renewal timer. Required for free SSL certificates.</p>
-            <p><span className="text-dark-100 font-medium">UFW</span> — Installs firewall, opens SSH/HTTP/HTTPS/SMTP/IMAPS ports, enables with deny-by-default policy.</p>
-            <p><span className="text-dark-100 font-medium">Fail2Ban</span> — Installs intrusion prevention. Creates jails for SSH brute-force, nginx auth failures, Postfix, and Dovecot.</p>
-            <p><span className="text-dark-100 font-medium">PowerDNS</span> — Installs an authoritative DNS server with your choice of SQLite (no database server required) or PostgreSQL backend. Auto-configures the HTTP API and saves credentials to Settings.</p>
-            <p><span className="text-dark-100 font-medium">Mail Server</span> — Installs Postfix (SMTP), Dovecot (IMAP/POP3), and OpenDKIM (DKIM signing). Creates vmail user, configures virtual mailbox hosting with SASL auth and submission port (587). Manage domains and mailboxes from the Mail page.</p>
-            <p><span className="text-dark-100 font-medium">Redis</span> — Installs Redis in-memory data store. Used as cache backend for PHP applications (WordPress object cache, Laravel, Drupal). Runs as a systemd service on port 6379.</p>
-            <p><span className="text-dark-100 font-medium">Node.js</span> — Installs Node.js 22 LTS and npm via NodeSource. Used for build tools, SSR frameworks (Next.js, Nuxt), and running JavaScript/TypeScript applications.</p>
-            <p><span className="text-dark-100 font-medium">Composer</span> — Installs Composer globally at /usr/local/bin. The standard PHP dependency manager used by Laravel, Symfony, Drupal, and most PHP frameworks.</p>
+            <p><span className="text-dark-100 font-medium">PHP</span> - Installs PHP-FPM + common extensions (mysql, curl, gd, mbstring, xml, zip, opcache). Required for WordPress and PHP sites.</p>
+            <p><span className="text-dark-100 font-medium">Certbot</span> - Installs Let's Encrypt certbot with nginx plugin. Enables auto-renewal timer. Required for free SSL certificates.</p>
+            <p><span className="text-dark-100 font-medium">UFW</span> - Installs firewall, opens SSH/HTTP/HTTPS/SMTP/IMAPS ports, enables with deny-by-default policy.</p>
+            <p><span className="text-dark-100 font-medium">Fail2Ban</span> - Installs intrusion prevention. Creates jails for SSH brute-force, nginx auth failures, Postfix, and Dovecot.</p>
+            <p><span className="text-dark-100 font-medium">PowerDNS</span> - Installs an authoritative DNS server with your choice of SQLite (no database server required) or PostgreSQL backend. Auto-configures the HTTP API and saves credentials to Settings.</p>
+            <p><span className="text-dark-100 font-medium">Mail Server</span> - Installs Postfix (SMTP), Dovecot (IMAP/POP3), and OpenDKIM (DKIM signing). Creates vmail user, configures virtual mailbox hosting with SASL auth and submission port (587). Manage domains and mailboxes from the Mail page.</p>
+            <p><span className="text-dark-100 font-medium">Redis</span> - Installs Redis in-memory data store. Used as cache backend for PHP applications (WordPress object cache, Laravel, Drupal). Runs as a systemd service on port 6379.</p>
+            <p><span className="text-dark-100 font-medium">Node.js</span> - Installs Node.js 22 LTS and npm via NodeSource. Used for build tools, SSR frameworks (Next.js, Nuxt), and running JavaScript/TypeScript applications.</p>
+            <p><span className="text-dark-100 font-medium">Composer</span> - Installs Composer globally at /usr/local/bin. The standard PHP dependency manager used by Laravel, Symfony, Drupal, and most PHP frameworks.</p>
           </div>
         )}
 
@@ -2751,7 +2751,7 @@ function ServiceInstallers({ pdnsApiUrl, setPdnsApiUrl, pdnsApiKey, setPdnsApiKe
 
           {showPdnsGuide && (
             <div className="bg-dark-900 border border-dark-500 p-4 space-y-3 text-sm">
-              <p className="text-dark-200">The one-click <span className="text-dark-100 font-medium">Install</span> button above does all of this for you — choose <span className="text-dark-100 font-mono">SQLite</span> (no database server needed, recommended for most setups) or <span className="text-dark-100 font-mono">PostgreSQL</span>, and the API URL + key are generated and saved automatically.</p>
+              <p className="text-dark-200">The one-click <span className="text-dark-100 font-medium">Install</span> button above does all of this for you - choose <span className="text-dark-100 font-mono">SQLite</span> (no database server needed, recommended for most setups) or <span className="text-dark-100 font-mono">PostgreSQL</span>, and the API URL + key are generated and saved automatically.</p>
               <p className="text-dark-200 font-medium">Prefer to set it up by hand? SQLite backend:</p>
               <pre className="bg-dark-950 border border-dark-600 p-3 text-xs text-dark-100 font-mono overflow-x-auto whitespace-pre">{`# Install PowerDNS with the SQLite backend
 apt install pdns-server pdns-backend-sqlite3 sqlite3
@@ -2771,9 +2771,9 @@ webserver=yes
 webserver-address=127.0.0.1
 webserver-port=8081
 webserver-allow-from=127.0.0.1`}</pre>
-              <p className="text-xs text-dark-300">On Ubuntu (and anywhere <span className="font-mono text-dark-200">systemd-resolved</span> is running) port 53 is already taken by the stub resolver on <span className="font-mono text-dark-200">127.0.0.53</span>, so PowerDNS's default wildcard bind fails with <span className="font-mono text-dark-200">Address already in use</span> and the service restart-loops. Add a <span className="font-mono text-dark-200">local-address</span> line listing your real IPs — the one-click installer detects this and does it for you:</p>
+              <p className="text-xs text-dark-300">On Ubuntu (and anywhere <span className="font-mono text-dark-200">systemd-resolved</span> is running) port 53 is already taken by the stub resolver on <span className="font-mono text-dark-200">127.0.0.53</span>, so PowerDNS's default wildcard bind fails with <span className="font-mono text-dark-200">Address already in use</span> and the service restart-loops. Add a <span className="font-mono text-dark-200">local-address</span> line listing your real IPs - the one-click installer detects this and does it for you:</p>
               <pre className="bg-dark-950 border border-dark-600 p-3 text-xs text-dark-100 font-mono overflow-x-auto whitespace-pre">{`local-address=YOUR.PUBLIC.IP.HERE,127.0.0.1`}</pre>
-              <p className="text-xs text-dark-300">Prefer PostgreSQL? DockPanel's database runs in the <span className="font-mono text-dark-200">dockpanel-postgres</span> container, not on localhost — so <span className="font-mono text-dark-200">sudo -u postgres createdb pdns</span> won't work. Use the one-click installer's PostgreSQL option (it creates the <span className="font-mono text-dark-200">pdns</span> database inside the container for you).</p>
+              <p className="text-xs text-dark-300">Prefer PostgreSQL? CyberHunter - Panel's database runs in the <span className="font-mono text-dark-200">dockpanel-postgres</span> container, not on localhost - so <span className="font-mono text-dark-200">sudo -u postgres createdb pdns</span> won't work. Use the one-click installer's PostgreSQL option (it creates the <span className="font-mono text-dark-200">pdns</span> database inside the container for you).</p>
               <p className="text-dark-200 font-medium">Then restart and verify:</p>
               <pre className="bg-dark-950 border border-dark-600 p-3 text-xs text-dark-100 font-mono overflow-x-auto whitespace-pre">{`systemctl restart pdns
 curl -s -H "X-API-Key: your-secret-key-here" \\
@@ -2876,7 +2876,7 @@ function AiDiagnosisSettings({ setMessage }: { setMessage: (m: { text: string; t
         ai_diagnosis_provider: provider,
         ai_diagnosis_model: model.trim(),
       };
-      // Don't overwrite a stored key with the mask placeholder — same guard as PowerDNS.
+      // Don't overwrite a stored key with the mask placeholder - same guard as PowerDNS.
       if (apiKey && apiKey !== "********") {
         body.ai_diagnosis_api_key = apiKey;
       }
@@ -2900,7 +2900,7 @@ function AiDiagnosisSettings({ setMessage }: { setMessage: (m: { text: string; t
           Bring your own API key to get an AI-generated root-cause explanation for a failed Git Deploy, on demand from its history entry.
         </p>
         <p className="text-[10px] text-dark-300 mt-1 italic">
-          Off by default. Nothing is ever sent automatically — this only fires when enabled here AND you click "Explain with AI" on a specific failed deploy.
+          Off by default. Nothing is ever sent automatically - this only fires when enabled here AND you click "Explain with AI" on a specific failed deploy.
         </p>
       </div>
       <div className="p-5 space-y-4">
@@ -3009,7 +3009,7 @@ function McpServerSettings({ setMessage, onManageKeys }: { setMessage: (m: { tex
   };
 
   const endpoint = bindMode === "direct"
-    ? "Whatever address you set in /etc/dockpanel/mcp.env's LISTEN_ADDR — not proxied by nginx in this mode."
+    ? "Whatever address you set in /etc/dockpanel/mcp.env's LISTEN_ADDR - not proxied by nginx in this mode."
     : `${window.location.origin}/mcp`;
 
   return (
@@ -3017,10 +3017,10 @@ function McpServerSettings({ setMessage, onManageKeys }: { setMessage: (m: { tex
       <div className="px-5 py-3 border-b border-dark-600">
         <h3 className="text-xs font-medium text-dark-300 uppercase font-mono tracking-widest">MCP Server</h3>
         <p className="text-xs text-dark-200 mt-0.5">
-          Read-only DockPanel introspection for AI agents (list sites, read logs/metrics, check security posture) over the Model Context Protocol.
+          Read-only CyberHunter - Panel introspection for AI agents (list sites, read logs/metrics, check security posture) over the Model Context Protocol.
         </p>
         <p className="text-[10px] text-dark-300 mt-1 italic">
-          The toggle and bind mode below are a record for this Settings page to display — they don't start, stop, or
+          The toggle and bind mode below are a record for this Settings page to display - they don't start, stop, or
           reconfigure the <code>dockpanel-mcp</code> systemd service themselves. Set them to match what you've actually
           done on the host.
         </p>
@@ -3049,7 +3049,7 @@ function McpServerSettings({ setMessage, onManageKeys }: { setMessage: (m: { tex
             className="w-full px-3 py-2 border border-dark-500 rounded-lg text-sm focus:ring-2 focus:ring-accent-500 outline-none bg-dark-900"
           >
             <option value="loopback">Loopback, proxied by nginx (recommended)</option>
-            <option value="direct">Direct bind (advanced — bypasses nginx and TLS)</option>
+            <option value="direct">Direct bind (advanced - bypasses nginx and TLS)</option>
           </select>
           <p className="text-xs text-dark-300 mt-1">
             Endpoint once running: <code className="font-mono text-dark-100">{endpoint}</code>
@@ -3059,7 +3059,7 @@ function McpServerSettings({ setMessage, onManageKeys }: { setMessage: (m: { tex
         <div className="border border-dark-600 bg-dark-900/50 rounded p-4 space-y-1.5">
           <p className="text-xs font-medium text-dark-100">Setup, if you haven't already</p>
           <ol className="text-[10px] text-dark-300 list-decimal list-inside space-y-0.5">
-            <li>Mint an API key named "MCP server" — <button type="button" onClick={onManageKeys} className="text-rust-400 hover:text-rust-300 underline">manage API keys</button>.</li>
+            <li>Mint an API key named "MCP server" - <button type="button" onClick={onManageKeys} className="text-rust-400 hover:text-rust-300 underline">manage API keys</button>.</li>
             <li>Save it to <code>/etc/dockpanel/mcp.token</code> on the host (root:root, mode 600).</li>
             <li>Run <code>systemctl enable --now dockpanel-mcp</code>.</li>
           </ol>
@@ -3139,7 +3139,7 @@ function AutoUpdates() {
   const [toggling, setToggling] = useState(false);
   // Local, and rendered under the toggle on purpose. A page-level banner on a
   // page this long is a message the operator never sees next to the control
-  // they clicked — the #120 shape. Keep the answer where the question was.
+  // they clicked - the #120 shape. Keep the answer where the question was.
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -3367,7 +3367,7 @@ function ImageScanSettings({ setMessage }: { setMessage: (m: { text: string; typ
             />
             <div>
               <div className="text-sm font-medium text-dark-50">Gate deploys on scan results</div>
-              <p className="text-[10px] text-dark-300 mt-0.5">Refuse an image whose last scan exceeds the threshold below &mdash; on deploys, image changes, compose and stacks. Updating an app is exempt: it re-pulls the same reference, so the scan on file describes the image being replaced.</p>
+              <p className="text-[10px] text-dark-300 mt-0.5">Refuse an image whose last scan exceeds the threshold below - on deploys, image changes, compose and stacks. Updating an app is exempt: it re-pulls the same reference, so the scan on file describes the image being replaced.</p>
             </div>
           </label>
         </div>
@@ -3381,7 +3381,7 @@ function ImageScanSettings({ setMessage }: { setMessage: (m: { text: string; typ
               onChange={e => update({ deploy_gate: e.target.value })}
               className="w-full px-3 py-2 bg-dark-800 border border-dark-500 rounded text-sm text-dark-50"
             >
-              <option value="none">None — never block</option>
+              <option value="none">None - never block</option>
               <option value="critical">Critical only</option>
               <option value="high">High or Critical</option>
               <option value="medium">Medium, High, or Critical</option>
@@ -3412,7 +3412,7 @@ function ImageScanSettings({ setMessage }: { setMessage: (m: { text: string; typ
 }
 
 // ── WordPress vulnerability scanning ────────────────────────────────────
-// Direct peer of ImageScanSettings above — same shape, same "off by
+// Direct peer of ImageScanSettings above - same shape, same "off by
 // default" posture. Before this, a critically-vulnerable plugin stayed
 // invisible until an operator manually reopened a site's toolkit and
 // clicked Scan; there was no schedule and no alert.
@@ -3592,7 +3592,7 @@ function SbomSettings({ setMessage }: { setMessage: (m: { text: string; type: st
       <div className="px-5 py-3 border-b border-dark-600">
         <h3 className="text-xs font-medium text-dark-300 uppercase font-mono tracking-widest">SBOM Generation</h3>
         <p className="text-xs text-dark-200 mt-0.5">Generate SPDX 2.3 SBOMs for deployed images on demand (syft). Use the "Download SBOM" button on any app's scan drawer.</p>
-        <p className="text-[10px] text-dark-300 mt-1 italic">On-demand only — no schedule, no deploy gate. Install or uninstall is the only configuration.</p>
+        <p className="text-[10px] text-dark-300 mt-1 italic">On-demand only - no schedule, no deploy gate. Install or uninstall is the only configuration.</p>
       </div>
       <div className="p-5 space-y-4">
         <div className="flex items-center justify-between border border-dark-600 bg-dark-900/50 rounded p-4">
@@ -3765,7 +3765,7 @@ function PrometheusSettings({ setMessage }: { setMessage: (m: { text: string; ty
 
               {newToken && (
                 <div className="border border-warn-500/30 bg-warn-500/5 rounded p-3">
-                  <div className="text-[10px] font-medium text-warn-400 uppercase tracking-wider mb-1">Save this token — it won't be shown again</div>
+                  <div className="text-[10px] font-medium text-warn-400 uppercase tracking-wider mb-1">Save this token - it won't be shown again</div>
                   <div className="flex items-center gap-2">
                     <code className="flex-1 text-xs font-mono text-dark-50 break-all">{newToken}</code>
                     <button
@@ -3817,7 +3817,7 @@ function PrometheusSettings({ setMessage }: { setMessage: (m: { text: string; ty
 // ── ACME contact address ──────────────────────────────────────────────
 //
 // The panel hands an email to Let's Encrypt as the account contact. Until
-// v2.28.0 that was silently the operator's panel login address, unvalidated —
+// v2.28.0 that was silently the operator's panel login address, unvalidated -
 // so registering the panel as e.g. admin@box.test made the CA refuse the
 // contact and EVERY certificate fail, with no reason in the UI and none in
 // journalctl either. This card makes the address visible, says plainly whether
@@ -3866,7 +3866,7 @@ function AcmeContactSettings({ setMessage }: { setMessage: (m: { text: string; t
       <div className="px-5 py-3 border-b border-dark-600">
         <h3 className="text-xs font-medium text-dark-300 uppercase font-mono tracking-widest">ACME Contact</h3>
         <p className="text-xs text-dark-200 mt-0.5">
-          The address DockPanel registers with Let's Encrypt. Certificates cannot be issued without one the CA accepts.
+          The address CyberHunter - Panel registers with Let's Encrypt. Certificates cannot be issued without one the CA accepts.
         </p>
       </div>
       <div className="p-5 space-y-3">
@@ -3936,7 +3936,7 @@ function AcmeContactSettings({ setMessage }: { setMessage: (m: { text: string; t
               <p className="text-[10px] text-dark-300 mt-2">
                 Leave empty to use each user's own login address. Reserved domains
                 (<span className="font-mono">.test</span>, <span className="font-mono">.local</span>,
-                {" "}<span className="font-mono">.internal</span>, …) are rejected — Let's Encrypt refuses them.
+                {" "}<span className="font-mono">.internal</span>, …) are rejected - Let's Encrypt refuses them.
               </p>
             </div>
           </>
@@ -3950,9 +3950,9 @@ function AcmeContactSettings({ setMessage }: { setMessage: (m: { text: string; t
 //
 // Lets the admin pick the default Let's Encrypt profile new certs use.
 // Maps to RFC 8555 + RFC 9773 "profiles" extension. LE currently exposes:
-//   classic     — 90-day certs, default
-//   tlsserver   — 90-day today; flips to 45-day on 2026-05-13 (opt-in)
-//   shortlived  — ~6-day certs, for the highest-automation subscribers
+//   classic     - 90-day certs, default
+//   tlsserver   - 90-day today; flips to 45-day on 2026-05-13 (opt-in)
+//   shortlived  - ~6-day certs, for the highest-automation subscribers
 //
 // When the CA doesn't advertise profiles, the card hides itself.
 
@@ -3990,7 +3990,7 @@ function AcmeSettings({ setMessage }: { setMessage: (m: { text: string; type: st
           <h3 className="text-xs font-medium text-dark-300 uppercase font-mono tracking-widest">ACME Profile</h3>
         </div>
         <div className="p-5 text-sm text-dark-300">
-          Couldn't reach the ACME directory ({loadError}). The CA's profile list is only available once an admin has an ACME account — this loads after your first SSL issuance.
+          Couldn't reach the ACME directory ({loadError}). The CA's profile list is only available once an admin has an ACME account - this loads after your first SSL issuance.
         </div>
       </div>
     );
@@ -4014,7 +4014,7 @@ function AcmeSettings({ setMessage }: { setMessage: (m: { text: string; type: st
           <h3 className="text-xs font-medium text-dark-300 uppercase font-mono tracking-widest">ACME Profile</h3>
         </div>
         <div className="p-5 text-sm text-dark-300">
-          The configured CA doesn't advertise the ACME profiles extension — DockPanel will request its default profile.
+          The configured CA doesn't advertise the ACME profiles extension - CyberHunter - Panel will request its default profile.
         </div>
       </div>
     );
@@ -4045,7 +4045,7 @@ function AcmeSettings({ setMessage }: { setMessage: (m: { text: string; type: st
             </select>
           </div>
           <p className="text-[10px] text-dark-300 mt-2">
-            "CA default" lets Let's Encrypt pick — today that's <span className="font-mono">classic</span> (90-day).
+            "CA default" lets Let's Encrypt pick - today that's <span className="font-mono">classic</span> (90-day).
             Existing certs keep their current profile until renewal.
           </p>
         </div>
@@ -4107,11 +4107,11 @@ function CredentialEncryptionCard({ setMessage }: { setMessage: (m: { text: stri
         });
       } else if (r.raced > 0) {
         setMessage({
-          text: `${r.rewritten} re-encrypted, but ${r.raced} value(s) changed while this ran and were safely skipped — run it again to pick them up`,
+          text: `${r.rewritten} re-encrypted, but ${r.raced} value(s) changed while this ran and were safely skipped - run it again to pick them up`,
           type: "error",
         });
       } else if (r.rewritten === 0) {
-        setMessage({ text: "Everything is already under the current key — nothing to do", type: "success" });
+        setMessage({ text: "Everything is already under the current key - nothing to do", type: "success" });
       } else {
         setMessage({ text: `${r.rewritten} credential(s) re-encrypted under the current key`, type: "success" });
       }
@@ -4133,7 +4133,7 @@ function CredentialEncryptionCard({ setMessage }: { setMessage: (m: { text: stri
           Stored credentials and Secrets Manager values are encrypted with a key derived from{" "}
           <code className="text-dark-100">JWT_SECRET</code>, or from{" "}
           <code className="text-dark-100">SECRETS_ENCRYPTION_KEY</code> when you set one. After changing
-          either, run this once so every value is rewritten under the new key — until you do, the panel
+          either, run this once so every value is rewritten under the new key - until you do, the panel
           is reading old values through a fallback and the previous key still has to be derivable.
         </p>
         <p className="text-xs text-dark-400">

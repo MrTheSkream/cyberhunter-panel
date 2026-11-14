@@ -22,7 +22,7 @@ The agent missed its checkin window (default 60s). After the grace period the pa
 - Agent crashed (look for `panicked at` in journalctl)
 - Host networking down (provider outage, firewall change, IP rotation)
 - Host out of memory and the agent got OOM-killed
-- Disk full on `/` — agent can't write its logs and exits
+- Disk full on `/` - agent can't write its logs and exits
 - Clock skew > 5 min between panel and agent (TLS cert validation fails)
 - Cert pin mismatch after agent reinstall (panel logs `cert fingerprint mismatch`)
 

@@ -37,7 +37,7 @@ struct DiskUsageRequest {
     domain: String,
 }
 
-/// POST /staging/clone — Clone site files from source to target.
+/// POST /staging/clone - Clone site files from source to target.
 async fn clone_files(Json(body): Json<CloneRequest>) -> Result<Json<serde_json::Value>, ApiErr> {
     if !is_valid_domain(&body.source) {
         return Err(err(StatusCode::BAD_REQUEST, "Invalid source domain"));
@@ -53,7 +53,7 @@ async fn clone_files(Json(body): Json<CloneRequest>) -> Result<Json<serde_json::
     Ok(Json(serde_json::json!({ "ok": true, "message": msg })))
 }
 
-/// POST /staging/sync — Sync files between two site directories.
+/// POST /staging/sync - Sync files between two site directories.
 async fn sync_files(Json(body): Json<SyncRequest>) -> Result<Json<serde_json::Value>, ApiErr> {
     if !is_valid_domain(&body.source) {
         return Err(err(StatusCode::BAD_REQUEST, "Invalid source domain"));
@@ -66,7 +66,7 @@ async fn sync_files(Json(body): Json<SyncRequest>) -> Result<Json<serde_json::Va
         .await
         .map_err(|e| {
             // Both refusals already name the fully-resolved path they could not
-            // find, which is the whole answer — and answering 5xx threw exactly
+            // find, which is the whole answer - and answering 5xx threw exactly
             // that sentence away. This one endpoint backs both panel directions,
             // sync AND push, and neither of them pre-checks the directories.
             let status = if e.contains("directory not found") {
@@ -80,7 +80,7 @@ async fn sync_files(Json(body): Json<SyncRequest>) -> Result<Json<serde_json::Va
     Ok(Json(serde_json::json!({ "ok": true, "message": msg })))
 }
 
-/// POST /staging/delete-files — Delete a site's file directory.
+/// POST /staging/delete-files - Delete a site's file directory.
 async fn delete_files(Json(body): Json<DeleteFilesRequest>) -> Result<Json<serde_json::Value>, ApiErr> {
     if !is_valid_domain(&body.domain) {
         return Err(err(StatusCode::BAD_REQUEST, "Invalid domain"));
@@ -93,7 +93,7 @@ async fn delete_files(Json(body): Json<DeleteFilesRequest>) -> Result<Json<serde
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// POST /staging/disk-usage — Get disk usage for a site directory.
+/// POST /staging/disk-usage - Get disk usage for a site directory.
 async fn disk_usage(Json(body): Json<DiskUsageRequest>) -> Result<Json<serde_json::Value>, ApiErr> {
     if !is_valid_domain(&body.domain) {
         return Err(err(StatusCode::BAD_REQUEST, "Invalid domain"));

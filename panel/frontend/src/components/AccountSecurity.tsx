@@ -6,14 +6,14 @@ import { api, ApiError } from "../api";
  * THEMSELVES rather than about the panel.
  *
  * These lived inline in `pages/Settings.tsx`, whose nav row is `adminOnly`
- * (`data/navItems.ts`), so every non-admin account — `user`, `client`,
- * `reseller` — had no door to its own password, 2FA, passkeys, sessions or API
+ * (`data/navItems.ts`), so every non-admin account - `user`, `client`,
+ * `reseller` - had no door to its own password, 2FA, passkeys, sessions or API
  * keys. Every endpoint behind them was already `AuthUser` and already scoped to
  * the caller's own id; the only thing missing was a way in. That is why this is
  * an extraction and not a feature: the capability shipped long ago, unreachable.
  *
- * Each card is self-contained — its own state, its own fetch, its own inline
- * message — following `SSHKeys`/`AutoUpdates` in `Settings.tsx`.
+ * Each card is self-contained - its own state, its own fetch, its own inline
+ * message - following `SSHKeys`/`AutoUpdates` in `Settings.tsx`.
  * That is what lets BOTH `pages/Account.tsx` and the Settings "Account" tab
  * render the same implementation instead of a copy that drifts.
  *
@@ -161,13 +161,13 @@ export function TwoFactorCard() {
             </div>
             {/* How many recovery codes are LEFT. They are spent one per recovery
                 login and nothing ever counted them, so an account could reach zero
-                — no fallback at all — while this card still said only "2FA is
+                - no fallback at all - while this card still said only "2FA is
                 enabled". Zero is called out in its own words because it is the
                 state that turns a lost phone into a lost account. */}
             {remaining !== null && (
               <p className={`text-xs ${remaining === 0 ? "text-danger-400" : remaining <= 2 ? "text-warn-400" : "text-dark-300"}`}>
                 {remaining === 0
-                  ? "No recovery codes left. If you lose your authenticator you will need an administrator to reset 2FA for you — issue a new set now."
+                  ? "No recovery codes left. If you lose your authenticator you will need an administrator to reset 2FA for you - issue a new set now."
                   : `${remaining} recovery ${remaining === 1 ? "code" : "codes"} remaining.`}
               </p>
             )}
@@ -175,7 +175,7 @@ export function TwoFactorCard() {
               Lost your authenticator? Enter one of your recovery codes below to turn 2FA off, then enrol again.
             </p>
             <div className="flex items-center gap-2 flex-wrap">
-              {/* Accepts a code from the authenticator OR a recovery code —
+              {/* Accepts a code from the authenticator OR a recovery code -
                   both are hex, and the backend tries the authenticator first
                   then the recovery codes. This stripped everything non-numeric
                   and required exactly 6, so a recovery code could not even be
@@ -390,7 +390,7 @@ export function PasskeysCard() {
                         <p className="text-sm text-dark-100 flex items-center gap-1.5">
                           {pk.name}
                           {pk.uvCapable ? (
-                            <span title="This key requires a PIN, fingerprint, or face to sign in — it counts as a full second factor." className="px-1.5 py-0.5 bg-rust-500/10 text-rust-400 rounded text-[10px] font-medium">Verified</span>
+                            <span title="This key requires a PIN, fingerprint, or face to sign in - it counts as a full second factor." className="px-1.5 py-0.5 bg-rust-500/10 text-rust-400 rounded text-[10px] font-medium">Verified</span>
                           ) : (
                             <span title="This key signs in on presence alone (no PIN/biometric was recorded). Re-register with a security key that supports verification for stronger protection." className="px-1.5 py-0.5 bg-dark-600 text-dark-300 rounded text-[10px] font-medium">Possession-only</span>
                           )}
@@ -425,7 +425,7 @@ export function PasskeysCard() {
                       )}
                       {/* Confirmed, like the Sessions and API-key cards below.
                           Removing a passkey is not recoverable from this screen
-                          — the credential has to be re-enrolled from the
+                          - the credential has to be re-enrolled from the
                           authenticator that holds it. */}
                       <button
                         onClick={() => setConfirmRemove(pk.id)}
@@ -576,9 +576,9 @@ export function PasskeysCard() {
                       load();
                     } catch (e) {
                       if (e instanceof DOMException && e.name === "NotAllowedError") {
-                        // User cancelled — ignore
+                        // User cancelled - ignore
                       } else if (e instanceof ApiError && e.code === "reauth_required") {
-                        // Not a failure — the backend is telling us which
+                        // Not a failure - the backend is telling us which
                         // credential this account can present. Collect it and
                         // the same button re-submits, now carrying proof.
                         const b = (e.body ?? {}) as { methods?: string[]; provider?: string };
@@ -780,7 +780,7 @@ export function ApiKeysCard() {
       )}
       {newResult && (
         <div className="px-5 py-3 border-b border-dark-600 bg-rust-500/5">
-          <p className="text-xs text-rust-400 mb-1">Copy this key now — it won't be shown again. This key authenticates API requests (used by the CLI, the MCP server, and any script calling the REST API directly) with the same access as your account — treat it like a password.</p>
+          <p className="text-xs text-rust-400 mb-1">Copy this key now - it won't be shown again. This key authenticates API requests (used by the CLI, the MCP server, and any script calling the REST API directly) with the same access as your account - treat it like a password.</p>
           <div className="flex gap-2">
             <code className="flex-1 px-2 py-1 bg-dark-900 rounded text-xs font-mono text-dark-100 break-all">{newResult}</code>
             <button onClick={() => { navigator.clipboard.writeText(newResult); setNewResult(null); }} className="px-2 py-1 bg-dark-700 rounded text-xs text-dark-200 shrink-0">Copy</button>

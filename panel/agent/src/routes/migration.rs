@@ -17,7 +17,7 @@ pub fn router() -> Router<AppState> {
         .route("/migration/cleanup", post(cleanup))
 }
 
-/// POST /migration/fetch — download a backup archive from a URL into the
+/// POST /migration/fetch - download a backup archive from a URL into the
 /// `/var/backups/dockpanel/` tree `analyze` already trusts, so an operator no
 /// longer has to SFTP it up first.
 async fn fetch(
@@ -59,7 +59,7 @@ async fn fetch(
     }
 }
 
-/// POST /migration/analyze — Extract and analyze a backup file
+/// POST /migration/analyze - Extract and analyze a backup file
 async fn analyze(
     State(_state): State<AppState>,
     Json(body): Json<serde_json::Value>,
@@ -76,15 +76,15 @@ async fn analyze(
     //
     // ⚠ NOT `/tmp`, and the message must not offer it. This unit runs with
     // `PrivateTmp=yes`, so the agent gets its own empty `/tmp` namespace and an
-    // archive the operator copied to the host's `/tmp` — the obvious place, and
-    // the place this sentence used to name — is simply not there. The guard
+    // archive the operator copied to the host's `/tmp` - the obvious place, and
+    // the place this sentence used to name - is simply not there. The guard
     // accepted the path and the very next line answered `File not found` for a
     // file plainly sitting on disk. Driven on a fresh box at s369: the identical
     // archive fails from `/tmp` and analyzes from `/var/backups/`.
     if !path.starts_with("/var/backups/") {
         return Err((
             StatusCode::BAD_REQUEST,
-            "Path must be within /var/backups/ — copy the archive there. \
+            "Path must be within /var/backups/ - copy the archive there. \
              (/tmp cannot be used: the agent runs with a private /tmp and \
              cannot see the host's.)"
                 .into(),
@@ -105,7 +105,7 @@ async fn analyze(
     }
 }
 
-/// POST /migration/import-site — Copy files from extracted backup to /var/www/{domain}/
+/// POST /migration/import-site - Copy files from extracted backup to /var/www/{domain}/
 async fn import_site(
     State(_state): State<AppState>,
     Json(body): Json<serde_json::Value>,
@@ -125,7 +125,7 @@ async fn import_site(
     }
 }
 
-/// POST /migration/import-database — Import SQL dump into a database container
+/// POST /migration/import-database - Import SQL dump into a database container
 async fn import_database(
     State(_state): State<AppState>,
     Json(body): Json<serde_json::Value>,
@@ -144,7 +144,7 @@ async fn import_database(
     }
 }
 
-/// POST /migration/cleanup — Remove temp extraction directory
+/// POST /migration/cleanup - Remove temp extraction directory
 async fn cleanup(
     State(_state): State<AppState>,
     Json(body): Json<serde_json::Value>,

@@ -1,4 +1,4 @@
-//! The mail vertical — "will anyone accept mail from this domain?"
+//! The mail vertical - "will anyone accept mail from this domain?"
 //!
 //! # What was already here, and why it wasn't enough
 //!
@@ -7,13 +7,13 @@
 //! `4/4 records verified`. The problem is what it verifies: **existence, not
 //! correctness.**
 //!
-//! * MX passed if the domain had *any* MX record — including one pointing at
+//! * MX passed if the domain had *any* MX record - including one pointing at
 //!   Google Workspace, i.e. precisely the configuration under which this server's
 //!   mail goes nowhere.
 //! * SPF passed if any `v=spf1` string existed, without checking that it
 //!   authorises *this* server. A domain whose SPF ends `include:sendgrid.net -all`
 //!   reported a pass while explicitly forbidding us to send.
-//! * DKIM passed on `contains("v=DKIM1") || contains("p=")` — never compared to
+//! * DKIM passed on `contains("v=DKIM1") || contains("p=")` - never compared to
 //!   our own key, so a stale selector from a previous install passed.
 //! * The A record for the mail host was not checked at all.
 //! * A failure produced the string `"Not found"` and nothing to do about it.
@@ -28,7 +28,7 @@
 //! `routes::mail::domain_dns` (what we tell you to create) and
 //! `routes::mail::auto_create_mail_dns` (what we create for you). They disagreed
 //! on the server address, the A record's name, the MX target, the SPF policy
-//! (`~all` vs `-all`) and the DKIM selector — and the manual one was outright
+//! (`~all` vs `-all`) and the DKIM selector - and the manual one was outright
 //! wrong, because it read the agent's **hostname** where it wanted an IP:
 //!
 //! ```text
@@ -47,7 +47,7 @@ use super::copy::{
 use super::{DnsRecordHint, PrereqResult, Remediation};
 use crate::safe_cmd::safe_command;
 
-/// The DKIM selector DockPanel uses when a domain doesn't record its own.
+/// The DKIM selector CyberHunter - Panel uses when a domain doesn't record its own.
 pub const DEFAULT_DKIM_SELECTOR: &str = "dockpanel";
 
 /// Turn a stored DKIM public key (PEM) into its DNS TXT value.
@@ -64,7 +64,7 @@ pub fn dkim_txt_value(public_key_pem: &str) -> String {
 ///
 /// THE single source of truth: the DNS tab renders this, the auto-DNS writer
 /// publishes this, and [`check_mail_dns_published`] verifies this. `server_ip`
-/// must be a real address — pass [`crate::helpers::detect_public_ip_cached`],
+/// must be a real address - pass [`crate::helpers::detect_public_ip_cached`],
 /// never the agent's hostname.
 ///
 /// # Why the mail host is the apex and not `mail.<domain>`
@@ -74,14 +74,14 @@ pub fn dkim_txt_value(public_key_pem: &str) -> String {
 /// because it is not what this product deploys:
 ///
 /// * `auto_create_mail_dns` publishes `A <domain>` and `MX <domain> → <domain>`,
-///   so every domain DockPanel has ever configured automatically uses the apex.
+///   so every domain CyberHunter - Panel has ever configured automatically uses the apex.
 ///   Describing a different topology would report all of them as broken.
 /// * The auto-SSL step immediately after issues a certificate for `<domain>` over
 ///   HTTP-01, which requires the apex A record to exist. Moving the mail host to
 ///   a subdomain would silently break certificate issuance for new mail domains.
 ///
 /// Postfix's `myhostname` is left at the distro default and never pinned by
-/// DockPanel, so neither topology is enforced by the mail stack — which is
+/// CyberHunter - Panel, so neither topology is enforced by the mail stack - which is
 /// exactly why the check accepts both (see [`record_satisfies`]) while we only
 /// ever *advise* one.
 // The single-address form (apex and send address equal): the pre-multi-IP
@@ -97,8 +97,8 @@ pub fn mail_records(
 }
 
 /// [`mail_records`] for a domain whose apex and send addresses differ (multi-IP,
-/// conception/01-multi-ip.md §5.3): `a_ip` is the apex A record — the same-named
-/// site's address when there is one, else the send address — and `spf_ip` is the
+/// conception/01-multi-ip.md §5.3): `a_ip` is the apex A record - the same-named
+/// site's address when there is one, else the send address - and `spf_ip` is the
 /// address mail is sent FROM, which SPF `ip4:` must authorise. Both come from
 /// `services::server_ips::mail_dns_addresses_for`.
 pub fn mail_records_for(
@@ -120,7 +120,7 @@ pub fn mail_records_for(
             format!("v=spf1 a mx ip4:{spf_ip} ~all"),
             "300",
         )
-        .with_purpose("SPF — authorises this server to send mail for the domain."),
+        .with_purpose("SPF - authorises this server to send mail for the domain."),
         DnsRecordHint::new(
             "_dmarc",
             format!("_dmarc.{domain}"),
@@ -128,7 +128,7 @@ pub fn mail_records_for(
             format!("v=DMARC1; p=quarantine; rua=mailto:postmaster@{domain}"),
             "300",
         )
-        .with_purpose("DMARC — tells receivers what to do when SPF or DKIM fails."),
+        .with_purpose("DMARC - tells receivers what to do when SPF or DKIM fails."),
     ];
 
     if let Some(pem) = dkim_public_key.filter(|p| !p.trim().is_empty()) {
@@ -140,7 +140,7 @@ pub fn mail_records_for(
                 dkim_txt_value(pem),
                 "300",
             )
-            .with_purpose("DKIM — the public key receivers use to verify our signature."),
+            .with_purpose("DKIM - the public key receivers use to verify our signature."),
         );
     }
 
@@ -154,7 +154,7 @@ pub fn mail_records_for(
 /// `v=spf1 a mx ip4:1.2.3.4 include:sendgrid.net -all` has a better SPF record
 /// than the one we suggest, and reporting it as missing would be both wrong and
 /// infuriating. But a DKIM record carrying somebody else's key is not a stricter
-/// setup, it is a broken one — which is exactly what the old `contains("p=")`
+/// setup, it is a broken one - which is exactly what the old `contains("p=")`
 /// test could not tell apart.
 pub(crate) fn record_satisfies(expected: &DnsRecordHint, found: &str, server_ip: &str) -> bool {
     let found = strip_quotes(found);
@@ -163,12 +163,12 @@ pub(crate) fn record_satisfies(expected: &DnsRecordHint, found: &str, server_ip:
     match expected.record_type.as_str() {
         "A" => found == expected_value,
         "MX" => {
-            // Any MX naming this server counts, whatever its preference — a backup
+            // Any MX naming this server counts, whatever its preference - a backup
             // MX at a different priority is a valid setup, not a fault.
             //
             // `mail.<domain>` is accepted alongside the apex we advise. That is not
             // laxity: the DNS tab told people to use `mail.<domain>` for years, it
-            // is the conventional choice, and it works — Postfix accepts mail for
+            // is the conventional choice, and it works - Postfix accepts mail for
             // any virtual domain regardless of the MX hostname, provided it
             // resolves here. Rejecting it would flag a working install as broken,
             // which is the exact failure mode this check replaces.
@@ -207,12 +207,12 @@ pub(crate) fn record_satisfies(expected: &DnsRecordHint, found: &str, server_ip:
 }
 
 fn strip_quotes(s: &str) -> String {
-    // A TXT value served in chunks arrives as `"part1" "part2"` — join it back
+    // A TXT value served in chunks arrives as `"part1" "part2"` - join it back
     // before comparing, or a long DKIM key never matches.
     s.trim().replace("\" \"", "").trim_matches('"').trim().to_string()
 }
 
-/// Look one record up. `None` means we could not ask — never "not published".
+/// Look one record up. `None` means we could not ask - never "not published".
 ///
 /// The distinction is the whole reason this returns an `Option`: a box without
 /// `dig` installed would otherwise report every record as missing and send the
@@ -255,8 +255,8 @@ async fn lookup(record: &DnsRecordHint) -> Option<Vec<String>> {
 ///
 /// `Warning`, never `Blocking`, and that follows the governing rule rather than
 /// timidity: nothing in the panel is gated on this. Mail already flows without
-/// these records — badly. The consequence of a missing SPF record is that other
-/// people's servers form a judgement about you, which DockPanel cannot refuse on
+/// these records - badly. The consequence of a missing SPF record is that other
+/// people's servers form a judgement about you, which CyberHunter - Panel cannot refuse on
 /// your behalf. There is no control to disable, so there is nothing to block;
 /// what there is, is a domain quietly landing in spam folders with nothing
 /// anywhere in the product saying so.
@@ -272,7 +272,7 @@ pub async fn check_mail_dns_published(
     check_mail_dns_published_for(domain, selector, dkim_public_key, server_ip, server_ip).await
 }
 
-/// [`check_mail_dns_published`] with the apex and send addresses split — see
+/// [`check_mail_dns_published`] with the apex and send addresses split - see
 /// [`mail_records_for`]. Either being unknown (empty) is "cannot judge".
 pub async fn check_mail_dns_published_for(
     domain: &str,
@@ -318,7 +318,7 @@ pub async fn check_mail_dns_published_for(
         }
     }
 
-    // Every lookup failed — that is a broken `dig`, not a broken domain.
+    // Every lookup failed - that is a broken `dig`, not a broken domain.
     if unreadable == checked.len() {
         return MAIL_DNS_CHECK
             .result(&MAIL_DNS_UNREADABLE, &[])
@@ -358,7 +358,7 @@ pub async fn check_mail_dns_published_for(
 /// A domain whose DKIM keys never generated can't sign anything.
 ///
 /// Surfaced separately because the fix is different in kind: it is an action in
-/// DockPanel, not a record at the registrar. `create_domain` logs a warning and
+/// CyberHunter - Panel, not a record at the registrar. `create_domain` logs a warning and
 /// stores the domain anyway when generation fails, so this state is reachable and
 /// otherwise invisible.
 pub fn check_dkim_key_present(domain: &str, dkim_public_key: Option<&str>) -> PrereqResult {
@@ -382,7 +382,7 @@ pub async fn evaluate(
     evaluate_for(domain, selector, dkim_public_key, server_ip, server_ip).await
 }
 
-/// [`evaluate`] with the apex and send addresses split — see [`mail_records_for`].
+/// [`evaluate`] with the apex and send addresses split - see [`mail_records_for`].
 pub async fn evaluate_for(
     domain: &str,
     selector: &str,
@@ -457,7 +457,7 @@ mod tests {
 
     /// The advised topology must be the one `auto_create_mail_dns` publishes and
     /// the one auto-SSL's HTTP-01 order depends on. Advising `mail.<domain>`
-    /// instead — which is conventional, and what the DNS tab used to say — would
+    /// instead - which is conventional, and what the DNS tab used to say - would
     /// report every auto-configured domain as broken and break certificate
     /// issuance for new ones.
     #[test]
@@ -513,7 +513,7 @@ mod tests {
         assert!(record_satisfies(&spf, "v=spf1 mx -all", "203.0.113.7"));
     }
 
-    /// The old check passed on any MX at all — including the one that means our
+    /// The old check passed on any MX at all - including the one that means our
     /// mail is going to somebody else entirely.
     #[test]
     fn an_mx_pointing_at_another_provider_does_not_satisfy_us() {

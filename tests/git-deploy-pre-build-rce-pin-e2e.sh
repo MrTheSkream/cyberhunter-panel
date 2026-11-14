@@ -5,7 +5,7 @@
 # ran a whitelisted-by-literal-string command via `sh -c` directly on the host,
 # as root (dockpanel-agent.service carries no User= directive). The whitelist
 # blocked shell-injection into the command STRING but did nothing about the
-# named commands themselves being standard supply-chain-RCE vectors — every
+# named commands themselves being standard supply-chain-RCE vectors - every
 # one of npm/yarn/pnpm/pip/composer/bundle/cargo runs installer/build hooks
 # (package.json postinstall, setup.py, build.rs, ...) that execute arbitrary
 # code. An admin arming any one of them for a git deploy caused every
@@ -18,7 +18,7 @@
 # THE FIX: delete the host-exec route entirely. The same whitelisted string is
 # now spliced into the auto-generated Dockerfile's install RUN line
 # (auto_generate_dockerfile), so it only ever executes inside the `docker
-# build` sandbox every other git deploy on this platform already trusts —
+# build` sandbox every other git deploy on this platform already trusts -
 # never a host shell. A design panel scored this against three sandboxing
 # alternatives (ephemeral container, privilege-drop via systemd-run, a
 # bubblewrap namespace) and it won on containment, fleet-compat, and
@@ -54,7 +54,7 @@ strip_comments() { sed -E 's|[[:space:]]*//.*$||' "$1"; }
 # Counting grep, not -q: a boolean grep piped from a producer quits at its
 # first match and can die of SIGPIPE mid-write, which under `set -o
 # pipefail` reads a successful match as a failure (s335). Redirect the count
-# away instead — the call site's pass/fail meaning is unchanged.
+# away instead - the call site's pass/fail meaning is unchanged.
 codeNot() { strip_comments "$1" | grep -c -- "$2" >/dev/null && bad "$3" || ok "$3"; }
 
 echo "== A. the host-exec route is gone, not just hardened =="
@@ -92,13 +92,13 @@ has  "$AGENT_SVC" 'corepack enable'       "yarn/pnpm overrides get a corepack pr
 echo
 echo "== D. mismatch handling: never a broken Dockerfile, never a silent no-op =="
 
-has "$AGENT_SVC" "repo already has a Dockerfile — add the install step as a RUN line there" \
+has "$AGENT_SVC" "repo already has a Dockerfile - add the install step as a RUN line there" \
   "a committed Dockerfile refuses to silently absorb an override"
-has "$AGENT_SVC" "doesn't apply to this project type — using the default install step" \
+has "$AGENT_SVC" "doesn't apply to this project type - using the default install step" \
   "a cross-language override (e.g. bundle install against Node) falls back to the default, explained"
-has "$AGENT_SVC" "has no matching install step for a Go project — ignored" \
+has "$AGENT_SVC" "has no matching install step for a Go project - ignored" \
   "Go has no ALLOWED_PRE_BUILD entry and says so explicitly"
-has "$AGENT_SVC" "has no matching install step for a static site — ignored" \
+has "$AGENT_SVC" "has no matching install step for a static site - ignored" \
   "a static site has no install step and says so explicitly"
 
 echo
@@ -115,7 +115,7 @@ N_KOD=$(grep -c 'kill_on_drop(true)' "$AGENT_SVC" 2>/dev/null); N_KOD=${N_KOD:-0
 if [ "$N_KOD" -ge 1 ]; then
   ok "build_image's docker-build Command carries kill_on_drop(true) ($N_KOD occurrence(s) in the crate)"
 else
-  bad "no kill_on_drop(true) found — a timed-out docker build can orphan past its deadline"
+  bad "no kill_on_drop(true) found - a timed-out docker build can orphan past its deadline"
 fi
 
 echo
@@ -160,7 +160,7 @@ echo "== J. frontend copy no longer promises a host-side effect =="
 
 hasNot "$FRONTEND" 'Runs in the git repo directory before docker build' \
   "the old (now false) 'runs before docker build, on the host' copy is gone"
-has    "$FRONTEND" 'Only applies when DockPanel generates the Dockerfile for you' \
+has    "$FRONTEND" 'Only applies when CyberHunter - Panel generates the Dockerfile for you' \
   "the field's copy now matches what it actually does"
 
 echo

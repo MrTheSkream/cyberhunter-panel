@@ -119,7 +119,7 @@ async fn themes(
     })
 }
 
-/// POST /wordpress/{domain}/promote-https — move `siteurl`/`home` to HTTPS.
+/// POST /wordpress/{domain}/promote-https - move `siteurl`/`home` to HTTPS.
 ///
 /// `enable_ssl_for_site` already does this for every site that exists when its
 /// certificate arrives. This covers the other order: a certificate that lands
@@ -127,7 +127,7 @@ async fn themes(
 /// panel calls back here once the install finishes.
 ///
 /// The target URL is derived from the path domain, never accepted from the
-/// caller — a settable `siteurl` is a site-takeover primitive, since WordPress
+/// caller - a settable `siteurl` is a site-takeover primitive, since WordPress
 /// loads its own scripts from it.
 async fn promote_https(
     Path(domain): Path<String>,
@@ -252,7 +252,7 @@ async fn set_auto_update(
         })
 }
 
-/// POST /wordpress/{domain}/vuln-scan — Scan for plugin vulnerabilities
+/// POST /wordpress/{domain}/vuln-scan - Scan for plugin vulnerabilities
 async fn vuln_scan(
     Path(domain): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
@@ -274,7 +274,7 @@ async fn vuln_scan(
         })
 }
 
-/// GET /wordpress/{domain}/security-check — Check security hardening status
+/// GET /wordpress/{domain}/security-check - Check security hardening status
 async fn security_check(
     Path(domain): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
@@ -290,7 +290,7 @@ async fn security_check(
         })
 }
 
-/// POST /wordpress/{domain}/harden — Apply security hardening fixes
+/// POST /wordpress/{domain}/harden - Apply security hardening fixes
 async fn harden(
     Path(domain): Path<String>,
     Json(body): Json<serde_json::Value>,
@@ -317,7 +317,7 @@ async fn harden(
         })
 }
 
-/// POST /wordpress/{domain}/update-with-rollback — Update WP with snapshot + auto-rollback.
+/// POST /wordpress/{domain}/update-with-rollback - Update WP with snapshot + auto-rollback.
 async fn update_with_rollback(
     Path(domain): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {

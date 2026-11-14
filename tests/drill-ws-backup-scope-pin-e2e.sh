@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# drill-ws-backup-scope-pin-e2e.sh — s465
+# drill-ws-backup-scope-pin-e2e.sh - s465
 #
 # dockpanel-fanout, batched small-file tail of panel/backend/src/{routes,services}
 # (drill_scheduler.rs, deploy_scheduler.rs, alert_runbooks.rs,
 # alert_runbook_defaults.rs / prometheus.rs, prometheus_exporter.rs,
 # metrics_collector.rs, ws_metrics.rs, system_logs.rs / agent_checkin.rs,
-# agent_updates.rs, sboms.rs, chain_report.rs, branding_assets.rs — see
+# agent_updates.rs, sboms.rs, chain_report.rs, branding_assets.rs - see
 # feedback_dockpanel_audit_scope). Found and fixed 5 real, independently
 # skeptic-verified issues (4 on-menu + 1 off-menu completeness-critic find):
 #
 #   §A drill_scheduler.rs + backup_orchestrator.rs: a scheduled OR on-demand
 #      backup drill fired the agent call via plain `post` (60s total-round-trip
 #      cap), but the agent-side restore it triggers is budgeted 220s (mariadb)
-#      to 360s (volume: 300s restore + 60s probe) — several multiples of the
+#      to 360s (volume: 300s restore + 60s probe) - several multiples of the
 #      cap. Any drill against a non-trivial backup was killed by the client and
 #      recorded `status = 'failed'`, a false DR-failure signal on a healthy
 #      backup. Fixed both the scheduled (`enqueue_drill`) and on-demand
@@ -28,14 +28,14 @@
 #      unknown, target server unreachable, another drill already running) that
 #      make zero agent calls and insert zero `backup_drills` rows. A policy
 #      whose server has been down for weeks read as "last drilled Xm ago" on
-#      every cron tick — the one case a DR-verification timestamp most needs to
+#      every cron tick - the one case a DR-verification timestamp most needs to
 #      flag was the case it hid. Fixed: `dispatch_policy_drills` now returns
 #      whether it actually enqueued a drill, and `tick()` only stamps
 #      `last_drill_at` when it did.
 #   §C ws_metrics.rs: the live-metrics websocket validated the JWT (expiry,
 #      blacklist, global session revocation, admin role) ONLY at handshake,
 #      before `ws.on_upgrade`. The 5s streaming loop never re-checked any of
-#      it — logout, the panic button, and `POST /auth/revoke-all` all closed
+#      it - logout, the panic button, and `POST /auth/revoke-all` all closed
 #      the door to NEW connections but left an ALREADY-OPEN socket streaming
 #      the full process/network/GPU/system feed for as long as the underlying
 #      TCP connection stayed alive, unbounded even by the token's own nominal
@@ -45,27 +45,27 @@
 #      handshake conditions would now reject it.
 #   §D backup_orchestrator.rs: `chain_report_json`/`chain_report_pdf` (via
 #      `build_chain_report`) and `list_all_backups` accepted a caller-supplied
-#      backup id / listed the whole fleet with NO ownership scoping — gated
+#      backup id / listed the whole fleet with NO ownership scoping - gated
 #      only by `AdminUser`, a pure role check. Any admin could pull another
 #      admin's full chain-of-trust report (site domain, db/container:volume
 #      names, filenames, hash chain, every verification and drill) as JSON or
 #      PDF, and `list_all_backups` was the exact discovery channel for the
 #      backup ids needed to do it. Identical bug class already fixed once in
 #      this same file for `list_volume_backups`/`restore_volume_backup`
-#      (v2.184.0) — just missed for these two. Fixed: every query now joins
+#      (v2.184.0) - just missed for these two. Fixed: every query now joins
 #      `servers` and requires `is_local OR user_id = caller`, mirroring the
 #      v2.184.0 remedy exactly.
 #   §E (off-menu, completeness critic) backup_destinations.rs: `update()`,
 #      `remove()`, and `test_connection()` all queried/mutated a destination by
-#      bare `id`, gated only by `AdminUser` — asymmetric with `create()` in the
+#      bare `id`, gated only by `AdminUser` - asymmetric with `create()` in the
 #      same file, which already scopes `server_id` by `is_local OR user_id`.
-#      A second admin (DockPanel genuinely supports multiple admin accounts)
+#      A second admin (CyberHunter - Panel genuinely supports multiple admin accounts)
 #      could overwrite another admin's S3/SFTP destination config with their
-#      own credentials — the next scheduled backup for any policy pointing at
+#      own credentials - the next scheduled backup for any policy pointing at
 #      it would silently upload the target server's data into the SECOND
 #      admin's bucket, a backup-exfiltration primitive, with no activity-log
 #      entry on this route to notice it by. `list()` had the identical gap
-#      (found independently while fixing the other three — a bare
+#      (found independently while fixing the other three - a bare
 #      unscoped `SELECT *`) and was fixed the same way. Fixed: all four now
 #      scope by the same `is_local OR user_id = caller` predicate `create`
 #      already established.
@@ -75,7 +75,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
 echo
 echo "=================================================="
-echo "  Drill timeout / ws revocation / backup ownership scope — source pins (s465)"
+echo "  Drill timeout / ws revocation / backup ownership scope - source pins (s465)"
 echo "=================================================="
 echo
 
@@ -131,7 +131,7 @@ ENQUEUE_BODY=$(fnbody "$DRILL_SCHED_C" "enqueue_drill")
 if has "$ENQUEUE_BODY" 'post_long\(&agent_path, Some\(body\), crate::services::agent::DRILL_TIMEOUT_SECS\)'; then
   ok "A2 scheduled path (enqueue_drill) calls post_long with DRILL_TIMEOUT_SECS"
 else
-  bad "A2 scheduled path no longer uses post_long/DRILL_TIMEOUT_SECS — regressed to the 60s cap"
+  bad "A2 scheduled path no longer uses post_long/DRILL_TIMEOUT_SECS - regressed to the 60s cap"
 fi
 
 TRIGGER_DRILL_LONG_CALLS=$(count "$BACKUP_ORCH_C" 'post_long\("/backups/drill/(site|db|volume)", Some\(body\), crate::services::agent::DRILL_TIMEOUT_SECS\)')
@@ -145,7 +145,7 @@ fi
 if has "$AGENT_SVC_C" 'pub const DB_RESTORE_TIMEOUT_SECS: u64 = 270;'; then
   ok "A4 (control) DB_RESTORE_TIMEOUT_SECS unchanged at 270s"
 else
-  bad "A4 (control) DB_RESTORE_TIMEOUT_SECS was touched — verify this wasn't accidentally altered"
+  bad "A4 (control) DB_RESTORE_TIMEOUT_SECS was touched - verify this wasn't accidentally altered"
 fi
 
 # ── §B last_drill_at: stamped only after a drill actually enqueues ─────────
@@ -155,7 +155,7 @@ DISPATCH_BODY=$(fnbody "$DRILL_SCHED_C" "dispatch_policy_drills")
 if has "$DISPATCH_BODY" '\-> bool'; then
   ok "B1 dispatch_policy_drills now returns bool"
 else
-  bad "B1 dispatch_policy_drills no longer returns bool — regressed"
+  bad "B1 dispatch_policy_drills no longer returns bool - regressed"
 fi
 
 if has "$DISPATCH_BODY" 'let mut dispatched = false;' && has "$DISPATCH_BODY" '^\s*dispatched$'; then
@@ -174,14 +174,14 @@ fi
 if lacks "$TICK_BODY" 'dispatch_policy_drills\(db, agents, policy\)\.await;'; then
   ok "B4 the old unconditional (unguarded) dispatch call is gone"
 else
-  bad "B4 an unconditional dispatch_policy_drills call still exists — the stamp could run unconditionally again"
+  bad "B4 an unconditional dispatch_policy_drills call still exists - the stamp could run unconditionally again"
 fi
 
 # Positive control: the UPDATE statement itself is unchanged.
 if has "$TICK_BODY" 'UPDATE backup_policies SET last_drill_at = NOW\(\) WHERE id = \$1'; then
   ok "B5 (control) the last_drill_at UPDATE statement text is unchanged"
 else
-  bad "B5 (control) the UPDATE statement was altered — verify the fix didn't change its shape"
+  bad "B5 (control) the UPDATE statement was altered - verify the fix didn't change its shape"
 fi
 
 # ── §C ws_metrics.rs: per-tick revocation/expiry recheck ────────────────────
@@ -197,7 +197,7 @@ CLAIMS_INVALID_BODY=$(fnbody "$WS_METRICS_C" "claims_now_invalid")
 if has "$CLAIMS_INVALID_BODY" 'claims\.exp as i64\) < chrono::Utc::now\(\)\.timestamp\(\)'; then
   ok "C2 claims_now_invalid checks the token's own expiry, not just revocation"
 else
-  bad "C2 the expiry check is missing — exposure would still be unbounded past the token's own exp"
+  bad "C2 the expiry check is missing - exposure would still be unbounded past the token's own exp"
 fi
 
 if has "$CLAIMS_INVALID_BODY" 'token_blacklist\.read\(\)\.await\.contains\(jti\)' && has "$CLAIMS_INVALID_BODY" 'sessions_revoked_at\.read\(\)\.await'; then
@@ -208,7 +208,7 @@ fi
 
 HANDLE_SOCKET_BODY=$(fnbody "$WS_METRICS_C" "handle_socket")
 # s466 CORR: handle_socket's signature went multi-line (a 5th param, shutdown_rx,
-# was added — see the graceful-shutdown-race pin suite), so state/claims no
+# was added - see the graceful-shutdown-race pin suite), so state/claims no
 # longer share a line; check each param and the per-tick call separately.
 if has "$HANDLE_SOCKET_BODY" 'state: AppState,' && has "$HANDLE_SOCKET_BODY" 'claims: Claims,' && has "$HANDLE_SOCKET_BODY" 'claims_now_invalid\(&state, &claims\)\.await'; then
   ok "C4 handle_socket takes state+claims and calls claims_now_invalid every loop iteration"
@@ -226,7 +226,7 @@ fi
 if has "$WS_METRICS_C" 'Token has been revoked' && has "$WS_METRICS_C" 'Session revoked\. Please log in again\.' && has "$WS_METRICS_C" 'Admin access required'; then
   ok "C6 (control) the handshake's own blacklist/revocation/admin-role checks are unchanged"
 else
-  bad "C6 (control) a handshake-time check was removed — verify this wasn't accidentally dropped"
+  bad "C6 (control) a handshake-time check was removed - verify this wasn't accidentally dropped"
 fi
 
 # ── §D backup_orchestrator.rs: chain-report + list-all-backups ownership scope ─
@@ -236,7 +236,7 @@ BUILD_CHAIN_BODY=$(fnbody "$BACKUP_ORCH_C" "build_chain_report")
 if has "$BUILD_CHAIN_BODY" 'caller_id: Uuid'; then
   ok "D1 build_chain_report now takes a caller_id parameter"
 else
-  bad "D1 build_chain_report has no caller_id parameter — still unscoped"
+  bad "D1 build_chain_report has no caller_id parameter - still unscoped"
 fi
 
 SCOPE_JOINS=$(count "$BUILD_CHAIN_BODY" 'JOIN servers sv ON sv\.id = .*server_id.* AND \(sv\.is_local OR sv\.user_id = \$2\)')
@@ -330,12 +330,12 @@ fi
 
 # Positive control: DESTINATION_CALLER_PREDICATE (the narrower READ-scope
 # constant used by selectable()/backup_schedules.rs) was deliberately left
-# untouched — this fix mirrors create()'s broader is_local-inclusive
+# untouched - this fix mirrors create()'s broader is_local-inclusive
 # MANAGEMENT predicate instead, not this one.
 if has "$BACKUP_DEST_C" 'pub const DESTINATION_CALLER_PREDICATE: &str = "\(bd\.server_id IS NULL OR s\.user_id = \$1\)";'; then
   ok "E6 (control) DESTINATION_CALLER_PREDICATE is unchanged"
 else
-  bad "E6 (control) DESTINATION_CALLER_PREDICATE was altered — this session deliberately left it alone"
+  bad "E6 (control) DESTINATION_CALLER_PREDICATE was altered - this session deliberately left it alone"
 fi
 
 echo

@@ -1,6 +1,6 @@
 #Requires -RunAsAdministrator
 <#
-  Crée le labo de test DockPanel sous Hyper-V :
+  Crée le labo de test CyberHunter - Panel sous Hyper-V :
     - commutateur INTERNE "DockPanelLab" (isolé du LAN) + NAT Windows vers Internet
     - hôte = 192.168.250.1, VM = 192.168.250.10 / .11 / .12 (IP statiques posées ensuite via netplan)
     - VM Gen2 "dockpanel-lab" : 4 vCPU, 8 Go RAM fixe, disque 80 Go dynamique, ISO Ubuntu Server 24.04

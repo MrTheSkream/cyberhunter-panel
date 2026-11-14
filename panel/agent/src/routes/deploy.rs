@@ -55,7 +55,7 @@ pub struct KeygenRequest {
     pub domain: String,
 }
 
-/// POST /deploy/run — Clone/pull and optionally run deploy script.
+/// POST /deploy/run - Clone/pull and optionally run deploy script.
 async fn run_deploy(
     Json(body): Json<DeployRequest>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
@@ -140,7 +140,7 @@ async fn run_deploy(
     })))
 }
 
-/// POST /deploy/keygen — Generate SSH deploy key pair.
+/// POST /deploy/keygen - Generate SSH deploy key pair.
 async fn keygen(
     Json(body): Json<KeygenRequest>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
@@ -157,7 +157,7 @@ async fn keygen(
     })))
 }
 
-/// POST /deploy/atomic — Zero-downtime deploy with atomic symlink swap.
+/// POST /deploy/atomic - Zero-downtime deploy with atomic symlink swap.
 async fn atomic_deploy(
     Json(body): Json<AtomicDeployRequest>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
@@ -214,7 +214,7 @@ async fn atomic_deploy(
     })))
 }
 
-/// GET /deploy/releases/:domain — List releases for a site.
+/// GET /deploy/releases/:domain - List releases for a site.
 async fn list_releases(
     Path(domain): Path<String>,
 ) -> Result<Json<Vec<ReleaseInfoResponse>>, ApiErr> {
@@ -238,7 +238,7 @@ async fn list_releases(
     Ok(Json(response))
 }
 
-/// POST /deploy/activate — Activate (rollback to) a specific release.
+/// POST /deploy/activate - Activate (rollback to) a specific release.
 async fn activate_release(
     Json(body): Json<ActivateReleaseRequest>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
@@ -257,7 +257,7 @@ async fn activate_release(
     })))
 }
 
-/// POST /sites/{domain}/laravel-migrate — Run Laravel migrations safely.
+/// POST /sites/{domain}/laravel-migrate - Run Laravel migrations safely.
 /// Uses argument arrays instead of shell interpolation to prevent injection.
 async fn laravel_migrate(
     Path(domain): Path<String>,

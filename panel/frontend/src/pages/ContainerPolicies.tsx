@@ -248,7 +248,7 @@ export default function ContainerPolicies() {
 
       {unreachableServers > 0 && (
         <div className="px-4 py-2 text-xs text-warn-400 bg-warn-500/10 border border-warn-500/20 rounded-lg">
-          {unreachableServers} server{unreachableServers === 1 ? "" : "s"} did not respond — the usage counts below are a floor, not exact.
+          {unreachableServers} server{unreachableServers === 1 ? "" : "s"} did not respond - the usage counts below are a floor, not exact.
         </div>
       )}
 
@@ -304,9 +304,9 @@ export default function ContainerPolicies() {
       <div className="bg-dark-800 rounded-lg border border-dark-500 p-5">
         <h3 className="text-xs font-medium text-dark-300 uppercase font-mono tracking-widest mb-3">How It Works</h3>
         <div className="space-y-2 text-sm text-dark-200">
-          <p><strong className="text-dark-100">Container limits</strong> — Maximum number of Docker containers a user can deploy, counted across every server they can reach, not just one. Counted when deploying from a template; a Compose file or a stack is not counted against it.</p>
-          <p><strong className="text-dark-100">Memory &amp; CPU</strong> — Maximum resources per container deployment, applied to template deploys.</p>
-          <p><strong className="text-dark-100">Allowed images</strong> — Comma-separated. Checked wherever an image is chosen: template deploys, changing an app&rsquo;s image, Compose and stacks. Leave empty for no restriction.</p>
+          <p><strong className="text-dark-100">Container limits</strong> - Maximum number of Docker containers a user can deploy, counted across every server they can reach, not just one. Counted when deploying from a template; a Compose file or a stack is not counted against it.</p>
+          <p><strong className="text-dark-100">Memory &amp; CPU</strong> - Maximum resources per container deployment, applied to template deploys.</p>
+          <p><strong className="text-dark-100">Allowed images</strong> - Comma-separated. Checked wherever an image is chosen: template deploys, changing an app&rsquo;s image, Compose and stacks. Leave empty for no restriction.</p>
           <p className="text-xs text-dark-400">
             An entry matches the whole reference (<span className="font-mono">nginx:1.27</span>), or the repository it
             tags (<span className="font-mono">nginx</span> allows <span className="font-mono">nginx:1.27</span> but not

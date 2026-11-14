@@ -68,7 +68,7 @@ function OnOff({
 const INHERITED = "inherited from global php.ini";
 
 function defaultLabel(field: PhpField, v: string | undefined): string {
-  if (v == null) return "—";
+  if (v == null) return "-";
   if (field.kind === "choice") return field.choices?.find((c) => c.value === v)?.label ?? v;
   return v;
 }
@@ -343,7 +343,7 @@ export default function PhpSettingsCard({ siteId, refreshKey, onSaved }: Props) 
       <div className="p-5 space-y-6">
         <p className="text-xs text-dark-300">
           Applied to this site's PHP-FPM pool. Leave a field empty to use the default. These values take
-          priority over the server's global php.ini. PHP memory and workers are also shown in Resource Limits —
+          priority over the server's global php.ini. PHP memory and workers are also shown in Resource Limits -
           both cards stay in sync.
         </p>
 

@@ -24,7 +24,7 @@ pub struct WhmcsConfigRequest {
     pub auto_terminate: Option<bool>,
 }
 
-/// GET /api/whmcs/config — Get WHMCS integration configuration.
+/// GET /api/whmcs/config - Get WHMCS integration configuration.
 pub async fn get_config(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -66,7 +66,7 @@ pub async fn get_config(
     }
 }
 
-/// PUT /api/whmcs/config — Configure WHMCS integration.
+/// PUT /api/whmcs/config - Configure WHMCS integration.
 pub async fn update_config(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -130,7 +130,7 @@ pub async fn update_config(
 
     // Mint a webhook secret only when there is not one already. Regenerating it
     // on every save would silently break the hook the operator had configured in
-    // WHMCS — and the old statement did exactly that in its VALUES list while
+    // WHMCS - and the old statement did exactly that in its VALUES list while
     // omitting the column from its DO UPDATE SET, so it would have returned a
     // secret it never stored.
     let webhook_secret =
@@ -175,7 +175,7 @@ pub async fn update_config(
     Ok(Json(serde_json::json!({ "ok": true, "webhook_secret": webhook_secret })))
 }
 
-/// DELETE /api/whmcs/config — Remove WHMCS integration.
+/// DELETE /api/whmcs/config - Remove WHMCS integration.
 pub async fn delete_config(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -216,7 +216,7 @@ pub struct WhmcsWebhookPayload {
 ///
 /// The panel has always PRINTED the hook URL with the secret as a query
 /// parameter (`Integrations.tsx`), but this handler only ever read it from the
-/// JSON body — so the address the operator was told to paste into WHMCS
+/// JSON body - so the address the operator was told to paste into WHMCS
 /// authenticated nothing and answered 401. Accepting both makes the advertised
 /// URL work without dropping the body form, which is what a caller that can
 /// shape its own payload should still prefer.
@@ -225,7 +225,7 @@ pub struct WhmcsWebhookQuery {
     pub secret: Option<String>,
 }
 
-/// POST /api/whmcs/webhook — Receive provisioning hooks from WHMCS.
+/// POST /api/whmcs/webhook - Receive provisioning hooks from WHMCS.
 ///
 /// ⚠ `Json` consumes the request body, so it must stay LAST in this argument
 /// list; `Query` has to precede it.
@@ -250,7 +250,7 @@ pub async fn webhook(
 
     match secret {
         Some(ref expected) => {
-            // Body first, query string second — see `WhmcsWebhookQuery`.
+            // Body first, query string second - see `WhmcsWebhookQuery`.
             let provided = body
                 .secret
                 .as_deref()
@@ -306,7 +306,7 @@ pub async fn webhook(
             };
 
             // Map service. `users.plan` was withdrawn with the Stripe billing
-            // routes it existed to serve (routes/billing.rs) — the WHMCS plan
+            // routes it existed to serve (routes/billing.rs) - the WHMCS plan
             // name lives only here, in `whmcs_service_map.plan`, which is what
             // Integrations.tsx actually reads.
             sqlx::query(
@@ -333,7 +333,7 @@ pub async fn webhook(
             if let Some((Some(user_id),)) = mapping {
                 // `role` doubles as the status column, so suspending OVERWRITES the only
                 // record of what the account was. This path used to have no stash at all,
-                // and the unsuspend arm below restored everyone to 'user' — so an account
+                // and the unsuspend arm below restored everyone to 'user' - so an account
                 // round-tripped through billing came back a plain user whatever it had
                 // been. It compensated with the deny-list below, which was complete when
                 // written and then silently holed: it names roles one by one, so it did
@@ -343,7 +343,7 @@ pub async fn webhook(
                 // Now it stashes, through the same helper the panel uses, so the deny-list
                 // no longer has to carry that weight alone. It is KEPT regardless, because
                 // it guards a different hazard the stash does not touch: a lapsed invoice
-                // must never suspend the operator out of their own panel. Reachable — the
+                // must never suspend the operator out of their own panel. Reachable - the
                 // provision arm above adopts an EXISTING user by email with no role filter,
                 // so the operator's own account maps here the moment their address is also
                 // a billing contact.
@@ -360,7 +360,7 @@ pub async fn webhook(
 
                 if changed == 0 {
                     tracing::warn!(
-                        "WHMCS suspend for service {service_id} changed no user row — the mapped \
+                        "WHMCS suspend for service {service_id} changed no user row - the mapped \
                          account is already suspended or holds a privileged role"
                     );
                 } else {
@@ -372,7 +372,7 @@ pub async fn webhook(
 
         // Gated on `auto_suspend`, like its twin above. It was the only arm of the
         // three with no flag test, so an operator who deliberately turned
-        // billing-driven suspension OFF still got billing-driven UN-suspension —
+        // billing-driven suspension OFF still got billing-driven UN-suspension -
         // and since un-suspending rewrites the role, that was the half that could
         // change a privilege. Suspend and unsuspend are one setting's two
         // directions; honouring one and not the other is not a safe default.
@@ -387,7 +387,7 @@ pub async fn webhook(
                 // and demote an `admin` in the same statement.
                 //
                 // ⚠ The deny-list is not symmetry for its own sake. The suspend arm
-                // above refuses to touch a privileged account — but the panel can
+                // above refuses to touch a privileged account - but the panel can
                 // suspend one, and then this arm would have handed `admin` straight
                 // back, turning a webhook secret into a privilege-restoration
                 // primitive that leaves no activity-log row. Billing may return an
@@ -402,7 +402,7 @@ pub async fn webhook(
                     // account is still suspended, and saying otherwise would leave
                     // billing and the panel disagreeing with nothing to reconcile them.
                     Ok(None) => tracing::warn!(
-                        "WHMCS unsuspend for service {service_id} left the account suspended — \
+                        "WHMCS unsuspend for service {service_id} left the account suspended - \
                          either no previous role was recorded, or it is one billing may not restore"
                     ),
                     Err(_) => tracing::warn!(
@@ -419,7 +419,7 @@ pub async fn webhook(
             ).bind(service_id).fetch_optional(&state.db).await.ok().flatten();
 
             if let Some((Some(_user_id),)) = mapping {
-                // Don't delete user — just mark terminated
+                // Don't delete user - just mark terminated
                 sqlx::query("UPDATE whmcs_service_map SET status = 'terminated' WHERE whmcs_service_id = $1")
                     .bind(service_id).execute(&state.db).await.ok();
 
@@ -432,7 +432,7 @@ pub async fn webhook(
     }
 }
 
-/// GET /api/whmcs/services — List WHMCS service mappings.
+/// GET /api/whmcs/services - List WHMCS service mappings.
 pub async fn list_services(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -471,7 +471,7 @@ pub struct MigrateRequest {
     pub target_server_id: uuid::Uuid,
 }
 
-/// POST /api/migrations/apps — Start migrating a container to another server.
+/// POST /api/migrations/apps - Start migrating a container to another server.
 pub async fn start_migration(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -533,7 +533,7 @@ pub async fn start_migration(
     .map_err(|e| internal_error("create migration", e))?;
 
     // No background task exists anywhere in the tree to do the actual container
-    // export/transfer/import this would need — the row above is written once
+    // export/transfer/import this would need - the row above is written once
     // and never updated again (confirmed by the loose-ends audit: zero writers
     // touch `app_migrations` besides this INSERT). It is permanently stuck at
     // `status='in_progress'`. See FEATURES.md §Withdrawn Claims ("App Migration").
@@ -551,7 +551,7 @@ pub async fn start_migration(
     }))))
 }
 
-/// GET /api/migrations/apps — List all app migrations.
+/// GET /api/migrations/apps - List all app migrations.
 pub async fn list_migrations(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -586,7 +586,7 @@ pub async fn list_migrations(
     Ok(Json(serde_json::json!({ "migrations": items })))
 }
 
-/// GET /api/migrations/apps/{id} — Get migration status.
+/// GET /api/migrations/apps/{id} - Get migration status.
 pub async fn migration_status(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,

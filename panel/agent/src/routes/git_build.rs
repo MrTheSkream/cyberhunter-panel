@@ -54,7 +54,7 @@ fn is_valid_branch(branch: &str) -> bool {
 /// written as root. Allows only `[A-Za-z0-9._-]` and rejects `..`, which blocks
 /// path traversal (`/`, `..`) and nginx directive injection (`;`, `{`, `}`,
 /// quotes, `$`, `#`, whitespace, control chars) while still permitting benign
-/// characters like `_`. Deliberately looser than full RFC validity — the backend
+/// characters like `_`. Deliberately looser than full RFC validity - the backend
 /// enforces is_valid_domain on new values; this only stops the dangerous set.
 fn is_safe_nginx_domain(domain: &str) -> bool {
     !domain.is_empty()
@@ -75,14 +75,14 @@ fn is_valid_build_context(ctx: &str) -> bool {
     !ctx.contains("..") && !ctx.starts_with('/')
 }
 
-/// A persistent-volume field is CONTAINER-path only (#118) — the host side is
+/// A persistent-volume field is CONTAINER-path only (#118) - the host side is
 /// always derived under `GIT_DATA_DIR/{name}` and never taken from the request,
 /// so the only injection surface left is the container path feeding that
 /// derivation. `..` is rejected here, before it ever reaches
 /// `std::fs::create_dir_all`: that call walks `..` components using the OS's own
 /// path resolution and can create a directory OUTSIDE the intended prefix before
 /// the later `canonicalize` + prefix check ever runs, exactly the way a symlink
-/// escape would. Otherwise deliberately loose — this only stops the dangerous
+/// escape would. Otherwise deliberately loose - this only stops the dangerous
 /// set, matching `is_valid_dockerfile`/`is_valid_build_context` above.
 fn is_valid_volume_path(path: &str) -> bool {
     path.starts_with('/')
@@ -95,7 +95,7 @@ fn is_valid_volume_path(path: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '_' | '-' | '.'))
 }
 
-/// At most this many declared volumes per deploy — a sane bound on an
+/// At most this many declared volumes per deploy - a sane bound on an
 /// operator-editable list, not a resource limit the deploy itself needs.
 const MAX_VOLUMES: usize = 10;
 
@@ -126,7 +126,7 @@ fn is_valid_image_tag(tag: &str) -> bool {
 /// says which.
 ///
 /// A preview used to be addressed by the bare string `{config}-pr-{branch}`,
-/// which is a name a *deployment* can legally have — so a pushed branch could
+/// which is a name a *deployment* can legally have - so a pushed branch could
 /// name a stranger's production container, checkout directory and image
 /// repository. `GitScope::scoped` puts previews behind a `.`, which
 /// `is_valid_name` rejects, so the two spaces can no longer intersect.
@@ -180,7 +180,7 @@ struct DeployRequest {
     ///
     /// Accepts both spellings deliberately. This endpoint has always read `env`
     /// (matching `/apps/deploy`), while every caller in the panel spelled it
-    /// `env_vars` after the column it is loaded from — and `serde(default)` turned
+    /// `env_vars` after the column it is loaded from - and `serde(default)` turned
     /// that mismatch into an empty map rather than an error, so git deploys came up
     /// with no environment at all and nothing anywhere said so (GH #94). The panel
     /// now sends `env`; the alias keeps a not-yet-updated panel working, since
@@ -195,7 +195,7 @@ struct DeployRequest {
     cpu_percent: Option<u64>,
     ssl_email: Option<String>,
     /// `none` / `acme` / `provided`, or absent from a panel that predates the
-    /// field — `TlsIntent::from_request` keeps that case reading `ssl_email`
+    /// field - `TlsIntent::from_request` keeps that case reading `ssl_email`
     /// presence exactly as this endpoint always has.
     tls_mode: Option<String>,
     /// The registered-certificate alias, `provided` mode only.
@@ -204,7 +204,7 @@ struct DeployRequest {
     scope: String,
     /// Container paths to bind-mount durably under `GIT_DATA_DIR/{name}` (#118).
     /// Absent from a panel that predates the field, exactly like every other
-    /// `#[serde(default)]` here — an old panel simply never declares volumes.
+    /// `#[serde(default)]` here - an old panel simply never declares volumes.
     #[serde(default)]
     volumes: Vec<String>,
 }
@@ -217,7 +217,7 @@ struct KeygenRequest {
 /// The OLD domain a rename is walking away from, plus the port that proves the
 /// vhost is still this deploy's. `host_port` is not optional in spirit: without
 /// it `ownership::app_vhost` cannot tell "still ours" from "re-claimed since",
-/// and it fails CLOSED — so a missing port leaves the vhost in place.
+/// and it fails CLOSED - so a missing port leaves the vhost in place.
 #[derive(Deserialize)]
 struct ReleaseDomainRequest {
     domain: String,
@@ -233,7 +233,7 @@ struct CleanupRequest {
     /// What the PANEL believes this deployment's vhost and published port are.
     ///
     /// The agent reads both off the container, which answers nothing once the
-    /// container is already gone — and that is the common case for a preview
+    /// container is already gone - and that is the common case for a preview
     /// swept after a crash. The vhost and its certificate then survived with no
     /// record anywhere naming them. These are a fallback, not an override: the
     /// port still has to match what the vhost proxies to before anything is
@@ -257,7 +257,7 @@ fn default_keep() -> usize {
     5
 }
 
-/// POST /git/clone — Clone or pull a Git repository.
+/// POST /git/clone - Clone or pull a Git repository.
 async fn clone(
     Json(body): Json<CloneRequest>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
@@ -293,7 +293,7 @@ async fn clone(
     })))
 }
 
-/// POST /git/build — Build a Docker image from the cloned repo.
+/// POST /git/build - Build a Docker image from the cloned repo.
 async fn build(
     Json(body): Json<BuildRequest>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
@@ -327,7 +327,7 @@ async fn build(
     })))
 }
 
-/// POST /git/deploy — Deploy a container from a locally-built image.
+/// POST /git/deploy - Deploy a container from a locally-built image.
 async fn deploy_container(
     State(state): State<AppState>,
     Json(body): Json<DeployRequest>,
@@ -346,7 +346,7 @@ async fn deploy_container(
     // written as root, so reject the injection/traversal characters here even if
     // the backend validation were bypassed (the s241 #69 threat). This is a
     // SECURITY floor (block '/', ';', braces, quotes, '$', whitespace, control),
-    // NOT full RFC validity — the backend already enforces is_valid_domain on new
+    // NOT full RFC validity - the backend already enforces is_valid_domain on new
     // values; being stricter here would break grandfathered/preview domains that
     // merely contain a benign '_'.
     if let Some(ref domain) = body.domain {
@@ -364,7 +364,7 @@ async fn deploy_container(
     // container writing into its own persistent directory defeats the point of
     // it being throwaway, and TTL teardown would then be destroying real data
     // rather than a re-clonable checkout. The panel is not trusted to enforce
-    // this on its own — it is the boundary a request actually crosses, and a
+    // this on its own - it is the boundary a request actually crosses, and a
     // future bug there must not be the only thing standing between a preview
     // and durable storage.
     if scope != ownership::GitScope::Deploy && !body.volumes.is_empty() {
@@ -376,7 +376,7 @@ async fn deploy_container(
 
     let name = scope.scoped(&body.name);
 
-    // Decide the TLS shape BEFORE anything runs — mirrors
+    // Decide the TLS shape BEFORE anything runs - mirrors
     // `docker_apps::TlsIntent::from_request`'s own front-door discipline: a
     // request naming a mode it cannot honour is refused with nothing done,
     // not a running container and a warning. `use_traefik` is always false
@@ -420,10 +420,10 @@ async fn deploy_container(
         // predicting one. An agent and a panel are installed separately and
         // update on their own schedule, and a panel newer than its agent would
         // otherwise store the scoped name for a container the agent had created
-        // under the old one — a row pointing at nothing.
+        // under the old one - a row pointing at nothing.
         "container_name": format!("dockpanel-git-{name}"),
     });
-    // Absent entirely for a blue-green update, which never touched TLS — see
+    // Absent entirely for a blue-green update, which never touched TLS - see
     // `GitDeployResult::ssl`'s doc comment. Present for anything that did.
     if let Some(ssl) = result.ssl {
         response["ssl"] = serde_json::json!(ssl);
@@ -438,7 +438,7 @@ async fn deploy_container(
         response["proxy_warning"] = serde_json::json!(warning);
         // Only a refused REGISTERED certificate is the outage this feature
         // exists to prevent (an ACME failure can still be ordered later, and
-        // has always been a background warning) — so this flag, which the
+        // has always been a background warning) - so this flag, which the
         // panel's own `provided_tls_refusal`-style check keys on, is set only
         // for that case, mirroring `docker_apps::expose_domain`'s wire shape.
         if result.tls_mode == Some("provided") {
@@ -449,7 +449,7 @@ async fn deploy_container(
     Ok(Json(response))
 }
 
-/// POST /git/keygen — Generate SSH deploy key.
+/// POST /git/keygen - Generate SSH deploy key.
 async fn keygen(
     Json(body): Json<KeygenRequest>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
@@ -466,7 +466,7 @@ async fn keygen(
     })))
 }
 
-/// POST /git/cleanup — Stop + remove container and clean up nginx/SSL/volumes.
+/// POST /git/cleanup - Stop + remove container and clean up nginx/SSL/volumes.
 async fn cleanup(
     Json(body): Json<CleanupRequest>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
@@ -494,7 +494,7 @@ async fn cleanup(
     Ok(Json(serde_json::json!({ "success": true })))
 }
 
-/// POST /git/release-domain — drop a vhost + certs this deploy no longer holds.
+/// POST /git/release-domain - drop a vhost + certs this deploy no longer holds.
 ///
 /// The rename half of `/git/cleanup`. A Git Deploy that changes its domain used
 /// to leave the OLD vhost proxying to the still-running container, with a
@@ -510,7 +510,7 @@ async fn release_domain(
     Ok(Json(serde_json::json!({ "success": true })))
 }
 
-/// POST /git/prune — Remove old Docker images, keeping the last N.
+/// POST /git/prune - Remove old Docker images, keeping the last N.
 async fn prune(
     Json(body): Json<PruneRequest>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
@@ -614,7 +614,7 @@ struct HookRequest {
     scope: String,
 }
 
-/// POST /git/hook — Run a command inside a git-deployed container (docker exec).
+/// POST /git/hook - Run a command inside a git-deployed container (docker exec).
 async fn run_hook(Json(body): Json<HookRequest>) -> Result<Json<serde_json::Value>, ApiErr> {
     if !super::is_valid_name(&body.name) { return Err(err(StatusCode::BAD_REQUEST, "Invalid name")); }
     if body.command.is_empty() { return Err(err(StatusCode::BAD_REQUEST, "Empty command")); }
@@ -655,7 +655,7 @@ struct AutoDetectRequest {
     #[serde(default = "default_context")]
     build_context: String,
     /// Whitelisted install command to fold into the auto-generated Dockerfile's
-    /// RUN line. Replaces the removed /git/pre-build-hook host-exec route —
+    /// RUN line. Replaces the removed /git/pre-build-hook host-exec route -
     /// this is the only place ALLOWED_PRE_BUILD content still reaches this
     /// crate, and it never touches a host shell: it only ever becomes text
     /// written into a Dockerfile that `docker build` later executes.
@@ -663,7 +663,7 @@ struct AutoDetectRequest {
     pre_build_cmd: Option<String>,
 }
 
-/// POST /git/auto-detect — Auto-detect language and generate Dockerfile if missing,
+/// POST /git/auto-detect - Auto-detect language and generate Dockerfile if missing,
 /// optionally splicing a whitelisted install command into it as a RUN line.
 async fn auto_detect(Json(body): Json<AutoDetectRequest>) -> Result<Json<serde_json::Value>, ApiErr> {
     if !super::is_valid_name(&body.name) { return Err(err(StatusCode::BAD_REQUEST, "Invalid name")); }
@@ -704,7 +704,7 @@ struct ComposeCheckRequest {
     build_context: String,
 }
 
-/// POST /git/compose-check — Check if repo has docker-compose.yml
+/// POST /git/compose-check - Check if repo has docker-compose.yml
 async fn compose_check(Json(body): Json<ComposeCheckRequest>) -> Result<Json<serde_json::Value>, ApiErr> {
     if !super::is_valid_name(&body.name) { return Err(err(StatusCode::BAD_REQUEST, "Invalid name")); }
     if !is_valid_build_context(&body.build_context) {
@@ -729,7 +729,7 @@ async fn compose_check(Json(body): Json<ComposeCheckRequest>) -> Result<Json<ser
     }
 }
 
-/// POST /git/nixpacks-build — Build image using nixpacks
+/// POST /git/nixpacks-build - Build image using nixpacks
 async fn nixpacks_build_handler(
     State(_state): State<AppState>,
     Json(body): Json<serde_json::Value>,
@@ -789,7 +789,7 @@ mod tests {
 
     #[test]
     fn volume_path_rejects_traversal_and_free_form_hosts() {
-        // `..` must be rejected before `create_dir_all` ever sees it — that call
+        // `..` must be rejected before `create_dir_all` ever sees it - that call
         // walks path components using the OS's own resolution and can create a
         // directory outside GIT_DATA_DIR before canonicalize's prefix check runs.
         for p in [

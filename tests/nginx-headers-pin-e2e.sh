@@ -6,7 +6,7 @@
 # s278 found index.html served with no cache directive at all, so every deploy
 # was invisible to returning visitors. s280 gave that fix a delivery path. Both
 # shipped WITHOUT a pin, and this project's own history says a fix without a pin
-# regresses — so the whole contract is asserted here, on both surfaces that can
+# regresses - so the whole contract is asserted here, on both surfaces that can
 # produce it: the template setup.sh writes at INSTALL time, and the migration
 # update.sh applies to a box that installed BEFORE the fix existed.
 #
@@ -29,7 +29,7 @@ UPDATE="$REPO/scripts/update.sh"
 PASS=0; FAIL=0; SKIP=0
 ok()   { PASS=$((PASS+1)); printf '  \033[0;32m✓\033[0m %s\n' "$1"; }
 bad()  { FAIL=$((FAIL+1)); printf '  \033[0;31m✗\033[0m %s\n' "$1"; }
-skip() { SKIP=$((SKIP+1)); printf '  \033[0;33m—\033[0m %s (skipped)\n' "$1"; }
+skip() { SKIP=$((SKIP+1)); printf '  \033[0;33m-\033[0m %s (skipped)\n' "$1"; }
 check(){ if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 (expected [$3], got [$2])"; fi; }
 
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"; [ -n "${NGX_PID:-}" ] && kill "$NGX_PID" 2>/dev/null' EXIT
@@ -84,7 +84,7 @@ echo
 echo "── 2: the other two shipped templates repeat their OWN parent set ──"
 # ─────────────────────────────────────────────────────────────────────────────
 # The parent sets differ per file (the panel vhost declares seven, these two
-# declare five and four), so "N of 7" is the wrong frame — each /assets/ block
+# declare five and four), so "N of 7" is the wrong frame - each /assets/ block
 # is measured against the server block it actually sits in.
 for f in panel/frontend/nginx.conf website/client/nginx.conf; do
     CONF="$REPO/$f"
@@ -105,7 +105,7 @@ done
 echo
 echo "── 3: the update.sh migrations (reach boxes installed BEFORE the fix) ──"
 # ─────────────────────────────────────────────────────────────────────────────
-# A fix in the install template reaches nobody already running — update.sh never
+# A fix in the install template reaches nobody already running - update.sh never
 # re-runs setup.sh (lesson #108). These assert the two migrations that close it.
 check "update.sh carries the index.html cache migration" \
       "$(grep -c 'Added index.html cache directive' "$UPDATE")" "1"
@@ -115,8 +115,8 @@ check "both migrations refuse a vhost with no server-level add_header" \
       "$(grep -c 'has no server-level add_header' "$UPDATE")" "2"
 
 # A pre-fix vhost, as a box installed on v2.47.0 actually has it. Its header set
-# is deliberately NOT today's — three headers, one of which today's template
-# does not even declare — so a migration that writes the script's list instead
+# is deliberately NOT today's - three headers, one of which today's template
+# does not even declare - so a migration that writes the script's list instead
 # of copying the box's own fails loudly here.
 cat > "$TMP/old-panel.conf" <<'EOF'
 server {
@@ -183,7 +183,7 @@ check "migrated /assets/ dropped 'expires'" \
 check "migrated = /index.html copied the box's own SAMEORIGIN too" \
       "$(printf '%s' "$MI" | grep -c 'X-Frame-Options "SAMEORIGIN"')" "1"
 
-# Idempotence — update.sh runs on EVERY update, not once.
+# Idempotence - update.sh runs on EVERY update, not once.
 cp "$TMP/migrated.conf" "$TMP/migrated.once"
 R=$(run_migrations "$TMP/migrated.conf")
 check "re-running both migrations signals no reload" "$R" "0"
@@ -193,7 +193,7 @@ check "re-running both migrations is byte-identical" \
 # The OTHER live population: a box on v2.47.1, which already has the index.html
 # block (from the template or the seventh migration) but still has the old
 # /assets/. The eighth migration must fix /assets/ and leave the existing block
-# alone — not skip, not duplicate.
+# alone - not skip, not duplicate.
 cat > "$TMP/v471.conf" <<'EOF'
 server {
     listen 8080;
@@ -234,7 +234,7 @@ check "  and re-running is a byte-identical no-op" \
 
 # A vhost with `expires` in some OTHER location must still migrate. The
 # migration's own post-condition originally grepped the whole file for
-# `expires`, which would have skipped this box silently — a fix that reaches
+# `expires`, which would have skipped this box silently - a fix that reaches
 # nobody, which is the failure this suite exists to prevent.
 cat > "$TMP/otherexpires.conf" <<'EOF'
 server {
@@ -283,7 +283,7 @@ check "a header-less vhost is left byte-identical" \
 
 # ─────────────────────────────────────────────────────────────────────────────
 echo
-echo "── 4: served by a real nginx — status FIRST, then headers (#108d) ──"
+echo "── 4: served by a real nginx - status FIRST, then headers (#108d) ──"
 # ─────────────────────────────────────────────────────────────────────────────
 if ! command -v nginx > /dev/null 2>&1; then
     skip "real-nginx serving assertions (nginx not installed)"
@@ -303,7 +303,7 @@ else
         "$TMP/template.conf" > "$TMP/ngx/server.conf"
 
     # When this runs as root, nginx would drop its workers to `nobody`, which
-    # cannot traverse a 0700 mktemp dir — every request comes back 403. That is
+    # cannot traverse a 0700 mktemp dir - every request comes back 403. That is
     # exactly the s280 failure this suite is built to detect, so it must not be
     # allowed to happen for a reason as uninteresting as file ownership.
     cat > "$TMP/ngx/nginx.conf" <<EOF
@@ -383,12 +383,12 @@ EOF
         E=$(hdrs /assets/does-not-exist.js)
         check "a missing asset is 404 (the harness can distinguish error from success)" \
               "$(status "$E")" "404"
-        # The security headers ARE emitted on the 404 — that is what made eleven
+        # The security headers ARE emitted on the 404 - that is what made eleven
         # assertions vacuous at s280. The cache header is not, by design. These
         # two are themselves gated on the status: asserted against a 403 they
         # would both pass while proving nothing, which is the whole lesson.
         if [ "$(status "$E")" = "404" ]; then
-            check "  the 404 still carries nosniff ('always' — this is why status must be checked)" \
+            check "  the 404 still carries nosniff ('always' - this is why status must be checked)" \
                   "$(hval "$E" X-Content-Type-Options)" "nosniff"
             check "  the 404 carries NO Cache-Control (an error must never be cached)" \
                   "$(hcount "$E" Cache-Control)" "0"

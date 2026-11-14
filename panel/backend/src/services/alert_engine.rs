@@ -28,7 +28,7 @@ pub async fn run(pool: PgPool, agents: AgentRegistry, mut shutdown_rx: tokio::sy
                 tick_count += 1;
 
                 // Whose alerts are silenced right now. Loaded ONCE per tick and
-                // handed to every check, the way `uptime.rs` does it — the
+                // handed to every check, the way `uptime.rs` does it - the
                 // alternative is one query per server per alert type.
                 let maint = maintenance_users(&pool).await;
 
@@ -71,7 +71,7 @@ pub async fn run(pool: PgPool, agents: AgentRegistry, mut shutdown_rx: tokio::sy
                 // GAP 9: Escalate unacknowledged firing alerts older than 15 minutes
                 check_escalations(&pool).await;
 
-                // Purge old resolved alerts (keep 30 days) — every hour
+                // Purge old resolved alerts (keep 30 days) - every hour
                 if tick_count % 60 == 0 {
                     let _ = sqlx::query(
                         "DELETE FROM alerts WHERE status = 'resolved' AND resolved_at < NOW() - INTERVAL '30 days'",
@@ -95,15 +95,15 @@ pub async fn run(pool: PgPool, agents: AgentRegistry, mut shutdown_rx: tokio::sy
 /// The panel offers a button labelled *Silence Alerts*. Until this existed the
 /// only service that honoured it was `uptime.rs`, which owns 5 of the 19 alert
 /// types; the engine in this file owns the other 14 and had never read the
-/// table. So the alerts a planned maintenance is certain to cause — `offline`,
-/// `service_down`, `container_down` — were precisely the ones that still paged.
+/// table. So the alerts a planned maintenance is certain to cause - `offline`,
+/// `service_down`, `container_down` - were precisely the ones that still paged.
 ///
 /// ⚠ The set is applied at each check's SOURCE, never at the fire. That is not
 /// a style preference. `check_server_offline` selects the servers that have no
 /// firing row and then writes one; `check_threshold` and the SSL ladder stamp
 /// `alert_state` beside their fire. Suppressing at the fire would leave those
 /// stamps claiming the operator was paged while nothing was sent, and the
-/// condition would never page again — the permanent silence that
+/// condition would never page again - the permanent silence that
 /// `fire_alert_with_retry`'s own contract exists to prevent. Skipping the row
 /// before any of that runs means the condition is still true on the first tick
 /// after the window closes, and pages then.
@@ -112,7 +112,7 @@ pub async fn run(pool: PgPool, agents: AgentRegistry, mut shutdown_rx: tokio::sy
 /// `cron_failure`, `security`, `image_scan`, `ssl_renewal_failure`) are
 /// deliberately NOT suppressed: each report is the result of a specific run
 /// (a backup, a cron job, a scan), not a standing condition THIS engine
-/// re-evaluates on its own 60-second loop — this function's suppression exists
+/// re-evaluates on its own 60-second loop - this function's suppression exists
 /// for the 14 types checked below, in this loop. A run that happens to fall
 /// inside a maintenance window is not deferred to the next tick the way a
 /// standing condition is; suppressing it here would lose that run's result
@@ -157,7 +157,7 @@ async fn fire_alert_with_retry(
         {
             // `Ok(false)` is not a fire. The operator has this type switched off,
             // so `try_fire_alert` wrote no `alerts` row, rang no bell and sent
-            // nothing — and the two things below both have to know that.
+            // nothing - and the two things below both have to know that.
             //
             // Returning `true` here published the outage on the operator's PUBLIC
             // status page (the incident is created `visible_on_status_page = TRUE`)
@@ -165,7 +165,7 @@ async fn fire_alert_with_retry(
             // also satisfied this function's own contract, so the SSL ladder
             // stamped `last_warned_day` for a page that never happened. Because
             // `ssl_decision` only fires a rung TIGHTER than the one stamped, that
-            // rung was then gone for good — re-enabling the type did not bring it
+            // rung was then gone for good - re-enabling the type did not bring it
             // back.
             //
             // Retrying is pointless too: the answer is a stored preference, not a
@@ -203,7 +203,7 @@ async fn fire_alert_with_retry(
 
                         tracing::info!("Correlated alert to existing incident {incident_id}: {title}");
                     } else {
-                        // No recent active incident — create a new one. RETURNING id
+                        // No recent active incident - create a new one. RETURNING id
                         // binds the follow-up update to the row we just wrote; the
                         // previous re-lookup matched on `title` alone across the whole
                         // table, so two tenants whose servers share a name (the default
@@ -232,7 +232,7 @@ async fn fire_alert_with_retry(
             Err(e) => {
                 tracing::warn!("Alert fire attempt {} failed: {}", attempt + 1, e);
                 if attempt == 1 {
-                    // Both attempts failed — log to system_logs
+                    // Both attempts failed - log to system_logs
                     crate::services::system_log::log_event(
                         pool,
                         "error",
@@ -327,7 +327,7 @@ async fn check_resource_thresholds(pool: &PgPool, maint: &HashSet<Uuid>) {
             }
         }
 
-        // Disk (no duration — disk doesn't fluctuate rapidly)
+        // Disk (no duration - disk doesn't fluctuate rapidly)
         if let Some(disk) = server.disk_usage_pct {
             check_threshold(
                 pool,
@@ -346,10 +346,10 @@ async fn check_resource_thresholds(pool: &PgPool, maint: &HashSet<Uuid>) {
             .await;
         }
 
-        // GAP 6: Disk-full forecast — check if disk will be full within 48 hours based on trend
+        // GAP 6: Disk-full forecast - check if disk will be full within 48 hours based on trend
         // Bounded by TIME, not by row count. `LIMIT 60` against a 30s collector
         // cadence (metrics_collector.rs:9) is a ~30-minute window, and
-        // disk_full_forecast requires 6 hours — so the forecast this guide
+        // disk_full_forecast requires 6 hours - so the forecast this guide
         // advertises ("full within 48 hours") could never fire, for any input,
         // on any install. Proven on this box: 20,159 rows at a measured 30.0s
         // mean gap, and `alerts` holds 0 disk_forecast rows against 7 for
@@ -370,14 +370,14 @@ async fn check_resource_thresholds(pool: &PgPool, maint: &HashSet<Uuid>) {
         // rather than calling fire_alert_with_retry directly: the condition holds
         // across many consecutive 60s ticks, and an ungated fire on every tick
         // meant one page per minute to every channel plus one never-purged
-        // `alerts` row per minute for a single event — and, because nothing ever
+        // `alerts` row per minute for a single event - and, because nothing ever
         // resolved them, a check_escalations re-page every 30 minutes forever.
         //
         // That storm is/was live for memory_leak. disk_forecast was UNREACHABLE
         // and had never fired, for the reason recorded above the query: a
         // row-count LIMIT against a 30s cadence could not span the 6-hour
         // minimum. The query is now time-bounded, so this is the tick where the
-        // forecast becomes reachable for the first time — which is exactly why
+        // forecast becomes reachable for the first time - which is exactly why
         // the gate below matters rather than being belt-and-braces. It is the
         // thing standing between a real forecast and the per-minute page storm
         // memory_leak demonstrated. Verified load-bearing before arming this:
@@ -419,7 +419,7 @@ async fn check_resource_thresholds(pool: &PgPool, maint: &HashSet<Uuid>) {
             }
         }
 
-        // GAP 7: Memory leak detection — check for sustained upward trend in memory usage
+        // GAP 7: Memory leak detection - check for sustained upward trend in memory usage
         let mem_trend: Vec<(f32,)> = sqlx::query_as(
             "SELECT mem_pct FROM metrics_history \
              WHERE server_id = $1 ORDER BY created_at DESC LIMIT 60",
@@ -562,7 +562,7 @@ async fn check_threshold(
     if exceeds {
         let new_count = consecutive + 1;
 
-        // Upsert state — PostgreSQL serializes concurrent ON CONFLICT upserts
+        // Upsert state - PostgreSQL serializes concurrent ON CONFLICT upserts
         let _ = sqlx::query(
             "INSERT INTO alert_state (server_id, alert_type, state_key, current_state, consecutive_count, fired_at) \
              VALUES ($1, $2, '', CASE WHEN $3 >= $4 THEN 'firing' ELSE 'pending' END, $3, \
@@ -593,7 +593,7 @@ async fn check_threshold(
                 Some(server.id),
                 None,
                 alert_type,
-                // check_threshold's own alert_state rows are keyed '' — these are
+                // check_threshold's own alert_state rows are keyed '' - these are
                 // conditions of the server as a whole, not of an entity on it.
                 "",
                 severity,
@@ -613,7 +613,7 @@ async fn check_threshold(
             .await;
         }
     } else if current_state == "firing" {
-        // Value dropped below threshold — resolve
+        // Value dropped below threshold - resolve
         let _ = sqlx::query(
             "UPDATE alert_state SET current_state = 'ok', consecutive_count = 0, fired_at = NULL, last_notified_at = NULL \
              WHERE server_id = $1 AND alert_type = $2 AND state_key = ''",
@@ -638,7 +638,7 @@ async fn check_threshold(
         )
         .await;
     } else {
-        // Below threshold and not firing — reset counter
+        // Below threshold and not firing - reset counter
         if consecutive > 0 {
             let _ = sqlx::query(
                 "UPDATE alert_state SET consecutive_count = 0 \
@@ -671,14 +671,14 @@ fn past_cooldown(
 ///
 /// Returns `true` at most once per `cooldown_minutes` window while the
 /// condition holds. The claim and the stamp are one statement, so two engines
-/// racing the same window can't both page — whichever loses the `ON CONFLICT`
+/// racing the same window can't both page - whichever loses the `ON CONFLICT`
 /// sees the fresh `last_notified_at` and returns no row.
 ///
 /// The gate is purely time-based: it deliberately does NOT re-arm just because
 /// the state row reads 'ok'. These predicates sit on a threshold (memory_leak
 /// needs `recent_avg > 60.0`), so a server plateaued at the boundary flips the
 /// condition on and off with ordinary jitter. Re-arming on the 'ok' transition
-/// would let that flap page once per tick with the cooldown never applying —
+/// would let that flap page once per tick with the cooldown never applying -
 /// reintroducing, through the gate meant to stop it, the exact storm this
 /// function exists to prevent.
 async fn claim_trend_fire(
@@ -688,7 +688,7 @@ async fn claim_trend_fire(
     cooldown_minutes: i32,
 ) -> bool {
     // A rule with cooldown_minutes <= 0 re-arms on every tick, which is exactly
-    // the storm this gate exists to stop — floor it at one tick.
+    // the storm this gate exists to stop - floor it at one tick.
     let cooldown = cooldown_minutes.max(1);
 
     let claimed: Option<(Uuid,)> = sqlx::query_as(
@@ -724,7 +724,7 @@ async fn claim_trend_fire(
 /// `last_notified_at` is deliberately PRESERVED: it is the cooldown clock
 /// `claim_trend_fire` reads, and clearing it here would let a flapping
 /// predicate re-page on the very next tick. Keeping it caps a flap at one fire
-/// plus one recovery per cooldown window — once a re-fire is suppressed the
+/// plus one recovery per cooldown window - once a re-fire is suppressed the
 /// state row stays 'ok', so this UPDATE matches nothing and no second recovery
 /// page is sent either.
 async fn clear_trend_alert(
@@ -954,7 +954,7 @@ async fn check_server_offline(pool: &PgPool, maint: &HashSet<Uuid>) {
             continue;
         }
 
-        // Create firing state — PostgreSQL serializes concurrent ON CONFLICT upserts
+        // Create firing state - PostgreSQL serializes concurrent ON CONFLICT upserts
         let _ = sqlx::query(
             "INSERT INTO alert_state (server_id, alert_type, state_key, current_state, fired_at, last_notified_at) \
              VALUES ($1, 'offline', '', 'firing', NOW(), NOW()) \
@@ -1032,7 +1032,7 @@ const SSL_EXPIRED_WARN_DAY: i64 = -1;
 /// What `check_ssl_expiry` should do for one site this tick.
 #[derive(Debug, PartialEq, Eq)]
 enum SslAction {
-    /// Certificate moved back past the rung we last paged at — it was renewed.
+    /// Certificate moved back past the rung we last paged at - it was renewed.
     Resolve,
     /// Page at `warn_day` (the dedup key to stamp on success).
     Fire { warn_day: i64, severity: &'static str },
@@ -1059,13 +1059,13 @@ fn ssl_decision(
     // 90-day renewal under a '90' config, or a short-lived ACME profile whose
     // whole validity sits below the widest rung) is still a renewal. Gating on
     // the widest rung would leave exactly those sites ratcheting downward across
-    // renewals until no rung — not even the EXPIRED sentinel — could ever fire
+    // renewals until no rung - not even the EXPIRED sentinel - could ever fire
     // again. Ticking down normally can never satisfy this, since days_left only
     // falls.
     //
     // `!expired` is load-bearing. `days_left` truncates toward zero, so for the
     // whole first 24 hours after a lapse it reads 0 while the stamp written by
-    // the EXPIRED page is -1 — and `0 > -1` would read as "renewed". That
+    // the EXPIRED page is -1 - and `0 > -1` would read as "renewed". That
     // alternates EXPIRED page / false-recovery page once per tick for a day,
     // which is precisely the storm this ship exists to kill. An expired
     // certificate is never a renewed one.
@@ -1076,7 +1076,7 @@ fn ssl_decision(
     // The TIGHTEST rung crossed, not the first one listed. The old loop broke on
     // the first config entry satisfying `days_left <= warn_day`, so with the
     // default descending '30,14,7,3,1' it always picked 30 and the
-    // `warn_day < last_warned_day` test then blocked every later rung — one
+    // `warn_day < last_warned_day` test then blocked every later rung - one
     // warning per certificate, ever, instead of the configured ladder.
     let warn_day = if expired {
         SSL_EXPIRED_WARN_DAY
@@ -1126,7 +1126,7 @@ async fn check_ssl_expiry(pool: &PgPool, maint: &HashSet<Uuid>) {
         // truncates toward zero: a certificate that lapsed anything under 24
         // hours ago still reports days_left = 0. Reading expiry off that meant
         // the EXPIRED page could not fire for a full day after the cert went
-        // invalid — and by then rung 1 was already consumed, so browsers showed
+        // invalid - and by then rung 1 was already consumed, so browsers showed
         // a security warning for 24 hours with no notification on any channel.
         let expired = remaining < chrono::Duration::zero();
         let days_left = remaining.num_days();
@@ -1136,7 +1136,7 @@ async fn check_ssl_expiry(pool: &PgPool, maint: &HashSet<Uuid>) {
         let warning_days = parse_ssl_warning_days(&ssl_days_str);
 
         // The tightest rung this site has already been paged at. Read once per
-        // site — the expired branch needs it too, and it used to be read only
+        // site - the expired branch needs it too, and it used to be read only
         // from inside the warning-ladder loop.
         let state: Option<(serde_json::Value,)> = sqlx::query_as(
             "SELECT COALESCE(metadata, '{}') FROM alert_state \
@@ -1174,7 +1174,7 @@ async fn check_ssl_expiry(pool: &PgPool, maint: &HashSet<Uuid>) {
                 "",
                 &format!("SSL certificate renewed for {domain}"),
                 &format!(
-                    "The SSL certificate for {domain} is valid again — {days_left} days remaining."
+                    "The SSL certificate for {domain} is valid again - {days_left} days remaining."
                 ),
             )
             .await;
@@ -1199,7 +1199,7 @@ async fn check_ssl_expiry(pool: &PgPool, maint: &HashSet<Uuid>) {
             continue;
         }
 
-        // Update state with last_warned_day — PostgreSQL serializes concurrent ON CONFLICT upserts
+        // Update state with last_warned_day - PostgreSQL serializes concurrent ON CONFLICT upserts
         let _ = sqlx::query(
             "INSERT INTO alert_state (site_id, alert_type, state_key, current_state, last_notified_at, metadata) \
              VALUES ($1, 'ssl_expiry', '', 'firing', NOW(), $2) \
@@ -1214,23 +1214,23 @@ async fn check_ssl_expiry(pool: &PgPool, maint: &HashSet<Uuid>) {
 }
 
 /// `check_ssl_expiry`'s sibling for Docker Compose stacks. Reuses
-/// `ssl_decision` and `parse_ssl_warning_days` UNCHANGED — the ladder is a
+/// `ssl_decision` and `parse_ssl_warning_days` UNCHANGED - the ladder is a
 /// pure function of days-left / expired / last-warned-day / rungs, and
 /// neither cares what kind of row it is deciding for.
 ///
 /// ACME-mode only, through `effective_tls_mode`: a `provided` stack serves its
 /// certificate from the TLS registry, and a stale `ssl_expiry` on such a row
-/// is not the panel's cert to alert on — the same rule
+/// is not the panel's cert to alert on - the same rule
 /// `certificate_dashboard_for_admin` and `renew_stack_certificate` already
 /// enforce.
 ///
 /// Keyed by `(server_id, "ssl_expiry", stack_ssl_expiry_state_key(domain))`.
 /// `alert_state`/`alerts` carry no `docker_stack_id` column, only `server_id`
-/// — mirroring `stack_renewal_state_key`'s own reasoning — so the domain has
+/// - mirroring `stack_renewal_state_key`'s own reasoning - so the domain has
 /// to be IN the key or two stacks on one server would share one dedup bucket.
 /// Reuses `alert_type = "ssl_expiry"` rather than inventing a second type, so
 /// a stack's warning inherits the SAME `alert_ssl_expiry` toggle and
-/// `ssl_warning_days` rungs a site's certificate already uses — an operator
+/// `ssl_warning_days` rungs a site's certificate already uses - an operator
 /// configures "how many days before I'm warned" once, not per certificate
 /// kind.
 async fn check_stack_ssl_expiry(pool: &PgPool, maint: &HashSet<Uuid>) {
@@ -1314,7 +1314,7 @@ async fn check_stack_ssl_expiry(pool: &PgPool, maint: &HashSet<Uuid>) {
                 &state_key,
                 &format!("SSL certificate renewed for {domain}"),
                 &format!(
-                    "The SSL certificate for {domain} is valid again — {days_left} days remaining."
+                    "The SSL certificate for {domain} is valid again - {days_left} days remaining."
                 ),
             )
             .await;
@@ -1354,18 +1354,18 @@ async fn check_stack_ssl_expiry(pool: &PgPool, maint: &HashSet<Uuid>) {
 }
 
 /// `check_ssl_expiry`/`check_stack_ssl_expiry`'s sibling for a REGISTERED
-/// (uploaded, non agent-managed) certificate in `tls_certificates` — the one
+/// (uploaded, non agent-managed) certificate in `tls_certificates` - the one
 /// population neither of those two functions can see: `check_ssl_expiry` only
 /// reads `sites.ssl_expiry` (ACME-issued, single-site certs) and
 /// `check_stack_ssl_expiry` deliberately SKIPS a `provided`-mode stack's
-/// `ssl_expiry` (it isn't the panel's cert to alert on — see that function's
+/// `ssl_expiry` (it isn't the panel's cert to alert on - see that function's
 /// own comment). A certificate served through the registry has its real
 /// expiry in `tls_certificates.not_after`, and until now nothing ever read it
 /// on a schedule; the only visibility was an operator opening the certificate
 /// dashboard and reading `days_left` themselves.
 ///
 /// Scoped to certificates a stack is ACTUALLY SERVING right now
-/// (`docker_stacks.tls_certificate_id`), not every row in the registry — the
+/// (`docker_stacks.tls_certificate_id`), not every row in the registry - the
 /// same "is this the panel's problem right now" framing `dashboard.rs` and
 /// `check_stack_ssl_expiry` already apply. An operator who uploaded a
 /// certificate ahead of assigning it to anything is not yet exposing traffic
@@ -1442,7 +1442,7 @@ async fn check_registered_cert_expiry(pool: &PgPool, maint: &HashSet<Uuid>) {
                 &state_key,
                 &format!("Registered certificate renewed for {display_name}"),
                 &format!(
-                    "The registered certificate \"{display_name}\" is valid again — {days_left} days remaining."
+                    "The registered certificate \"{display_name}\" is valid again - {days_left} days remaining."
                 ),
             )
             .await;
@@ -1503,7 +1503,7 @@ fn parse_ssl_warning_days(raw: &str) -> Vec<i64> {
 /// left also reads 0 and used to be announced to the operator as already
 /// EXPIRED.
 ///
-/// Shared by the site and stack ladders — the copy depends only on the domain
+/// Shared by the site and stack ladders - the copy depends only on the domain
 /// and how much time is left, never on what kind of row is expiring.
 fn ssl_alert_copy(domain: &str, days_left: i64, expired: bool) -> (String, String) {
     let window = if days_left <= 0 {
@@ -1550,7 +1550,7 @@ async fn fire_ssl_alert(
 }
 
 /// `fire_ssl_alert`'s sibling for a Compose stack. A stack alert has no
-/// `site_id` — a `docker_stacks` row has no `sites` row to point at — so this
+/// `site_id` - a `docker_stacks` row has no `sites` row to point at - so this
 /// fires with `server_id: Some` and a domain-derived `state_key` instead of
 /// the site ladder's `site_id: Some` + empty key.
 async fn fire_stack_ssl_alert(
@@ -1599,12 +1599,12 @@ async fn check_service_health(pool: &PgPool, member: &FleetMember) {
 
         if status == "stopped" || status == "failed" {
             // Skip alerting if auto-healer recently handled this service (within 5
-            // minutes) — ON THIS HOST. The writer of these rows has stamped
+            // minutes) - ON THIS HOST. The writer of these rows has stamped
             // `server_id` since v2.58.0 and its own cooldown reads it back, but
             // this reader was left matching on `target_name` alone, so a heal of
             // `nginx` on one server silenced the `service_down` alert for `nginx`
             // on every other server for five minutes. Service names are the least
-            // distinctive key in the fleet — every host has an `nginx` — so this
+            // distinctive key in the fleet - every host has an `nginx` - so this
             // is the shape that goes wrong the moment a second server exists.
             let recently_healed: Option<(i64,)> = sqlx::query_as(
                 "SELECT COUNT(*) FROM activity_logs \
@@ -1666,7 +1666,7 @@ async fn check_service_health(pool: &PgPool, member: &FleetMember) {
                 .await;
             }
         } else if status == "running" {
-            // Check if was previously firing — resolve
+            // Check if was previously firing - resolve
             let state: Option<(String,)> = sqlx::query_as(
                 "SELECT current_state FROM alert_state \
                  WHERE server_id = $1 AND alert_type = 'service_down' AND state_key = $2",
@@ -1735,7 +1735,7 @@ async fn check_container_health(pool: &PgPool, member: &FleetMember) {
 
     // Every container this host still reports, whatever its state. Reaching
     // this line means the agent answered with a well-formed array, so a name
-    // absent from it is genuinely absent from the host — see the sweep at the
+    // absent from it is genuinely absent from the host - see the sweep at the
     // end of this function.
     let observed: std::collections::HashSet<&str> = containers
         .iter()
@@ -1752,9 +1752,9 @@ async fn check_container_health(pool: &PgPool, member: &FleetMember) {
         // Docker running this container is what falsifies "a stop is expected",
         // and that fact is independent of the healthcheck. The recovery arm
         // below is `running && health != unhealthy` and sits under the unhealthy
-        // arm, so a container that comes back up with a failing healthcheck —
+        // arm, so a container that comes back up with a failing healthcheck -
         // the ordinary case for something that was stopped BECAUSE it was
-        // misbehaving — would never reach it, keep its expectation for ever, and
+        // misbehaving - would never reach it, keep its expectation for ever, and
         // be suppressed when it finally died. `restarting`, `paused` and
         // `created` have no arm at all. So the clear is keyed on the one thing
         // that matters: this container is not stopped.
@@ -1764,7 +1764,7 @@ async fn check_container_health(pool: &PgPool, member: &FleetMember) {
 
         if state == "exited" || state == "dead" {
             // ⛔ A stop the panel carried out is not an outage. Skipping the
-            // WHOLE branch — not just the fire — is deliberate: the `alert_state`
+            // WHOLE branch - not just the fire - is deliberate: the `alert_state`
             // row is written 'firing' immediately above the fire, and the branch
             // is guarded by `!= Some("firing")`, so stamping the row while
             // sending nothing would leave this container claiming it had paged
@@ -1812,7 +1812,7 @@ async fn check_container_health(pool: &PgPool, member: &FleetMember) {
                     // notifications says "a planned `docker stop` is normal
                     // operational use, so we don't page on it" and "Don't page
                     // on this alone". It was raised at "critical", which is the
-                    // string the incident branch gates on — so a container going
+                    // string the incident branch gates on - so a container going
                     // down opened a CRITICAL incident on the operator's public
                     // status page, contradicting the runbook in the same email.
                     "info",
@@ -1904,7 +1904,7 @@ async fn check_container_health(pool: &PgPool, member: &FleetMember) {
                 .await;
             }
         } else if state == "running" && health != Some("unhealthy") {
-            // Container is healthy — resolve any previous container alerts
+            // Container is healthy - resolve any previous container alerts
             for alert_type in &["container_down", "container_unhealthy", "container_crashloop"] {
                 let was_firing: Option<(String,)> = sqlx::query_as(
                     "SELECT current_state FROM alert_state \
@@ -1950,7 +1950,7 @@ async fn check_container_health(pool: &PgPool, member: &FleetMember) {
     // stays `firing` for ever. Not theoretical: this panel carried a
     // `container_down` row for a container deleted on 2026-03-23, still
     // `firing` four months later, with ZERO matching `alerts` rows ever
-    // written — because the fire branches skip a key that already reads
+    // written - because the fire branches skip a key that already reads
     // `firing`, that one row had silently suppressed every future alert for
     // that container name. Retention cannot clear it either; both purges only
     // delete `status = 'resolved'`.
@@ -2005,21 +2005,21 @@ async fn check_container_health(pool: &PgPool, member: &FleetMember) {
         );
     }
 
-    // The same absence, one table over — and it had no sweep at all.
+    // The same absence, one table over - and it had no sweep at all.
     //
     // The clear above the ladder runs from OBSERVING a container alive, so a
     // REMOVED container never reaches it: its expectation row outlives it, and
     // the next container to claim that name inherits the silence. Removing an
     // app and redeploying it under the same name is the supported way to rebuild
     // one while keeping its data, so the container that inherits it is the one
-    // the operator has just been trying to repair — and if it fails to start,
+    // the operator has just been trying to repair - and if it fails to start,
     // this engine skips its `container_down`, the auto-heal restart leg skips
     // it, and the Apps page files it under "stopped on purpose", naming whoever
     // stopped the container that no longer exists.
     //
     // The removal doors clear their own row, which is exact and has no window.
-    // This sweep is what covers a removal the panel did not perform — `docker
-    // rm` on the box — and any door added later, which is the failure the
+    // This sweep is what covers a removal the panel did not perform - `docker
+    // rm` on the box - and any door added later, which is the failure the
     // hardcoded list in this table's own pin suite could not see.
     let observed_names: Vec<String> = observed.iter().map(|n| (*n).to_string()).collect();
     expected_stops::clear_absent(pool, server_id, &observed_names, observed_at).await;
@@ -2070,12 +2070,12 @@ fn escalation_decision(
         }
     }
 
-    // Spent. It must not go quiet — that made a policy strictly worse than no
-    // policy at all — so it drops onto the cadence an unattached rule gets.
+    // Spent. It must not go quiet - that made a policy strictly worse than no
+    // policy at all - so it drops onto the cadence an unattached rule gets.
     // Skip, not Terminal: a spent chain is no longer terminal for anything, so
     // stamping it here would only push its own clock forward and delay the
     // first fallback page past the fifteen minutes the cadence promises. It
-    // cannot starve the sweep window either — a row this young sorts to the
+    // cannot starve the sweep window either - a row this young sorts to the
     // back of the least-recently-paged ordering by its `created_at` alone.
     if elapsed_minutes < 15 {
         return EscalationAction::Skip;
@@ -2092,7 +2092,7 @@ fn escalation_decision(
 /// - When the owning `alert_rules` row has `escalation_policy_id IS NULL`, the
 ///   pre-W3 behaviour is preserved exactly: re-page every 30 min for alerts
 ///   older than 15 min. The W3 ship also folds in the W2 runbook payload here
-///   — bare `send_notification` was leaving the runbook excerpt + URL out of
+///   - bare `send_notification` was leaving the runbook excerpt + URL out of
 ///   escalation pages even though `try_fire_alert` carried them on the
 ///   original fire.
 /// - When `escalation_policy_id IS NOT NULL`, the policy chain drives
@@ -2104,7 +2104,7 @@ fn escalation_decision(
 ///   last rung's route until it is acknowledged or resolved.
 ///
 ///   That fallback is the whole point. Terminating for good made attaching a
-///   policy strictly worse than attaching none — and the policy editor seeded
+///   policy strictly worse than attaching none - and the policy editor seeded
 ///   one step by default, so the ordinary outcome of building a policy was a
 ///   single page on a firing critical and then silence. The operator-facing
 ///   documentation has always promised a repeating cadence for every alert;
@@ -2127,14 +2127,14 @@ async fn check_escalations(pool: &PgPool) {
 
     // Bounded sweep. This query used to be unbounded, and every row cost 3-5 DB
     // round-trips per 60s tick (policy lookup + runbook + base URL) *before* any
-    // eligibility check — so a pile-up of never-resolving firing rows turned the
+    // eligibility check - so a pile-up of never-resolving firing rows turned the
     // escalation pass into self-amplifying load on the shared pool.
     //
     // Ordered least-recently-paged first, NOT newest-first. Any fixed window over
     // a sorted-by-age list can starve: newest-first drops an old unacknowledged
     // critical out of the window once enough newer rows exist, and oldest-first
     // does the reverse. COALESCE(escalated_at, created_at) makes it a fair
-    // rotation instead — paging a row stamps escalated_at, which sends it to the
+    // rotation instead - paging a row stamps escalated_at, which sends it to the
     // back, so every eligible row is serviced in turn and none can be crowded out
     // indefinitely. Rows never paged sort by age, and a brand-new row is not
     // eligible for 15 minutes anyway, by which point it competes on equal terms.
@@ -2162,7 +2162,7 @@ async fn check_escalations(pool: &PgPool) {
 
     if rows.len() as i64 == ESCALATION_SWEEP_LIMIT {
         tracing::warn!(
-            "Escalation sweep hit its {ESCALATION_SWEEP_LIMIT}-row cap — older unacknowledged \
+            "Escalation sweep hit its {ESCALATION_SWEEP_LIMIT}-row cap - older unacknowledged \
              alerts were not considered this tick; acknowledge or resolve the backlog"
         );
     }
@@ -2193,7 +2193,7 @@ async fn check_escalations(pool: &PgPool) {
 
     for row in &rows {
         // The operator can switch an alert type off. Until now that switch had
-        // exactly ONE caller — inside `try_fire_alert` — so it governed only
+        // exactly ONE caller - inside `try_fire_alert` - so it governed only
         // whether a row was ever RECORDED, and said nothing about a row already
         // firing when the switch was flipped. This sweep selects on
         // `status = 'firing'` alone and is provenance-blind, so the one control
@@ -2201,8 +2201,8 @@ async fn check_escalations(pool: &PgPool) {
         // thirty minutes until it aged out of the seven-day window above.
         //
         // ⚠ Skipped WITHOUT stamping `escalated_at`. Stamping would rotate the
-        // row to the back of the least-recently-paged ordering — which is what
-        // `terminal_ids` exists for — but `escalated_at` means *this row was
+        // row to the back of the least-recently-paged ordering - which is what
+        // `terminal_ids` exists for - but `escalated_at` means *this row was
         // paged at this time*, and writing it for a page that was never sent is
         // exactly the harm `maintenance_users` documents a few hundred lines
         // above: a stamp claiming the operator was told. A re-enabled type pages
@@ -2226,7 +2226,7 @@ async fn check_escalations(pool: &PgPool) {
         };
         if !enabled {
             tracing::debug!(
-                "Alert type '{}' is switched off for this owner — skipping escalation for alert {}",
+                "Alert type '{}' is switched off for this owner - skipping escalation for alert {}",
                 row.alert_type,
                 row.id
             );
@@ -2258,7 +2258,7 @@ async fn check_escalations(pool: &PgPool) {
                     }
                 }
 
-                // Fan out via the alert owner's channels — same audience as
+                // Fan out via the alert owner's channels - same audience as
                 // try_fire_alert's NULL-policy path. dispatch_escalation_step
                 // handles per-user mute checks and (W2 repair) carries the
                 // runbook payload.
@@ -2301,7 +2301,7 @@ async fn check_escalations(pool: &PgPool) {
                         // documentation promises exactly that, without
                         // qualification, for every alert. A policy built to be
                         // paged HARDER cannot be the thing that stops paging
-                        // you — and the editor seeds a single-step policy, so
+                        // you - and the editor seeds a single-step policy, so
                         // the ordinary outcome was one page and then silence.
                         //
                         // The LAST rung's route, not the default fan-out:
@@ -2328,7 +2328,7 @@ async fn check_escalations(pool: &PgPool) {
 
         // Single-sourced with try_fire_alert's own initial-page HTML
         // (notifications::severity_color) so an escalated warning does not
-        // read as an escalated critical — the row's OWN stored severity, not
+        // read as an escalated critical - the row's OWN stored severity, not
         // a hardcoded red for every re-page.
         let esc_color = notifications::severity_color(&row.severity);
         let esc_subject = format!("[ESCALATED] {}", row.title);
@@ -2387,10 +2387,10 @@ async fn check_escalations(pool: &PgPool) {
         }
     }
 
-    // One statement, not one per row — these are precisely the rows we did NOT
+    // One statement, not one per row - these are precisely the rows we did NOT
     // want to spend per-row work on. Marking them "considered" moves them off
     // the head of the least-recently-paged ordering so a pile of exhausted
-    // policy alerts (a cron failing every 5 minutes, say — nothing resolves
+    // policy alerts (a cron failing every 5 minutes, say - nothing resolves
     // those) cannot fill the window and starve a fresh critical out of it.
     if !terminal_ids.is_empty() {
         let _ = sqlx::query("UPDATE alerts SET escalated_at = $1 WHERE id = ANY($2)")
@@ -2452,7 +2452,7 @@ mod tests {
         assert_eq!(escalation_decision(&chain, 2, 90, None), RepeatLast);
     }
 
-    /// A rung already paged is never paged again by the chain — the position
+    /// A rung already paged is never paged again by the chain - the position
     /// only ever moves forward. Regression on the `i <= current_index` break.
     #[test]
     fn the_chain_never_walks_backwards() {
@@ -2555,7 +2555,7 @@ mod tests {
                 _ => None,
             })
             .collect();
-        // One page per rung crossed, then exactly ONE expired page — the storm
+        // One page per rung crossed, then exactly ONE expired page - the storm
         // this ship exists to kill fired one page per 60s tick forever here.
         assert_eq!(fires, vec![30, 14, 7, 3, 1, SSL_EXPIRED_WARN_DAY]);
         assert_eq!(seen[0], SslAction::Nothing, "40 days is outside every rung");
@@ -2568,7 +2568,7 @@ mod tests {
     fn ssl_expired_cert_pages_once_and_never_claims_renewal() {
         // The 24 hours after a lapse: `expired` is true but days_left truncates
         // to 0, so a resolve test of `days_left > last_warned_day` would see
-        // `0 > -1` and announce a renewal — then re-page EXPIRED, once per tick,
+        // `0 > -1` and announce a renewal - then re-page EXPIRED, once per tick,
         // for a full day. Feed the post-expiry ticks back in and assert silence.
         let rungs = parse_ssl_warning_days("30,14,7,3,1");
         let mut life = vec![(1, false)];
@@ -2587,7 +2587,7 @@ mod tests {
     fn ssl_expiry_uses_the_expired_flag_not_truncated_days() {
         // The 24-hour window after expiry: num_days() truncates to 0, so gating
         // the EXPIRED page on `days_left < 0` left a lapsed certificate silent
-        // for a full day — rung 1 was already spent, and -1 had not been reached.
+        // for a full day - rung 1 was already spent, and -1 had not been reached.
         let rungs = parse_ssl_warning_days("30,14,7,3,1");
         assert_eq!(
             ssl_decision(0, true, 1, &rungs),
@@ -2602,7 +2602,7 @@ mod tests {
     fn ssl_short_lived_cert_does_not_ratchet_itself_silent() {
         // A ~6-day ACME profile never exceeds the widest rung (30), so gating the
         // resolve on "clear of the widest rung" meant last_warned_day only ever
-        // fell — after two renewal cycles the site was permanently silent, even
+        // fell - after two renewal cycles the site was permanently silent, even
         // for expiry. Renewal must reset the ladder.
         let rungs = parse_ssl_warning_days("30,14,7,3,1");
         let two_cycles = [
@@ -2652,7 +2652,7 @@ mod tests {
         // SAME comparison twice: `A || (d == 0 && A)` is just `A`, so the second
         // clause could never change the verdict and the `d == 0` rung it looked
         // like it was covering was in fact covered by the first. Clippy calls it a
-        // logic bug and it is right — an assertion whose extra half cannot fail
+        // logic bug and it is right - an assertion whose extra half cannot fail
         // reads as more coverage than it has.
         for d in parse_ssl_warning_days("30,14,7,3,1,0") {
             assert!(SSL_EXPIRED_WARN_DAY < d, "rung {d} must stay above the expired sentinel");
@@ -2694,20 +2694,20 @@ mod tests {
         assert!(rate > 0.9 && rate < 1.1);
         assert_eq!(pct, 78.0);
 
-        // Same slope inside a 30-minute window returns None — correct for the
+        // Same slope inside a 30-minute window returns None - correct for the
         // function, and until v2.66.0 this was ALSO the only window the caller
         // could ever supply (`LIMIT 60` at a 30s cadence), so the feature was
         // dead in production while this test stayed green. The assertions here
         // were never wrong; they are about the pure function, and nothing
         // measured the caller. That gap is now pinned at the query itself in
-        // `docs-claims-pin-e2e.sh` — do not treat this arm as covering it.
+        // `docs-claims-pin-e2e.sh` - do not treat this arm as covering it.
         let short: Vec<_> = std::iter::repeat((78.0f32, ts(0)))
             .take(9)
             .chain(std::iter::once((70.0f32, ts(30))))
             .collect();
         assert!(disk_full_forecast(&short).is_none());
 
-        // Long window, but nowhere near full — nothing to forecast.
+        // Long window, but nowhere near full - nothing to forecast.
         let low: Vec<_> = std::iter::repeat((12.0f32, ts(0)))
             .take(9)
             .chain(std::iter::once((4.0f32, ts(480))))
@@ -2746,7 +2746,7 @@ mod tests {
         assert_eq!(older, 60.0);
         assert_eq!(increase, 25.0);
 
-        // Same 25-point climb, but low absolute usage — not a leak worth paging.
+        // Same 25-point climb, but low absolute usage - not a leak worth paging.
         let mut low = vec![(35.0f32,); 20];
         low.extend(vec![(10.0f32,); 10]);
         assert!(memory_leak_trend(&low).is_none());

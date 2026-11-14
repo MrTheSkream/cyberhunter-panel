@@ -19,7 +19,7 @@ The fastest way to get started is the one-click preset.
 
 1. Go to **Backup Orchestrator** in the sidebar
 2. Click **Protect Everything**
-3. DockPanel creates a policy that backs up all sites, databases, and volumes daily at 2 AM, keeps 7 days of history, and verifies each backup after creation.
+3. CyberHunter - Panel creates a policy that backs up all sites, databases, and volumes daily at 2 AM, keeps 7 days of history, and verifies each backup after creation.
 
 ## Creating Backup Policies
 
@@ -131,7 +131,7 @@ Verification types: `site`, `database`, `volume`.
 
 ## Backup Destinations
 
-Store backups off-server. There are exactly two destination types — `s3` and `sftp` — and every S3-compatible provider uses the first:
+Store backups off-server. There are exactly two destination types - `s3` and `sftp` - and every S3-compatible provider uses the first:
 
 | Provider | Type | Endpoint example |
 |----------|------|-----------------|
@@ -145,7 +145,7 @@ Store backups off-server. There are exactly two destination types — `s3` and `
 
 Add a destination under **Backup Manager** > **Destinations**, then select it on a policy.
 
-A policy with no destination writes its archives to this server's own disk and nowhere else. DockPanel says so on the Backup Manager overview rather than leaving you to discover it — see [What DockPanel checks for you](prerequisites.md).
+A policy with no destination writes its archives to this server's own disk and nowhere else. CyberHunter - Panel says so on the Backup Manager overview rather than leaving you to discover it - see [What CyberHunter - Panel checks for you](prerequisites.md).
 
 > **Retention off-site covers site archives only.** The prune that enforces a retention count at the destination is keyed on a site's domain, so remote copies of *database* and *volume* backups accumulate there even as their local copies are pruned. Watch the bucket, or prune it on the provider's own lifecycle rules, until this is resource-agnostic.
 
@@ -155,7 +155,7 @@ A policy with no destination writes its archives to this server's own disk and n
 > encryption path for a site or volume archive, so ticking **Encrypt DB dumps**
 > on a policy that also backs up sites or volumes leaves those archives in
 > cleartext both on disk and at the destination. A site archive is the whole
-> webroot — configuration files, and any database credentials in them — and
+> webroot - configuration files, and any database credentials in them - and
 > since v2.34.0 it also carries a dump of every database attached to that site.
 > So an encrypted policy covering sites ships an encrypted copy of that data and
 > an unencrypted copy of the same data to the same destination.

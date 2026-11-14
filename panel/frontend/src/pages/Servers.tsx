@@ -28,10 +28,10 @@ export default function Servers() {
   // Agent-token rotation is a different control from the TLS-pin rotation beside it:
   // the pin is a fingerprint the next checkin re-captures, the token is the agent's
   // own credential. That endpoint has existed and been documented in api-reference.md
-  // since the fleet shipped, with nothing in the panel calling it — so an operator who
+  // since the fleet shipped, with nothing in the panel calling it - so an operator who
   // suspected a leaked agent token had no in-product way to rotate one.
   // (The path is spelled ONCE below, in the call. A pin counts raw source, so a second
-  // spelling in this comment would satisfy it on its own — the s346 prose trap.)
+  // spelling in this comment would satisfy it on its own - the s346 prose trap.)
   const [pendingTokenRotate, setPendingTokenRotate] = useState<{ id: string; name: string } | null>(null);
 
   const handleCreate = useCallback(async () => {
@@ -71,7 +71,7 @@ export default function Servers() {
     setPendingRotate(null);
     try {
       await api.post(`/servers/${id}/rotate-cert-pin`);
-      setRotateResult((prev) => ({ ...prev, [id]: "Pin cleared — next agent checkin will re-capture." }));
+      setRotateResult((prev) => ({ ...prev, [id]: "Pin cleared - next agent checkin will re-capture." }));
       await refreshServers();
     } catch (e) {
       setRotateResult((prev) => ({ ...prev, [id]: e instanceof ApiError ? e.message : "Rotate failed" }));
@@ -84,7 +84,7 @@ export default function Servers() {
     setPendingTokenRotate(null);
     try {
       await api.post(`/servers/${id}/rotate-token`);
-      setRotateResult((prev) => ({ ...prev, [id]: "Agent token rotated — the panel is already using the new one." }));
+      setRotateResult((prev) => ({ ...prev, [id]: "Agent token rotated - the panel is already using the new one." }));
       await refreshServers();
     } catch (e) {
       setRotateResult((prev) => ({ ...prev, [id]: e instanceof ApiError ? e.message : "Token rotation failed" }));
@@ -231,7 +231,7 @@ export default function Servers() {
 
           {installScript && (
             <div className="mt-4 space-y-2">
-              <p className="text-sm text-dark-200">Run this command on the remote server to install the DockPanel agent:</p>
+              <p className="text-sm text-dark-200">Run this command on the remote server to install the CyberHunter - Panel agent:</p>
               <div className="relative">
                 <pre className="bg-dark-950 border border-dark-600 rounded-lg p-4 text-sm text-rust-400 font-mono overflow-x-auto whitespace-pre-wrap">{installScript}</pre>
                 <button
@@ -343,7 +343,7 @@ export default function Servers() {
                 <div className="min-w-0 flex-1">
                   <span className="text-dark-300 uppercase tracking-widest text-[10px]">TLS pin</span>
                   {s.cert_fingerprint ? (
-                    <span className="ml-2 text-dark-100 break-all" title={`SHA-256 of agent's inbound TLS cert — captured on first checkin (TOFU). Full: ${s.cert_fingerprint}`}>
+                    <span className="ml-2 text-dark-100 break-all" title={`SHA-256 of agent's inbound TLS cert - captured on first checkin (TOFU). Full: ${s.cert_fingerprint}`}>
                       {s.cert_fingerprint.slice(0, 16)}…{s.cert_fingerprint.slice(-16)}
                     </span>
                   ) : (
@@ -360,7 +360,7 @@ export default function Servers() {
               </div>
             )}
 
-            {/* Agent token — every server has one, local included, so this row is not
+            {/* Agent token - every server has one, local included, so this row is not
                 gated on !is_local the way the TLS pin above is. */}
             <div className="mt-3 pt-3 border-t border-dark-700 flex items-center justify-between gap-3 text-xs font-mono">
               <div className="min-w-0 flex-1">

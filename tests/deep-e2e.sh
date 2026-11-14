@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# DockPanel Deep E2E Test Suite
+# CyberHunter - Panel Deep E2E Test Suite
 # Tests edge cases, advanced features, and failure modes.
 #
 # Usage: bash tests/deep-e2e.sh <host> [port]
@@ -42,7 +42,7 @@ api_get_status() { curl -s -o /dev/null -w "%{http_code}" -H "$(auth_header)" "$
 api_post_status() { curl -s -o /dev/null -w "%{http_code}" -H "$(auth_header)" -X POST "${API}$1" -H "Content-Type: application/json" -d "$2" 2>/dev/null; }
 
 echo ""
-echo -e "${BOLD}DockPanel Deep E2E Test Suite${NC}"
+echo -e "${BOLD}CyberHunter - Panel Deep E2E Test Suite${NC}"
 echo -e "Target: ${BASE}"
 echo ""
 
@@ -68,7 +68,7 @@ WP_SITE_ID=$(echo "$WP_RESP" | python3 -c "import sys,json; print(json.load(sys.
 if [ -n "$WP_SITE_ID" ] && [ "$WP_SITE_ID" != "" ]; then
     ok "WordPress site creation initiated (ID: ${WP_SITE_ID:0:8}...)"
 
-    # Wait for provisioning (WP install takes time — DB container + wp-cli)
+    # Wait for provisioning (WP install takes time - DB container + wp-cli)
     echo -e "  ${YELLOW}…${NC} Waiting for WordPress provisioning (up to 90s)..."
     WAITED=0
     WP_READY=false
@@ -220,7 +220,7 @@ if [ -n "$GIT_ID" ] && [ "$GIT_ID" != "" ]; then
         fail "Deploy key generation returned HTTP $KEYGEN_STATUS"
     fi
 
-    # Trigger deploy (this will clone + build — may take time)
+    # Trigger deploy (this will clone + build - may take time)
     DEPLOY_STATUS=$(api_post_status "/git-deploys/${GIT_ID}/deploy" '{}')
     if [ "$DEPLOY_STATUS" = "200" ] || [ "$DEPLOY_STATUS" = "202" ]; then
         ok "Git deploy triggered (HTTP $DEPLOY_STATUS)"
@@ -325,7 +325,7 @@ fi
 section "5. MAIL SYSTEM"
 # ═══════════════════════════════════════════════════════════════════════
 
-# Check mail service status (install not tested — requires Postfix)
+# Check mail service status (install not tested - requires Postfix)
 MAIL_DOMAINS=$(api_get "/mail/domains")
 if echo "$MAIL_DOMAINS" | python3 -c "import sys,json; json.load(sys.stdin)" 2>/dev/null; then
     ok "Mail domains endpoint works"
@@ -345,7 +345,7 @@ fi
 section "6. MIGRATION WIZARD"
 # ═══════════════════════════════════════════════════════════════════════
 
-# List migrations (may not have a list-all endpoint — check status)
+# List migrations (may not have a list-all endpoint - check status)
 MIG_STATUS=$(api_get_status "/migrations")
 if [ "$MIG_STATUS" = "200" ]; then
     ok "Migrations endpoint works"
@@ -409,7 +409,7 @@ if [ -n "$BK_SITE_ID" ]; then
         fail "Null byte injection NOT blocked ($TRAV3)"
     fi
 
-    # File upload — use the write endpoint with content (upload endpoint is multipart)
+    # File upload - use the write endpoint with content (upload endpoint is multipart)
     UPLOAD_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -H "$(auth_header)" -X PUT \
         "${API}/sites/${BK_SITE_ID}/files/write" \
         -H "Content-Type: application/json" \
@@ -448,7 +448,7 @@ fi
 # A TWO-SERVICE stack, because a one-service stack cannot fail the way every
 # real one did (GitHub #50). Until v2.54.0 compose services were created with no
 # user-defined network, so a sibling's name never resolved and every
-# multi-service package the panel ships died on boot — while the deploy reported
+# multi-service package the panel ships died on boot - while the deploy reported
 # every service "running" on the strength of create+start returning Ok. A single
 # nginx that talks to nothing exercises neither half.
 PAIR_YAML='services:\n  client:\n    image: alpine:3\n    command: sleep 300\n    depends_on: [store]\n  store:\n    image: redis:7-alpine'
@@ -475,7 +475,7 @@ if [ -n "$PAIR_ID" ]; then
         if docker exec "$CLIENT_CID" getent hosts store >/dev/null 2>&1; then
             ok "A service resolves its sibling by compose service key"
         else
-            fail "'store' does not resolve from 'client' — services are not on a shared network"
+            fail "'store' does not resolve from 'client' - services are not on a shared network"
         fi
     else
         fail "Could not find the client container for stack ${PAIR_ID:0:8}"
@@ -726,7 +726,7 @@ fi
 # Delete backup test site
 [ -n "${BK_SITE_ID:-}" ] && { api_delete "/sites/${BK_SITE_ID}" > /dev/null 2>&1 && ok "Backup test site deleted" || fail "Backup site delete failed"; }
 
-# Delete WordPress site (last — has database container)
+# Delete WordPress site (last - has database container)
 [ -n "${WP_SITE_ID:-}" ] && { api_delete "/sites/${WP_SITE_ID}" > /dev/null 2>&1 && ok "WordPress site deleted" || fail "WP site delete failed"; }
 
 # Verify zero leftovers
@@ -788,7 +788,7 @@ print(all(f in g for f in fields))
         fail "GPU monitoring missing expanded metric fields"
     fi
 else
-    skip "No GPU detected — expanded field check"
+    skip "No GPU detected - expanded field check"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════

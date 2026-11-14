@@ -13,13 +13,13 @@ const SAFE_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin
 /// The agent unit runs `ProtectHome=yes`, so the `HOME=/root` these helpers set
 /// is an empty read-only mount inside the sandbox. The docker CLI creates
 /// `$HOME/.docker` on first use, and `docker build` does not tolerate failing to
-/// — it aborts with `mkdir /root/.docker: read-only file system`. That took down
+/// - it aborts with `mkdir /root/.docker: read-only file system`. That took down
 /// every Dockerfile-based git deploy on every hardened install (s261): the clone
 /// succeeded, the build never ran once. Point the CLI at a directory that IS in
 /// the unit's `ReadWritePaths` instead of widening the sandbox. Set here rather
 /// than at a call site because `env_clear()` means a unit-level `Environment=`
 /// would never reach the child, and because ~77 docker invocations share these
-/// helpers — one of them silently missing it is exactly the drift that hid this.
+/// helpers - one of them silently missing it is exactly the drift that hid this.
 pub const DOCKER_CONFIG_DIR: &str = "/var/lib/dockpanel/docker";
 
 /// Create an async `tokio::process::Command` with a sanitized environment.
@@ -73,7 +73,7 @@ const CAPTURE_DIR: &str = "/var/lib/dockpanel/run";
 /// Identical to [`CAPTURE_DIR`] in production. Under `cargo test` it
 /// resolves instead to a scratch directory under the process's own temp
 /// dir: `cargo test` runs unprivileged (concretely: GitHub Actions' runner
-/// user), which cannot `create_dir_all` anything under `/var/lib` — every
+/// user), which cannot `create_dir_all` anything under `/var/lib` - every
 /// `DockerEnvFile` test failed with `PermissionDenied` in CI from the
 /// moment those tests started actually calling `.new()` (v2.201.0) because
 /// nothing distinguished a test run from a production one. `CAPTURE_DIR`
@@ -85,7 +85,7 @@ const CAPTURE_DIR: &str = "/var/lib/dockpanel/run";
 /// `#[cfg(test)]` ahead of the real `#[cfg(test)] mod tests` block this
 /// file already ends with, and every pin suite that reads this file treats
 /// the FIRST such token as "everything after this is test code, stop
-/// measuring" — see reference_dockpanel_ops_p7's mid-file cfg(test) gate.
+/// measuring" - see reference_dockpanel_ops_p7's mid-file cfg(test) gate.
 fn capture_dir() -> std::path::PathBuf {
     if cfg!(test) {
         std::env::temp_dir().join("dockpanel-test-capture")
@@ -101,7 +101,7 @@ static CAPTURE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64:
 /// transient systemd unit.
 ///
 /// PID1 spawns the unit in its own mount namespace, so the inner binary sees
-/// the full filesystem read-write — necessary for commands like
+/// the full filesystem read-write - necessary for commands like
 /// `apt-get`/`dnf install` that must write to `/var/cache/apt`,
 /// `/var/lib/dpkg`, `/var/lib/rpm` and `/usr`, none of which are in the agent
 /// unit's `ReadWritePaths`.
@@ -114,7 +114,7 @@ static CAPTURE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64:
 /// D-Bus**. On RHEL the system bus is `dbus-broker` (`system_dbusd_t`), and
 /// SELinux checks the *receiver's* access to a passed object via its
 /// `file_receive` hook. Receiving a writable pipe labelled
-/// `unconfined_service_t` — the label every systemd service's pipes carry — is
+/// `unconfined_service_t` - the label every systemd service's pipes carry - is
 /// denied, so the broker drops the connection and `systemd-run` reports:
 ///
 ///     Failed to start transient service unit: Connection reset by peer
@@ -123,7 +123,7 @@ static CAPTURE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64:
 /// visible after `semodule -DB`, and `ausearch` did not surface it even then
 /// (grep `/var/log/audit/audit.log` directly). The same command works from a
 /// *shell* because a shell's pipes are labelled `unconfined_t`, which policy
-/// permits — that is the whole of the shell-vs-service discriminator.
+/// permits - that is the whole of the shell-vs-service discriminator.
 ///
 /// So we never pass a descriptor. `-p StandardOutput=file:…` has PID1 open the
 /// capture files itself, and `--wait` still propagates the inner command's exit
@@ -137,7 +137,7 @@ static CAPTURE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64:
 /// Escape a literal `$` for the inner command's argv, live-verified necessary
 /// on a fresh VPS: `systemd-run` turns the trailing argv into the transient
 /// unit's own `ExecStart=`, which systemd's unit-file grammar subjects to
-/// `$VAR`/`${VAR}` environment-variable expansion — undocumented for
+/// `$VAR`/`${VAR}` environment-variable expansion - undocumented for
 /// `systemd-run`'s own command line, but real. An argument like a SHA-crypt
 /// hash (`$6$salt$hash`) silently loses everything from the first unset `$6`
 /// onward, which does not fail loudly: the wrapped command just receives
@@ -192,7 +192,7 @@ impl UnsandboxedCommand {
         cmd.args(cap.properties());
         cmd.args(&self.argv);
         // Callers building the inner argv have no way to reach this
-        // `Command` themselves, so `kill_on_drop` must be set HERE — the one
+        // `Command` themselves, so `kill_on_drop` must be set HERE - the one
         // place that can. Without it, a caller-side `tokio::time::timeout`
         // around this future does not kill `systemd-run` on expiry: the
         // future is dropped, but the child (and whatever it started via
@@ -205,7 +205,7 @@ impl UnsandboxedCommand {
     }
 
     /// Run to completion within `timeout`, and make sure the PRIVILEGED WORK
-    /// ITSELF stops when the timeout fires — not merely the local process
+    /// ITSELF stops when the timeout fires - not merely the local process
     /// that was waiting on it.
     ///
     /// # Why [`Self::output`] plus a caller-side `tokio::time::timeout` is not enough
@@ -213,7 +213,7 @@ impl UnsandboxedCommand {
     /// `kill_on_drop(true)` on the local `systemd-run` client (see
     /// [`Self::output`]) only kills the WAITER. The privileged command itself
     /// runs inside a *separate* systemd transient unit, started by PID1 in
-    /// its own cgroup and fully decoupled from this process's lifecycle —
+    /// its own cgroup and fully decoupled from this process's lifecycle -
     /// that decoupling is the entire reason `--wait` has to exist at all (it
     /// is `systemd-run` polling the unit on our behalf, not a parent/child
     /// relationship the kernel would tear down together). So when a caller
@@ -227,9 +227,9 @@ impl UnsandboxedCommand {
     ///
     /// Stopping the right thing on expiry requires knowing the unit's own
     /// name, so this method assigns it a caller-known one up front via
-    /// `--unit=NAME` — which composes fine alongside `--collect` (that flag
+    /// `--unit=NAME` - which composes fine alongside `--collect` (that flag
     /// only means "discard the unit's state once it exits, whatever the
-    /// outcome"; it says nothing about how the unit is named) — instead of
+    /// outcome"; it says nothing about how the unit is named) - instead of
     /// leaving naming to `--collect`'s own auto-generated scheme, which no
     /// caller could predict or act on. On timeout, it then asks systemd to
     /// stop that exact unit directly.
@@ -330,8 +330,8 @@ impl UnsandboxedCommand {
 
 /// A running [`UnsandboxedCommand`] whose output is being streamed.
 ///
-/// Drain `lines` to completion first — it closes once the inner command has
-/// exited and its output has been fully read — then await [`Self::status`].
+/// Drain `lines` to completion first - it closes once the inner command has
+/// exited and its output has been fully read - then await [`Self::status`].
 pub struct StreamingRun {
     pub lines: tokio::sync::mpsc::Receiver<String>,
     status: tokio::sync::oneshot::Receiver<std::io::Result<std::process::ExitStatus>>,
@@ -350,7 +350,7 @@ impl StreamingRun {
 /// Follow a capture file, emitting complete lines as they appear.
 ///
 /// `done` is checked *before* each read so that the read which observes it set
-/// is guaranteed to happen after the writer exited — otherwise the last line of
+/// is guaranteed to happen after the writer exited - otherwise the last line of
 /// an install would be dropped whenever it arrived inside the poll interval.
 async fn tail_lines(
     path: std::path::PathBuf,
@@ -463,14 +463,14 @@ fn unsandboxed_prefix(binary: &str, extra_env: &[(&str, &str)]) -> Vec<std::ffi:
 /// unit name)`, so [`UnsandboxedCommand::output_with_timeout`] knows what to
 /// tell systemd to stop if the timeout fires.
 ///
-/// Pulled out as its own pure function — rather than living inline in
-/// `output_with_timeout` — so the insertion point and the name generator's
+/// Pulled out as its own pure function - rather than living inline in
+/// `output_with_timeout` - so the insertion point and the name generator's
 /// collision safety can be unit-tested directly against a plain `argv`
 /// vector, without spawning a real `systemd-run` child (which the test
 /// environment may not even have installed).
 ///
-/// `unsandboxed_prefix` pushes exactly one `--` — immediately before the
-/// inner binary — and does so before any caller `.arg()`/`.args()` call can
+/// `unsandboxed_prefix` pushes exactly one `--` - immediately before the
+/// inner binary - and does so before any caller `.arg()`/`.args()` call can
 /// add more argv entries, so the FIRST `--` in `argv` is always that
 /// separator, regardless of how many `--setenv=` entries `extra_env`
 /// produced ahead of it. Scanning for it, rather than assuming a fixed
@@ -487,7 +487,7 @@ fn insert_unit_arg(argv: &mut Vec<std::ffi::OsString>) -> (String, String) {
         .get(sep + 1)
         .map(|b| b.to_string_lossy().into_owned())
         .unwrap_or_default();
-    // 32 lowercase hex chars, no hyphens — a shape `--unit=` and later
+    // 32 lowercase hex chars, no hyphens - a shape `--unit=` and later
     // `systemctl stop` both accept without quoting concerns. Matches the
     // `.simple()` convention `routes/ssl_registry.rs` already uses for the
     // same "unique, filesystem/argv-safe token" need.
@@ -498,7 +498,7 @@ fn insert_unit_arg(argv: &mut Vec<std::ffi::OsString>) -> (String, String) {
 
 /// A pair of files PID1 writes the transient unit's stdout/stderr into.
 ///
-/// Created 0600 *before* the run — package output can carry credentials, and
+/// Created 0600 *before* the run - package output can carry credentials, and
 /// systemd's `file:` scheme would otherwise create them 0644.
 struct Capture {
     out: std::path::PathBuf,
@@ -563,7 +563,7 @@ impl Capture {
     /// `systemd-run`'s own stderr is appended rather than discarded: when the
     /// transient unit cannot be started at all, that string is the only
     /// diagnostic there is, and the capture files stay empty.
-    /// Remove the pair without reading it — the streaming path has already
+    /// Remove the pair without reading it - the streaming path has already
     /// delivered every line to its caller.
     fn cleanup(self) {
         let _ = std::fs::remove_file(&self.out);
@@ -591,7 +591,7 @@ impl Capture {
 /// `/proc/<pid>/cmdline` is world-readable on every install this agent
 /// targets (no `hidepid=` mount restriction assumed or required elsewhere in
 /// this codebase), so a `-e MYSQL_PWD=secret`/`-e PGPASSWORD=secret` argument
-/// is visible to any local process for the lifetime of the `docker` child —
+/// is visible to any local process for the lifetime of the `docker` child -
 /// including, concretely, a site-terminal session running as `www-data`. A
 /// `--env-file <path>` argument leaks only the path; the secret lives in a
 /// 0600 file only this agent's uid can read, and is gone the instant this
@@ -599,7 +599,7 @@ impl Capture {
 ///
 /// Written immediately before use under [`CAPTURE_DIR`] (already proven
 /// writable + `dontaudit`-clean on every hardened distro this agent
-/// supports) and removed on drop — keep the guard bound in scope for as long
+/// supports) and removed on drop - keep the guard bound in scope for as long
 /// as the `docker` child that reads it may still be running.
 pub struct DockerEnvFile {
     path: std::path::PathBuf,
@@ -619,7 +619,7 @@ impl DockerEnvFile {
         let path = capture_dir().join(format!("env-{}-{n}", std::process::id()));
         let mut body = String::new();
         for (k, v) in vars {
-            // `docker --env-file` reads one `KEY=VALUE` per line — an embedded
+            // `docker --env-file` reads one `KEY=VALUE` per line - an embedded
             // newline in a value would silently start a second (bogus)
             // variable rather than being passed through, so refuse it
             // outright instead of writing a file docker will misparse.
@@ -685,7 +685,7 @@ mod tests {
     }
 
     /// THE WALL. `--pipe` passes descriptors over D-Bus, which SELinux forbids
-    /// the message bus to receive from a service — every package operation on
+    /// the message bus to receive from a service - every package operation on
     /// every RHEL box failed for as long as this flag was here.
     #[test]
     fn escape_hatch_passes_no_file_descriptors() {
@@ -717,11 +717,11 @@ mod tests {
 
     /// Live-verified on a fresh VPS: `$6$salt$hash` (a real SHA-crypt shape)
     /// passed through this escape hatch reached the inner command as just
-    /// the text before the first `$`, everything after silently gone —
+    /// the text before the first `$`, everything after silently gone -
     /// `systemd-run`'s transient-unit ExecStart= is subject to systemd's own
     /// `$VAR`/`${VAR}` expansion, and none of `$6`/`$salt`/`$hash` are set.
     /// `$$` is systemd's own escape for a literal `$` and round-trips
-    /// correctly through this exact invocation shape (confirmed on-box) —
+    /// correctly through this exact invocation shape (confirmed on-box) -
     /// this is why `arg`/`args` must double every `$` rather than merely
     /// documenting the trap.
     #[test]
@@ -735,12 +735,12 @@ mod tests {
         );
         assert!(
             !argv.iter().any(|a| a == "$6$abcdefgh$somehashvalue"),
-            "the raw, unescaped hash reached argv — this is exactly what silently \
+            "the raw, unescaped hash reached argv - this is exactly what silently \
              mangles through systemd-run's own $VAR expansion"
         );
     }
 
-    /// An argument with no `$` at all must pass through byte-for-byte — the
+    /// An argument with no `$` at all must pass through byte-for-byte - the
     /// escaping must be a no-op for the overwhelming majority of callers that
     /// never touch this class of value.
     #[test]
@@ -755,7 +755,7 @@ mod tests {
 
     /// `insert_unit_arg` must land `--unit=` immediately before the `--`
     /// separator no matter how many `--setenv=` entries `extra_env` pushed
-    /// ahead of it — a fixed-index insert would have worked for the
+    /// ahead of it - a fixed-index insert would have worked for the
     /// zero-`extra_env` case in testing and then silently corrupted the
     /// argv (splitting `--unit=` into the inner binary's own arguments) the
     /// first time a caller passed one.
@@ -790,7 +790,7 @@ mod tests {
     }
 
     /// Two operations racing each other must never be assigned the same
-    /// transient unit name — a collision would let one caller's
+    /// transient unit name - a collision would let one caller's
     /// timeout-triggered `systemctl stop` kill the OTHER caller's still
     /// legitimate, still-running transaction.
     #[test]
@@ -803,7 +803,7 @@ mod tests {
     }
 
     /// The generated name must actually be a valid, unquoted systemd unit
-    /// identifier — no hyphens beyond the fixed prefix, no characters that
+    /// identifier - no hyphens beyond the fixed prefix, no characters that
     /// would need escaping in `--unit=` or a later `systemctl stop` argv.
     #[test]
     fn unit_name_is_a_plain_hex_token() {

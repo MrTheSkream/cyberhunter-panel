@@ -76,8 +76,8 @@ export default function PublicStatusPage() {
 
   const subscribe = async () => {
     // The response status is what says whether anyone was subscribed. Setting
-    // the confirmation unconditionally reported "Subscribed!" for a refusal —
-    // a disabled status page, a rejected address — and the visitor then waited
+    // the confirmation unconditionally reported "Subscribed!" for a refusal -
+    // a disabled status page, a rejected address - and the visitor then waited
     // for incident mail that was never going to arrive, while the operator had
     // nothing to notice, because the client had declared success.
     //
@@ -273,7 +273,7 @@ export default function PublicStatusPage() {
 
         {/* Footer */}
         <div className="text-center mt-10 text-xs text-dark-600 font-mono">
-          Last updated {timeAgo(data.updated_at)} — Powered by DockPanel
+          Last updated {timeAgo(data.updated_at)} - Powered by CyberHunter - Panel
         </div>
       </div>
     </div>

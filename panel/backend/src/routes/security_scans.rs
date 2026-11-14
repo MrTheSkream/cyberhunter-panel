@@ -34,7 +34,7 @@ pub struct FindingRow {
     remediation: Option<String>,
 }
 
-/// POST /api/security/scan — Trigger a security scan (admin only).
+/// POST /api/security/scan - Trigger a security scan (admin only).
 /// For self-hosted: calls agent directly. For SaaS with server_id: dispatches command.
 pub async fn trigger_scan(
     State(state): State<AppState>,
@@ -44,8 +44,8 @@ pub async fn trigger_scan(
     require_admin(&claims.role)?;
 
     // The scan record names the host that was scanned. This handler resolved
-    // the right agent and then threw the id away, so every manual scan — of any
-    // member — was filed against no server at all.
+    // the right agent and then threw the id away, so every manual scan - of any
+    // member - was filed against no server at all.
     let scan_id: uuid::Uuid = sqlx::query_scalar(
         "INSERT INTO security_scans (server_id, scan_type, status) VALUES ($1, 'full', 'running') RETURNING id",
     )
@@ -115,7 +115,7 @@ pub async fn trigger_scan(
 
     // ⛔ THIS ROW IS WHAT THE WEEKLY SCANNER'S OWN GATE COUNTS. `security_scanner::run`
     // skips a host for 7 days once ANY `security_scans` row for it is `status =
-    // 'completed'` within that window — it does not distinguish who triggered the
+    // 'completed'` within that window - it does not distinguish who triggered the
     // scan. Marking this one `completed` above without also running the fix pass
     // below would buy the host a week of no automatic SSL/stack renewal for
     // nothing: an admin clicking Scan, satisfied, and the scheduled scan that would
@@ -173,7 +173,7 @@ pub async fn trigger_scan(
 
             if let Some((old_hash,)) = &existing {
                 if old_hash != hash {
-                    // File changed — add a finding
+                    // File changed - add a finding
                     if let Err(e) = sqlx::query(
                         "INSERT INTO security_findings (scan_id, check_type, severity, title, description, file_path, remediation) \
                          VALUES ($1, 'file_integrity', 'warning', $2, $3, $4, 'Verify this change was intentional')",
@@ -204,7 +204,7 @@ pub async fn trigger_scan(
             }
 
             // Upsert baseline
-            // Binding the host is what ARMS this upsert — the arbiter named a
+            // Binding the host is what ARMS this upsert - the arbiter named a
             // column the INSERT never supplied, and a NULL never conflict-matches.
             if let Err(e) = sqlx::query(
                 "INSERT INTO file_integrity_baselines (server_id, file_path, sha256_hash, file_size) \
@@ -237,18 +237,18 @@ pub async fn trigger_scan(
     .await;
 
     // Resolve any stale firing alert BEFORE deciding whether to raise a new
-    // one — mirrors `security_scanner::run_scan`'s resolve-then-fire order,
+    // one - mirrors `security_scanner::run_scan`'s resolve-then-fire order,
     // which this manual path never had. Without it, clicking "Run Scan" to
     // confirm a fix left the earlier `alerts` row `status = 'firing'` forever
     // (or until the next scheduled scan, up to 7 days later): the dashboard's
     // firing-alert count and its -15 health-score penalty never cleared even
     // though the scan the operator just ran came back clean, while the
     // scan-history tiles (which read `security_scans` directly) updated
-    // instantly — the two halves of the same dashboard card disagreed with
+    // instantly - the two halves of the same dashboard card disagreed with
     // each other after every manual rescan.
     //
     // ⚠ Looped over EVERY admin, not just `claims.sub` (the one who clicked).
-    // `run_scan` — the scheduled twin this mirrors — fires per-admin
+    // `run_scan` - the scheduled twin this mirrors - fires per-admin
     // (`send_scan_alerts`), so a multi-admin install can have one firing row
     // PER ADMIN for the same condition. Resolving only the clicking admin's
     // own row would leave every other admin's row stuck exactly as before,
@@ -267,7 +267,7 @@ pub async fn trigger_scan(
             "security",
             "",
             "Security alert resolved",
-            "A manual security scan found no matching issue — the earlier alert no longer applies.",
+            "A manual security scan found no matching issue - the earlier alert no longer applies.",
         )
         .await;
     }
@@ -318,7 +318,7 @@ pub async fn trigger_scan(
     })))
 }
 
-/// GET /api/security/scans — List recent security scans (admin only).
+/// GET /api/security/scans - List recent security scans (admin only).
 pub async fn list_scans(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -343,7 +343,7 @@ pub async fn list_scans(
     Ok(Json(scans))
 }
 
-/// GET /api/security/scans/{id} — Get scan details with findings (admin only).
+/// GET /api/security/scans/{id} - Get scan details with findings (admin only).
 pub async fn get_scan(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -382,7 +382,7 @@ pub async fn get_scan(
     })))
 }
 
-/// GET /api/security/posture — Overall security posture summary (admin only).
+/// GET /api/security/posture - Overall security posture summary (admin only).
 pub async fn posture(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,

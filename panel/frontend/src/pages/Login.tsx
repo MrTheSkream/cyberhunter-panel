@@ -51,7 +51,7 @@ export default function Login() {
         // Read the body, exactly as the `complete` half below does. The two
         // halves of one ceremony disagreed: this one discarded the server's
         // sentence and printed a fixed string, so a visitor refused by the
-        // panel's IP allowlist — or told the panel has no passkeys enrolled —
+        // panel's IP allowlist - or told the panel has no passkeys enrolled -
         // was informed only that starting had failed.
         const data = await beginRes.json().catch(() => ({}));
         throw new Error(data.error || "Failed to start passkey authentication");
@@ -171,7 +171,7 @@ export default function Login() {
           )}
           {!branding.hideBranding && (
             <h1 className="text-lg font-bold uppercase font-mono tracking-widest logo-glow">
-              {branding.panelName === "DockPanel" ? <><span className="text-rust-500">Dock</span><span className="text-dark-50">Panel</span></> : <span className="text-dark-50">{branding.panelName}</span>}
+              {branding.panelName === "CyberHunter - Panel" ? <><span className="text-rust-500">CyberHunter</span><span className="text-dark-50"> - Panel</span></> : <span className="text-dark-50">{branding.panelName}</span>}
             </h1>
           )}
           <p className="text-dark-200 text-sm mt-1">

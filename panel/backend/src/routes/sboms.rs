@@ -2,7 +2,7 @@
 //
 // Companion to image_scans: that module reports vulnerabilities (what is
 // broken); this module reports composition (what is installed). Operators
-// want both — the SBOM is the supply-chain artifact, the vuln scan is the
+// want both - the SBOM is the supply-chain artifact, the vuln scan is the
 // risk assessment. The two share the same agent install pattern but live in
 // distinct backend modules so the UI can wire them independently.
 
@@ -23,7 +23,7 @@ pub struct SbomSettings {
     pub installed: bool,
 }
 
-/// GET /api/sbom/settings — Whether the syft binary is installed on the agent.
+/// GET /api/sbom/settings - Whether the syft binary is installed on the agent.
 pub async fn get_settings(
     AuthUser(claims): AuthUser,
     ServerScope(_server_id, agent): ServerScope,
@@ -40,7 +40,7 @@ pub async fn get_settings(
     Ok(Json(SbomSettings { installed }))
 }
 
-/// POST /api/sbom/install — Install syft on the agent.
+/// POST /api/sbom/install - Install syft on the agent.
 pub async fn install_scanner(
     AuthUser(claims): AuthUser,
     ServerScope(_server_id, agent): ServerScope,
@@ -53,7 +53,7 @@ pub async fn install_scanner(
     Ok(Json(result))
 }
 
-/// POST /api/sbom/uninstall — Remove syft on the agent.
+/// POST /api/sbom/uninstall - Remove syft on the agent.
 pub async fn uninstall_scanner(
     AuthUser(claims): AuthUser,
     ServerScope(_server_id, agent): ServerScope,
@@ -71,7 +71,7 @@ pub struct GenerateRequest {
     pub image: String,
 }
 
-/// POST /api/sbom/generate — Generate an SBOM for an arbitrary image.
+/// POST /api/sbom/generate - Generate an SBOM for an arbitrary image.
 pub async fn generate(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -87,7 +87,7 @@ pub async fn generate(
     })))
 }
 
-/// POST /api/apps/{name}/sbom — Generate an SBOM for a specific app's image.
+/// POST /api/apps/{name}/sbom - Generate an SBOM for a specific app's image.
 pub async fn generate_app(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -106,7 +106,7 @@ pub async fn generate_app(
     })))
 }
 
-/// GET /api/apps/{name}/sbom — Latest stored SBOM for the app's image as
+/// GET /api/apps/{name}/sbom - Latest stored SBOM for the app's image as
 /// SPDX JSON download (Content-Disposition: attachment).
 pub async fn download_app_sbom(
     State(state): State<AppState>,
@@ -154,7 +154,7 @@ pub async fn download_app_sbom(
     Ok(resp)
 }
 
-/// GET /api/sbom/image/{ref} — Latest stored SBOM for an arbitrary image
+/// GET /api/sbom/image/{ref} - Latest stored SBOM for an arbitrary image
 /// reference. Inline (Content-Type application/json) for API consumers.
 pub async fn get_image_sbom(
     State(state): State<AppState>,
@@ -246,7 +246,7 @@ async fn generate_and_store(
     // ⚠ The arbiter must name the CURRENT primary key. `image_sbom` was keyed
     // on the bare image, so two hosts' documents overwrote each other; the key
     // is now `(server_id, image)`. An arbiter that names no unique index does
-    // not fall back — Postgres raises 42P10 at execution time, so leaving this
+    // not fall back - Postgres raises 42P10 at execution time, so leaving this
     // as it was would have turned every SBOM generation into a 500.
     sqlx::query(
         "INSERT INTO image_sbom (server_id, image, format, spdx, generated_at) \

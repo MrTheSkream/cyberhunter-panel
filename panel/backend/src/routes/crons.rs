@@ -51,7 +51,7 @@ pub struct Cron {
 ///
 /// One line over [`crate::helpers::site_domain_for_caller`], which is shared with
 /// the five other modules that each carried their own copy of this query. The
-/// rules — including why only the admin arm is scoped by server — live there.
+/// rules - including why only the admin arm is scoped by server - live there.
 async fn get_site_domain(state: &AppState, site_id: Uuid, claims: &Claims) -> Result<String, ApiError> {
     crate::helpers::site_domain_for_caller(state, site_id, claims).await
 }
@@ -62,7 +62,7 @@ async fn get_site_domain(state: &AppState, site_id: Uuid, claims: &Claims) -> Re
 /// the payload to decide which crontab lines this sync owns. Sending only the
 /// enabled ones made the request indistinguishable from "this site has no
 /// disabled crons", and the agent compensated by stripping every `# dockpanel:`
-/// line on the box — every other site's jobs with them. The `enabled` flag now
+/// line on the box - every other site's jobs with them. The `enabled` flag now
 /// carries that information explicitly, so the agent can remove exactly this
 /// site's disabled lines and touch nothing else.
 async fn sync_crons_to_agent(state: &AppState, agent: &AgentHandle, site_id: Uuid) -> Result<(), ApiError> {
@@ -95,7 +95,7 @@ async fn sync_crons_to_agent(state: &AppState, agent: &AgentHandle, site_id: Uui
     Ok(())
 }
 
-/// GET /api/sites/{id}/crons — List crons for a site.
+/// GET /api/sites/{id}/crons - List crons for a site.
 pub async fn list(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -119,7 +119,7 @@ pub async fn list(
     Ok(Json(crons))
 }
 
-/// POST /api/sites/{id}/crons — Create a cron job.
+/// POST /api/sites/{id}/crons - Create a cron job.
 pub async fn create(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -167,7 +167,7 @@ pub async fn create(
     Ok((StatusCode::CREATED, Json(cron)))
 }
 
-/// PUT /api/sites/{id}/crons/{cron_id} — Update a cron job.
+/// PUT /api/sites/{id}/crons/{cron_id} - Update a cron job.
 pub async fn update(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -235,7 +235,7 @@ pub async fn update(
     Ok(Json(cron))
 }
 
-/// DELETE /api/sites/{id}/crons/{cron_id} — Delete a cron job.
+/// DELETE /api/sites/{id}/crons/{cron_id} - Delete a cron job.
 pub async fn remove(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -276,7 +276,7 @@ pub async fn remove(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// POST /api/sites/{id}/crons/{cron_id}/run — Run a cron job immediately.
+/// POST /api/sites/{id}/crons/{cron_id}/run - Run a cron job immediately.
 pub async fn run_now(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -322,7 +322,7 @@ pub async fn run_now(
     .await
     .map_err(|e| internal_error("run now", e))?;
 
-    tracing::info!("Cron executed manually: {cron_id} for {domain} — {status_str}");
+    tracing::info!("Cron executed manually: {cron_id} for {domain} - {status_str}");
     activity::log_activity(
         &state.db, claims.sub, &claims.email, "cron.run",
         Some("cron"), Some(&domain), Some(&cron.label), Some(status_str), claims.key_id,

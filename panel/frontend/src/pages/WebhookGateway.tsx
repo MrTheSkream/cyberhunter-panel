@@ -10,7 +10,7 @@ interface Endpoint {
   last_received_at: string | null; created_at: string;
   // Whether the endpoint holds a secret it can actually verify with. The secret
   // itself is no longer sent to the browser, so this is the only thing the
-  // screen can ask — and it has to ask, because an endpoint stored before the
+  // screen can ask - and it has to ask, because an endpoint stored before the
   // presence check can name a verification mode it cannot perform.
   verify_secret_set: boolean;
 }
@@ -87,7 +87,7 @@ export default function WebhookGateway() {
 
   // Picking a verification mode and leaving either field empty is the one
   // combination the backend refuses, because an endpoint cannot be edited
-  // afterwards — it would have to be deleted and created again. Refusing it here
+  // afterwards - it would have to be deleted and created again. Refusing it here
   // too means the operator sees it while the form is still open.
   const verifyHalvesMissing =
     epForm.verify_mode !== "none" &&
@@ -120,7 +120,7 @@ export default function WebhookGateway() {
     try {
       await api.put(`/webhook-gateway/endpoints/${ep.id}`, { enabled: !ep.enabled });
       setEndpoints(endpoints.map(e => e.id === ep.id ? { ...e, enabled: !ep.enabled } : e));
-      setMessage({ text: ep.enabled ? "Endpoint paused — it will refuse inbound deliveries" : "Endpoint resumed", type: "success" });
+      setMessage({ text: ep.enabled ? "Endpoint paused - it will refuse inbound deliveries" : "Endpoint resumed", type: "success" });
     } catch (e) {
       setMessage({ text: e instanceof Error ? e.message : "Failed", type: "error" });
     }
@@ -152,13 +152,13 @@ export default function WebhookGateway() {
     try {
       await api.put(`/webhook-gateway/routes/${r.id}`, { enabled: !r.enabled });
       setRoutes(routes.map(x => x.id === r.id ? { ...x, enabled: !r.enabled } : x));
-      setMessage({ text: r.enabled ? "Route paused — nothing will be forwarded to it" : "Route resumed", type: "success" });
+      setMessage({ text: r.enabled ? "Route paused - nothing will be forwarded to it" : "Route resumed", type: "success" });
     } catch (e) {
       setMessage({ text: e instanceof Error ? e.message : "Failed", type: "error" });
     }
   };
 
-  // Replaying a delivery the gateway REFUSED is a real capability — the guide
+  // Replaying a delivery the gateway REFUSED is a real capability - the guide
   // documents it, and the usual cause is a sender configured with the wrong
   // secret rather than a forged payload. It is also the one action here that
   // sends an externally-supplied body onward under the panel's own credentials,
@@ -275,7 +275,7 @@ export default function WebhookGateway() {
               <div className="flex items-center justify-end gap-3">
                 {verifyHalvesMissing && (
                   <span className="text-xs text-warn-400 font-mono">
-                    Signature verification needs both a secret and the header carrying it — an endpoint cannot be edited afterwards.
+                    Signature verification needs both a secret and the header carrying it - an endpoint cannot be edited afterwards.
                   </span>
                 )}
                 <button
@@ -320,7 +320,7 @@ export default function WebhookGateway() {
                         {ep.verify_mode !== "none" && !ep.verify_secret_set && (
                           <span className="ml-2 px-2 py-0.5 bg-danger-500/10 text-danger-400 rounded-md"
                             title="This endpoint names a verification mode but holds no secret, so it can verify nothing. Deliveries to it are rejected. Delete it and create it again with a secret and a signature header.">
-                            no secret — rejecting
+                            no secret - rejecting
                           </span>
                         )}
                       </td>

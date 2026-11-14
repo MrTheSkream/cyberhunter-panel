@@ -57,7 +57,7 @@ export default function NexusLayout() {
   const state = useLayoutState();
   const branding = useBranding();
 
-  // Light theme detection — only needed for status color tones (emerald/rose/amber)
+  // Light theme detection - only needed for status color tones (emerald/rose/amber)
   const isLight = state.theme === "clean" || state.theme === "arctic";
 
   if (state.loading) {
@@ -115,8 +115,8 @@ export default function NexusLayout() {
                 </div>
                 {!branding.hideBranding && (
                   <span className="text-lg font-bold tracking-tight">
-                    {branding.panelName === "DockPanel" ? (
-                      <><span className="text-rust-400">Dock</span><span className="text-dark-50">Panel</span></>
+                    {branding.panelName === "CyberHunter - Panel" ? (
+                      <><span className="text-rust-400">CyberHunter</span><span className="text-dark-50"> - Panel</span></>
                     ) : (
                       <span className="text-dark-50">{branding.panelName}</span>
                     )}
@@ -136,7 +136,7 @@ export default function NexusLayout() {
 
         <ServerSelector />
 
-        {/* Nav — flat list, no group headers */}
+        {/* Nav - flat list, no group headers */}
         <nav className="flex-1 py-4 px-3 space-y-1 overflow-y-auto">
           {allItems.map((item) => (
             <NavLink
@@ -174,7 +174,7 @@ export default function NexusLayout() {
 
         {/* Footer */}
         <div className="p-4 border-t border-dark-700 space-y-3">
-          {/* Health — admins only; see `canSeeHealth` in useLayoutState. */}
+          {/* Health - admins only; see `canSeeHealth` in useLayoutState. */}
           {state.canSeeHealth && (
           <div className={`flex items-center gap-2.5 px-3 py-2 rounded-lg ${
   state.apiHealthy === true ? "bg-rust-500/10 border border-rust-500/10" :
@@ -257,7 +257,7 @@ export default function NexusLayout() {
 
             <div className="h-6 w-px hidden sm:block bg-dark-700" />
 
-            {/* Theme cycle — same paint bucket as other layouts */}
+            {/* Theme cycle - same paint bucket as other layouts */}
             <button
               onClick={state.cycleTheme}
               className="p-2 rounded-lg transition-colors text-dark-400 hover:text-dark-50 hover:bg-dark-800"

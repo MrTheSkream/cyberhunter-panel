@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 #
-# Regression pin for the s484 Mode B research pass — "fetch a migration archive
+# Regression pin for the s484 Mode B research pass - "fetch a migration archive
 # by URL instead of requiring the operator SFTP it up first."
 #
 # Before this, `Migration.tsx` told the operator to upload the backup via SFTP
-# and paste the resulting path — `analyze()` required `body.path` to already
+# and paste the resulting path - `analyze()` required `body.path` to already
 # exist on the server's disk, full stop. This adds a URL-fetch alternative: the
 # AGENT downloads the archive itself into the one subtree it can actually write
 # (`/var/backups/dockpanel/migration-fetch/`, NOT the bare `/var/backups/` an
-# operator-copied archive can otherwise live anywhere under — a new path outside
+# operator-copied archive can otherwise live anywhere under - a new path outside
 # a granted `ReadWritePaths` entry is the exact EROFS class the per-site SFTP
 # jail hit), then analysis proceeds exactly as it always did.
 #
@@ -37,13 +37,13 @@ for f in "$BACKEND_ROUTE" "$AGENT_ROUTE" "$AGENT_SVC" "$TSX"; do
   [ -f "$f" ] || { echo "missing $f"; exit 1; }
 done
 
-# NOT the naive `sed 's://.*::'` this repo's other pins use — this file's own
+# NOT the naive `sed 's://.*::'` this repo's other pins use - this file's own
 # subject lines contain `"http://"` / `"https://"` string literals, and that
 # stripper treats ANY `//` as a comment marker with no regard for what is
 # inside a string. It would truncate `if !(u.starts_with("http:` right there,
 # silently deleting the rest of the scheme check this suite exists to hold.
 # Only strip a `//` NOT immediately preceded by `:` (a real line comment is
-# preceded by whitespace or code, never a bare colon) — and handle a comment
+# preceded by whitespace or code, never a bare colon) - and handle a comment
 # that starts the line with zero indentation as its own case.
 strip() { sed -E 's#^//.*$##; s#([^:])//.*#\1#' "$1"; }
 SRC_BACKEND=$(strip "$BACKEND_ROUTE")
@@ -65,25 +65,25 @@ echo "§1 the request accepts a URL, and enforces path XOR url"
 if hasE "$SRC_BACKEND" 'pub url: Option<String>'; then
   ok "AnalyzeRequest carries an optional url field"
 else
-  bad "AnalyzeRequest has no url field — the frontend has nothing to send"
+  bad "AnalyzeRequest has no url field - the frontend has nothing to send"
 fi
 
 if has "$ANALYZE" 'path.is_empty() && url.is_none()'; then
   ok "analyze rejects the request when NEITHER path nor url is given"
 else
-  bad "no empty-both guard — a request with neither field could slip through"
+  bad "no empty-both guard - a request with neither field could slip through"
 fi
 
 if hasE "$ANALYZE" '!path\.is_empty\(\) && url\.is_some\(\)'; then
   ok "analyze rejects the request when BOTH path and url are given"
 else
-  bad "no both-given guard — ambiguous requests are not rejected"
+  bad "no both-given guard - ambiguous requests are not rejected"
 fi
 
 if hasE "$ANALYZE" 'u\.starts_with\("http://"\) \|\| u\.starts_with\("https://"\)'; then
   ok "the URL is scheme-restricted to http/https on the panel side"
 else
-  bad "no scheme check on the panel side — any URI scheme could be accepted"
+  bad "no scheme check on the panel side - any URI scheme could be accepted"
 fi
 
 echo
@@ -98,28 +98,28 @@ fi
 if hasE "$ANALYZE" 'Uuid::new_v4\(\)'; then
   ok "the destination filename is a fresh UUID, not derived from user input"
 else
-  bad "the destination filename is not UUID-derived — a URL-controlled name could inject a path"
+  bad "the destination filename is not UUID-derived - a URL-controlled name could inject a path"
 fi
 
 echo
-echo "§3 the agent's fetch route re-validates independently — it does not trust the caller"
+echo "§3 the agent's fetch route re-validates independently - it does not trust the caller"
 
 if [ -n "$FETCH_ROUTE" ]; then
   ok "the agent's /migration/fetch handler is present and readable"
 else
-  bad "could not read the agent fetch handler — the arms below mean nothing"
+  bad "could not read the agent fetch handler - the arms below mean nothing"
 fi
 
 if hasE "$FETCH_ROUTE" 'url\.starts_with\("http://"\) \|\| url\.starts_with\("https://"\)'; then
   ok "the agent independently re-checks the URL scheme"
 else
-  bad "the agent trusts the panel's scheme check instead of re-validating — defense in depth is gone"
+  bad "the agent trusts the panel's scheme check instead of re-validating - defense in depth is gone"
 fi
 
 if has "$FETCH_ROUTE" 'ssrf_guard::validate_repo_url_not_internal'; then
   ok "the agent SSRF-guards the host at the point it actually dials it"
 else
-  bad "no ssrf_guard call — an admin-supplied URL could reach an internal address"
+  bad "no ssrf_guard call - an admin-supplied URL could reach an internal address"
 fi
 
 if hasE "$FETCH_ROUTE" 'dest\.contains\("\.\."\)'; then
@@ -140,31 +140,31 @@ echo "§4 the download is capped on both the declared AND the actual size, and l
 if hasE "$FETCH_SVC" 'MAX_FETCH_BYTES'; then
   ok "a size cap constant exists"
 else
-  bad "no MAX_FETCH_BYTES constant — nothing bounds a fetched archive's size"
+  bad "no MAX_FETCH_BYTES constant - nothing bounds a fetched archive's size"
 fi
 
 if hasE "$FETCH_SVC" 'content_length\(\)'; then
   ok "the declared Content-Length is checked before streaming begins"
 else
-  bad "no content_length() check — an obviously-oversized response isn't rejected early"
+  bad "no content_length() check - an obviously-oversized response isn't rejected early"
 fi
 
 if hasE "$FETCH_SVC" 'written[[:space:]]*>[[:space:]]*MAX_FETCH_BYTES'; then
   ok "the ACTUAL streamed byte count is also checked, not just the declared header"
 else
-  bad "no streamed-byte-count check — a lying or absent Content-Length bypasses the cap entirely"
+  bad "no streamed-byte-count check - a lying or absent Content-Length bypasses the cap entirely"
 fi
 
 if hasE "$FETCH_SVC" '\{dest\}\.part'; then
   ok "the download writes to a .part sibling first"
 else
-  bad "no .part staging file — a crash or a cap trip could leave a truncated file at the real path"
+  bad "no .part staging file - a crash or a cap trip could leave a truncated file at the real path"
 fi
 
 if hasE "$FETCH_SVC" 'tokio::fs::rename\(&part_path, dest\)'; then
   ok "the .part file is renamed into place only after the full response lands"
 else
-  bad "no rename-on-success — analyze() could be pointed at a file that never finished downloading"
+  bad "no rename-on-success - analyze() could be pointed at a file that never finished downloading"
 fi
 
 if hasE "$FETCH_SVC" 'remove_file\(&part_path\)'; then
@@ -179,7 +179,7 @@ echo "§5 a fetch failure is recorded the same honest way an analyze failure alr
 if hasE "$SRC_BACKEND" "status = 'failed'.*Could not fetch the archive" || hasE "$SRC_BACKEND" 'Could not fetch the archive'; then
   ok "a fetch failure writes a real reason into the migrations row"
 else
-  bad "no distinct fetch-failure message — the operator would see a generic or absent reason"
+  bad "no distinct fetch-failure message - the operator would see a generic or absent reason"
 fi
 
 if hasE "$SRC_BACKEND" 'if let Some\(fetch_url\) = url'; then

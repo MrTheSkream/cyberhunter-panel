@@ -2,8 +2,8 @@
 
 - [Getting Started](getting-started.md)
 - [Configuration](CONFIGURATION.md)
-- [What DockPanel checks for you](guides/prerequisites.md)
-- [How DockPanel is tested](testing.md)
+- [What CyberHunter - Panel checks for you](guides/prerequisites.md)
+- [How CyberHunter - Panel is tested](testing.md)
 - [Guides]()
   - [Databases](guides/databases.md)
   - [Getting files onto a site](guides/file-uploads.md)

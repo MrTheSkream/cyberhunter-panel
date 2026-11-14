@@ -10,14 +10,14 @@
 //
 // So: everything still fails the build, except advisories listed below with a
 // written reason. An allowlist entry that no longer matches anything is reported
-// too — an entry nothing can hit is how an allowlist quietly turns into a blanket.
+// too - an entry nothing can hit is how an allowlist quietly turns into a blanket.
 //
 // Usage:  node scripts/npm-audit-gate.mjs [--input audit.json] [--level moderate]
 //         (run from the directory holding the package.json to audit)
 //
 // s467: the default was `high` from the day this gate was written, which meant
 // a MODERATE-severity advisory never even reached the waived/blocking split
-// below — not waived, just silently below threshold. GitHub's Dependabot has no
+// below - not waived, just silently below threshold. GitHub's Dependabot has no
 // such floor, so it flagged two `qs` advisories (website/server, both moderate)
 // that this gate had never been able to see, on any manifest, since it existed.
 // Lowered to `moderate` to match what Dependabot actually reports; `low`/`info`
@@ -25,9 +25,9 @@
 //
 // Exit codes, kept distinct because the pre-push hook treats them differently:
 //   0  clean, or everything at/above the level is waived
-//   1  a real un-waived advisory — block
-//   2  the output could not be parsed — block, because we cannot tell
-//   3  npm could not reach the advisory source — WARN and let it through. A gate
+//   1  a real un-waived advisory - block
+//   2  the output could not be parsed - block, because we cannot tell
+//   3  npm could not reach the advisory source - WARN and let it through. A gate
 //      that blocks on a DNS blip is a gate that gets disabled with --no-verify.
 
 import { spawnSync } from 'node:child_process';
@@ -43,13 +43,13 @@ const ALLOWLIST = [
   // watching for exactly that rather than trusting it. On 2026-08-07 it fired:
   // 7.18.2 carries the fix. Both frontends were already on `^7.18.1`, so the fix
   // was one `npm install` inside the range the waiver said would need a major
-  // migration — the waiver was accurate when written and stopped being accurate
+  // migration - the waiver was accurate when written and stopped being accurate
   // without any commit here changing.
   //
   // ⚠ Retiring a waiver is not just deleting the entry: two checks existed to
   // police THIS waiver and both had to be re-pointed, or they would have gone on
   // asserting that a waiver exists. See `ssl-correctness-pin-e2e.sh` §A and
-  // `live-surfaces-check.sh` §4, which now assert the opposite — that the
+  // `live-surfaces-check.sh` §4, which now assert the opposite - that the
   // advisory is NOT waived, and that the version we ship is at or above the fix.
 ];
 
@@ -68,7 +68,7 @@ if (inputFile) {
   raw = readFileSync(inputFile, 'utf8');
 } else {
   // npm audit exits non-zero whenever it finds anything, so the exit code says
-  // nothing useful here — the report does. Read stdout regardless.
+  // nothing useful here - the report does. Read stdout regardless.
   const res = spawnSync('npm', ['audit', '--json'], {
     encoding: 'utf8',
     maxBuffer: 32 * 1024 * 1024,
@@ -137,7 +137,7 @@ for (const adv of waived) {
 // a dependency that got fixed.
 for (const entry of ALLOWLIST) {
   if (!advisories.has(entry.id)) {
-    console.log(`stale   ${entry.id} is allowlisted but no longer reported here — drop it once no manifest needs it.`);
+    console.log(`stale   ${entry.id} is allowlisted but no longer reported here - drop it once no manifest needs it.`);
   }
 }
 

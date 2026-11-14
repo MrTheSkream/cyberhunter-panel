@@ -3,7 +3,7 @@
     {
       "name": "DS_PROMETHEUS",
       "label": "Prometheus",
-      "description": "Prometheus instance scraping DockPanel's /api/metrics endpoint.",
+      "description": "Prometheus instance scraping CyberHunter - Panel's /api/metrics endpoint.",
       "type": "datasource",
       "pluginId": "prometheus",
       "pluginName": "Prometheus"
@@ -30,14 +30,14 @@
       }
     ]
   },
-  "description": "Fleet-wide overview of DockPanel-managed servers, sites, GPUs, and alerts. Backed by the /api/metrics scrape endpoint. See docs/guides/prometheus.md for setup.",
+  "description": "Fleet-wide overview of CyberHunter - Panel-managed servers, sites, GPUs, and alerts. Backed by the /api/metrics scrape endpoint. See docs/guides/prometheus.md for setup.",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
   "id": null,
   "links": [
     {
-      "title": "DockPanel",
+      "title": "CyberHunter - Panel",
       "url": "https://dockpanel.dev",
       "type": "link",
       "icon": "external link",
@@ -64,7 +64,7 @@
           "mappings": [],
           "color": { "mode": "fixed", "fixedColor": "blue" },
           "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] },
-          "noValue": "—"
+          "noValue": "-"
         },
         "overrides": []
       },
@@ -680,7 +680,7 @@
     {
       "type": "timeseries",
       "title": "Alerts firing by severity",
-      "description": "The exporter publishes severity=\"none\" with value 0 when nothing is firing — filter excludes that synthetic series.",
+      "description": "The exporter publishes severity=\"none\" with value 0 when nothing is firing - filter excludes that synthetic series.",
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "gridPos": { "h": 8, "w": 24, "x": 0, "y": 21 },
       "id": 40,
@@ -767,7 +767,7 @@
   "time": { "from": "now-1h", "to": "now" },
   "timepicker": {},
   "timezone": "browser",
-  "title": "DockPanel — Fleet Overview",
+  "title": "CyberHunter - Panel - Fleet Overview",
   "uid": "dockpanel-fleet",
   "version": 1,
   "weekStart": ""

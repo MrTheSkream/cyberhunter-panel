@@ -236,7 +236,7 @@ pub async fn cmd_apps_compose(token: &str, file: &str) -> Result<(), String> {
         for f in failed {
             let name = f["name"].as_str().unwrap_or("-");
             let err = f["error"].as_str().unwrap_or("unknown");
-            eprintln!("\x1b[31m✗\x1b[0m Service failed: {name} — {err}");
+            eprintln!("\x1b[31m✗\x1b[0m Service failed: {name} - {err}");
         }
     }
 

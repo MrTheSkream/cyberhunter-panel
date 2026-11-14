@@ -1,28 +1,28 @@
 #!/usr/bin/env bash
-# secrets-mask-value-boundary-pin-e2e.sh — s442
+# secrets-mask-value-boundary-pin-e2e.sh - s442
 #
 # ONE PROPERTY: masking a secret's value for display never panics, regardless
 # of what characters that value contains.
 #
 # `panel/backend/src/routes/secrets.rs`'s `mask_value` sliced the first 4
 # BYTES (`&value[..4]`) of any value longer than 4 bytes. Rust panics if a
-# byte-slice boundary doesn't land on a UTF-8 char boundary — reachable from
+# byte-slice boundary doesn't land on a UTF-8 char boundary - reachable from
 # any secret value containing a multi-byte character (a pasted passphrase,
 # API key, or credential with non-ASCII content). Hit from every masking
 # call site: `create_secret`'s response (after the row is already committed,
 # so the secret is saved but the caller never sees it), `update_secret`'s
-# response, and every subsequent `list_secrets` call with `reveal=false` —
+# response, and every subsequent `list_secrets` call with `reveal=false` -
 # so a single boundary-violating secret in a vault permanently breaks that
 # vault's default masked listing until the offending secret is deleted via
 # `reveal=true` (which skips mask_value entirely).
 #
 # Fix: walk `.chars()` instead of bytes. A char boundary can't be straddled
-# by construction — `.chars().take(4)` always stops on one.
+# by construction - `.chars().take(4)` always stops on one.
 #
 # §A mask_value walks chars, not raw byte-index slicing.
 # §B mask_value is still reachable from all 3 call sites the finder counted.
 # §C the fix threshold (4-or-fewer fully masked, more gets a 4-char prefix)
-#    is preserved — this is a boundary-safety fix, not a behavior change.
+#    is preserved - this is a boundary-safety fix, not a behavior change.
 # §D executed unit tests exist for the exact panic scenario (multi-byte value
 #    straddling the old byte offset) and the all-multibyte case.
 
@@ -31,7 +31,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
 echo
 echo "=================================================="
-echo "  secrets mask_value UTF-8 boundary — source pins (s442)"
+echo "  secrets mask_value UTF-8 boundary - source pins (s442)"
 echo "=================================================="
 echo
 
@@ -71,11 +71,11 @@ echo "── §A mask_value walks chars, not byte indices ──"
 if [ -n "$MASK_BODY" ]; then
   ok "A1 mask_value exists"
 else
-  bad "A1 mask_value is missing — every arm below measures nothing"
+  bad "A1 mask_value is missing - every arm below measures nothing"
 fi
 
 if has "$MASK_BODY" '&value\[\.\.4\]|value\[0\.\.4\]|\[\.\.4\]'; then
-  bad "A2 mask_value still byte-slices with a literal ..4 index — the panic is back"
+  bad "A2 mask_value still byte-slices with a literal ..4 index - the panic is back"
 else
   ok "A2 no literal [..4] byte-index slice in mask_value"
 fi
@@ -83,7 +83,7 @@ fi
 if has "$MASK_BODY" '\.chars\(\)'; then
   ok "A3 mask_value iterates .chars() (char-boundary-safe by construction)"
 else
-  bad "A3 mask_value doesn't use .chars() — the fix shape is gone"
+  bad "A3 mask_value doesn't use .chars() - the fix shape is gone"
 fi
 
 if has "$MASK_BODY" '\.take\(4\)'; then
@@ -103,7 +103,7 @@ CALL_COUNT=$(grep -c 'mask_value(' <<< "$PROD_ONLY")
 if [ "$CALL_COUNT" -eq 4 ]; then
   ok "B1 mask_value appears 4 times (1 definition + 3 call sites), matching the finder's exhaustiveness claim"
 else
-  bad "B1 mask_value appears $CALL_COUNT times, expected 4 — a call site was added, removed, or the fix moved the definition"
+  bad "B1 mask_value appears $CALL_COUNT times, expected 4 - a call site was added, removed, or the fix moved the definition"
 fi
 
 # ── §C the masking threshold behavior is unchanged ────────────────────────
@@ -112,7 +112,7 @@ echo "── §C 4-or-fewer stays fully masked; more gets a char prefix ──"
 if has "$MASK_BODY" 'is_none\(\)' && has "$MASK_BODY" '••••••••'; then
   ok "C1 a short (<=4 char) value still resolves to the fully-masked constant"
 else
-  bad "C1 short-value handling looks different — verify by hand"
+  bad "C1 short-value handling looks different - verify by hand"
 fi
 
 if has "$MASK_BODY" 'format!\("\{prefix\}••••••••"\)|format!\("\{\}••••••••"'; then
@@ -140,7 +140,7 @@ fi
 if grep -qE '日|本|語' "$SECRETS"; then
   ok "D3 the tests use real multi-byte (non-ASCII) literals, not just an assertion of intent"
 else
-  bad "D3 no multi-byte literal found — the panic scenario may not actually be exercised"
+  bad "D3 no multi-byte literal found - the panic scenario may not actually be exercised"
 fi
 
 echo

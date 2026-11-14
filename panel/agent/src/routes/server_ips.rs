@@ -1,4 +1,4 @@
-//! `/system/ips` — list, add and remove the server's IPv4 addresses, and read
+//! `/system/ips` - list, add and remove the server's IPv4 addresses, and read
 //! their PTR. See `services::server_ips` for the runtime / persistence split.
 
 use axum::{
@@ -55,7 +55,7 @@ async fn list_ips() -> Result<Json<serde_json::Value>, ApiErr> {
     // An unreadable netplan file must not hide the inventory: list everything
     // as unmanaged and say so in the log.
     let managed = sip::read_managed().unwrap_or_else(|e| {
-        tracing::warn!("{e} — listing every address as unmanaged");
+        tracing::warn!("{e} - listing every address as unmanaged");
         sip::Managed::new()
     });
     let primary = sip::primary_ip();
@@ -83,7 +83,7 @@ fn parse_ip(s: &str) -> Result<Ipv4Addr, ApiErr> {
         .map_err(|_| err(StatusCode::BAD_REQUEST, "Invalid IPv4 address"))
 }
 
-/// POST /system/ips — `{ip, prefix?=32, interface?=<default route device>}`.
+/// POST /system/ips - `{ip, prefix?=32, interface?=<default route device>}`.
 ///
 /// An address already on the host is *adopted* (written to our netplan file
 /// without `ip addr add`), using the interface and prefix it actually has; an
@@ -217,7 +217,7 @@ async fn add_ip(Json(body): Json<AddIpRequest>) -> Result<Json<IpEntry>, ApiErr>
     }))
 }
 
-/// DELETE /system/ips/{ip} — only for an address in our netplan file, never
+/// DELETE /system/ips/{ip} - only for an address in our netplan file, never
 /// the primary. The file is rewritten and validated first, then the address
 /// is removed from the interface; a failure at either step restores the file.
 async fn delete_ip(Path(ip): Path<String>) -> Result<Json<serde_json::Value>, ApiErr> {
@@ -269,7 +269,7 @@ async fn delete_ip(Path(ip): Path<String>) -> Result<Json<serde_json::Value>, Ap
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// GET /system/ips/{ip}/ptr — `{ip, ptr}`; `ptr` is null when there is none.
+/// GET /system/ips/{ip}/ptr - `{ip, ptr}`; `ptr` is null when there is none.
 async fn get_ptr(Path(ip): Path<String>) -> Result<Json<serde_json::Value>, ApiErr> {
     let ip = parse_ip(&ip)?;
     let ptr = sip::ptr_lookup(ip).await;

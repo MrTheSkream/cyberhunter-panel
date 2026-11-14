@@ -63,7 +63,7 @@ export default function WordPress() {
     } catch (e) {
       // A failed request (agent unreachable, timeout, contention from the
       // site_lock queue) is NOT the same signal as a genuine "no wp-config.php
-      // found" — collapsing both into installed:false showed a false "Not
+      // found" - collapsing both into installed:false showed a false "Not
       // Detected" + an Install-over-it CTA for a site that was merely
       // temporarily unreachable. Surface the error instead; loadInfo() (via
       // the Retry button) is the only thing that should ever set installed:false.
@@ -213,7 +213,7 @@ export default function WordPress() {
       )}
 
       {error ? (
-        /* Load failed — distinct from "not installed" (see loadInfo's catch). */
+        /* Load failed - distinct from "not installed" (see loadInfo's catch). */
         <div className="bg-dark-800 rounded-lg border border-dark-500 p-8">
           <div className="text-center max-w-md mx-auto">
             <div className="w-16 h-16 bg-danger-500/15 rounded-2xl flex items-center justify-center mx-auto mb-4">
@@ -445,7 +445,7 @@ export default function WordPress() {
                     try {
                       const result = await api.post<{ rolled_back?: boolean; core_before?: string; core_after?: string; log?: string[] }>(`/sites/${id}/wordpress/update-safe`);
                       if (result.rolled_back) {
-                        setMessage({ text: "Update failed health check — rolled back to snapshot", type: "warning" });
+                        setMessage({ text: "Update failed health check - rolled back to snapshot", type: "warning" });
                       } else {
                         setMessage({ text: `Safe update complete: ${result.core_before} → ${result.core_after}`, type: "success" });
                       }

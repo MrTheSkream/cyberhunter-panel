@@ -1,5 +1,5 @@
 /**
- * Per-site PHP settings and global php.ini — shapes and pure helpers.
+ * Per-site PHP settings and global php.ini - shapes and pure helpers.
  *
  * Contract: conception/02-php-contrats.md, sections A2/A3 and B1–B3. Nothing in
  * here imports React or the API client, so every helper can be exercised on its

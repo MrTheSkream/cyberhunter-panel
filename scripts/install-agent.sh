@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# DockPanel Remote Agent Installer
+# CyberHunter - Panel Remote Agent Installer
 # Usage: curl -sSL https://panel.example.com/install-agent.sh | sudo bash -s -- \
 #   --panel-url https://panel.example.com \
 #   --token <agent_token> \
 #   --server-id <server_uuid>
 #
-# This installs ONLY the DockPanel agent binary (no database, no API, no frontend).
+# This installs ONLY the CyberHunter - Panel agent binary (no database, no API, no frontend).
 # The agent connects back to the panel via HTTPS on port 9443.
 
 set -euo pipefail
@@ -33,7 +33,7 @@ if [[ -z "$TOKEN" ]]; then
 fi
 
 # An agent with no central URL never phones home, so the panel never records a
-# `last_seen_at` for it — and the fleet rolling update only considers servers
+# `last_seen_at` for it - and the fleet rolling update only considers servers
 # seen in the last 5 minutes. The box would install fine and then be invisible
 # to every fleet operation, with nothing anywhere saying why. Fail loudly here
 # instead. (The panel used to hand out a copy-paste command with an empty
@@ -52,7 +52,7 @@ if [[ "$PANEL_URL" == --* || "$TOKEN" == --* || "$SERVER_ID" == --* ]]; then
 fi
 
 echo "======================================"
-echo "  DockPanel Agent Installer (Remote)"
+echo "  CyberHunter - Panel Agent Installer (Remote)"
 echo "======================================"
 echo ""
 
@@ -72,7 +72,7 @@ detect_pkg_manager() {
         PKG_MGR="apt"
         # Both of these exist on the panel box via setup.sh, and a fleet member
         # runs exactly the same agent-driven apt operations, so it needs them
-        # too — this function had neither.
+        # too - this function had neither.
         #
         # Lock timeout: without it, any agent install/update racing
         # unattended-upgrades dies on "Could not get lock /var/lib/dpkg/lock-frontend".
@@ -81,14 +81,14 @@ detect_pkg_manager() {
 DPkg::Lock::Timeout "300";
 APT_EOF
         # needrestart: the agent links libc, so a plain libc6 upgrade puts
-        # dockpanel-agent.service on needrestart's restart list — killing the
+        # dockpanel-agent.service on needrestart's restart list - killing the
         # process that is streaming that very update's progress back to the
         # panel, which then reports a clean update as failed. Exclude only the
         # agent; every other service still restarts.
         if [ -d /etc/needrestart ]; then
             mkdir -p /etc/needrestart/conf.d
             cat > /etc/needrestart/conf.d/99-dockpanel.conf << 'NR_EOF'
-# Managed by DockPanel — do not edit; rewritten by setup.sh/update.sh.
+# Managed by CyberHunter - Panel - do not edit; rewritten by setup.sh/update.sh.
 $nrconf{override_rc}{qr(^dockpanel-agent)} = 0;
 1;
 NR_EOF
@@ -121,13 +121,13 @@ detect_pkg_manager
 # Install Docker.
 #
 # `get.docker.com` points the RHEL clones at
-# download.docker.com/linux/<id>/… — and `linux/rocky` carries no `docker-ce`
+# download.docker.com/linux/<id>/… - and `linux/rocky` carries no `docker-ce`
 # at all, while there is no `almalinux` branch to point at. So on those
 # families the script adds a repo, refreshes the cache, and ends with
 # `Error: Unable to find a match: docker-ce docker-ce-cli`. s264 found this and
 # fixed it in setup.sh (v2.37.0) with an el-clone repo aimed at `linux/centos`;
 # the fix never reached THIS installer, so adding a remote RHEL server has been
-# impossible the whole time — measured on a stock Rocky 9, s271.
+# impossible the whole time - measured on a stock Rocky 9, s271.
 #
 # The panel's own installer is the source of the shape below; keep them the same.
 if ! command -v docker &> /dev/null; then
@@ -205,10 +205,10 @@ chmod 600 /etc/dockpanel/agent.env
 
 # Download agent binary (naming matches GitHub release assets)
 #
-# Until s336 this was the ONE path that put a DockPanel binary on a machine
+# Until s336 this was the ONE path that put a CyberHunter - Panel binary on a machine
 # without checking it: no checksum, no signature, and the bytes went straight
 # onto /usr/local/bin/dockpanel-agent. Its three siblings all verify sha256
-# against the release's checksums.txt and all quarantine first — setup.sh's own
+# against the release's checksums.txt and all quarantine first - setup.sh's own
 # comment states the contract, "so the live executable path never holds
 # unverified bytes". This is the installer the Add-Server dialog tells an
 # operator to pipe into `sudo bash`, so it was the least verified path and the
@@ -232,7 +232,7 @@ fi
 
 # Integrity: a MISMATCH is fatal, a missing manifest only warns. That is
 # setup.sh's policy for a fresh install rather than update.sh's fail-closed one,
-# and deliberately so — availability must not brick a first install, but a
+# and deliberately so - availability must not brick a first install, but a
 # corrupt or substituted binary must never be installed.
 if curl -fsSL "$BASE_URL/checksums.txt" -o "$AGENT_TMP.sums" 2>/dev/null; then
     WANT=$(awk -v n="$ASSET" '$2 == n {print $1; exit}' "$AGENT_TMP.sums")
@@ -240,17 +240,17 @@ if curl -fsSL "$BASE_URL/checksums.txt" -o "$AGENT_TMP.sums" 2>/dev/null; then
         GOT=$(sha256sum "$AGENT_TMP" | awk '{print $1}')
         if [ "$WANT" != "$GOT" ]; then
             rm -f "$AGENT_TMP" "$AGENT_TMP.sums"
-            echo "Error: sha256 mismatch for $ASSET — refusing to install."
+            echo "Error: sha256 mismatch for $ASSET - refusing to install."
             echo "  expected $WANT"
             echo "  got      $GOT"
             exit 1
         fi
         echo "  sha256 verified against the release checksums.txt"
     else
-        echo "  WARNING: checksums.txt has no entry for $ASSET — installing unverified"
+        echo "  WARNING: checksums.txt has no entry for $ASSET - installing unverified"
     fi
 else
-    echo "  WARNING: could not fetch checksums.txt — installing unverified"
+    echo "  WARNING: could not fetch checksums.txt - installing unverified"
 fi
 rm -f "$AGENT_TMP.sums"
 
@@ -266,12 +266,12 @@ if [[ ! -f /etc/dockpanel/ssl/agent.crt ]]; then
     chmod 600 /etc/dockpanel/ssl/agent.key
 fi
 
-# Install the systemd unit — TAKEN FROM THE BINARY, not written here.
+# Install the systemd unit - TAKEN FROM THE BINARY, not written here.
 #
 # This step used to hand-write a third copy of the unit into a heredoc, and that
 # copy switched every one of systemd's protection directives off, listed no
 # writable paths at all, and omitted eight more hardening directives the real
-# unit sets — under a comment claiming it matched the local agent's hardening.
+# unit sets - under a comment claiming it matched the local agent's hardening.
 # It matched nothing: every server the panel manages remotely ran the agent with
 # no sandbox, from s253 to s271. The directives are deliberately not spelled out
 # in this comment: tests/sandbox-paths-pin-e2e.sh greps this file for them, and
@@ -279,13 +279,13 @@ fi
 #
 # The panel's own installers (setup.sh, update.sh) deploy
 # panel/agent/dockpanel-agent.service by copying that file. This script has no
-# repo tree — it is fetched from the panel and downloads a release binary — so
+# repo tree - it is fetched from the panel and downloads a release binary - so
 # it asks the binary it just downloaded, which carries the unit via include_str!
 # for exactly the reason agent-self-update.sh does: it cannot then drift from
 # the binary that runs it. One unit, three installers, no mirrors.
 #
 # The `timeout` is load-bearing, not caution. A binary that predates the flag
-# does not reject it — it ignores every argument and starts the DAEMON, which
+# does not reject it - it ignores every argument and starts the DAEMON, which
 # binds the agent socket and never returns. Without the bound, this installer
 # hangs for ever at "[7/7]" against an older release instead of refusing, which
 # is what it did when first driven on a real box (s271).
@@ -306,7 +306,7 @@ rm -f /tmp/dockpanel-agent.service.$$
 # Every directory the unit's ReadWritePaths names, DERIVED FROM THE UNIT.
 #
 # An UNPREFIXED entry that does not exist fails the namespace mount and the
-# agent does not start at all — /etc/apt did this to every RPM-family box
+# agent does not start at all - /etc/apt did this to every RPM-family box
 # (s264), and /etc/nginx would do it here, because an agent-only server has no
 # nginx and nothing above creates that path. A `-`-prefixed entry is worse when
 # missing, not better: systemd skips it silently, the unit starts, reports
@@ -320,7 +320,7 @@ for d in $AGENT_RWP; do
 done
 
 # Allow agent port through firewall. Check what is ACTUALLY ENFORCING first
-# (firewall-cmd --state, not just "is the binary installed") — the same
+# (firewall-cmd --state, not just "is the binary installed") - the same
 # split setup.sh's detect_firewall() already guards against (s265): a box can
 # have ufw installed but not running while firewalld is the one actually
 # enforcing, and checking `command -v ufw` first would silently configure the
@@ -332,7 +332,7 @@ elif command -v ufw &> /dev/null; then
     ufw allow ${AGENT_PORT}/tcp > /dev/null 2>&1 || true
 fi
 
-# Start agent. "The command ran" is not the success condition — "the unit is
+# Start agent. "The command ran" is not the success condition - "the unit is
 # active" is. install_powerdns ended in `let _ = systemctl restart` and hid three
 # separate bugs behind that silence for two releases (lesson #45), so this
 # installer polls and shows the failing journal line rather than printing a
@@ -360,7 +360,7 @@ fi
 
 echo ""
 echo "======================================"
-echo "  DockPanel Agent installed!"
+echo "  CyberHunter - Panel Agent installed!"
 echo "======================================"
 echo ""
 echo "  Agent listening on: 0.0.0.0:${AGENT_PORT}"
@@ -368,6 +368,6 @@ echo "  Token: ${TOKEN:0:12}..."
 echo "  Server ID: ${SERVER_ID}"
 echo "  Config: /etc/dockpanel/agent.env"
 echo ""
-echo "  Return to your DockPanel and click"
+echo "  Return to your CyberHunter - Panel and click"
 echo "  'Test Connection' to verify."
 echo ""

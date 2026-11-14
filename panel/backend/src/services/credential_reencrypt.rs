@@ -9,7 +9,7 @@
 //! fallback arm, and the old derivation can never be retired.
 //!
 //! This is the missing migration half. Before v2.112.0 there was no
-//! re-encryption path of any kind — verified, not assumed: a tree-wide search
+//! re-encryption path of any kind - verified, not assumed: a tree-wide search
 //! for `re.?encrypt|rotate_key|rekey|key_rotation` returned only comments and
 //! one test name.
 //!
@@ -23,7 +23,7 @@
 //! that every route module containing an `encrypt_credential` call appears in
 //! [`COVERED_MODULES`], and fails when one does not. (This paragraph used to
 //! name `tests/credential-key-survival-pin-e2e.sh` §D, a file that has never
-//! existed in any commit — the guarantee was real, its cited enforcer was not.)
+//! existed in any commit - the guarantee was real, its cited enforcer was not.)
 
 use sqlx::{PgPool, Row};
 
@@ -74,7 +74,7 @@ const SPECIAL_SUBJECTS: &[&str] = &[
 /// ⚠ The pairing is the point, and it was added after the registry proved it
 /// could be satisfied without doing its job. It was previously a bare list of
 /// module names checked by `every_credential_writer_is_covered`, so a new
-/// encrypting module could be made to pass by adding its NAME here — while the
+/// encrypting module could be made to pass by adding its NAME here - while the
 /// column it wrote was never added to `SIMPLE_SUBJECTS` and so was silently
 /// skipped by every re-key for ever. That is the exact failure this file's own
 /// header warns about ("a registry that merely lists what someone remembered is
@@ -117,7 +117,7 @@ pub fn covered_module_names() -> Vec<&'static str> {
 /// Every subject this sweep re-keys, as `table.column`.
 ///
 /// Reported beside the module list so the endpoint answers "did it touch my X?"
-/// about COLUMNS and not only about modules — the module half alone was what
+/// about COLUMNS and not only about modules - the module half alone was what
 /// let a module be declared covered while its column was skipped. Deriving both
 /// halves from the same two constants is also what keeps `SPECIAL_SUBJECTS`
 /// honest: it is production data, so it cannot rot behind a `cfg(test)`.
@@ -133,7 +133,7 @@ pub fn swept_subjects() -> Vec<String> {
 /// writers in `routes::settings` apply (`SENSITIVE_KEYS` plus the
 /// `_client_secret` suffix) and the `pdns_api_key` written by `routes::system`.
 ///
-/// The `IN (...)` list is a hand-copied literal — SQL text, not Rust — so it
+/// The `IN (...)` list is a hand-copied literal - SQL text, not Rust - so it
 /// cannot `use` `SETTINGS_SENSITIVE_KEYS` directly the way `DESTINATION_SECRET_KEYS`
 /// below now imports its source of truth. `sensitive_settings_sql_covers_settings_keys`
 /// in this file's own test module asserts the two haven't drifted instead.
@@ -149,7 +149,7 @@ pub struct SubjectReport {
     pub examined: i64,
     /// Rows rewritten under the current primary key.
     pub rewritten: i64,
-    /// Rows already under the primary key — nothing to do.
+    /// Rows already under the primary key - nothing to do.
     pub already_current: i64,
     /// Rows no candidate key could open. These are NOT rewritten; a failed
     /// re-encrypt must never overwrite the only copy of the ciphertext.
@@ -157,7 +157,7 @@ pub struct SubjectReport {
     /// Rows a normal write (a password reset, a token rotation, a settings
     /// save) changed between our SELECT and our UPDATE. The CAS guard on every
     /// UPDATE in this file catches this and skips rather than overwrites the
-    /// newer value with a re-encrypted copy of the stale one we read — these
+    /// newer value with a re-encrypted copy of the stale one we read - these
     /// are correctly re-keyed on the NEXT run, once nothing races them.
     pub raced: i64,
 }
@@ -175,7 +175,7 @@ impl SubjectReport {
     }
 }
 
-/// Sweep every subject. Never fails the whole run because one subject failed —
+/// Sweep every subject. Never fails the whole run because one subject failed -
 /// a missing optional table (whmcs on an install that never configured it) must
 /// not stop the rest, and a partially-completed sweep is safe to re-run.
 pub async fn reencrypt_all(pool: &PgPool, jwt_secret: &str) -> Vec<SubjectReport> {
@@ -239,7 +239,7 @@ async fn reencrypt_column(
                     Ok(_) => {
                         report.raced += 1;
                         tracing::warn!(
-                            "re-encrypt: {table}.{value_col} id={id} changed concurrently — \
+                            "re-encrypt: {table}.{value_col} id={id} changed concurrently - \
                              skipped this run, will be picked up by the next one"
                         );
                     }
@@ -293,7 +293,7 @@ async fn reencrypt_settings(pool: &PgPool, jwt_secret: &str) -> SubjectReport {
                     Ok(_) => {
                         report.raced += 1;
                         tracing::warn!(
-                            "re-encrypt: settings[{key}] changed concurrently — skipped this run"
+                            "re-encrypt: settings[{key}] changed concurrently - skipped this run"
                         );
                     }
                     Err(e) => {
@@ -374,7 +374,7 @@ async fn reencrypt_destinations(pool: &PgPool, jwt_secret: &str) -> SubjectRepor
         }
 
         // CAS on the config we read at the top of this iteration, before any
-        // key was rewritten — a concurrent edit to this destination (e.g.
+        // key was rewritten - a concurrent edit to this destination (e.g.
         // renaming it or changing an unrelated field) between our SELECT and
         // this UPDATE makes the guard fail instead of clobbering it.
         match sqlx::query(
@@ -390,7 +390,7 @@ async fn reencrypt_destinations(pool: &PgPool, jwt_secret: &str) -> SubjectRepor
             Ok(_) => {
                 report.raced += 1;
                 tracing::warn!(
-                    "re-encrypt: backup_destinations[{id}] changed concurrently — skipped this run"
+                    "re-encrypt: backup_destinations[{id}] changed concurrently - skipped this run"
                 );
             }
             Err(e) => {
@@ -403,8 +403,8 @@ async fn reencrypt_destinations(pool: &PgPool, jwt_secret: &str) -> SubjectRepor
     report
 }
 
-/// The Secrets Manager vault. Different key ladder from the credential path —
-/// see `secrets_crypto::vault_key_sources` — so it needs its own arm rather
+/// The Secrets Manager vault. Different key ladder from the credential path -
+/// see `secrets_crypto::vault_key_sources` - so it needs its own arm rather
 /// than sharing `reencrypt_credential`.
 async fn reencrypt_vault_secrets(pool: &PgPool, jwt_secret: &str) -> SubjectReport {
     let mut report = SubjectReport::new("secrets.encrypted_value");
@@ -434,7 +434,7 @@ async fn reencrypt_vault_secrets(pool: &PgPool, jwt_secret: &str) -> SubjectRepo
                 // No `version` bump here: the plaintext is unchanged, only its
                 // encryption wrapper is. `routes::secrets`' real edit path
                 // pairs every `version` increment with an INSERT into
-                // `secret_versions` under that same version number — bumping
+                // `secret_versions` under that same version number - bumping
                 // `version` here without one would desync the two on every
                 // successful re-key, not only a raced one. CAS on the
                 // ciphertext read above catches the race the same way the
@@ -453,7 +453,7 @@ async fn reencrypt_vault_secrets(pool: &PgPool, jwt_secret: &str) -> SubjectRepo
                     Ok(_) => {
                         report.raced += 1;
                         tracing::warn!(
-                            "re-encrypt: secrets[{id}] changed concurrently — skipped this run"
+                            "re-encrypt: secrets[{id}] changed concurrently - skipped this run"
                         );
                     }
                     Err(e) => {
@@ -481,7 +481,7 @@ mod tests {
     ///
     /// ⚠ This ENUMERATES; it does not confirm a number I already believe. The
     /// registry above is what someone remembered, and a registry that is only
-    /// a list is a changelog — the next feature to encrypt a column joins the
+    /// a list is a changelog - the next feature to encrypt a column joins the
     /// install silently and becomes the one row the sweep skips.
     ///
     /// The discovery is asserted NON-EMPTY first. An arm that examines nothing
@@ -490,7 +490,7 @@ mod tests {
     #[test]
     fn every_credential_writer_is_covered() {
         // BOTH trees. An earlier cut walked only `src/routes`, so a service
-        // that encrypted a credential joined the install completely unseen —
+        // that encrypted a credential joined the install completely unseen -
         // and this diff created the first one (`services::agent` encrypts
         // `servers.agent_token` when it registers the local server). A
         // discovery scoped to one directory is a list of the places someone
@@ -502,7 +502,7 @@ mod tests {
         // below keep that exclusion from quietly emptying the census.
         // The doors are DERIVED, not listed. An earlier cut walked
         // `["src/routes", "src/services"]` and asserted that both names
-        // appeared in what it had walked — which is a tautology, because the
+        // appeared in what it had walked - which is a tautology, because the
         // walked set IS that list. A mutation shortening it to routes-only
         // passed: no service was scanned, so no service writer was discovered,
         // so nothing was "missing". A census whose scope is a literal can
@@ -510,7 +510,7 @@ mod tests {
         //
         // `secrets_crypto` is the primitive and `credential_reencrypt` is this
         // sweep; both necessarily name the function and neither stores a
-        // credential of its own, so they are excluded BY NAME — and the floor
+        // credential of its own, so they are excluded BY NAME - and the floor
         // below keeps that exclusion from quietly emptying the census.
         const MACHINERY: &[&str] = &["secrets_crypto", "credential_reencrypt"];
         let src_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
@@ -532,8 +532,8 @@ mod tests {
                 }
                 scanned += 1;
                 let body = std::fs::read_to_string(&path).expect("source file is readable");
-                // `decrypt_credential(` cannot match `encrypt_credential(` — different
-                // letters — but `reencrypt_credential(` contains it verbatim, so it is
+                // `decrypt_credential(` cannot match `encrypt_credential(` - different
+                // letters - but `reencrypt_credential(` contains it verbatim, so it is
                 // removed before the test rather than reasoned around.
                 let body = body.replace("reencrypt_credential(", "");
                 if body.contains("encrypt_credential(") {
@@ -557,7 +557,7 @@ mod tests {
         // tree rather than as an instrument that examined nothing.
         assert!(
             scanned >= 90,
-            "the walk examined only {scanned} source file(s) under src/ — the crate layout moved \
+            "the walk examined only {scanned} source file(s) under src/ - the crate layout moved \
              or the traversal stopped descending, so this census proves nothing about the tree"
         );
 
@@ -565,7 +565,7 @@ mod tests {
         // discovery that collapses is a broken instrument, not a clean tree.
         assert!(
             writers.len() >= 8,
-            "credential-writer discovery found only {} module(s) ({writers:?}) — the enumeration \
+            "credential-writer discovery found only {} module(s) ({writers:?}) - the enumeration \
              is broken, not the tree",
             writers.len()
         );
@@ -579,11 +579,11 @@ mod tests {
             missing.is_empty(),
             "these route modules encrypt a credential but are not covered by the re-encryption \
              sweep: {missing:?}. Add the table/column to SIMPLE_SUBJECTS (or a special-shape arm) \
-             and then add the module to COVERED_MODULES — in that order."
+             and then add the module to COVERED_MODULES - in that order."
         );
     }
 
-    /// The registry must not name a module that no longer writes anything —
+    /// The registry must not name a module that no longer writes anything -
     /// a stale entry makes the census above pass vacuously for that module.
     #[test]
     fn covered_modules_all_still_exist() {
@@ -603,7 +603,7 @@ mod tests {
     ///
     /// This is the arm that makes the pairing load-bearing rather than
     /// decorative. Adding `("cdn", "cdn_zones.api_key")` without also adding
-    /// `("cdn_zones", "id", "api_key")` to SIMPLE_SUBJECTS fails HERE — which is
+    /// `("cdn_zones", "id", "api_key")` to SIMPLE_SUBJECTS fails HERE - which is
     /// the whole reason the pairing exists, because the old bare-name registry
     /// went green on exactly that half-edit and the column was then skipped by
     /// every re-key.
@@ -615,14 +615,14 @@ mod tests {
             assert!(
                 swept.iter().any(|s| s == subject),
                 "COVERED_MODULES pairs `{module}` with subject `{subject}`, which the sweep never \
-                 visits — add it to SIMPLE_SUBJECTS (or give it an arm and list it in \
+                 visits - add it to SIMPLE_SUBJECTS (or give it an arm and list it in \
                  SPECIAL_SUBJECTS). Swept subjects are: {swept:?}"
             );
         }
 
         // And the special arms must exist. Read from THIS file's source rather
         // than from the constant, so the list cannot drift away from the
-        // `SubjectReport::new(..)` calls it claims to name — the two are
+        // `SubjectReport::new(..)` calls it claims to name - the two are
         // separate declarations, so this can actually fail.
         let src = std::fs::read_to_string(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -632,7 +632,7 @@ mod tests {
         let arms = src.matches("SubjectReport::new(").count();
         assert!(
             arms >= 4,
-            "found {arms} SubjectReport::new call(s) — the sweep's arms moved and this check is \
+            "found {arms} SubjectReport::new call(s) - the sweep's arms moved and this check is \
              measuring an empty set"
         );
         for subject in SPECIAL_SUBJECTS {
@@ -647,7 +647,7 @@ mod tests {
     /// `use` `SETTINGS_SENSITIVE_KEYS` the way `DESTINATION_SECRET_KEYS` above
     /// now imports its source of truth directly. This test keeps the two from
     /// drifting instead: this file used to carry a hand-copied SQL literal
-    /// with nothing tying it back to `routes::settings::SENSITIVE_KEYS` — a
+    /// with nothing tying it back to `routes::settings::SENSITIVE_KEYS` - a
     /// settings key that module encrypts, added there alone, would have
     /// passed CI while never being re-keyed by this sweep.
     #[test]
@@ -658,14 +658,14 @@ mod tests {
         // 8` apply above.
         assert!(
             SETTINGS_SENSITIVE_KEYS.len() >= 2,
-            "SETTINGS_SENSITIVE_KEYS is empty or unexpectedly small — the import from \
+            "SETTINGS_SENSITIVE_KEYS is empty or unexpectedly small - the import from \
              routes::settings is broken, not the tree"
         );
         for key in SETTINGS_SENSITIVE_KEYS {
             assert!(
                 SENSITIVE_SETTINGS_SQL.contains(&format!("'{key}'")),
                 "routes::settings::SENSITIVE_KEYS contains `{key}` but SENSITIVE_SETTINGS_SQL's \
-                 IN(...) list does not — add it there too"
+                 IN(...) list does not - add it there too"
             );
         }
     }

@@ -57,7 +57,7 @@ export default function SiteDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { user } = useAuth();
-  /** Holds sites, cannot claim a new domain — see `domain_claim::ensure_claimable`. */
+  /** Holds sites, cannot claim a new domain - see `domain_claim::ensure_claimable`. */
   const isClient = user?.role === "client";
   const [site, setSite] = useState<Site | null>(null);
   const [loading, setLoading] = useState(true);
@@ -67,7 +67,7 @@ export default function SiteDetail() {
   const [provisioning, setProvisioning] = useState(false);
   const [sslMessage, setSslMessage] = useState("");
   const [sslMessageIsError, setSslMessageIsError] = useState(false);
-  // Set only by the agent's `foreign_certificate` refusal — never inferred
+  // Set only by the agent's `foreign_certificate` refusal - never inferred
   // from any other 4xx, so a DNS 412 or a rate limit never grows a "replace
   // it anyway" button that has no business next to it. `retry` re-issues the
   // exact same provision call with `force: true`, the only way this reaches
@@ -196,8 +196,8 @@ export default function SiteDetail() {
 
   // WHO ISSUED THE CERTIFICATE THIS SITE IS SERVING.
   //
-  // The row used to name one specific CA for every enabled site — see the badge
-  // below for the wording — including a site carrying a certificate the operator
+  // The row used to name one specific CA for every enabled site - see the badge
+  // below for the wording - including a site carrying a certificate the operator
   // uploaded from a commercial CA, and including one the panel had already
   // DECLINED to renew for precisely that reason. The backend has been able to answer this since
   // `foreign_cert_issuer` shipped; nothing ever asked it on the operator's
@@ -216,7 +216,7 @@ export default function SiteDetail() {
   // Custom SSL Upload
   const [showSslUpload, setShowSslUpload] = useState(false);
   // The three specialist certificate routes stay behind a disclosure. Offering
-  // four flat choices — one of them the bare protocol acronym "DNS-01 (CF)" —
+  // four flat choices - one of them the bare protocol acronym "DNS-01 (CF)" -
   // asks the operator to pick between mechanisms at exactly the moment they
   // cannot know which applies (s252 F12).
   const [showSslOptions, setShowSslOptions] = useState(false);
@@ -412,7 +412,7 @@ export default function SiteDetail() {
   // ⚠ This costs an agent hop (`GET /api/sites/{id}/ssl` reaches the box), so it
   // is fired only for an SSL-enabled site and it NEVER blocks the row: until it
   // answers, `sslProvenance` is null and the badge renders the neutral wording.
-  // A failure is left as null for the same reason — a page that cannot reach the
+  // A failure is left as null for the same reason - a page that cannot reach the
   // agent must not therefore start asserting a CA.
   const loadSslProvenance = useCallback(() => {
     api
@@ -431,7 +431,7 @@ export default function SiteDetail() {
     loadSslProvenance();
   }, [site?.ssl_enabled, site?.domain, loadSslProvenance]);
 
-  // Composite score augmenting the plain up/down Health Check button above —
+  // Composite score augmenting the plain up/down Health Check button above -
   // computed server-side from SSL expiry + backup freshness + monitor uptime,
   // not a replacement for the on-demand check.
   useEffect(() => {
@@ -717,7 +717,7 @@ export default function SiteDetail() {
               ) : (
                 /* Clone, Create Staging and Add Alias all end in
                    `domain_claim::ensure_claimable`, so all three are refusals for a
-                   `client` — on the site they DO own, which is what made them read
+                   `client` - on the site they DO own, which is what made them read
                    as a fault rather than a rule. Hidden rather than disabled: a
                    disabled control still says "this is for you, later", and for
                    this role there is no later. */
@@ -733,7 +733,7 @@ export default function SiteDetail() {
                   <div className="flex items-center gap-2">
                     {/* Picked, not typed. The endpoint answers 404 "No account
                         with that email" on a typo, so a text field could only
-                        fail late — and an operator does not carry their clients'
+                        fail late - and an operator does not carry their clients'
                         addresses in their head. */}
                     <select
                       value={transferEmail}
@@ -755,7 +755,7 @@ export default function SiteDetail() {
                           .then(() => {
                             setShowTransfer(false);
                             setTransferMsg(
-                              `Transferred to ${transferEmail}. You no longer own this site — ` +
+                              `Transferred to ${transferEmail}. You no longer own this site - ` +
                               `find it again under Sites → "All sites on this server".`
                             );
                           })
@@ -771,7 +771,7 @@ export default function SiteDetail() {
                 ) : (
                   <button
                     onClick={() => setShowTransfer(true)}
-                    title="Hand this site to another account. Ownership is exclusive — the current owner loses access."
+                    title="Hand this site to another account. Ownership is exclusive - the current owner loses access."
                     className="px-4 py-2 bg-dark-700 text-dark-100 rounded-lg text-sm font-medium hover:bg-dark-600 transition-colors"
                   >
                     Transfer
@@ -866,7 +866,7 @@ export default function SiteDetail() {
                   <span>{runtimeLabels[site.runtime] || site.runtime}</span>
                   {/* #99: the reporter's workaround was deleting the site and
                       recreating it, because there was no control here at all.
-                      Offered only between static and PHP — the proxying runtimes
+                      Offered only between static and PHP - the proxying runtimes
                       move the document root, which is a different change. */}
                   {(site.runtime === "static" || site.runtime === "php") && !runtimeTarget && (
                     <button
@@ -892,7 +892,7 @@ export default function SiteDetail() {
                 {runtimeTarget === "php" && (
                   <div className="rounded-lg border border-dark-600 p-3 space-y-3">
                     <p className="text-xs text-dark-200">
-                      The document root does not move — <span className="font-mono">public/</span> keeps
+                      The document root does not move - <span className="font-mono">public/</span> keeps
                       serving the files that are already there. Existing <span className="font-mono">.html</span>{" "}
                       files keep working; <span className="font-mono">.php</span> files start executing.
                     </p>
@@ -907,7 +907,7 @@ export default function SiteDetail() {
                       <button
                         type="button"
                         disabled={switchingRuntime || !runtimePhpReady}
-                        title={runtimePhpReady ? undefined : `PHP ${runtimePhpChoice} is not installed on this server yet — install it above first.`}
+                        title={runtimePhpReady ? undefined : `PHP ${runtimePhpChoice} is not installed on this server yet - install it above first.`}
                         onClick={async () => {
                           setSwitchingRuntime(true);
                           setRuntimeMessage("");
@@ -945,12 +945,12 @@ export default function SiteDetail() {
                   <div className="rounded-lg border border-dark-600 p-3 space-y-3">
                     <p className="text-xs text-dark-200">
                       PHP stops executing on this site. Your files are not touched, and switching back
-                      restores execution — but anything the PHP vhost was hiding is a static file from
+                      restores execution - but anything the PHP vhost was hiding is a static file from
                       now on, so the static vhost refuses <span className="font-mono">.php</span> source
                       and dotfiles (<span className="font-mono">.env</span>,{" "}
                       <span className="font-mono">.git/</span>) outright rather than serving them.
-                      Anything else in <span className="font-mono">public/</span> — database dumps,
-                      backups, <span className="font-mono">composer.json</span> — becomes publicly
+                      Anything else in <span className="font-mono">public/</span> - database dumps,
+                      backups, <span className="font-mono">composer.json</span> - becomes publicly
                       downloadable. Move it out before switching.
                     </p>
                     <div className="flex items-center gap-2">
@@ -1004,7 +1004,7 @@ export default function SiteDetail() {
                     {/* Picking a version this server does not have used to fire
                         the switch anyway and surface the agent's refusal. The
                         picker now knows, holds the selection back, and offers the
-                        install — then switches once the version really works. */}
+                        install - then switches once the version really works. */}
                     <PhpVersionPicker
                       className="max-w-xs"
                       value={phpChoice || site.php_version || "8.3"}
@@ -1023,9 +1023,9 @@ export default function SiteDetail() {
                           setPhpMessage(err instanceof Error ? err.message : "Switch failed");
                           // Put the control back on what the site is actually
                           // running. Leaving it on the version that just failed
-                          // states the switch happened, and — because the guard
+                          // states the switch happened, and - because the guard
                           // above short-circuits when the selection already
-                          // equals the current version — makes retrying the same
+                          // equals the current version - makes retrying the same
                           // version impossible without picking a third one first.
                           setPhpChoice(site.php_version || "");
                         } finally {
@@ -1074,13 +1074,13 @@ export default function SiteDetail() {
                   )}
                   {sslProvenance?.provenance === "foreign" && (
                     <p className="text-xs text-dark-300">
-                      DockPanel did not issue this certificate and will not renew it. Renew it
+                      CyberHunter - Panel did not issue this certificate and will not renew it. Renew it
                       wherever it was issued, then install the replacement here.
                     </p>
                   )}
                   {/* ⛔ THE CONTROL THAT WAS MISSING. Three separate refusals in
                       this product tell the operator to "install a replacement
-                      under the site's SSL tab" — the renew door, the security
+                      under the site's SSL tab" - the renew door, the security
                       scanner's declined-renewal alert and the DNS-01 renewal
                       plan. Every SSL control, the upload form included, used to
                       live in the `else` branch below, so once SSL was on there
@@ -1090,7 +1090,7 @@ export default function SiteDetail() {
                       certificate had NO reachable path at all: the panel
                       correctly declined to renew, then named a control that did
                       not exist. The form itself is shared with the `else`
-                      branch — see below the ternary — so this is a disclosure,
+                      branch - see below the ternary - so this is a disclosure,
                       not a second copy. */}
                   {site.status === "active" && (
                     <div className="pt-1">
@@ -1199,7 +1199,7 @@ export default function SiteDetail() {
                 </div>
               )}
 
-              {/* ⛔ SHARED BY BOTH BRANCHES, WHICH IS THE WHOLE POINT — hoisted
+              {/* ⛔ SHARED BY BOTH BRANCHES, WHICH IS THE WHOLE POINT - hoisted
                   out of the `else` above rather than copied into the `true`
                   side. Two instances would mean two `showSslUpload` reads of one
                   state and a second success handler to drift, and a duplicated
@@ -1242,9 +1242,9 @@ export default function SiteDetail() {
 
               {/* The refusal that used to be a dead end. The agent's
                   provision writer declines by default over a certificate
-                  this product did not issue — correct, since a purchased
+                  this product did not issue - correct, since a purchased
                   wildcard or an Origin CA cert is a paid asset nobody asked
-                  to have replaced — but until this control existed the only
+                  to have replaced - but until this control existed the only
                   way past it was `dockpanel ssl provision --force` on the
                   CLI, with the panel's own button offering no path forward
                   at all. This asks the SAME confirmation the CLI's `--force`
@@ -1278,7 +1278,7 @@ export default function SiteDetail() {
 
               {/* The result of the button the user just pressed, BESIDE that
                   button. This used to render ~1400 lines further down the
-                  page, at the very bottom of the document — so a perfectly
+                  page, at the very bottom of the document - so a perfectly
                   good 412 explaining the DNS problem was on screen but
                   nowhere the user would ever look, and clicking "Let's
                   Encrypt" appeared to do nothing at all (s252 F1). */}
@@ -1421,7 +1421,7 @@ export default function SiteDetail() {
         )}
       </div>
 
-      {/* IP Address — admin only (server IPs are a host-level setting) */}
+      {/* IP Address - admin only (server IPs are a host-level setting) */}
       {isAdmin && site.status === "active" && (
         <div className="bg-dark-800 rounded-lg border border-dark-500 overflow-hidden mt-6">
           <div className="px-5 py-4 border-b border-dark-600 flex items-center justify-between">
@@ -1638,7 +1638,7 @@ export default function SiteDetail() {
                       setSite(updated);
                       setLimitsMessage(
                         updated.enabled && site.enabled === false
-                          ? "Limits saved — site re-enabled"
+                          ? "Limits saved - site re-enabled"
                           : "Limits saved"
                       );
                     } catch (err) {
@@ -1657,7 +1657,7 @@ export default function SiteDetail() {
         </div>
       )}
 
-      {/* PHP Settings — per-site php.ini values, isolation and pool. A save can
+      {/* PHP Settings - per-site php.ini values, isolation and pool. A save can
           change php_memory_mb / php_max_workers, which Resource Limits above
           also sends: re-read the site and resync ONLY those two inputs, so the
           next "Apply Limits" cannot revert them (and unsaved limit edits stay). */}
@@ -1678,7 +1678,7 @@ export default function SiteDetail() {
         />
       )}
 
-      {/* FastCGI Cache — PHP sites only */}
+      {/* FastCGI Cache - PHP sites only */}
       {site.runtime === "php" && site.status === "active" && (
         <div className="bg-dark-800 rounded-lg border border-dark-500 overflow-hidden mt-6">
           <div className="px-5 py-4 border-b border-dark-600 flex items-center justify-between">
@@ -1747,7 +1747,7 @@ export default function SiteDetail() {
         </div>
       )}
 
-      {/* Redis Object Cache — PHP sites only */}
+      {/* Redis Object Cache - PHP sites only */}
       {site.runtime === "php" && site.status === "active" && (
         <div className="bg-dark-800 rounded-lg border border-dark-500 overflow-hidden mt-6">
           <div className="px-5 py-4 border-b border-dark-600 flex items-center justify-between">
@@ -1834,7 +1834,7 @@ export default function SiteDetail() {
           </div>
           <div className="p-5 space-y-4">
             <p className="text-sm text-dark-200">
-              Gives this site its own Linux account, chrooted to its own files — nothing outside this
+              Gives this site its own Linux account, chrooted to its own files - nothing outside this
               site is ever reachable over the connection. Enabling it re-owns the site's existing
               content directory; this only happens once, when you click Enable.
             </p>
@@ -1860,7 +1860,7 @@ export default function SiteDetail() {
                   try {
                     const path = site.sftp_enabled ? "disable" : "enable";
                     const result = await api.post<{ sftp_enabled: boolean }>(`/sites/${id}/sftp/${path}`);
-                    // sftp_uid isn't in this response — the toggle endpoints only
+                    // sftp_uid isn't in this response - the toggle endpoints only
                     // confirm the new state; re-fetching the site is what picks up
                     // the allocated uid after an enable.
                     setSite(s => s ? { ...s, sftp_enabled: result.sftp_enabled } : s);
@@ -1923,7 +1923,7 @@ export default function SiteDetail() {
                     &times;
                   </button>
                 </div>
-                <p className="text-xs text-dark-300 mb-2">Save this password now — it will not be shown again after you leave this page.</p>
+                <p className="text-xs text-dark-300 mb-2">Save this password now - it will not be shown again after you leave this page.</p>
                 <div className="flex items-center gap-2">
                   <code className="flex-1 bg-dark-800 border border-dark-500 rounded-lg px-3 py-2 text-sm font-mono text-dark-50">
                     {sftpPassword}
@@ -2127,7 +2127,7 @@ export default function SiteDetail() {
                   permissions_policy: permsPolicy || null,
                 });
                 setSite(s => s ? { ...s, csp_policy: cspPolicy || null, permissions_policy: permsPolicy || null } : s);
-                setHeadersMsg("Saved — nginx reloaded");
+                setHeadersMsg("Saved - nginx reloaded");
               } catch (e) { setHeadersMsg(e instanceof Error ? e.message : "Failed"); }
               finally { setHeadersSaving(false); }
             }}
@@ -2194,7 +2194,7 @@ export default function SiteDetail() {
           </div>
           <div className="p-5 space-y-4">
             <p className="text-sm text-dark-200">
-              Convert images to WebP or AVIF for smaller file sizes and faster page loads. Original files are preserved — optimized versions are served automatically by nginx.
+              Convert images to WebP or AVIF for smaller file sizes and faster page loads. Original files are preserved - optimized versions are served automatically by nginx.
             </p>
             <div className="flex items-center gap-3 flex-wrap">
               <button
@@ -2283,7 +2283,7 @@ export default function SiteDetail() {
                         ? staging.disk_usage_bytes < 1048576
                           ? `${Math.round(staging.disk_usage_bytes / 1024)} KB`
                           : `${(staging.disk_usage_bytes / 1048576).toFixed(1)} MB`
-                        : "—"}
+                        : "-"}
                     </p>
                   </div>
                   <div>
@@ -2371,7 +2371,7 @@ export default function SiteDetail() {
               <div className="space-y-3">
                 <p className="text-sm text-dark-200">
                   Create a staging copy of this site's files to test changes before going live.
-                  Only files are cloned — if this site has a database attached, staging reads
+                  Only files are cloned - if this site has a database attached, staging reads
                   and writes that SAME live database; it is not isolated.
                 </p>
                 {pendingConfirm && pendingConfirm.type === "staging_create_db_ack" && (
@@ -2436,7 +2436,7 @@ export default function SiteDetail() {
                     </button>
                   </div>
                 ) : (
-                  /* See the Clone control above — a staging environment is a new
+                  /* See the Clone control above - a staging environment is a new
                      domain and `ensure_claimable` refuses it for a client. */
                   !isClient && (
                     <button
@@ -2754,7 +2754,7 @@ export default function SiteDetail() {
                 </div>
               )}
 
-              {/* Add alias form — an alias IS a new domain
+              {/* Add alias form - an alias IS a new domain
                   (`ensure_claimable`), so it is not a client's to add. Existing
                   aliases stay listed above: they are part of the site they hold. */}
               {!isClient && (
@@ -2944,7 +2944,7 @@ export default function SiteDetail() {
                         loadPhpExtensions();
                       } catch (e) {
                         // Without this the spinner simply stopped and the
-                        // extension stayed in "Available" — the operator's only
+                        // extension stayed in "Available" - the operator's only
                         // clue that anything had gone wrong.
                         setExtMessage(e instanceof Error ? e.message : `Could not install ${ext}`);
                       }
@@ -3003,7 +3003,7 @@ export default function SiteDetail() {
         )}
       </div>
 
-      {/* The SSL message used to render here — at the bottom of the whole page,
+      {/* The SSL message used to render here - at the bottom of the whole page,
           far below the SSL card whose buttons produce it. It now renders inside
           that card instead (see the "SSL" row above). */}
     </div>

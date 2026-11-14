@@ -1,4 +1,4 @@
-//! Global `php.ini` editor helpers (per version, FPM only — never the CLI
+//! Global `php.ini` editor helpers (per version, FPM only - never the CLI
 //! file). Contract: `conception/02-php-contrats.md` §A2/§A3.
 //!
 //! Pure: [`read_ini_values`], [`set_ini_values`], [`ini_test_passed`].
@@ -46,7 +46,7 @@ fn active_value<'a>(line: &'a str, key: &str) -> Option<&'a str> {
     Some(rest.trim())
 }
 
-/// `;key = …` (any spaces after the `;`, `=` required — so prose lines like
+/// `;key = …` (any spaces after the `;`, `=` required - so prose lines like
 /// `; display_errors` in the quick-reference block never match).
 fn is_commented_assignment(line: &str, key: &str) -> bool {
     let t = line.trim_start();
@@ -168,8 +168,8 @@ fn line_ending(line: &str) -> &'static str {
 }
 
 /// Verdict on `php-fpm<ver> -t`. A php.ini syntax error does not make FPM
-/// exit non-zero — it prints `PHP:  syntax error, unexpected … in
-/// /etc/php/X.Y/fpm/php.ini on line N` and carries on — so the output is read
+/// exit non-zero - it prints `PHP:  syntax error, unexpected … in
+/// /etc/php/X.Y/fpm/php.ini on line N` and carries on - so the output is read
 /// too, or a broken php.ini would pass and be restarted into.
 pub fn ini_test_passed(exit_ok: bool, output: &str) -> bool {
     let lower = output.to_ascii_lowercase();

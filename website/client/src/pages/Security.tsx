@@ -5,19 +5,19 @@ import { DocSection, DocShell, DocTitle, docLink } from '../components/DocChrome
 /**
  * The security page, on the site's spine.
  *
- * It was the last page on a dialect of its own. Rebuilt Jul 27 16:29 — twenty-
+ * It was the last page on a dialect of its own. Rebuilt Jul 27 16:29 - twenty-
  * nine minutes before the `.measure`/`.rule`/`.eyebrow` spine landed in
- * `Landing.tsx` at 16:58 — it used none of it: ground #09090b against the
+ * `Landing.tsx` at 16:58 - it used none of it: ground #09090b against the
  * token's #0a0a0b, a pill for an eyebrow, a local font constant restating what
  * index.css already sets on `body`, and no footer, so the page was a dead end.
  * s277 cleared it by mtime, which answers when it was touched rather than what
  * it is built on.
  *
  * Nothing it claims changed. Every figure, date, bullet and heading below is
- * the string that was already published — restyling is not amending, and a
+ * the string that was already published - restyling is not amending, and a
  * security page is the last place to quietly restate a claim. What changed is
  * the drawing: the bordered cards with a lucide glyph apiece are ruled rows,
- * for the reason `Landing.tsx` gives where it retired the same pattern — an
+ * for the reason `Landing.tsx` gives where it retired the same pattern - an
  * icon chosen loosely carries no information and takes the eye first anyway.
  * Measurements are mono and tabular because they are measurements.
  */
@@ -28,7 +28,7 @@ const POSTURE = {
   breaches: 0,
   latestAuditRound: 7,
   latestAuditDate: 'April 2026',
-  // NOT hardcoded. It said v2.7.11 — thirty-seven releases stale — because a
+  // NOT hardcoded. It said v2.7.11 - thirty-seven releases stale - because a
   // version typed into a page is a fact with no owner. It is fetched from the
   // releases API at render time, and the row is simply omitted if that fails:
   // a number nobody can verify is worse than no number.
@@ -116,7 +116,7 @@ const SUPPLY_CHAIN = [
     since: 'v2.7.10+',
     text:
       'Every binary and SBOM in every GitHub release is signed in CI with cosign keyless. ' +
-      'No long-lived signing key exists — the certificate is bound to the release workflow’s ' +
+      'No long-lived signing key exists - the certificate is bound to the release workflow’s ' +
       'GitHub Actions OIDC identity and recorded in the public Rekor transparency log.',
   },
   {
@@ -150,12 +150,12 @@ const VERIFY_CMD = `cosign verify-blob \\
   dockpanel-agent-linux-amd64`;
 
 const RECENT_ADVISORIES = [
-  { ver: '2.7.11', date: '2026-04-15', text: 'Per-image SBOM generation (syft) shipped — supply-chain transparency for every deployed container.' },
+  { ver: '2.7.11', date: '2026-04-15', text: 'Per-image SBOM generation (syft) shipped - supply-chain transparency for every deployed container.' },
   { ver: '2.7.10', date: '2026-04-15', text: 'Signed releases via cosign keyless + per-binary SPDX SBOMs in CI.' },
   { ver: '2.7.9',  date: '2026-04-15', text: 'Per-image CVE scanning (grype) shipped; agent sandbox gap (/var/lib/dockpanel missing from ReadWritePaths) closed.' },
   { ver: '2.7.8',  date: '2026-04-15', text: 'Audit Round 7 fixes: tar --no-dereference, terminal denylist, agent unit hardening, URL guards, alert-pileup fix.' },
   { ver: '2.7.x',  date: '2026-03',    text: 'Audit Round 6: 30 findings closed including MySQL SQL injection, deploy RCE, CSRF, Compose YAML AST validation, HKDF.' },
-  { ver: '2.7.x',  date: '2026-03',    text: 'Audit Round 3: research-driven sweep against real-world panel CVEs — 55 findings, env_clear() on 341 Command::new() calls, AES-256-GCM credentials at rest.' },
+  { ver: '2.7.x',  date: '2026-03',    text: 'Audit Round 3: research-driven sweep against real-world panel CVEs - 55 findings, env_clear() on 341 Command::new() calls, AES-256-GCM credentials at rest.' },
 ];
 
 const DEFAULTS: [string, string][] = [
@@ -174,7 +174,7 @@ const DEFAULTS: [string, string][] = [
 const SECURITY_MD = 'https://github.com/ovexro/dockpanel/blob/main/SECURITY.md';
 const CHANGELOG_MD = 'https://github.com/ovexro/dockpanel/blob/main/CHANGELOG.md';
 
-/** Section headings. Sized as sections rather than clauses — these are units. */
+/** Section headings. Sized as sections rather than clauses - these are units. */
 const h2 =
   'text-[1.5rem] sm:text-[1.75rem] font-semibold leading-[1.15] tracking-[-0.02em] text-[#f4f4f5]';
 /** The line under a heading that says what the section is for. */
@@ -209,7 +209,7 @@ export default function Security() {
         standfirst={
           <>
             Every other panel that skipped this page eventually wrote a postmortem instead.
-            DockPanel takes the opposite approach: continuous internal audits, supply-chain
+            CyberHunter - Panel takes the opposite approach: continuous internal audits, supply-chain
             transparency, signed releases, and a public response SLA. Here&apos;s the receipts.
           </>
         }
@@ -242,8 +242,8 @@ export default function Security() {
       <DocSection id="supply-chain" label="Provenance" contentClassName="max-w-3xl">
         <h2 className={h2}>Supply chain</h2>
         <p className={standfirst}>
-          What we ship, signed. What you run, scannable. EU CRA compliance lands September 2026 —
-          DockPanel is ready today.
+          What we ship, signed. What you run, scannable. EU CRA compliance lands September 2026 -
+          CyberHunter - Panel is ready today.
         </p>
 
         <ul className="mt-8 border-t border-[#1e1e22]">
@@ -259,7 +259,7 @@ export default function Security() {
         </ul>
 
         {/* The one thing on this page a reader can run. It is a command, so it
-            is set as one — no rounded panel, just the rule and the mono. */}
+            is set as one - no rounded panel, just the rule and the mono. */}
         <figure className="mt-8 border border-[#1e1e22]">
           <figcaption className="flex items-center justify-between gap-4 border-b border-[#1e1e22] px-4 py-2.5">
             <span className="eyebrow">Verify a downloaded binary</span>
@@ -325,7 +325,7 @@ export default function Security() {
                 {r.bullets.map((b, i) => (
                   <li key={i} className="flex gap-3">
                     <span aria-hidden="true" className="mono select-none text-[#3f3f46]">
-                      &mdash;
+                      -
                     </span>
                     <span className="min-w-0">{b}</span>
                   </li>
@@ -381,7 +381,7 @@ export default function Security() {
       {/* ── Defaults ──────────────────────────────────────────────────── */}
       <DocSection id="defaults" label="By default" contentClassName="max-w-3xl">
         <h2 className={h2}>Defense in depth</h2>
-        <p className={standfirst}>The properties every DockPanel install ships with by default.</p>
+        <p className={standfirst}>The properties every CyberHunter - Panel install ships with by default.</p>
 
         <dl className="mt-8 grid border-t border-[#1e1e22] md:grid-cols-2 md:gap-x-12">
           {DEFAULTS.map(([t, d]) => (

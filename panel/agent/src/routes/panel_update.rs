@@ -17,11 +17,11 @@
 //! 1. `install-agent.sh` never creates `/opt/dockpanel`. Every fleet update
 //!    against a real agent-only box died in 166 ms with `500: update script
 //!    not found`, and that installer is the only documented way to add a
-//!    remote server — so the feature never worked on any box it targeted.
+//!    remote server - so the feature never worked on any box it targeted.
 //! 2. `update.sh` is the *panel* updater: it wants a git repo, a postgres
 //!    container, an API, a frontend, nginx. Planting the repo and re-running
 //!    it produced `No such container: dockpanel-postgres` → `Database backup
-//!    failed, aborting upgrade` — one second *after* the panel had recorded
+//!    failed, aborting upgrade` - one second *after* the panel had recorded
 //!    the server as **succeeded**, because `update.sh` re-execs itself into a
 //!    transient unit with `exec systemd-run` (no `--wait`), so the child this
 //!    file waits on exits 0 the moment PID1 *accepts* the job. Status was
@@ -43,7 +43,7 @@ use tokio::process::Command;
 
 use super::AppState;
 
-/// The panel updater, present only on full DockPanel installs.
+/// The panel updater, present only on full CyberHunter - Panel installs.
 const UPDATE_SCRIPT: &str = "/opt/dockpanel/scripts/update.sh";
 /// Present on a full install only; used to tell a panel box from an agent box.
 const API_BIN: &str = "/usr/local/bin/dockpanel-api";
@@ -81,7 +81,7 @@ pub enum AgentUpdateState {
 /// progress window. An update restarts this process, so this state cannot
 /// outlive the thing it describes; the orchestrator confirms success from
 /// `/health` (which is what the W4 design §4.5 said to do all along). Nothing
-/// here may report `Succeeded` on its own authority — that is exactly the bug
+/// here may report `Succeeded` on its own authority - that is exactly the bug
 /// this file shipped with.
 static STATE: Mutex<AgentUpdateState> = Mutex::new(AgentUpdateState::Idle);
 
@@ -123,13 +123,13 @@ fn validate_target_version(v: &str) -> bool {
     true
 }
 
-/// POST /panel/update — kick off the update with the target version.
+/// POST /panel/update - kick off the update with the target version.
 /// Returns 202 with the accepted target. Caller polls /panel/update/status.
 ///
 /// A thin HTTP shell over `start_agent_self_update`, which is shared with the
 /// agent's own periodic update check. There is exactly one implementation of
 /// "start an update on this box", so the timer cannot drift into a second,
-/// weaker one — which is precisely what it used to be (s233).
+/// weaker one - which is precisely what it used to be (s233).
 async fn apply_panel_update(
     Json(body): Json<UpdateRequest>,
 ) -> Result<Json<ApplyResponse>, (axum::http::StatusCode, String)> {
@@ -174,7 +174,7 @@ impl std::fmt::Display for StartUpdateError {
 
 /// Start an update of this box to `target`, and return as soon as the work has
 /// been handed to PID1. Never blocks on the update itself and never reports
-/// success — the caller confirms from `/health` and from the updater's own
+/// success - the caller confirms from `/health` and from the updater's own
 /// verdict file.
 ///
 /// Shared by the panel-driven fleet path (`POST /panel/update`) and the agent's
@@ -187,8 +187,8 @@ pub(crate) async fn start_agent_self_update(target: &str) -> Result<(), StartUpd
         return Err(StartUpdateError::Invalid(target));
     }
     // A full panel install keeps the panel updater (it has an API, a frontend
-    // and a database to move). Everything else — i.e. every box added with
-    // install-agent.sh, which is the entire fleet population — gets the
+    // and a database to move). Everything else - i.e. every box added with
+    // install-agent.sh, which is the entire fleet population - gets the
     // agent-only updater, which needs nothing from /opt.
     let mode = if std::path::Path::new(UPDATE_SCRIPT).exists()
         && std::path::Path::new(API_BIN).exists()
@@ -201,8 +201,8 @@ pub(crate) async fn start_agent_self_update(target: &str) -> Result<(), StartUpd
     // Already-in-flight guard. It has to ask whether the in-flight run is
     // actually still running: an updater that fails inside its own transient
     // unit never restarts this process, so `InFlight` would otherwise stick
-    // for the life of the agent and every later attempt — including the one
-    // fixing the operator's typo — would be refused 409 for ever. Observed on
+    // for the life of the agent and every later attempt - including the one
+    // fixing the operator's typo - would be refused 409 for ever. Observed on
     // the s232 lab immediately after the previous fix landed.
     //
     // It also serialises the timer against an operator-driven fleet run: two
@@ -211,8 +211,8 @@ pub(crate) async fn start_agent_self_update(target: &str) -> Result<(), StartUpd
     // Checking and claiming happen under ONE lock acquisition. They used to be
     // two, which left a window where two callers could both observe "not in
     // flight" and both go on to spawn an updater. That was unreachable while the
-    // only caller was HTTP — the orchestrator drives fleet members one at a time
-    // — but s233 added the agent's own timer as a second, independent caller
+    // only caller was HTTP - the orchestrator drives fleet members one at a time
+    // - but s233 added the agent's own timer as a second, independent caller
     // that can fire at any moment, including the moment an operator starts a
     // fleet run. Making a dormant race reachable is exactly lesson #50, so the
     // guard is now atomic: the state may not change between the question and
@@ -252,7 +252,7 @@ pub(crate) async fn start_agent_self_update(target: &str) -> Result<(), StartUpd
 
 #[derive(Debug, Clone, Copy)]
 enum UpdateMode {
-    /// Box has an API binary and the panel updater — update the whole panel.
+    /// Box has an API binary and the panel updater - update the whole panel.
     FullPanel,
     /// Agent-only box (install-agent.sh). Update just the agent binary.
     AgentOnly,
@@ -274,7 +274,7 @@ async fn write_agent_update_script() -> std::io::Result<()> {
 
 async fn run_update_subprocess(target: String, mode: UpdateMode) {
     // Both updaters restart dockpanel-agent.service, and that unit is
-    // KillMode=control-group — so anything still in this process's cgroup when
+    // KillMode=control-group - so anything still in this process's cgroup when
     // that happens is SIGTERMed mid-update. PID1 has to own the work
     // (lesson #47). `update.sh` self-detaches the same way; doing it here too
     // means the agent path does not depend on the remote box's copy of a script
@@ -354,7 +354,7 @@ async fn run_update_subprocess(target: String, mode: UpdateMode) {
     }
 
     // `systemd-run` without `--wait` returns as soon as PID1 has ACCEPTED the
-    // job — measured at ~120 ms, while the real update runs for minutes and may
+    // job - measured at ~120 ms, while the real update runs for minutes and may
     // fail outright. So a zero exit here means "the work was handed off", never
     // "the work succeeded", and this function must not promote it to
     // `Succeeded`. It used to, and the panel therefore reported a fleet member
@@ -432,13 +432,13 @@ const POST_SWAP_STAGES: &[&str] = &["swap", "unit", "restart", "verify-running",
 /// binary? Returns the stage and reason if so.
 ///
 /// This exists to stop an unattended retry loop. The agent's timer decides to
-/// update by comparing the panel's target against its own version — and a failed
+/// update by comparing the panel's target against its own version - and a failed
 /// update leaves its version unchanged, so that comparison stays true for ever.
 /// With a target that cannot come up on this box, the timer would otherwise
 /// re-run the whole destructive sequence indefinitely: download, swap, restart,
 /// fail the health poll, roll back, restart again. And because the rollback
 /// restarts the process, the loop begins again at its *initial* delay rather
-/// than the 6-hour one — so the pathological case would repeat roughly HOURLY,
+/// than the 6-hour one - so the pathological case would repeat roughly HOURLY,
 /// on every box in the fleet, for ever.
 ///
 /// Deliberately NOT consulted by `start_agent_self_update`: an operator starting
@@ -477,15 +477,15 @@ pub(crate) fn target_already_failed_destructively(target: &str) -> Option<String
 ///
 /// The comparison is at WHOLE-SECOND resolution on both sides, and that is
 /// load-bearing, not sloppy. The verdict's `at` is written by the shell updater
-/// with `date +%S` — whole seconds — while `started_at` is `Utc::now()` with
+/// with `date +%S` - whole seconds - while `started_at` is `Utc::now()` with
 /// sub-second precision. Comparing them directly means a run that reaches its
 /// verdict *inside the same wall-clock second it began* has its floored verdict
-/// timestamp fall below `started_at` and be judged stale — so the state stays
+/// timestamp fall below `started_at` and be judged stale - so the state stays
 /// `InFlight` for ever and every later attempt is refused `409`. That is the
 /// exact wedge this predicate exists to prevent, and the FASTEST failures hit
 /// it every time: a 404 download resolves in ~0.25s, well within one second, so
 /// a mistyped or unreleased target would reliably wedge the box (measured on the
-/// s233 lab — it is why the fleet regression looked flaky). Flooring
+/// s233 lab - it is why the fleet regression looked flaky). Flooring
 /// `started_at` to its second makes a verdict written in the same second count
 /// as belonging to this run, which is what "conservative" was reaching for.
 fn run_has_finished(started_at: chrono::DateTime<chrono::Utc>) -> bool {
@@ -500,12 +500,12 @@ fn run_has_finished(started_at: chrono::DateTime<chrono::Utc>) -> bool {
         .unwrap_or(false)
 }
 
-/// GET /panel/update/status — a *negative* signal plus a progress window.
+/// GET /panel/update/status - a *negative* signal plus a progress window.
 ///
 /// `idle` after the update restarts this process, which is why the caller must
 /// treat the running version (always included below, and on `/health`) as the
 /// authority on whether an update landed. What this endpoint can say reliably
-/// is that something FAILED: either in-process, or — across the restart — from
+/// is that something FAILED: either in-process, or - across the restart - from
 /// the updater's own result file.
 async fn get_panel_update_status() -> Json<serde_json::Value> {
     let s = STATE.lock().unwrap().clone();
@@ -515,7 +515,7 @@ async fn get_panel_update_status() -> Json<serde_json::Value> {
     // once the process has restarted. A failure that stops before the restart
     // (a target release that does not exist, say) leaves this state `in_flight`
     // for ever, and the caller would then wait out its whole 10-minute deadline
-    // and report a timeout — when the real, actionable reason had been on disk
+    // and report a timeout - when the real, actionable reason had been on disk
     // one second in. Measured on the s232 lab.
     let state_str = value
         .get("state")
@@ -602,7 +602,7 @@ mod tests {
             // about `cp` as such: nothing may copy onto $AGENT_BIN. Copying the
             // live binary INTO the backup path is the documented exception
             // (reading a running executable is always allowed), and s271 added
-            // a second, unrelated copy — the systemd unit into its rollback
+            // a second, unrelated copy - the systemd unit into its rollback
             // backup, a plain text file no process holds open.
             if l.starts_with("cp ") || l.starts_with("cp -") {
                 assert!(
@@ -614,7 +614,7 @@ mod tests {
         assert!(AGENT_UPDATE_SCRIPT.contains("mv -f \"$STAGED\" \"$AGENT_BIN\""));
     }
 
-    /// Download, then verify, then install — in that order and as three
+    /// Download, then verify, then install - in that order and as three
     /// separate steps. Once bytes have been streamed into the consumer there is
     /// no verification window left (lesson #25).
     #[test]
@@ -635,7 +635,7 @@ mod tests {
     }
 
     /// It restarts the unit it runs under, so PID1 has to own it (lesson #47),
-    /// and a scope is not a substitute — a scope dies with the caller's session.
+    /// and a scope is not a substitute - a scope dies with the caller's session.
     #[test]
     fn agent_updater_runs_under_a_pid1_owned_transient_service() {
         assert!(AGENT_UPDATE_SCRIPT.contains("systemd-run"));
@@ -647,7 +647,7 @@ mod tests {
     }
 
     /// The rollback branch must not claim it restored anything it did not, and
-    /// must not swallow the failure of a restore — that combination is what made
+    /// must not swallow the failure of a restore - that combination is what made
     /// `update.sh`'s own rollback print "Rolled back to previous binaries" over
     /// a box that had not been rolled back at all (lesson #48/#58).
     #[test]
@@ -715,7 +715,7 @@ mod tests {
     /// A failure that stops before the restart leaves the in-memory state
     /// `in_flight` for ever. The caller would then wait out its full deadline
     /// and report a timeout, when the real reason had been on disk one second
-    /// in — so the verdict must be consulted while in flight too, and only when
+    /// in - so the verdict must be consulted while in flight too, and only when
     /// it describes THIS run.
     #[test]
     fn an_in_flight_run_still_surfaces_a_verdict_written_after_it_started() {
@@ -752,7 +752,7 @@ mod tests {
     }
 
     /// The verdict timestamp is whole-second (`date +%S`) but `started_at` is
-    /// sub-second, so `run_has_finished` must compare at second resolution — or
+    /// sub-second, so `run_has_finished` must compare at second resolution - or
     /// a run that fails within the same second it began (every 404-fast failure)
     /// is judged stale and the box wedges at 409 for ever. This pins the
     /// comparison to `.timestamp()` (whole seconds) on both sides.
@@ -777,7 +777,7 @@ mod tests {
     /// A failed update leaves the agent's version unchanged, so the timer's
     /// "am I behind?" test stays true permanently; without this the box would
     /// re-download, re-swap, re-fail and roll back on every cycle. Only stages
-    /// reached AFTER the binary was replaced count — a 404 or a checksum
+    /// reached AFTER the binary was replaced count - a 404 or a checksum
     /// mismatch costs nothing and should still be retried.
     #[test]
     fn a_target_that_already_failed_after_the_swap_is_not_retried_unattended() {
@@ -802,7 +802,7 @@ mod tests {
             let Some(stage) = rest.split('"').next() else { continue };
             assert!(
                 POST_SWAP_STAGES.contains(&stage) || matches!(stage, "init" | "probe" | "arch" | "download" | "verify" | "complete"),
-                "unclassified updater stage {stage:?} — decide whether it is destructive"
+                "unclassified updater stage {stage:?} - decide whether it is destructive"
             );
         }
         // And the timer, not the shared launcher, is what consults it: an
@@ -821,8 +821,8 @@ mod tests {
         );
     }
 
-    /// Two callers may now start an update — the panel over HTTP and the
-    /// agent's own timer — so asking "is one in flight?" and claiming the slot
+    /// Two callers may now start an update - the panel over HTTP and the
+    /// agent's own timer - so asking "is one in flight?" and claiming the slot
     /// must be a single atomic step. Split across two lock acquisitions, both
     /// callers can observe "no" and both spawn an updater for the same binary.
     #[test]
@@ -844,8 +844,8 @@ mod tests {
         );
     }
 
-    /// A full panel install keeps the panel updater; everything else — the
-    /// entire fleet population — gets the agent-only one.
+    /// A full panel install keeps the panel updater; everything else - the
+    /// entire fleet population - gets the agent-only one.
     #[test]
     fn update_mode_is_decided_by_what_the_box_actually_has() {
         let src = include_str!("panel_update.rs");
@@ -853,7 +853,7 @@ mod tests {
         assert!(src.contains("UpdateMode::AgentOnly"));
         assert!(
             src.contains("std::path::Path::new(API_BIN).exists()"),
-            "an agent-only box has no API binary — that is the discriminator"
+            "an agent-only box has no API binary - that is the discriminator"
         );
     }
 }

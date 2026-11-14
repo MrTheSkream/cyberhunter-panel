@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Regression pins for s277 — every door that mints a session owes the same gates.
+# Regression pins for s277 - every door that mints a session owes the same gates.
 #
 # A session cookie is a session cookie no matter which handler emits it, but the
 # cross-cutting access gates were written per-handler, and by v2.46.0 they had
 # drifted into four different opinions about who may sign in:
 #
-#   D1  THE IP ALLOWLIST GATED ONE DOOR. `allowed_panel_ips` gates login — s276
+#   D1  THE IP ALLOWLIST GATED ONE DOOR. `allowed_panel_ips` gates login - s276
 #       gave it range matching, save-time validation and a control. It lived
 #       inline in `login` alone, so an operator who restricted the panel to their
 #       office range still had `passkey/auth/*` and `oauth/{provider}/callback`
@@ -22,11 +22,11 @@
 #       could be redeemed from an excluded address or after a lockdown began.
 #
 # The shape is lesson #104d one layer out: a control's blast radius is what it
-# GATES, not what it names — and here the same control had four different radii.
+# GATES, not what it names - and here the same control had four different radii.
 #
 # These pins DISCOVER their subjects. Listing the four doors would reproduce the
 # defect: the list is complete only until someone adds a fifth. So a door is
-# found by what makes it a door — a handler that emits a session cookie — and the
+# found by what makes it a door - a handler that emits a session cookie - and the
 # suite FAILS if it discovers fewer doors than are known to exist, because a
 # broken discovery pattern must never read as a clean sweep (lesson #100, and
 # #104f, where a line-oriented pattern found 7 of 8 subjects and three arms below
@@ -35,11 +35,11 @@
 # Pure source analysis: no box, no network, no build.
 #
 # ─────────────────────────────────────────────────────────────────────────────
-# s338 — WHAT THIS SUITE MEASURED, AND WHAT IT ONLY APPEARED TO
+# s338 - WHAT THIS SUITE MEASURED, AND WHAT IT ONLY APPEARED TO
 #
 # Every arm here read RAW source. A pin that greps raw source cannot tell the
 # mechanism from the story told about the mechanism, so a COMMENT satisfies an
-# arm whose code is gone. Measured at c9d2a1f by mutation rather than argued —
+# arm whose code is gone. Measured at c9d2a1f by mutation rather than argued -
 # five of the thirty-two assertions were satisfiable by prose, and one arm was
 # the mirror-image failure:
 #
@@ -49,11 +49,11 @@
 #   · The OAuth door's lockdown test was neutered to a constant, with the old
 #     expression left behind as an explanatory tail comment. Green.
 #   · The whole revocation block on the metrics-socket decode path was commented
-#     out. Green — and this arm's own in-file note claimed that keying on the
+#     out. Green - and this arm's own in-file note claimed that keying on the
 #     read operation dodged the prose trap. It dodged only the PRE-EXISTING
 #     prose, never a newly written comment.
 #   · WORST, because it needed no cooperation at all: the panic handler's entire
-#     session-revocation leg — the audit insert AND the watermark write — was
+#     session-revocation leg - the audit insert AND the watermark write - was
 #     BLANKED, no attacker comment involved, and the arm stayed green, fed by an
 #     unrelated narrative comment 150 lines above that happens to spell the
 #     watermark's name. Panic could silently stop revoking sessions today and
@@ -64,7 +64,7 @@
 #
 # So the comment strippers now sit ABOVE section 1 rather than being absent, they
 # choose their comment syntax by EXTENSION rather than assuming one, and they
-# BLANK comment lines instead of deleting them — deleting renumbers a file, and
+# BLANK comment lines instead of deleting them - deleting renumbers a file, and
 # the body slicers below depend on height. §6-§9 hold all of that in place, and
 # §7 is the mutation itself, encoded so it re-runs on every push instead of
 # living in one session's notes.
@@ -85,7 +85,7 @@ bad() { FAIL=$((FAIL+1)); printf '  \033[0;31m✗\033[0m %s\n' "$1"; }
 # ── the comment strippers, ABOVE every arm that needs them (s338) ────────────
 #
 # A check placed below the thing it must run before inherits that position as a
-# defect even when the check itself is perfect — the s336 lesson, and the reason
+# defect even when the check itself is perfect - the s336 lesson, and the reason
 # these functions are the first thing in the file rather than the middle. The
 # sibling suite shipped them at line 379 with thirty arms above the definition;
 # reproducing that layout here would reproduce that outcome here.
@@ -116,7 +116,7 @@ code_lines() {
     # on code the stripper had merely removed.
     #
     # A trailing `//` is stripped, but only when the text before it has BALANCED
-    # double quotes — otherwise an https URL in a string literal would lose its
+    # double quotes - otherwise an https URL in a string literal would lose its
     # tail. Backslash escapes are skipped so an escaped quote cannot flip the
     # parity.
     awk '
@@ -151,7 +151,7 @@ code_lines() {
 # into twice. Under `set -o pipefail`, `code_lines f | grep -q PATTERN` reports
 # FAILURE on a successful match: grep -q exits at the first hit, the producer
 # upstream dies of SIGPIPE (141), and pipefail takes the pipeline's status from
-# it. The effect is silent and selective — a file whose match is near the top gets
+# it. The effect is silent and selective - a file whose match is near the top gets
 # dropped while one whose match is near the bottom survives, because the producer
 # had already finished. `grep -c` consumes all of its input, so there is no early
 # exit and no signal. (#103d is the same operator lying in the other direction:
@@ -181,7 +181,7 @@ SET_TSX=panel/frontend/src/pages/Settings.tsx
 AGENT_SEC=panel/agent/src/routes/security.rs
 TERM_SRC=panel/agent/src/routes/terminal.rs
 
-# PROSE BY DESIGN — read RAW, deliberately. The three arms over it assert
+# PROSE BY DESIGN - read RAW, deliberately. The three arms over it assert
 # SENTENCES a human wrote for a human; there is no code in it to isolate, and the
 # shell marker would blank every ATX heading. §6 pins that reasoning.
 SESSDOC=docs/guides/sessions.md
@@ -198,7 +198,7 @@ trap 'rm -rf "$FIXDIR"' EXIT
 #
 # STRIP FIRST, THEN SLICE. code_lines blanks rather than deletes, so height and
 # line numbers survive and every range boundary lands exactly where it did on the
-# raw file — while the text inside the range is code only. Reversing the order
+# raw file - while the text inside the range is code only. Reversing the order
 # would slice raw source and hand a comment-fed body to every arm below.
 #
 # Each takes its subject as an ARGUMENT rather than reading a global, because §8
@@ -232,11 +232,11 @@ inline_allowlist_files() {
 #
 # A door is a `pub async fn` whose body emits an auth session cookie. We look for
 # the two ways the tree does that: calling the shared issuer, or formatting the
-# session cookie inline. Logout is excluded by construction — it emits an empty
+# session cookie inline. Logout is excluded by construction - it emits an empty
 # value to CLEAR the cookie, and clearing a session is not minting one.
 #
 # Read per file through code_lines, so a handler that has been commented out is
-# not discovered as a live door — the discovery count is the denominator for
+# not discovered as a live door - the discovery count is the denominator for
 # eight arms below, and inflating it with dead code inflates them all.
 
 DOORS=$(for f in "$ROUTES"/*.rs; do
@@ -259,13 +259,13 @@ DOORS_N=$(printf '%s\n' "$DOORS" | grep -c . || true)
 echo "── discovery ──"
 printf '%s\n' "$DOORS" | sed 's/^/  door: /'
 
-# §0 — the discovery itself. Four doors are known to exist (login, twofa_verify,
+# §0 - the discovery itself. Four doors are known to exist (login, twofa_verify,
 # passkeys::auth_complete, oauth::callback). Fewer means the pattern broke and
 # every arm below would pass by inspecting nothing.
 if [ "$DOORS_N" -ge 4 ]; then
   ok "discovered $DOORS_N session-minting doors (>= 4 known to exist)"
 else
-  bad "only $DOORS_N doors discovered — the mint pattern moved; every arm below is now vacuous"
+  bad "only $DOORS_N doors discovered - the mint pattern moved; every arm below is now vacuous"
 fi
 
 # ── §1 every door enforces the panel IP allowlist ───────────────────────────
@@ -277,7 +277,7 @@ for d in $DOORS; do
   if [ "$n" -ge 1 ]; then
     ok "$(basename "$file")::$fn enforces the IP allowlist"
   else
-    bad "$(basename "$file")::$fn mints a session WITHOUT the IP allowlist — an excluded address can sign in here"
+    bad "$(basename "$file")::$fn mints a session WITHOUT the IP allowlist - an excluded address can sign in here"
   fi
 done
 
@@ -290,7 +290,7 @@ for d in $DOORS; do
   if [ "$n" -ge 1 ]; then
     ok "$(basename "$file")::$fn enforces lockdown"
   else
-    bad "$(basename "$file")::$fn mints a session WITHOUT the lockdown check — lockdown does not hold this door"
+    bad "$(basename "$file")::$fn mints a session WITHOUT the lockdown check - lockdown does not hold this door"
   fi
 done
 
@@ -300,7 +300,7 @@ done
 # whitelist did (#104g), so the query belongs to the helper alone.
 #
 # NEGATIVE ARM: a match here means BAD. Narrowing it with the stripper therefore
-# fails in the silent direction — a stripper that ate too much would report a
+# fails in the silent direction - a stripper that ate too much would report a
 # clean tree over a genuinely duplicated gate. §8 plants the real duplicate and
 # requires this predicate to fire.
 echo "── §3 one implementation, not a copy per door ──"
@@ -311,7 +311,7 @@ UNEXPECTED=$(printf '%s\n' "$INLINE" | grep -v -e 'routes/auth\.rs$' -e 'routes/
 if [ -z "$UNEXPECTED" ]; then
   ok "allowed_panel_ips is referenced only by the helper (auth.rs) and its validator (settings.rs)"
 else
-  bad "inline allowlist re-implementation in: $(printf '%s ' $UNEXPECTED) — it will drift from the helper"
+  bad "inline allowlist re-implementation in: $(printf '%s ' $UNEXPECTED) - it will drift from the helper"
 fi
 
 # The helper must fail closed. `panel_ip_allowed` returns false for an
@@ -328,7 +328,7 @@ fi
 # Auto-lockdown counts "N events within M minutes" over created_at. Stamping an
 # ingested backlog with NOW() collapses however long it took to accumulate into
 # one instant. Before v2.46.0 ingestion sat under `auto_heal_enabled` (seeded
-# false), so a stock box queued events on disk that nothing drained — and the
+# false), so a stock box queued events on disk that nothing drained - and the
 # first tick after upgrading replayed the whole file as simultaneous and locked
 # every non-admin out. Driven on a real box: 16 events spread over ~3 minutes of
 # real time landed within 105ms of each other, and the tenant got a 503.
@@ -337,41 +337,41 @@ n=$(code_lines "$HEALER" | perl -0777 -ne 'print "1" if /record_suspicious_event
 if [ "$n" -ge 1 ]; then
   ok "the jsonl ingest records events at their occurrence time, not at ingest time"
 else
-  bad "the ingest no longer passes an occurrence time — a queued backlog will trip auto-lockdown on the first tick"
+  bad "the ingest no longer passes an occurrence time - a queued backlog will trip auto-lockdown on the first tick"
 fi
 n=$(code_lines "$HEALER" | perl -0777 -ne 'print "1" if /event\["timestamp"\]/s' | grep -c 1 || true)
 if [ "$n" -ge 1 ]; then
   ok "the agent's per-event timestamp is read (the agent has always written it)"
 else
-  bad "the ingest ignores the agent's timestamp field — the writer/reader pair is severed again"
+  bad "the ingest ignores the agent's timestamp field - the writer/reader pair is severed again"
 fi
 
 # ── §5 the recording toggle cannot claim more than the fleet delivers ───────
 # The toggle is one settings row enforced by each server's agent: an agent older
 # than the gate release ignores the signed claim and keeps recording. The panel
 # already knows every member's version (servers.agent_version, written on each
-# check-in), so reporting a flat "disabled" is a claim it can itself falsify —
+# check-in), so reporting a flat "disabled" is a claim it can itself falsify -
 # lesson #104a, one layer out.
 echo "── §5 the recording toggle discloses fleet members it cannot control ──"
 n=$(code_count "$SET_RS" -F -e 'recording_coverage')
 if [ "$n" -ge 1 ]; then
   ok "backend exposes recording coverage across the fleet"
 else
-  bad "no recording-coverage endpoint — the toggle makes a fleet-wide claim nothing checks"
+  bad "no recording-coverage endpoint - the toggle makes a fleet-wide claim nothing checks"
 fi
 n=$(code_count "$SET_TSX" -F -e 'recording-coverage')
 if [ "$n" -ge 1 ]; then
   ok "the Settings toggle consumes it, so lagging members are named in the UI"
 else
-  bad "the UI never reads recording coverage — operators are told 'disabled' while members still record"
+  bad "the UI never reads recording coverage - operators are told 'disabled' while members still record"
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
-# s308 — THE SAME LESSON ONE LAYER FURTHER ON: a control's blast radius is what
+# s308 - THE SAME LESSON ONE LAYER FURTHER ON: a control's blast radius is what
 # it GATES. D1/D2/D3 above are about doors that forgot a gate. These are about
 # the EMERGENCY control, which gated the doors and nothing else.
 #
-# Lockdown is tested at login, OAuth, passkey and site creation — every one of
+# Lockdown is tested at login, OAuth, passkey and site creation - every one of
 # them a door. Nothing tests it against a token that has ALREADY been minted. So
 # the panic button locked the doors while the intruder was already inside, and
 # the admin session that got them there kept working for the rest of its two
@@ -381,19 +381,19 @@ echo "── s308: the panic button ──"
 
 PANIC=$(panic_body "$SEC_RS")
 if [ -z "$PANIC" ]; then
-  bad "could not extract panic_button — every arm below is measuring nothing"
+  bad "could not extract panic_button - every arm below is measuring nothing"
 else
-  ok "extracted panic_button ($(wc -l <<< "$PANIC") lines) — the arms below read real code"
+  ok "extracted panic_button ($(wc -l <<< "$PANIC") lines) - the arms below read real code"
 fi
 
 if grep -q "sessions_revoked_at" <<< "$PANIC"; then
   ok "panic WRITES the session-revocation watermark"
 else
-  bad "panic only locks the doors — the stolen session that reached the root shell keeps working"
+  bad "panic only locks the doors - the stolen session that reached the root shell keeps working"
 fi
 
 # ⚠ The arm above says WRITES, and that wording is load-bearing. It shipped in
-# v2.65.0 reading "panic revokes every issued session, not just the doors" — a
+# v2.65.0 reading "panic revokes every issued session, not just the doors" - a
 # claim about every READER, tested by grepping one WRITER. It was green while
 # the metrics socket hand-decoded JWTs and never consulted the watermark, so a
 # stolen admin token could open a NEW process-list socket after the button was
@@ -403,25 +403,25 @@ fi
 # because an unrelated narrative comment 150 lines higher in the same handler
 # spells the watermark's name. Slicing the STRIPPED file is what removed that
 # false floor. The claim "keying on the read operation dodges the prose trap",
-# which this block used to make below, was false — it dodged only the prose that
+# which this block used to make below, was false - it dodged only the prose that
 # already existed, never a comment someone writes tomorrow.
 #
 # Class arm: every hand-rolled Claims decode outside the AuthUser extractor must
-# consult the watermark, and both halves — the enumeration and the per-file
-# check — now read code only.
+# consult the watermark, and both halves - the enumeration and the per-file
+# check - now read code only.
 DECODERS=$(for f in $(find "$BE" -name '*.rs' | sort); do
   case "$f" in */auth.rs) continue ;; esac
   has_code "$f" -F -e 'decode::<Claims>' && printf '%s\n' "$f"
 done)
 if [ -z "$DECODERS" ]; then
-  bad "found no hand-rolled Claims decoders at all — this arm is measuring nothing"
+  bad "found no hand-rolled Claims decoders at all - this arm is measuring nothing"
 else
   ok "enumerated $(wc -l <<< "$DECODERS") hand-rolled Claims decoder file(s) outside auth.rs"
   for f in $DECODERS; do
     if has_code "$f" -F -e 'sessions_revoked_at.read()'; then
       ok "  $(basename "$f") enforces session revocation on its own decode path"
     else
-      bad "  $(basename "$f") decodes a JWT by hand and never checks sessions_revoked_at — panic cannot close this channel"
+      bad "  $(basename "$f") decodes a JWT by hand and never checks sessions_revoked_at - panic cannot close this channel"
     fi
   done
 fi
@@ -431,7 +431,7 @@ fi
 # produced the same reassurance. What the agent reports is what gets reported.
 #
 # NEGATIVE ARM: a match means BAD. Before the strip it fired on an explanatory
-# comment that merely QUOTED the forbidden field — a false alarm on correct code,
+# comment that merely QUOTED the forbidden field - a false alarm on correct code,
 # the same defect as comment-blindness with the sign flipped. §8 plants the field
 # as real code and requires this to fire.
 if grep -qE '"terminals_killed": true' <<< "$PANIC"; then
@@ -445,8 +445,8 @@ else
   bad "an unreachable agent is indistinguishable from a successful kill"
 fi
 
-# A terminal share is an UNAUTHENTICATED public URL — the shared-terminal route
-# is registered in the no-auth block and its handler takes no auth extractor —
+# A terminal share is an UNAUTHENTICATED public URL - the shared-terminal route
+# is registered in the no-auth block and its handler takes no auth extractor -
 # serving up to 500KB of terminal output for an hour. Lockdown does not reach it
 # (lockdown is tested at the doors; this is not a door), so before v2.66.0 panic
 # left the intruder's own share serving to the whole internet while the UI said
@@ -455,23 +455,23 @@ fi
 if grep -qE "DELETE FROM settings WHERE key LIKE 'terminal_share_%'" <<< "$PANIC"; then
   ok "panic revokes every terminal share"
 else
-  bad "panic leaves public terminal shares serving — the one channel lockdown cannot close"
+  bad "panic leaves public terminal shares serving - the one channel lockdown cannot close"
 fi
 if grep -q "shares_revoked" <<< "$PANIC"; then
   ok "and it reports how many it revoked"
 else
-  bad "shares are revoked but the count is dropped — the operator cannot tell"
+  bad "shares are revoked but the count is dropped - the operator cannot tell"
 fi
 
 # The agent half: killing by unix user is a GUESS about which processes are ours,
-# and it guessed wrong in the one direction that matters — a SERVER terminal is
+# and it guessed wrong in the one direction that matters - a SERVER terminal is
 # deliberately kept as root, so the shell most worth killing was the one process
 # the control could not reach.
 AGENT_KILL=$(kill_body "$AGENT_SEC")
 if [ -z "$AGENT_KILL" ]; then
-  bad "could not extract kill_terminals — the arms below are measuring nothing"
+  bad "could not extract kill_terminals - the arms below are measuring nothing"
 else
-  ok "extracted kill_terminals — the arms below read real code"
+  ok "extracted kill_terminals - the arms below read real code"
 fi
 if grep -q "TERMINAL_PIDS" <<< "$AGENT_KILL"; then
   ok "the kill walks a registry of shells this agent started, rather than guessing by user"
@@ -481,7 +481,7 @@ fi
 # NEGATIVE ARM: a match means BAD. §8 plants the real counter-reset and requires
 # this to fire.
 if grep -qE 'ACTIVE_TERMINALS\.swap\(0' <<< "$AGENT_KILL"; then
-  bad "the session counter is zeroed without killing — an attacker gets a fresh full quota"
+  bad "the session counter is zeroed without killing - an attacker gets a fresh full quota"
 else
   ok "the counter is not zeroed independently of the kill"
 fi
@@ -491,14 +491,14 @@ fi
 if has_code "$TERM_SRC" -F -e 'register_terminal(child_pid' && has_code "$TERM_SRC" -F -e 'forget_terminal(child_pid'; then
   ok "every spawned shell is registered on open and forgotten on close"
 else
-  bad "the pid registry is written at only one end — it either leaks or kills nothing"
+  bad "the pid registry is written at only one end - it either leaks or kills nothing"
 fi
 
 echo
 echo "── s308: the sessions screen its own guide describes ──"
 
 # Three endpoints, complete and caller-scoped, with zero callers in the shipped
-# bundle — while the sessions guide told a user to click controls that were not
+# bundle - while the sessions guide told a user to click controls that were not
 # there, as the response to a suspected compromise.
 TSX_FILES=$(find panel/frontend/src -name '*.tsx' | sort)
 for ep in "auth/sessions" "export-my-data"; do
@@ -508,8 +508,8 @@ for ep in "auth/sessions" "export-my-data"; do
   # a false negative wearing a false positive's clothes. Count, don't fall back.
   #
   # ⚠ This counted the settings page ALONE until v2.83.0, which pinned the
-  # SUBJECT AT AN ADDRESS: extracting these controls into their own component —
-  # so a non-admin could finally reach them — made the arm go red over a tree
+  # SUBJECT AT AN ADDRESS: extracting these controls into their own component -
+  # so a non-admin could finally reach them - made the arm go red over a tree
   # where the screen had just become MORE built. The property is "the shipped
   # bundle calls it", so count the tree.
   #
@@ -519,7 +519,7 @@ for ep in "auth/sessions" "export-my-data"; do
   n=0
   for f in $TSX_FILES; do n=$((n + $(code_count "$f" -F -e "$ep"))); done
   if [ "${n:-0}" -ge 1 ]; then
-    ok "the panel calls $ep — the guide's screen exists"
+    ok "the panel calls $ep - the guide's screen exists"
   else
     bad "$ep still has no caller; the guide documents a screen that is not built"
   fi
@@ -528,7 +528,7 @@ done
 # The guide's own corrected claims. Each of these was false at v2.64.2.
 #
 # READ RAW, AND THAT IS THE POINT. These three arms assert English sentences in a
-# markdown document — prose is the mechanism here, not a disguise for one.
+# markdown document - prose is the mechanism here, not a disguise for one.
 # Stripping would be the defect: the shell marker blanks a leading hash, which in
 # markdown is a heading, not a comment. §6 pins that so the exemption stays
 # visibly deliberate and §9 keeps the guide out of the raw-read scan on purpose.
@@ -554,7 +554,7 @@ echo "── §6 the strippers strip comments, and nothing else (s338) ──"
 # Everything above now depends on code_lines. A stripper that under-strips
 # restores the whole defect silently; one that OVER-strips turns the three
 # negative arms green on broken code. So it gets its own fixtures, and they are
-# hermetic — no repository file is involved, because a fixture that shares a
+# hermetic - no repository file is involved, because a fixture that shares a
 # subject with the thing it validates cannot tell the two apart.
 
 cat > "$FIXDIR/f.sh" <<'FIX'
@@ -595,7 +595,7 @@ fi
 if [ "$(code_count "$FIXDIR/f.sh" -F -e 'TOKENSTR')" -eq 1 ]; then
   ok "shell: a '#' inside a string literal is left alone (no trailing-comment stripping)"
 else
-  bad "shell: the stripper ate a '#' inside a string — a negative arm would now pass on broken code"
+  bad "shell: the stripper ate a '#' inside a string - a negative arm would now pass on broken code"
 fi
 
 if [ "$(code_count "$FIXDIR/f.rs" -F -e 'TOKENWORD')" -eq 1 ]; then
@@ -605,18 +605,18 @@ else
 fi
 
 if [ "$(code_count "$FIXDIR/f.rs" -F -e 'TOKENURL')" -eq 1 ]; then
-  ok "rust: '//' inside a quoted string survives — a URL is not a comment"
+  ok "rust: '//' inside a quoted string survives - a URL is not a comment"
 else
   bad "rust: the stripper cut a line at the '//' of a URL inside a string literal"
 fi
 
 # s294: a `/*` inside a string literal opened a block comment that ran to the
 # next close marker and deleted 485 lines of git_build.rs. The guard is that a
-# block is recognised only where one is WRITTEN — opening at line start.
+# block is recognised only where one is WRITTEN - opening at line start.
 if [ "$(code_count "$FIXDIR/f.rs" -F -e 'TOKENAFTER')" -eq 1 ]; then
   ok "rust: a '/*' inside a string literal does not open a block (the s294 guard holds)"
 else
-  bad "rust: a string containing '/*' swallowed the code after it — the s294 stripper defect is back"
+  bad "rust: a string containing '/*' swallowed the code after it - the s294 stripper defect is back"
 fi
 
 if [ "$(code_count "$FIXDIR/f.tsx" -F -e 'TOKENTSX')" -eq 1 ] && [ "$(code_count "$FIXDIR/f.tsx" -F -e 'TOKENPATH')" -eq 1 ]; then
@@ -637,9 +637,9 @@ fi
 MD_CODE=$(code_count "$FIXDIR/f.md" -F -e 'TOKENMD')
 MD_RAW=$(grep -c 'TOKENMD' "$FIXDIR/f.md" || true)
 if [ "$MD_CODE" -eq 1 ] && [ "$MD_RAW" -eq 2 ]; then
-  ok "markdown: stripping would blank an ATX heading — which is why the guide's arms read it raw, on purpose"
+  ok "markdown: stripping would blank an ATX heading - which is why the guide's arms read it raw, on purpose"
 else
-  bad "markdown: expected raw 2 / stripped 1 for the heading fixture, got raw $MD_RAW / stripped $MD_CODE — the guide's raw exemption no longer has a reason"
+  bad "markdown: expected raw 2 / stripped 1 for the heading fixture, got raw $MD_RAW / stripped $MD_CODE - the guide's raw exemption no longer has a reason"
 fi
 
 # The body slicers cut ranges out of this stream and one arm reports the height
@@ -653,7 +653,7 @@ done
 if [ -z "$LINEDRIFT" ]; then
   ok "blanking preserves the line count of all 11 code subjects, so every slice boundary still lands where it did"
 else
-  bad "code_lines changed the line count of:$LINEDRIFT — the body slicers are now cutting the wrong ranges"
+  bad "code_lines changed the line count of:$LINEDRIFT - the body slicers are now cutting the wrong ranges"
 fi
 
 echo
@@ -698,8 +698,8 @@ PINNED=(
 # The copy KEEPS the original's extension, and that is load-bearing rather than
 # tidy: comment_marker_for dispatches on the extension, so a scratch file called
 # `mutated` is read as shell no matter what it holds. The path is flattened into
-# the basename because two of these subjects share one — the backend and the
-# agent each own a security.rs — and a shared scratch name would let one
+# the basename because two of these subjects share one - the backend and the
+# agent each own a security.rs - and a shared scratch name would let one
 # subject's copy answer for the other's.
 scratch_name() { printf '%s' "$1" | tr '/' '_'; }
 
@@ -738,13 +738,13 @@ for subj in $PIN_SUBJECTS; do
   if [ -z "$dead" ]; then
     ok "$subj: every pattern this suite pins is present in CODE, not only in prose"
   else
-    bad "$subj: pinned pattern(s) present only as prose —$dead — the arm reading it is passing on a comment"
+    bad "$subj: pinned pattern(s) present only as prose -$dead - the arm reading it is passing on a comment"
   fi
 
   if [ -z "$survived" ]; then
     ok "$subj: commenting out the matching code lines drives every pinned pattern to zero"
   else
-    bad "$subj: pattern(s) still counted after their code lines were commented out —$survived — the stripper is not reaching this subject"
+    bad "$subj: pattern(s) still counted after their code lines were commented out -$survived - the stripper is not reaching this subject"
   fi
 done
 
@@ -778,12 +778,12 @@ done
 if [ -z "$EP_DEAD" ]; then
   ok "frontend tree: both session-screen endpoints are called from CODE, not from a commented-out call site"
 else
-  bad "frontend tree: endpoint(s) present only as prose —$EP_DEAD — the screen's arms are passing on a comment"
+  bad "frontend tree: endpoint(s) present only as prose -$EP_DEAD - the screen's arms are passing on a comment"
 fi
 if [ -z "$EP_SURVIVED" ]; then
   ok "frontend tree: commenting out the call sites drives both endpoint counts to zero"
 else
-  bad "frontend tree: endpoint(s) still counted after their call sites were commented out —$EP_SURVIVED"
+  bad "frontend tree: endpoint(s) still counted after their call sites were commented out -$EP_SURVIVED"
 fi
 
 echo
@@ -791,7 +791,7 @@ echo "── §8 the negative arms still fire on a REAL defect (s338) ──"
 
 # Three arms in this suite are NEGATIVE: a match means BAD. Stripping makes every
 # check see LESS, and for a negative arm seeing less is SILENTLY GREEN on broken
-# code — the direction that ships. A positive arm that over-strips goes loudly
+# code - the direction that ships. A positive arm that over-strips goes loudly
 # red and gets fixed the same hour; a negative one just stops objecting.
 #
 # So each of the three gets a control that plants the REAL defect, as code, in a
@@ -805,7 +805,7 @@ insert_after() {  # <src> <anchor-regex> <line> <dst>
       '$0 ~ anchor && !done { print; print ins; done = 1; next } { print }' "$src" > "$dst"
 }
 
-# NC1 — §3's inline re-implementation detector. A route file that reads the
+# NC1 - §3's inline re-implementation detector. A route file that reads the
 # settings key itself, in code, must be reported.
 cat > "$FIXDIR/ctl_route.rs" <<'CTL'
 pub async fn fake_second_door() {
@@ -815,10 +815,10 @@ CTL
 if [ -n "$(inline_allowlist_files "$FIXDIR/ctl_route.rs")" ]; then
   ok "§3's duplicate-gate detector still fires on a real inline lookup in a route file"
 else
-  bad "§3's duplicate-gate detector no longer sees a real inline lookup — the stripper is eating code and a second gate would pass unnoticed"
+  bad "§3's duplicate-gate detector no longer sees a real inline lookup - the stripper is eating code and a second gate would pass unnoticed"
 fi
 
-# NC2 — the panic response arm. Anchored at column 0 so the narrative comment
+# NC2 - the panic response arm. Anchored at column 0 so the narrative comment
 # 400 lines above the handler cannot become the insertion point; if it did, the
 # planted line would land outside the slice and the control would look broken
 # while the arm was fine.
@@ -828,17 +828,17 @@ CTL_PANIC=$(panic_body "$FIXDIR/ctl_panic.rs")
 if [ -n "$CTL_PANIC" ] && grep -qE '"terminals_killed": true' <<< "$CTL_PANIC"; then
   ok "the panic-response arm still fires when the hardcoded claim is really in code"
 else
-  bad "the panic-response arm no longer fires on a real hardcoded claim — it is now green by blindness, not by correctness"
+  bad "the panic-response arm no longer fires on a real hardcoded claim - it is now green by blindness, not by correctness"
 fi
 
-# NC3 — the agent's counter-reset arm.
+# NC3 - the agent's counter-reset arm.
 insert_after "$AGENT_SEC" '^async fn kill_terminals' \
   '    let _ctl = ACTIVE_TERMINALS.swap(0, Ordering::SeqCst);' "$FIXDIR/ctl_kill.rs"
 CTL_KILL=$(kill_body "$FIXDIR/ctl_kill.rs")
 if [ -n "$CTL_KILL" ] && grep -qE 'ACTIVE_TERMINALS\.swap\(0' <<< "$CTL_KILL"; then
   ok "the counter-reset arm still fires when the reset is really in code"
 else
-  bad "the counter-reset arm no longer fires on a real reset — an attacker's fresh quota would pass unnoticed"
+  bad "the counter-reset arm no longer fires on a real reset - an attacker's fresh quota would pass unnoticed"
 fi
 
 echo
@@ -861,7 +861,7 @@ else
 fi
 
 # s336 #364: a check placed below an early exit inherits that exit's blind spot.
-# The sibling suite's strippers were the same shape — defined at line 379, used
+# The sibling suite's strippers were the same shape - defined at line 379, used
 # by nothing above them. Assert the definition precedes the first section rather
 # than trusting it.
 DEF_LINE=$(code_lineno "$SELF" -E -e '^code_lines\(\) \{')
@@ -869,7 +869,7 @@ SEC1_LINE=$(code_lineno "$SELF" -F -e '── discovery ──')
 if [ -n "$DEF_LINE" ] && [ -n "$SEC1_LINE" ] && [ "$DEF_LINE" -lt "$SEC1_LINE" ]; then
   ok "code_lines is defined (line $DEF_LINE) above the first section (line $SEC1_LINE)"
 else
-  bad "code_lines is no longer defined above the first section — the arms above its definition are reading raw source again (def=${DEF_LINE:-none} first=${SEC1_LINE:-none})"
+  bad "code_lines is no longer defined above the first section - the arms above its definition are reading raw source again (def=${DEF_LINE:-none} first=${SEC1_LINE:-none})"
 fi
 
 echo

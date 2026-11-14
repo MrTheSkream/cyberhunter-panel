@@ -1,4 +1,4 @@
-//! The prerequisite layer — "what you need to do first".
+//! The prerequisite layer - "what you need to do first".
 //!
 //! Features declare what must already be true before they can work; a shared
 //! checker evaluates those conditions and returns STRUCTURED results; the
@@ -12,7 +12,7 @@
 //!
 //! Why this exists as a registry rather than an inline guard: the DNS condition
 //! was already being computed correctly inside `POST /api/sites/{id}/ssl`, which
-//! returned a precise 412 — but as a prose string, at one call site, at the
+//! returned a precise 412 - but as a prose string, at one call site, at the
 //! moment of failure. Nothing else in the product could ask "is this domain
 //! pointed here yet?" before the user committed to an action. Promoting the
 //! check to a callable that returns data rather than a sentence is what lets the
@@ -20,7 +20,7 @@
 //!
 //! # Layout
 //!
-//! This module holds the shared vocabulary — the result type, the severity rule,
+//! This module holds the shared vocabulary - the result type, the severity rule,
 //! the remediation shapes. One submodule per vertical:
 //!
 //! | Module   | Answers |
@@ -36,7 +36,7 @@
 //! [`copy`] holds every sentence all four of them say. A check module decides
 //! *which* outcome a situation is; it does not decide what that outcome says, and
 //! it cannot, because the words are not in it. That separation is what lets the
-//! documentation be generated rather than written — see [`copy::manual`].
+//! documentation be generated rather than written - see [`copy::manual`].
 
 use serde::Serialize;
 
@@ -55,16 +55,16 @@ pub use dns::{check_dns_points_at, check_dns_points_here};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PrereqState {
-    /// Verified true — the dependent action can proceed.
+    /// Verified true - the dependent action can proceed.
     Satisfied,
-    /// Verified false — the dependent action will fail or half-succeed.
+    /// Verified false - the dependent action will fail or half-succeed.
     Unsatisfied,
     /// We could not determine it. Never treated as failure: an unknown must not
     /// block a user whose setup is fine but whose check we couldn't run.
     Unknown,
 }
 
-/// How loudly to present an unmet prerequisite — chosen by consequence, not by
+/// How loudly to present an unmet prerequisite - chosen by consequence, not by
 /// how confident the check is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -79,7 +79,7 @@ pub enum PrereqSeverity {
 
 /// The exact DNS record a user should create, with values filled in.
 ///
-/// Per brief §3A.3 this must be the record itself — name, type, value, TTL —
+/// Per brief §3A.3 this must be the record itself - name, type, value, TTL -
 /// never a description of a record.
 #[derive(Debug, Clone, Serialize)]
 pub struct DnsRecordHint {
@@ -91,7 +91,7 @@ pub struct DnsRecordHint {
     pub value: String,
     pub ttl: String,
     /// Why this record exists, in the user's terms. Optional because the DNS
-    /// vertical's single record needs no caption — the callout says it. A set of
+    /// vertical's single record needs no caption - the callout says it. A set of
     /// five mail records does.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub purpose: Option<String>,
@@ -102,7 +102,7 @@ pub struct DnsRecordHint {
 }
 
 impl DnsRecordHint {
-    /// A record with no caption and no observed state — the v2.28.0 shape.
+    /// A record with no caption and no observed state - the v2.28.0 shape.
     pub fn new(
         name: impl Into<String>,
         fqdn: impl Into<String>,
@@ -137,7 +137,7 @@ impl DnsRecordHint {
 /// Deliberately a closed set of SHAPES rather than free prose: every arm is
 /// something the frontend can render as an action (copy this, click this) rather
 /// than as a sentence the user has to translate into one. Convention #4 of the
-/// design doc — give `remediation` real values, not a description.
+/// design doc - give `remediation` real values, not a description.
 ///
 /// Tagged by `kind` so the renderer dispatches on data, not on the check's key.
 #[derive(Debug, Clone, Serialize)]
@@ -145,7 +145,7 @@ impl DnsRecordHint {
 pub enum Remediation {
     /// One DNS record to create. The DNS vertical's shape.
     DnsRecord { record: DnsRecordHint },
-    /// A set of records that must all exist — mail's MX/SPF/DKIM/DMARC, where
+    /// A set of records that must all exist - mail's MX/SPF/DKIM/DMARC, where
     /// each carries its own `present` flag so the user sees which one is missing
     /// rather than being told to re-check all five.
     DnsRecords { records: Vec<DnsRecordHint> },
@@ -174,7 +174,7 @@ pub struct PrereqResult {
     pub severity: PrereqSeverity,
     /// One short line naming the situation.
     pub title: String,
-    /// The explanation, in the user's terms — what is true and what to do.
+    /// The explanation, in the user's terms - what is true and what to do.
     pub detail: String,
     /// What we expected to see (the server's address, for DNS).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -189,7 +189,7 @@ pub struct PrereqResult {
 impl PrereqResult {
     /// True when a control gated on this prerequisite should be disabled.
     ///
-    /// This is the ONLY rule for gating a control. Never re-derive it — an
+    /// This is the ONLY rule for gating a control. Never re-derive it - an
     /// `unknown` must never block, and a `warning` must never block, however
     /// confident the check happens to feel.
     pub fn blocks(&self) -> bool {
@@ -199,7 +199,7 @@ impl PrereqResult {
     /// Fixture constructor. **Tests only, deliberately.**
     ///
     /// In the running product there is exactly one way to produce a
-    /// `PrereqResult` — [`copy::Prereq::result`] — and that is not a convention,
+    /// `PrereqResult` - [`copy::Prereq::result`] - and that is not a convention,
     /// it is the absence of an alternative: a check cannot invent a sentence
     /// because it has no constructor that takes one. Removing the four
     /// hand-rolled constructors that shipped through v2.29.0 is what turned the
@@ -260,7 +260,7 @@ mod tests {
         PrereqResult::fixture(key, PrereqState::Unknown, PrereqSeverity::Info)
     }
 
-    /// A `Warning` must never gate a control — only `Blocking` does. This is the
+    /// A `Warning` must never gate a control - only `Blocking` does. This is the
     /// s252 orange-cloud case: it looks unsatisfied but demonstrably works.
     #[test]
     fn only_blocking_unsatisfied_results_gate_a_control() {
@@ -281,7 +281,7 @@ mod tests {
         assert!(first_blocker(&set[..2]).is_none());
     }
 
-    /// The remediation shapes must round-trip as a tagged union — the frontend
+    /// The remediation shapes must round-trip as a tagged union - the frontend
     /// dispatches on `kind`, so a rename here is a silent renderer break.
     #[test]
     fn remediation_serializes_with_a_kind_tag() {

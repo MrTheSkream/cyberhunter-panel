@@ -1,7 +1,7 @@
 //! Phase 4 W4: panel self-update orchestrator.
 //!
 //! Lifts `scripts/update.sh`'s SSH-only flow into a panel-UI-driven action.
-//! Does NOT reimplement the binary swap or rollback — those live in
+//! Does NOT reimplement the binary swap or rollback - those live in
 //! `update.sh` (its binary-swap + `.bak` rollback path) and are battle-tested.
 //! The orchestrator's job is:
 //!
@@ -20,10 +20,10 @@
 //!      happened.
 //!
 //! Out of scope here:
-//!   - In-flight rollback is `update.sh`'s `.bak` restore — orchestrator
+//!   - In-flight rollback is `update.sh`'s `.bak` restore - orchestrator
 //!     doesn't touch it.
 //!   - Operator-triggered rollback from a snapshot is
-//!     [`rollback_to_snapshot`] — restores binaries + DB + /etc/dockpanel
+//!     [`rollback_to_snapshot`] - restores binaries + DB + /etc/dockpanel
 //!     and bounces services. Routes/UI gate this behind a destructive
 //!     confirm.
 
@@ -52,7 +52,7 @@ const UPDATE_SCRIPT: &str = "/opt/dockpanel/scripts/update.sh";
 /// Manual snapshots are excluded everywhere this predicate is used: they are
 /// taken on demand and legitimately keep `to_version` NULL forever (see the
 /// `panel_snapshots` migration), so treating them as unfinalized updates made
-/// a safety snapshot look like an update in progress — and let the
+/// a safety snapshot look like an update in progress - and let the
 /// abandoned-sweep below stamp them `to_version = 'abandoned'`, which
 /// `current_state` then reported as a successful update to "abandoned".
 const IN_FLIGHT_WINDOW_MIN: i64 = 15;
@@ -66,7 +66,7 @@ const LOG_TAIL_MAX: usize = 64;
 /// This file is the ONLY honest channel for the local update path, and the
 /// reason is structural: `update.sh` re-execs itself into a PID1-owned transient
 /// unit with `exec systemd-run` and no `--wait`, so the child spawned below exits
-/// **0 within milliseconds** — measured at ~29 ms against an update that ran
+/// **0 within milliseconds** - measured at ~29 ms against an update that ran
 /// 54 s. That zero describes the handoff, never the work.
 ///
 /// The agent side learned this at s232 and reads `last-agent-update.json`; the
@@ -84,7 +84,7 @@ const PANEL_UPDATE_RESULT_PATH: &str = "/var/lib/dockpanel/last-panel-update.jso
 /// finalizer instead.
 const RESULT_WATCH_SECS: u64 = 900;
 
-/// The verdict `update.sh` left behind, if any. Permissive by construction —
+/// The verdict `update.sh` left behind, if any. Permissive by construction -
 /// a half-written or absent file must read as "no verdict", never as a failure.
 pub async fn last_panel_update_result() -> Option<serde_json::Value> {
     let raw = tokio::fs::read_to_string(PANEL_UPDATE_RESULT_PATH).await.ok()?;
@@ -304,7 +304,7 @@ pub async fn current_state(handle: &UpdateStateHandle, pool: &PgPool) -> UpdateS
         }
         if to != from {
             // The row is stamped by whichever binary happened to boot after the
-            // swap — which is ~30s BEFORE update.sh's health check decides
+            // swap - which is ~30s BEFORE update.sh's health check decides
             // whether the new build is actually good. On a rollback the new api
             // starts, writes to_version = itself ("succeeded"), and only then
             // fails its health check and gets replaced by the old binary; the
@@ -315,7 +315,7 @@ pub async fn current_state(handle: &UpdateStateHandle, pool: &PgPool) -> UpdateS
             //
             // The running binary is ground truth, so correct the record at the
             // read site rather than trusting the stamp. No schema change, no new
-            // state variant — this is what `RolledBack` already means.
+            // state variant - this is what `RolledBack` already means.
             let running = env!("CARGO_PKG_VERSION");
             if to != running {
                 return UpdateState::RolledBack {
@@ -365,7 +365,7 @@ pub async fn start_panel_update(
     //
     // TOCTOU fix (v2.216.0 audit): the guard used to be read-check-then-later-write,
     // with `create_snapshot`'s multi-minute pipeline (binary copy, pg_dump, tar,
-    // sha256) running entirely inside the gap — two requests arriving within that
+    // sha256) running entirely inside the gap - two requests arriving within that
     // window (a double-click, a client retry, two admin sessions) both passed the
     // check and both spawned their own `create_snapshot` + detached `update.sh`.
     // Reserve InFlight atomically under ONE write-lock acquisition, before any
@@ -401,7 +401,7 @@ pub async fn start_panel_update(
         return Err(OrchestratorError::AlreadyInFlight);
     }
 
-    // Create the pre-update snapshot. If this fails, release the reservation —
+    // Create the pre-update snapshot. If this fails, release the reservation -
     // no update actually started, so nothing should stay locked.
     let meta = match panel_snapshot::create_snapshot(
         &pool,
@@ -439,7 +439,7 @@ pub async fn start_panel_update(
         // straight into the release download URL, but the poller stores the
         // advertised version with the `v` stripped (telemetry_collector.rs) and
         // apply_update validates against that stripped form. Passing it through
-        // verbatim built `releases/download/2.11.2/...`, which 404s — so every
+        // verbatim built `releases/download/2.11.2/...`, which 404s - so every
         // self-update died at the first `curl -sfL` with exit 22, before any
         // binary was swapped. Re-add the prefix at this boundary.
         .env("DOCKPANEL_VERSION", format!("v{}", target_version.trim_start_matches('v')))
@@ -461,11 +461,11 @@ pub async fn start_panel_update(
     let target_clone = target_version.clone();
     tokio::spawn(async move {
         stream_update_output(handle_clone, stdout, stderr).await;
-        // We may not reach here — update.sh kills the api midway. If we
+        // We may not reach here - update.sh kills the api midway. If we
         // do, log the exit status so the operator sees it in journals.
         // A NON-zero exit here is still real information: the script (or PID1)
         // refused outright, so nothing is running and the update definitively
-        // did not happen. A ZERO exit means only that the work was handed off —
+        // did not happen. A ZERO exit means only that the work was handed off -
         // it is never "the work succeeded", because `exec systemd-run` without
         // `--wait` returns the moment PID1 accepts the job (lesson #49).
         let handed_off = match tokio::time::timeout(
@@ -480,7 +480,7 @@ pub async fn start_panel_update(
                     true
                 } else {
                     tracing::error!(
-                        "update.sh (target {target_clone}) could not start ({status}) — \
+                        "update.sh (target {target_clone}) could not start ({status}) - \
                          panel left on the previous version"
                     );
                     false
@@ -500,7 +500,7 @@ pub async fn start_panel_update(
         // it. If the update SUCCEEDS this loop never finishes: update.sh stops
         // dockpanel-api, which is the process running this task, and the next
         // boot's `finalize_pending_on_startup` closes the row. The case being
-        // rescued is the opposite one — a failure BEFORE the api is stopped,
+        // rescued is the opposite one - a failure BEFORE the api is stopped,
         // where no restart will ever come to close anything.
         let mut verdict = None;
         if handed_off {
@@ -542,7 +542,7 @@ pub async fn start_panel_update(
             None => {
                 tracing::error!(
                     "update.sh (target {target_clone}) left no verdict and this process \
-                     was never restarted — treating the update as failed"
+                     was never restarted - treating the update as failed"
                 );
                 finalize_failed_update(
                     &pool_for_exit,
@@ -585,7 +585,7 @@ async fn finalize_failed_update(
 }
 
 /// Stream `update.sh` stdout + stderr into the handle's `last_log_line`.
-/// This loop exits when both pipes hit EOF — typically because the api
+/// This loop exits when both pipes hit EOF - typically because the api
 /// process is being killed by `systemctl stop dockpanel-api`.
 async fn stream_update_output(
     handle: UpdateStateHandle,
@@ -643,7 +643,7 @@ fn parse_target_from_trigger(trigger: &str) -> Option<String> {
 }
 
 /// Operator-triggered rollback. Validates the snapshot, then hands the whole
-/// restore — stop services, database, binaries, /etc, start services — to a
+/// restore - stop services, database, binaries, /etc, start services - to a
 /// detached PID1-owned unit and returns.
 ///
 /// It CANNOT be awaited. The first thing the restore does is stop the api
@@ -654,7 +654,7 @@ fn parse_target_from_trigger(trigger: &str) -> Option<String> {
 /// This shape is the fix, not an implementation detail. Until v2.11.5 the
 /// restore ran INLINE in the request handler, which meant:
 ///   * it competed with the panel's own 300s HTTP timeout (`main.rs` TimeoutLayer
-///     and nginx `proxy_read_timeout`) — a restore measured at 394.9s on a lab
+///     and nginx `proxy_read_timeout`) - a restore measured at 394.9s on a lab
 ///     box, so the future was dropped mid-flight;
 ///   * dropping it broke the `gunzip | psql` pipe, which psql read as a normal
 ///     end of input and exited 0 for, so the failure was recorded as a success;
@@ -670,7 +670,7 @@ pub async fn rollback_to_snapshot(
     // Concurrent-apply guard (v2.216.0 audit): rollback used to carry NO check
     // against an update already in flight, so `/api/update/rollback` could race
     // update.sh's binary swap against restore-snapshot.sh's binary swap on the
-    // same files. Same reservation pattern as start_panel_update — held for the
+    // same files. Same reservation pattern as start_panel_update - held for the
     // duration of the restore, since a rollback in progress must equally block a
     // fresh apply.
     {
@@ -691,7 +691,7 @@ pub async fn rollback_to_snapshot(
     let result = panel_snapshot::spawn_restore(&pool, snapshot_id).await;
     if result.is_err() {
         // Validation failed before any file operation started (NotFound/FileMissing/
-        // hash mismatch) — release the reservation. A restore that got past
+        // hash mismatch) - release the reservation. A restore that got past
         // validation and is genuinely running detached is expected to end the
         // process (binary swap) or resolve via finalize_pending_on_startup; this
         // early-failure branch is the only one still in-process to release from.
@@ -756,7 +756,7 @@ pub async fn finalize_pending_on_startup(pool: &PgPool) {
     }
 
     // Mark older, abandoned in-flight rows with a sentinel so they don't
-    // perpetually block /api/update/apply. Manual snapshots are exempt — they
+    // perpetually block /api/update/apply. Manual snapshots are exempt - they
     // are never in flight, and stamping one 'abandoned' made it the newest
     // finalized row, which `current_state` reads as a completed update from the
     // running version to a version literally called "abandoned".
@@ -781,7 +781,7 @@ pub async fn finalize_pending_on_startup(pool: &PgPool) {
 // per-server progress in `fleet_update_runs.progress` JSONB. Halts on
 // first failure unless `force_continue: true`.
 //
-// Per design memo §3.D5: `include_panel: false` default — fleet rolls
+// Per design memo §3.D5: `include_panel: false` default - fleet rolls
 // first, panel itself last with a separate explicit click.
 
 use serde::Deserialize;
@@ -808,7 +808,7 @@ pub struct FleetProgressRow {
 /// `is_admin` widens `user_id = $1` to the whole fleet, mirroring
 /// `routes/servers.rs::list`'s and `routes/dashboard.rs`'s own established
 /// convention that `servers.user_id` names whoever registered the row, not a
-/// tenant boundary — an admin (the only caller `apply_fleet` accepts) sees the
+/// tenant boundary - an admin (the only caller `apply_fleet` accepts) sees the
 /// whole fleet. Without this (v2.216.0 audit finding), a fleet-wide update run
 /// silently skipped every server a DIFFERENT admin had registered, with
 /// nothing in the response indicating the plan was incomplete.
@@ -820,7 +820,7 @@ pub async fn build_fleet_plan(
 ) -> Result<Vec<FleetPlanRow>, sqlx::Error> {
     let target_clean = target_version.trim_start_matches('v').to_string();
     // NOT ordered in SQL: `agent_version` is text, so postgres would sort it
-    // lexicographically and put 2.9.0 AFTER 2.10.0 — i.e. it would roll the
+    // lexicographically and put 2.9.0 AFTER 2.10.0 - i.e. it would roll the
     // newest box first and call it the oldest. Ordering happens below, on
     // parsed numeric components.
     let rows: Vec<(Uuid, String, Option<String>)> = sqlx::query_as(
@@ -916,7 +916,7 @@ pub async fn create_fleet_run(
 
 /// Walk the plan, POST `/panel/update` to each agent, poll status until
 /// terminal, record per-server progress. Writes terminal `outcome` field
-/// on completion. Long-running — spawn as a tokio task.
+/// on completion. Long-running - spawn as a tokio task.
 #[allow(clippy::too_many_arguments)]
 pub async fn execute_fleet_plan(
     pool: PgPool,
@@ -988,7 +988,7 @@ pub async fn execute_fleet_plan(
     tracing::info!("Fleet update run {run_id} completed with outcome {outcome}");
 
     // `include_panel` (design memo §3.D5: fleet rolls first, the panel itself
-    // last) was stored on the run row and read by nothing — the operator's
+    // last) was stored on the run row and read by nothing - the operator's
     // checkbox has been inert since v2.10.0. Honour it now, and only when every
     // member actually made it: updating the panel on top of a half-rolled fleet
     // is the one ordering the design explicitly rules out.
@@ -996,7 +996,7 @@ pub async fn execute_fleet_plan(
         if any_failed {
             tracing::warn!(
                 "Fleet run {run_id}: include_panel was requested but the fleet did not \
-                 fully succeed ({outcome}) — leaving the panel on its current version"
+                 fully succeed ({outcome}) - leaving the panel on its current version"
             );
             return;
         }
@@ -1030,7 +1030,7 @@ async fn persist_progress(
 ///
 /// It used to return Ok as soon as the agent's own `/panel/update/status` said
 /// `"succeeded"`. That state is process-local and was being set from the exit
-/// status of `systemd-run`, which returns 0 the instant PID1 accepts the job —
+/// status of `systemd-run`, which returns 0 the instant PID1 accepts the job -
 /// so on the s232 two-box lab the panel recorded a fleet member as **succeeded
 /// in 5.1s** while that member never moved off 2.11.2 and its updater aborted a
 /// second later. A restart is a step, not an outcome (lesson #49); the only
@@ -1051,7 +1051,7 @@ async fn update_one_server(
     // as `start_panel_update` does for the local path. The operator's input is
     // free text and `validate_target_version` accepts both spellings, so a bare
     // `2.11.4` reached the remote agent verbatim, became DOCKPANEL_VERSION, and
-    // update.sh concatenated it into `releases/download/2.11.4/...` — a 404 and
+    // update.sh concatenated it into `releases/download/2.11.4/...` - a 404 and
     // `curl -sfL` exit 22 before any swap. The local path was repaired in
     // v2.11.3; this sibling call site was missed. update.sh's own bare-semver
     // tolerance does not rescue it, because fleet targets are by definition
@@ -1061,14 +1061,14 @@ async fn update_one_server(
     if let Err(e) = handle.post("/panel/update", payload).await {
         let raw = e.to_string();
         // Agents before 2.11.8 could only run the PANEL updater, which is not
-        // present on an agent-only box — so they refuse with this exact message
+        // present on an agent-only box - so they refuse with this exact message
         // and there is nothing the panel can do about it remotely. Say what to
         // do instead of handing the operator a path that does not exist.
         if raw.contains("update script not found") {
             return Err(format!(
                 "this agent is too old to be updated from the panel (it looks for the panel \
                  updater, which agent-only boxes do not have). Re-run install-agent.sh on it \
-                 once to reach 2.11.8+, after which fleet updates work — original error: {raw}"
+                 once to reach 2.11.8+, after which fleet updates work - original error: {raw}"
             ));
         }
         return Err(format!("POST /panel/update: {raw}"));
@@ -1085,8 +1085,8 @@ async fn update_one_server(
 
         // GROUND TRUTH first. `/health` is served by whichever binary is
         // actually running, so it cannot report a version that is not installed.
-        // Connection errors are expected here — the agent restarts itself
-        // partway through — and are never treated as failure.
+        // Connection errors are expected here - the agent restarts itself
+        // partway through - and are never treated as failure.
         if let Ok(health) = handle.get("/health").await {
             if let Some(v) = health.get("version").and_then(|v| v.as_str()) {
                 last_seen_version = v.to_string();
@@ -1097,7 +1097,7 @@ async fn update_one_server(
         }
 
         // Then the agent's own report, which is only trusted when it says
-        // something went WRONG — a claim it can make honestly, unlike success.
+        // something went WRONG - a claim it can make honestly, unlike success.
         // (After the restart this also surfaces the updater's on-disk verdict,
         // which is the only record that survives the process that wrote it.)
         if let Ok(resp) = handle.get("/panel/update/status").await {
@@ -1114,7 +1114,7 @@ async fn update_one_server(
     }
 
     Err(format!(
-        "timed out after 10min — agent still reports version {}, wanted {target_clean}",
+        "timed out after 10min - agent still reports version {}, wanted {target_clean}",
         if last_seen_version.is_empty() {
             "nothing".into()
         } else {
@@ -1176,13 +1176,13 @@ mod tests {
     ///
     /// `--wait` would block systemd-run inside the very cgroup being killed, and
     /// `--pipe` (which implies `--wait`) would additionally wire the unit's
-    /// stdout to a process about to die — so the updater would take SIGPIPE on
+    /// stdout to a process about to die - so the updater would take SIGPIPE on
     /// its next log line, in the middle of the binary swap. Neither is the fix
     /// for reading the outcome; the result file is.
     ///
     /// Counts EXECUTABLE lines only. The script explains at length why it does
     /// not use these flags, and a negative pin that reads raw source fails the
-    /// moment someone documents the thing it pins — the comment naming the trap
+    /// moment someone documents the thing it pins - the comment naming the trap
     /// would itself trip the assertion.
     #[test]
     fn the_updater_does_not_try_to_wait_on_its_own_detached_unit() {
@@ -1207,7 +1207,7 @@ mod tests {
 
     /// A zero exit from the handoff must never be promoted to a success claim.
     /// This is lesson #49, and the agent side has carried the same pin since
-    /// s232 — the local path is the sibling call site that had never got it.
+    /// s232 - the local path is the sibling call site that had never got it.
     #[test]
     fn a_zero_exit_from_the_handoff_is_not_a_successful_update() {
         let src = include_str!("panel_update.rs");
@@ -1216,14 +1216,14 @@ mod tests {
             "the reason a zero exit proves nothing must stay written down next to the code"
         );
         // The failure finalizer must be reachable from the verdict, not only
-        // from the child's status — that is the whole defect.
+        // from the child's status - that is the whole defect.
         assert!(
             src.contains("panel_update_verdict_since"),
             "the outcome must be read from the updater's own record"
         );
     }
 
-    /// Captured verbatim from a real `update.sh` run — a non-root invocation
+    /// Captured verbatim from a real `update.sh` run - a non-root invocation
     /// that aborted at the preflight check, so nothing hand-instrumented wrote
     /// it. Using the updater's own bytes is the point: the writer is shell and
     /// the reader is Rust, and a fixture invented on the Rust side would pin the
@@ -1244,7 +1244,7 @@ mod tests {
 
     /// A verdict left by a PREVIOUS run must not be read as this one's. The file
     /// is overwritten in place, so without a lower bound every new update would
-    /// inherit the last one's outcome until it wrote its own — and the outcome
+    /// inherit the last one's outcome until it wrote its own - and the outcome
     /// it would inherit is a FAILURE that finalises the row and drops the state
     /// back to Idle while the real update is still running.
     #[test]
@@ -1258,7 +1258,7 @@ mod tests {
     }
 
     /// Absent or half-written files must read as "no verdict yet", never as a
-    /// failure — the orchestrator polls this while an update is in flight, and
+    /// failure - the orchestrator polls this while an update is in flight, and
     /// a torn read must not finalise a running update as failed.
     #[test]
     fn a_missing_or_torn_verdict_is_not_a_failure() {
@@ -1356,7 +1356,7 @@ mod tests {
     /// terminal-recording toggle by comparing this key against the release that
     /// began honouring the signed `record` claim. Two edges matter and both are
     /// easy to get backwards: the release itself must count as covered, and a
-    /// server that has never checked in (no version) must count as NOT covered —
+    /// server that has never checked in (no version) must count as NOT covered -
     /// reporting an unverified member as covered is the exact claim the endpoint
     /// exists to stop the UI making.
     #[test]
@@ -1375,7 +1375,7 @@ mod tests {
     }
 
     /// The fleet orchestrator must decide "updated" from what the agent is
-    /// RUNNING, not from what it says about itself — the agent's own state was
+    /// RUNNING, not from what it says about itself - the agent's own state was
     /// being set from the exit status of the process that merely launched the
     /// update, and reported success 124ms in (lesson #49, measured s232).
     #[test]

@@ -25,7 +25,7 @@ pub struct ApiKeyInfo {
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
-/// GET /api/api-keys — List current user's API keys.
+/// GET /api/api-keys - List current user's API keys.
 pub async fn list(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -42,7 +42,7 @@ pub async fn list(
     Ok(Json(keys))
 }
 
-/// POST /api/api-keys — Create a new API key. Returns the full key ONCE.
+/// POST /api/api-keys - Create a new API key. Returns the full key ONCE.
 pub async fn create(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -103,12 +103,12 @@ pub async fn create(
             "key": key,
             "prefix": prefix,
             "name": name,
-            "message": "Save this key — it won't be shown again.",
+            "message": "Save this key - it won't be shown again.",
         })),
     ))
 }
 
-/// DELETE /api/api-keys/{id} — Revoke an API key.
+/// DELETE /api/api-keys/{id} - Revoke an API key.
 pub async fn revoke(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -153,7 +153,7 @@ pub async fn revoke(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// POST /api/api-keys/{id}/rotate — Rotate an API key (atomically replace old key with new one).
+/// POST /api/api-keys/{id}/rotate - Rotate an API key (atomically replace old key with new one).
 pub async fn rotate(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -212,7 +212,7 @@ pub async fn rotate(
             "key": key,
             "prefix": prefix,
             "name": name,
-            "message": "Key rotated — save the new key, the old one is now invalid.",
+            "message": "Key rotated - save the new key, the old one is now invalid.",
         })),
     ))
 }

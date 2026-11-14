@@ -5,7 +5,7 @@
 #
 #   D1  `reconcile_network_icc` (the one-time pre-s242 ICC-hardening migration
 #       for the shared `dockpanel-db` bridge) aborted on the FIRST reconnect
-#       failure — the network was already torn down and recreated by that
+#       failure - the network was already torn down and recreated by that
 #       point, so every container LATER in the batch than the failure was
 #       left with ZERO network attachment (its published port stops
 #       routing) and no server-side record of which containers were
@@ -15,13 +15,13 @@
 #       after the fix, and the aggregated error named exactly the bad id.
 #   D2  `routes/files.rs::download_file` read an entire file into a `Vec<u8>`
 #       (`tokio::fs::read`) before sending a single response byte, with no
-#       size cap — unlike its sibling `read_file` (2MB cap, same file). The
+#       size cap - unlike its sibling `read_file` (2MB cap, same file). The
 #       agent is the ONE process per box mediating deploys/backups/terminal/
 #       Docker for every tenant, and runs under a 512MB `MemoryMax` cgroup;
 #       an ordinary non-admin site owner with any large file in their own
 #       webroot (a DB dump, an unrotated log, media) could OOM-kill the
 #       shared agent with one GET request. Fixed by streaming instead of
-#       buffering — memory use becomes constant regardless of file size, so
+#       buffering - memory use becomes constant regardless of file size, so
 #       no arbitrary cap is needed.
 #
 # Pure source analysis except where noted; no box, no network, no build.
@@ -40,7 +40,7 @@ has()   { [ -n "$(code "$1" | grep -F -- "$2")" ]; }
 hasre() { [ -n "$(code "$1" | grep -E -- "$2")" ]; }
 
 # One named function's body, comment-stripped. Never pipe this into `grep
-# -q` — see security-firewalld-ssh-include-pin-e2e.sh's own header for why
+# -q` - see security-firewalld-ssh-include-pin-e2e.sh's own header for why
 # (the exact SIGPIPE-under-pipefail class this project tracks).
 fnbody()    { code "$1" | awk "/$2/,/^}/"; }
 bodyhas()   { [ -n "$(fnbody "$1" "$2" | grep -F -- "$3")" ]; }
@@ -65,7 +65,7 @@ fi
 if bodyhasre "$DB_SVC" "fn reconcile_network_icc_at" 'if let Err\(e\) = docker'; then
   ok "the reconnect loop catches each failure instead of propagating with ?"
 else
-  bad "the reconnect loop no longer catches individual failures — abort-on-first-failure may be back"
+  bad "the reconnect loop no longer catches individual failures - abort-on-first-failure may be back"
 fi
 
 if bodyhasre "$DB_SVC" "fn reconcile_network_icc_at" '\.connect_network\('; then
@@ -77,7 +77,7 @@ fi
 if bodyhas "$DB_SVC" "fn reconcile_network_icc_at" "failed.push"; then
   ok "every reconnect failure is collected, not just the first"
 else
-  bad "failures are no longer accumulated — the aggregated error report is gone"
+  bad "failures are no longer accumulated - the aggregated error report is gone"
 fi
 
 if bodyhas "$DB_SVC" "fn reconcile_network_icc_at" "failed.join"; then
@@ -86,7 +86,7 @@ else
   bad "the error no longer lists every failed container"
 fi
 
-# Deliberately NOT using has() here — has()/code() strip the #[cfg(test)]
+# Deliberately NOT using has() here - has()/code() strip the #[cfg(test)]
 # module (so a pin can't be tautologically satisfied by test-only code), but
 # this assertion's whole point is confirming a specific TEST exists.
 if grep -qF "reconcile_network_icc_reconnects_every_container_despite_one_bad_id" "$DB_SVC"; then
@@ -99,7 +99,7 @@ echo
 echo "── 2. D2: file download streams instead of buffering the whole file in memory ──"
 
 if bodyhas "$FILES_ROUTE" "async fn download_file" "tokio::fs::read(&safe)"; then
-  bad "download_file reads the whole file into memory again — the OOM path is back"
+  bad "download_file reads the whole file into memory again - the OOM path is back"
 else
   ok "download_file no longer reads the whole file into a Vec<u8>"
 fi
@@ -107,27 +107,27 @@ fi
 if bodyhasre "$FILES_ROUTE" "async fn download_file" 'ReaderStream::new|Body::from_stream'; then
   ok "download_file streams the response instead of buffering it"
 else
-  bad "download_file no longer streams — check what replaced tokio::fs::read"
+  bad "download_file no longer streams - check what replaced tokio::fs::read"
 fi
 
 if has "$FILES_ROUTE" "tokio::fs::File::open(&safe)"; then
   ok "download_file opens the file for streaming rather than reading it eagerly"
 else
-  bad "download_file no longer opens the file via tokio::fs::File — streaming path may be gone"
+  bad "download_file no longer opens the file via tokio::fs::File - streaming path may be gone"
 fi
 
 if hasre "panel/agent/Cargo.toml" '^tokio-util'; then
   ok "tokio-util is a direct dependency (ReaderStream needs it, not just a transitive one)"
 else
-  bad "tokio-util is no longer a direct dependency — the streaming fix cannot compile without it"
+  bad "tokio-util is no longer a direct dependency - the streaming fix cannot compile without it"
 fi
 
-# The sibling function's own cap must be untouched — this pin suite is about
+# The sibling function's own cap must be untouched - this pin suite is about
 # the DOWNLOAD path specifically, not about relaxing the text-editor guard.
 if bodyhasre "$FILES_SVC" "pub async fn read_file" '2 \* 1024 \* 1024'; then
   ok "read_file's own 2MB text-editor cap is still in place, untouched"
 else
-  bad "read_file's 2MB cap is gone — unrelated regression"
+  bad "read_file's 2MB cap is gone - unrelated regression"
 fi
 
 echo

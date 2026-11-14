@@ -1,4 +1,4 @@
-//! The DNS vertical (v2.28.0) — "does this domain point here yet?"
+//! The DNS vertical (v2.28.0) - "does this domain point here yet?"
 //!
 //! The prerequisite behind every HTTP-01 certificate, and the single most common
 //! reason a new user's site doesn't work.
@@ -15,7 +15,7 @@ use std::net::IpAddr;
 /// Deliberately a heuristic, not a Public Suffix List lookup: pulling in a PSL
 /// crate (and keeping it current) is not worth it when the cost of being wrong
 /// is cosmetic. A multi-part TLD like `example.co.uk` will be described as host
-/// `example` under `co.uk`, which is wrong — which is exactly why every result
+/// `example` under `co.uk`, which is wrong - which is exactly why every result
 /// also carries the unambiguous `fqdn` spelling, and why the copy tells the user
 /// to use whichever field their provider asks for.
 pub(super) fn split_record_name(domain: &str) -> (String, String) {
@@ -53,7 +53,7 @@ pub(super) fn looks_like_a_domain(domain: &str) -> bool {
 ///   Cloudflare-proxied ("orange cloud") domain and issuance *succeeded*, because
 ///   Cloudflare forwards `/.well-known/acme-challenge/` to the origin. That
 ///   configuration resolves to Cloudflare's addresses and is indistinguishable
-///   from "pointed at the wrong server" by IP alone — so blocking it would refuse
+///   from "pointed at the wrong server" by IP alone - so blocking it would refuse
 ///   a setup we have direct evidence works.
 pub async fn check_dns_points_here(domain: &str) -> PrereqResult {
     let d = domain.trim().trim_end_matches('.').to_ascii_lowercase();
@@ -64,7 +64,7 @@ pub async fn check_dns_points_here(domain: &str) -> PrereqResult {
     check_dns_points_at(domain, &server_ip).await
 }
 
-/// [`check_dns_points_here`] against a given address — the one a SPECIFIC site
+/// [`check_dns_points_here`] against a given address - the one a SPECIFIC site
 /// publishes (multi-IP: `services::server_ips::site_dns_address`, which is the
 /// site's own address, or its server's). An empty `expected` is "we don't know
 /// the address", exactly as an undetectable public IP is.

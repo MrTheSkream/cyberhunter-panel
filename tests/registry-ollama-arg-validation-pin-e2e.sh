@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# registry-ollama-arg-validation-pin-e2e.sh — s439
+# registry-ollama-arg-validation-pin-e2e.sh - s439
 #
 # Pins the docker_apps.rs registry_login/ollama_pull/ollama_delete finding
 # named in [[project_dockpanel_tech_debt_p4]] (long-standing INFO carry: "exec
@@ -9,19 +9,19 @@
 # closure ([[project_dockpanel_tech_debt_p176]]): every one of these 4
 # handlers passes an admin-supplied string straight into a `docker`/`ollama`
 # CLI argument via `safe_command(...).args([...])` (no shell, so classic `;`/
-# `|` injection is not reachable — args() passes each token verbatim), but
+# `|` injection is not reachable - args() passes each token verbatim), but
 # `safe_command` does nothing to stop the string ITSELF being read as a CLI
 # FLAG when it lands in argv right where a flag is expected.
 #
 #   §A registry_login had ZERO format validation on `body.server` (only an
 #      emptiness check) before `docker login <server> -u <user>
-#      --password-stdin` — a server starting with `-` is parsed by docker's
+#      --password-stdin` - a server starting with `-` is parsed by docker's
 #      own arg parser as an option in that position, not the registry host.
 #   §B registry_logout had the identical gap on `server` before `docker
 #      logout <server>`.
 #   §C/§D ollama_pull_model/ollama_delete_model already validated length and
 #      character class, but neither rejected a LEADING `-` before `docker
-#      exec <container_id> ollama pull/rm <model>` — the same argv-position
+#      exec <container_id> ollama pull/rm <model>` - the same argv-position
 #      hazard, just missing the one guard `is_valid_image_ref` (used a few
 #      hundred lines away for `change_image`'s `image` field, the established
 #      sibling for this exact threat class in this same file) already has.
@@ -30,7 +30,7 @@
 # crate, matching the fix-precedent of reusing an existing sibling validator
 # instead of inventing a near-duplicate one) rather than a fresh domain
 # validator, because a registry server is commonly `host:port` or a bare
-# single-label host (`localhost:5000`) — shapes `is_valid_domain` (which
+# single-label host (`localhost:5000`) - shapes `is_valid_domain` (which
 # requires a dot and rejects `:`) would incorrectly reject.
 #
 # Pure source analysis: no box, no network, no build.
@@ -40,7 +40,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
 echo
 echo "=============================================="
-echo "  docker_apps.rs registry/ollama arg validation — source pins (s439)"
+echo "  docker_apps.rs registry/ollama arg validation - source pins (s439)"
 echo "=============================================="
 echo
 
@@ -48,7 +48,7 @@ PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); printf '  \033[32m✓\033[0m %s\n' "$1"; }
 bad() { FAIL=$((FAIL+1)); printf '  \033[31m✗\033[0m %s\n' "$1"; }
 
-# Strip comments before matching (per [[feedback_source_pin_prose_trap]] —
+# Strip comments before matching (per [[feedback_source_pin_prose_trap]] -
 # this file's own header spells the tokens the arms grep for).
 code() {
   perl -0777 -pe '
@@ -61,7 +61,7 @@ code() {
 has()  { grep -qE -- "$2" <<< "$1"; }
 flat() { tr '\n' ' ' <<< "$1" | tr -s ' '; }
 
-# A function body, bounded on ITS OWN braces (s323 fix — a window ending at
+# A function body, bounded on ITS OWN braces (s323 fix - a window ending at
 # the successor's match position swallows the next function's declaration).
 fnbody() {
   awk -v fn="$2" '
@@ -88,7 +88,7 @@ else
   if has "$LOGIN" 'is_valid_image_ref\(&body\.server\)'; then
     ok "A1 registry_login validates body.server with is_valid_image_ref"
   else
-    bad "A1 registry_login has no format validation on body.server — a leading '-' is parsed as a docker login flag, not a registry host"
+    bad "A1 registry_login has no format validation on body.server - a leading '-' is parsed as a docker login flag, not a registry host"
   fi
   CHK_AT=$(grep -bo 'is_valid_image_ref(&body.server)' <<< "$LOGIN" | head -1 | cut -d: -f1)
   SPAWN_AT=$(grep -bo '"login"' <<< "$LOGIN" | head -1 | cut -d: -f1)
@@ -109,7 +109,7 @@ else
   if has "$LOGOUT" 'is_valid_image_ref\(server\)'; then
     ok "B1 registry_logout validates server with is_valid_image_ref"
   else
-    bad "B1 registry_logout has no format validation on server — a leading '-' is parsed as a docker logout flag, not a registry host"
+    bad "B1 registry_logout has no format validation on server - a leading '-' is parsed as a docker logout flag, not a registry host"
   fi
   CHK_AT=$(grep -bo 'is_valid_image_ref(server)' <<< "$LOGOUT" | head -1 | cut -d: -f1)
   SPAWN_AT=$(grep -bo '"logout"' <<< "$LOGOUT" | head -1 | cut -d: -f1)
@@ -130,7 +130,7 @@ else
   if has "$PULL" 'model\.starts_with\(.-.\)'; then
     ok "C1 ollama_pull_model rejects a model name starting with '-'"
   else
-    bad "C1 ollama_pull_model has no leading-hyphen guard — a model name starting with '-' is parsed as an ollama pull flag"
+    bad "C1 ollama_pull_model has no leading-hyphen guard - a model name starting with '-' is parsed as an ollama pull flag"
   fi
 fi
 
@@ -144,7 +144,7 @@ else
   if has "$DELETE" 'model\.starts_with\(.-.\)'; then
     ok "D1 ollama_delete_model rejects a model name starting with '-'"
   else
-    bad "D1 ollama_delete_model has no leading-hyphen guard — a model name starting with '-' is parsed as an ollama rm flag"
+    bad "D1 ollama_delete_model has no leading-hyphen guard - a model name starting with '-' is parsed as an ollama rm flag"
   fi
 fi
 
@@ -152,7 +152,7 @@ fi
 # Same threat class, same file, different call: the charset check at
 # `remove_image` allowed every character `docker rmi --help` needs, so
 # `DELETE /apps/images/--help` ran that flag and returned success:true with
-# no guard at all — 0 hits for `rmi` in this suite before the fix.
+# no guard at all - 0 hits for `rmi` in this suite before the fix.
 # [[project_dockpanel_tech_debt_p185]] §D.
 
 REMOVE_IMG=$(flat "$(fnbody "$APPS_SRC" "remove_image")")
@@ -163,7 +163,7 @@ else
   if has "$REMOVE_IMG" 'id\.starts_with\(.-.\)'; then
     ok "E1 remove_image rejects an image id starting with '-'"
   else
-    bad "E1 remove_image has no leading-hyphen guard — an id starting with '-' is parsed as a docker rmi flag"
+    bad "E1 remove_image has no leading-hyphen guard - an id starting with '-' is parsed as a docker rmi flag"
   fi
   CHK_AT=$(grep -bo "id.starts_with('-')" <<< "$REMOVE_IMG" | head -1 | cut -d: -f1)
   SPAWN_AT=$(grep -bo '"rmi"' <<< "$REMOVE_IMG" | head -1 | cut -d: -f1)
@@ -178,7 +178,7 @@ fi
 # Different threat class from §A-E (not an argv-injection guard) but same
 # file, same "an admin-reachable docker verb takes an unsafe flag" shape:
 # `-a` on `image prune` reaches every image not backing a running container,
-# not just dangling ones — including git-deploy rollback targets
+# not just dangling ones - including git-deploy rollback targets
 # (`dockpanel-git-<name>:<hash>`, no pull fallback) and manual snapshots
 # (`dockpanel-snapshot:*`), neither re-pullable. The project's own C4 rule
 # for the UNATTENDED reclaim (`tests/unattended-host-scope-pin-e2e.sh`)
@@ -191,14 +191,14 @@ if [ -z "$PRUNE" ]; then
 else
   ok "F0 docker_apps::prune_images_all extracted"
   if has "$PRUNE" '"image", *"prune", *"-af"|"image", *"prune", *"-a"'; then
-    bad "F1 prune_images_all passes -a — it can remove a locally built image with no registry to restore from"
+    bad "F1 prune_images_all passes -a - it can remove a locally built image with no registry to restore from"
   else
     ok "F1 prune_images_all never passes -a"
   fi
   if has "$PRUNE" 'label!=dockpanel\.managed=true'; then
     ok "F2 prune_images_all filters on the same dockpanel.managed label as the scoped reclaim"
   else
-    bad "F2 prune_images_all has no label filter — diverges from the scoped reclaim's own C4 precedent"
+    bad "F2 prune_images_all has no label filter - diverges from the scoped reclaim's own C4 precedent"
   fi
 fi
 

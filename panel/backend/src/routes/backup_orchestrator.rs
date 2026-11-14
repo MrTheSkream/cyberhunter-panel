@@ -71,7 +71,7 @@ where
 
 /// Body of PUT /policies/{id}. Separate from [`CreatePolicyRequest`] because on
 /// create an absent field means "use the default", while on update it means
-/// "leave it as it is" — the same `None` standing for two different intentions
+/// "leave it as it is" - the same `None` standing for two different intentions
 /// is what made this endpoint destructive.
 #[derive(serde::Deserialize)]
 pub struct UpdatePolicyRequest {
@@ -111,7 +111,7 @@ pub struct DatabaseBackup {
     pub db_name: String,
     pub encrypted: bool,
     /// Which `derive_backup_encryption_key_for_version` derivation actually
-    /// produced this file's passphrase — restore MUST use this, not
+    /// produced this file's passphrase - restore MUST use this, not
     /// `CURRENT_BACKUP_KEY_VERSION`, or a backup written under an older
     /// derivation becomes permanently unrestorable the moment the
     /// derivation changes again.
@@ -236,7 +236,7 @@ pub struct BackupHealth {
     pub verify_lag_p95_hours: Option<f64>,
     pub per_server_sla: Vec<ServerSla>,
     /// The SLA figures above could not be computed. Zeroes then mean "not
-    /// measured", NOT "nothing to measure" — the two render identically
+    /// measured", NOT "nothing to measure" - the two render identically
     /// otherwise, and for six releases the card showed its empty state on every
     /// install because a query referenced a column that does not exist.
     pub sla_unavailable: bool,
@@ -264,11 +264,11 @@ pub struct ServerSla {
     pub lag_p95_hours: Option<f64>,
 }
 
-/// GET /api/backup-orchestrator/all — Unified fleet-wide backup list across site, database, and volume backups.
+/// GET /api/backup-orchestrator/all - Unified fleet-wide backup list across site, database, and volume backups.
 ///
 /// Scoped, not truly fleet-wide despite the name: an admin sees the local server plus any
 /// server THEY registered, same predicate `list_volume_backups`/`chain_report` use (v2.184.0
-/// / this session). Before this fix `AdminUser` alone gated it — a flat, unscoped CTE handing
+/// / this session). Before this fix `AdminUser` alone gated it - a flat, unscoped CTE handing
 /// every admin account the backup ids and resource names (site domains, db/container:volume
 /// names, filenames, sizes) of the ENTIRE fleet, including servers another admin registered.
 /// That id was also the exact discovery channel a caller needed to walk into the (now also
@@ -276,7 +276,7 @@ pub struct ServerSla {
 ///
 /// Optional filters: `kind` (site|database|volume) and `server_id`.
 /// Site backups derive their server via `sites.server_id`; database and volume backups carry
-/// `server_id` directly (nullable — a NULL row predates the fleet backfill and is treated as
+/// `server_id` directly (nullable - a NULL row predates the fleet backfill and is treated as
 /// local, matching the COALESCE default below; it is visible to every admin the same as any
 /// other local-server row, never scoped away).
 pub async fn list_all_backups(
@@ -361,8 +361,8 @@ pub async fn list_all_backups(
     Ok(Json(UnifiedBackupsResponse { items, total }))
 }
 
-/// GET /api/backup-orchestrator/health — Global backup health dashboard.
-/// GET /api/backup-orchestrator/preflight — Backup prerequisites.
+/// GET /api/backup-orchestrator/health - Global backup health dashboard.
+/// GET /api/backup-orchestrator/preflight - Backup prerequisites.
 ///
 /// Answers the question the Overview tab could not: will any of this survive
 /// losing the machine? One result per enabled policy, plus the prior question of
@@ -422,7 +422,7 @@ pub async fn health(
     let (total_vol,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM volume_backups")
         .fetch_one(db).await.map_err(|e| internal_error("health", e))?;
 
-    // SUM(BIGINT) returns NUMERIC in postgres — cast back to bigint so sqlx can
+    // SUM(BIGINT) returns NUMERIC in postgres - cast back to bigint so sqlx can
     // decode into Option<i64>. Empty rowsets give NULL, populated ones used to
     // 500 with "INT8 not compatible with NUMERIC" until this cast was added.
     let (site_storage,): (Option<i64>,) = sqlx::query_as("SELECT SUM(size_bytes)::bigint FROM backups")
@@ -455,13 +455,13 @@ pub async fn health(
     // Find stale sites (no backup in > 7 days)
     //
     // The join admits only archives that landed where they were meant to. An
-    // upload that exhausted its retries still writes a row — that row is what
-    // makes the local file reapable — but it is not off-site, so counting it as
+    // upload that exhausted its retries still writes a row - that row is what
+    // makes the local file reapable - but it is not off-site, so counting it as
     // a fresh backup would quietly disarm this list for exactly the site whose
     // destination is down.
     //
     // `last_backup` is Option because the HAVING clause deliberately admits sites
-    // that have NEVER been backed up — those are the ones that matter most — and
+    // that have NEVER been backed up - those are the ones that matter most - and
     // a LEFT JOIN miss makes MAX() NULL. Decoding that into a bare DateTime made
     // `fetch_all` fail on the FIRST row (NULLS FIRST sorts them to the front),
     // and `unwrap_or_default` then blanked the entire warning, including the
@@ -494,7 +494,7 @@ pub async fn health(
     // "Of the last N backups across all kinds, how many are verified?"
     // Latest verification per (kind, backup_id) wins (re-verifications supersede).
     const SLA_WINDOW: i64 = 30;
-    // `backups` has NO server_id column — a site reaches its server through
+    // `backups` has NO server_id column - a site reaches its server through
     // `sites`, exactly as the unified list query above does. Selecting it
     // directly made this statement fail at PLAN time, on every request, on every
     // install, from the day the card shipped.
@@ -666,7 +666,7 @@ pub async fn health(
 
 // ── Policies CRUD ───────────────────────────────────────────────────────────
 
-/// GET /api/backup-orchestrator/policies — List policies.
+/// GET /api/backup-orchestrator/policies - List policies.
 pub async fn list_policies(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -683,7 +683,7 @@ pub async fn list_policies(
     Ok(Json(policies))
 }
 
-/// POST /api/backup-orchestrator/policies — Create a policy.
+/// POST /api/backup-orchestrator/policies - Create a policy.
 pub async fn create_policy(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -741,7 +741,7 @@ pub async fn create_policy(
     Ok((StatusCode::CREATED, Json(policy)))
 }
 
-/// PUT /api/backup-orchestrator/policies/{id} — Update a policy.
+/// PUT /api/backup-orchestrator/policies/{id} - Update a policy.
 pub async fn update_policy(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -767,7 +767,7 @@ pub async fn update_policy(
     let server_id = req.server_id.unwrap_or(cur_server_id);
     let destination_id = req.destination_id.unwrap_or(cur_destination_id);
     // `unwrap_or(7)` here meant an edit that did not mention retention silently
-    // reset it to seven — the same reset-on-omission class as the two above.
+    // reset it to seven - the same reset-on-omission class as the two above.
     let retention = req.retention_count.unwrap_or(cur_retention).max(1).min(365);
 
     if let Some(s) = &req.schedule {
@@ -820,7 +820,7 @@ pub async fn update_policy(
     Ok(Json(policy))
 }
 
-/// DELETE /api/backup-orchestrator/policies/{id} — Delete a policy.
+/// DELETE /api/backup-orchestrator/policies/{id} - Delete a policy.
 pub async fn delete_policy(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -839,7 +839,7 @@ pub async fn delete_policy(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// POST /api/backup-orchestrator/policies/protect-all — Create a backup-everything policy.
+/// POST /api/backup-orchestrator/policies/protect-all - Create a backup-everything policy.
 pub async fn protect_all(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -900,7 +900,7 @@ pub struct CreateDbBackupRequest {
     pub database_id: Uuid,
 }
 
-/// POST /api/backup-orchestrator/db-backup — Create a database backup.
+/// POST /api/backup-orchestrator/db-backup - Create a database backup.
 pub async fn create_db_backup(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -923,12 +923,12 @@ pub async fn create_db_backup(
     // join above reads `s.server_id` and the INSERT below stamps the new row with it,
     // while the dump itself went to whatever agent the caller's server switcher named
     // (an HTTP header with a local-agent fallback). So the archive was written on host
-    // A and the row claimed host B — a guaranteed lie the moment the two disagree, and
+    // A and the row claimed host B - a guaranteed lie the moment the two disagree, and
     // three consumers read that column to decide where to act: the verifier
     // (`services/backup_verifier.rs`) looks for the file on the named host, the drill
     // scheduler (`services/drill_scheduler.rs`) restores from it there, and the
     // retention pruner in `services/auto_healer.rs` only unlinks a path on the host the
-    // row names — so a mislabelled archive is never verified, never drilled, and never
+    // row names - so a mislabelled archive is never verified, never drilled, and never
     // pruned, and it grows on a machine nothing is watching.
     //
     // The credential is the sharper half: the body below carries this database's
@@ -938,7 +938,7 @@ pub async fn create_db_backup(
     //
     // `backup_policy_executor` runs this exact dump from the same join and has always
     // resolved `agents.for_server(s.server_id)` for it. The scheduled path was right and
-    // the operator-pressed button never adopted it — that asymmetry is the whole defect.
+    // the operator-pressed button never adopted it - that asymmetry is the whole defect.
     let agent = crate::helpers::agent_for_site_server(
         &state, server_id, &format!("database {db_name}"),
     ).await?;
@@ -949,7 +949,7 @@ pub async fn create_db_backup(
     // Container name follows convention: dockpanel-db-{name}
     let container_name = format!("dockpanel-db-{db_name}");
 
-    // Manual (ad-hoc) DB backups are not encrypted: there is no manual-encryption toggle —
+    // Manual (ad-hoc) DB backups are not encrypted: there is no manual-encryption toggle -
     // only policy-driven backups encrypt (via backup_policy_executor). The previous read of
     // backup_destinations.encryption_key was dead (nothing writes that column) and always
     // yielded None, so this preserves the actual behavior while removing the phantom query and
@@ -974,7 +974,7 @@ pub async fn create_db_backup(
     let size_bytes = result.get("size_bytes").and_then(|v| v.as_u64()).unwrap_or(0) as i64;
     let encrypted = encryption_key.is_some();
 
-    // v2.8.2: integrity chain — same pattern as routes/backups.rs for site backups.
+    // v2.8.2: integrity chain - same pattern as routes/backups.rs for site backups.
     let sha256_hash = result.get("sha256").and_then(|v| v.as_str()).unwrap_or("").to_string();
     let previous_hash: Option<String> = sqlx::query_scalar::<_, Option<String>>(
         "SELECT sha256_hash FROM database_backups WHERE database_id = $1 ORDER BY created_at DESC LIMIT 1"
@@ -1008,7 +1008,7 @@ pub async fn create_db_backup(
     }))))
 }
 
-/// GET /api/backup-orchestrator/db-backups — List database backups.
+/// GET /api/backup-orchestrator/db-backups - List database backups.
 pub async fn list_db_backups(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -1028,7 +1028,7 @@ pub async fn list_db_backups(
     Ok(Json(backups))
 }
 
-/// DELETE /api/backup-orchestrator/db-backups/{id} — Delete a database backup.
+/// DELETE /api/backup-orchestrator/db-backups/{id} - Delete a database backup.
 pub async fn delete_db_backup(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -1051,13 +1051,13 @@ pub async fn delete_db_backup(
     }
 
     // Unlink the archive on the host that HOLDS it, which is the host its own row
-    // names — not the one the caller's server switcher happened to be pointing at.
+    // names - not the one the caller's server switcher happened to be pointing at.
     // The `SELECT db.*` above already loaded `server_id`; only the dispatch ignored it.
     // Deleting through the caller's scope asked some other machine to unlink a path it
     // never had, and the DELETE below then ran regardless: the real archive survived
     // with its only record destroyed, invisible to the retention pruner that would
-    // eventually have reclaimed it. Where the same dump name exists on both hosts —
-    // policy-driven dumps are named per database, so it does — the wrong machine's
+    // eventually have reclaimed it. Where the same dump name exists on both hosts -
+    // policy-driven dumps are named per database, so it does - the wrong machine's
     // backup was destroyed instead.
     let agent = crate::helpers::agent_for_site_server(
         &state, backup.server_id, &format!("database {}", backup.db_name),
@@ -1075,7 +1075,7 @@ pub async fn delete_db_backup(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// POST /api/backup-orchestrator/db-backups/{id}/restore — Restore a database from backup.
+/// POST /api/backup-orchestrator/db-backups/{id}/restore - Restore a database from backup.
 pub async fn restore_db_backup(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -1098,7 +1098,7 @@ pub async fn restore_db_backup(
     // the dump off its own disk and pipes it into its own `dockpanel-db-{name}`
     // container, so source and destination are the same machine by construction. That
     // is precisely why taking it from the caller's scope was destructive rather than
-    // merely wrong — a container of that name answers on every host that runs this
+    // merely wrong - a container of that name answers on every host that runs this
     // database, and the name is unique only per site. The caller's machine would find
     // a container, find a dump beside it, and overwrite a live database the operator
     // was not even looking at, then report success. Pinning to `backup.server_id`
@@ -1127,8 +1127,8 @@ pub async fn restore_db_backup(
 
     // Get encryption key if backup is encrypted. Policy-encrypted DB backups are encrypted by
     // backup_policy_executor with a key derived from the process JWT secret; the restore MUST
-    // use the SAME derivation. The previous code read backup_destinations.encryption_key — a
-    // column nothing ever writes — so every encrypted-backup restore 400'd and DR was silently
+    // use the SAME derivation. The previous code read backup_destinations.encryption_key - a
+    // column nothing ever writes - so every encrypted-backup restore 400'd and DR was silently
     // broken in encrypted mode (lesson #70).
     //
     // ⚠ s434: uses the row's OWN `encryption_key_version`, not
@@ -1136,7 +1136,7 @@ pub async fn restore_db_backup(
     // changed once already (a leaky v1 → a safe v2, see
     // `secrets_crypto::derive_backup_encryption_key_v2`'s doc), and a backup
     // written under v1 stays restorable only if restore reproduces v1 for
-    // THAT row specifically — reading `CURRENT_BACKUP_KEY_VERSION` here would
+    // THAT row specifically - reading `CURRENT_BACKUP_KEY_VERSION` here would
     // silently derive the WRONG passphrase for every backup older than
     // whatever the derivation happens to be today.
     let encryption_key: Option<String> = if backup.encrypted {
@@ -1167,7 +1167,7 @@ pub async fn restore_db_backup(
 
     let agent_path = format!("/db-backups/{}/restore/{}", backup.db_name, backup.filename);
     // `post` and not `post_long` was a 60-second budget on an operation the agent gives
-    // 600 (agent/src/services/database_backup.rs), on both transports — the local client
+    // 600 (agent/src/services/database_backup.rs), on both transports - the local client
     // times out at 60s and the remote reqwest client defaults to the same. Any restore of
     // a database bigger than a toy therefore reported `agent request timed out after 60s`,
     // which `agent_error` turns into a bare incident id, WHILE THE RESTORE CARRIED ON
@@ -1214,7 +1214,7 @@ pub struct CreateVolumeBackupRequest {
     pub volume_name: String,
 }
 
-/// POST /api/backup-orchestrator/volume-backup — Create a volume backup.
+/// POST /api/backup-orchestrator/volume-backup - Create a volume backup.
 pub async fn create_volume_backup(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -1241,7 +1241,7 @@ pub async fn create_volume_backup(
     let size_bytes = result.get("size_bytes").and_then(|v| v.as_u64()).unwrap_or(0) as i64;
 
     // The row records the server the archive was actually written on, which is the
-    // one `ServerScope` just resolved the agent for — NOT "some online server".
+    // one `ServerScope` just resolved the agent for - NOT "some online server".
     // Picking an arbitrary row here labelled the backup with a host that never held
     // it, and two background services read this column to decide where to act: the
     // verifier looks for the file there, and the drill scheduler restores from it.
@@ -1277,7 +1277,7 @@ pub async fn create_volume_backup(
     }))))
 }
 
-/// GET /api/backup-orchestrator/volume-backups — List volume backups.
+/// GET /api/backup-orchestrator/volume-backups - List volume backups.
 pub async fn list_volume_backups(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -1287,7 +1287,7 @@ pub async fn list_volume_backups(
 
     // Scoped the same way `restore_volume_backup` below scopes its own lookup:
     // this machine, or a server this operator added. Before this fix the query
-    // was a flat, unfiltered `SELECT *` — every admin account's volume-backup
+    // was a flat, unfiltered `SELECT *` - every admin account's volume-backup
     // metadata (container/volume names, filenames, sizes, hashes, server_id)
     // was visible to every OTHER admin account, unlike the sibling
     // `list_db_backups` above, which has always scoped by `s.user_id`. A row
@@ -1306,7 +1306,7 @@ pub async fn list_volume_backups(
     Ok(Json(backups))
 }
 
-/// POST /api/backup-orchestrator/volume-backups/{id}/restore — Restore a volume from backup.
+/// POST /api/backup-orchestrator/volume-backups/{id}/restore - Restore a volume from backup.
 pub async fn restore_volume_backup(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -1316,23 +1316,23 @@ pub async fn restore_volume_backup(
     // Look up the volume backup record, scoped to the machines this operator runs.
     //
     // The scope has to land in the SAME commit as the body fix below, and that
-    // ordering is the whole point. Until now this route could not succeed at all —
+    // ordering is the whole point. Until now this route could not succeed at all -
     // it sent no request body, so the agent's `Json` extractor answered 415 before
-    // any handler ran — and a route that always fails closed hides whatever else is
+    // any handler ran - and a route that always fails closed hides whatever else is
     // wrong with it. Fixing only the body would have made an unscoped restore work
     // for the first time: `volume_backups` has no owner column, only `server_id`,
     // and the agent is resolved from that row, so any administrator could unpack a
     // backup over a live volume on a server somebody else registered.
     //
     // The predicate is the one `SITE_CALLER_PREDICATE`'s admin arm draws and
-    // `approve_deploy` reuses — this machine, or a server this operator added — and
+    // `approve_deploy` reuses - this machine, or a server this operator added - and
     // `u.role` is read from the DATABASE, not from `claims.role`, because a JWT
     // keeps asserting the role it was minted with until it expires.
     //
     // A NULL `server_id` (a row predating the fleet backfill) no longer reaches the
     // 409 below: it cannot satisfy the scope, so it 404s here. Refusing it earlier
-    // is the same answer for the same reason — there is no safe guess about which
-    // machine's volume to overwrite — and it also stops the id of a backup on
+    // is the same answer for the same reason - there is no safe guess about which
+    // machine's volume to overwrite - and it also stops the id of a backup on
     // another operator's server from being distinguishable from one that does not.
     let backup: Option<VolumeBackup> = sqlx::query_as(
         "SELECT * FROM volume_backups vb WHERE vb.id = $1 AND EXISTS (\
@@ -1350,7 +1350,7 @@ pub async fn restore_volume_backup(
     // a tar from its own disk straight over its own Docker volume. So `server_id`
     // governs both ends, and `create_volume_backup` above deliberately records the host
     // that actually wrote the archive for exactly this reader. Restoring through the
-    // caller's scope did NOT merely fail to find the file — policy-driven volume
+    // caller's scope did NOT merely fail to find the file - policy-driven volume
     // archives are named per container and volume, so an identically-named tar sits on
     // every host running that container, and the caller's machine would happily unpack
     // ITS OWN archive over ITS OWN live volume: a restore nobody requested, on a server
@@ -1370,7 +1370,7 @@ pub async fn restore_volume_backup(
     // agent transport sets that header when the body is `None`
     // (`services/agent.rs` sets it only `if body.is_some()`, and the remote twin
     // only calls `.json()` inside `if let Some(b)`). So every call this route has
-    // ever made was refused in the transport layer — the sibling `restore_db_backup`
+    // ever made was refused in the transport layer - the sibling `restore_db_backup`
     // passes `Some(body)` and worked, which is the asymmetry that hid it.
     //
     // The volume drill cannot catch this: `services/backup_drill.rs` re-implements
@@ -1416,7 +1416,7 @@ pub async fn restore_volume_backup(
 /// Resolve the host a stored backup actually lives on, from the backup's own row.
 ///
 /// Verify and drill are the two endpoints that take nothing but `(backup_type,
-/// backup_id)` — no site, no database, no container — so there was nothing in the
+/// backup_id)` - no site, no database, no container - so there was nothing in the
 /// request to pin a host to and both simply used whatever agent `ServerScope` handed
 /// over. That reads one machine's disk looking for another machine's archive. For a
 /// verification the result is a `failed` row that says more about the caller's server
@@ -1424,7 +1424,7 @@ pub async fn restore_volume_backup(
 /// though the archive were bad. For a drill it is worse: a drill RESTORES.
 ///
 /// The lookup is a deliberate extra round-trip taken BEFORE the tracking row is
-/// inserted — the same ordering `services/backup_verifier.rs::verify_one` spells out and
+/// inserted - the same ordering `services/backup_verifier.rs::verify_one` spells out and
 /// for the same reason: a row written `running` against a host we then decline to reach
 /// is a permanent record of work that never happened, and the sweeper's driving queries
 /// skip any backup that already has one.
@@ -1438,7 +1438,7 @@ async fn agent_for_backup(
     backup_type: &str,
     backup_id: Uuid,
 ) -> Result<(Option<Uuid>, crate::services::agent::AgentHandle), ApiError> {
-    // `backups` carries no server_id of its own — a site backup reaches its host through
+    // `backups` carries no server_id of its own - a site backup reaches its host through
     // the site, the same hop the unified list and the SLA queries above already make.
     let sql = match backup_type {
         "site" => "SELECT s.server_id FROM backups b JOIN sites s ON s.id = b.site_id WHERE b.id = $1",
@@ -1465,14 +1465,14 @@ pub struct VerifyRequest {
     pub backup_id: Uuid,
 }
 
-/// POST /api/backup-orchestrator/verify — Trigger backup verification.
+/// POST /api/backup-orchestrator/verify - Trigger backup verification.
 pub async fn trigger_verify(
     State(state): State<AppState>,
     AdminUser(_claims): AdminUser,
     Json(req): Json<VerifyRequest>,
 ) -> Result<(StatusCode, Json<BackupVerification>), ApiError> {
     // Read the archive on the host that holds it, resolved from the backup's own row.
-    // The agent used to come from `ServerScope` — and the row below was then stamped
+    // The agent used to come from `ServerScope` - and the row below was then stamped
     // with that same scope, so the record and the work agreed with each other while
     // both pointed at a machine chosen by a request header. `backup_verifier.rs`, the
     // scheduled half of this very feature, has always resolved `for_server(server_id)`
@@ -1588,7 +1588,7 @@ pub async fn trigger_verify(
     Ok((StatusCode::ACCEPTED, Json(verification)))
 }
 
-/// GET /api/backup-orchestrator/storage-history — Backup storage growth over time (last 30 days).
+/// GET /api/backup-orchestrator/storage-history - Backup storage growth over time (last 30 days).
 pub async fn storage_history(
     State(state): State<AppState>,
     AdminUser(_claims): AdminUser,
@@ -1622,7 +1622,7 @@ pub async fn storage_history(
     Ok(Json(result))
 }
 
-/// GET /api/backup-orchestrator/verifications — List verifications.
+/// GET /api/backup-orchestrator/verifications - List verifications.
 pub async fn list_verifications(
     State(state): State<AppState>,
     AdminUser(_claims): AdminUser,
@@ -1648,7 +1648,7 @@ pub struct DrillRequest {
     pub backup_id: Uuid,
 }
 
-/// POST /api/backup-orchestrator/drill — Trigger an on-demand backup drill.
+/// POST /api/backup-orchestrator/drill - Trigger an on-demand backup drill.
 /// Supports `backup_type = "site"` (W1.2.a), `"database"` (W1.2.b),
 /// and `"volume"` (W1.2.c).
 pub async fn trigger_drill(
@@ -1664,7 +1664,7 @@ pub async fn trigger_drill(
     // nowhere else. Driven by `ServerScope` this reached for one machine's archive on
     // another: with site backups it merely failed, but policy-driven database and volume
     // archives are named deterministically per resource, so an identically-named file
-    // sits on every host running that resource — and the caller's machine would find it,
+    // sits on every host running that resource - and the caller's machine would find it,
     // restore ITS OWN archive over ITS OWN live data, and report the result under the
     // server the operator had selected. `drill_scheduler.rs::dispatch_policy_drills`
     // resolves `for_server(row.server_id)` and refuses rather than substituting, with the
@@ -1674,7 +1674,7 @@ pub async fn trigger_drill(
 
     // Insert pending drill record so the UI gets immediate feedback. `server_id` is
     // bound now that one is known: `drill_scheduler`'s concurrency guard counts running
-    // drills BY SERVER, and a NULL from this handler was invisible to it — an
+    // drills BY SERVER, and a NULL from this handler was invisible to it - an
     // operator-pressed drill could not hold off the scheduled one, so two restores could
     // land on the same host at once. It also fills the Server column the drills table
     // renders, which was blank for every manually triggered row.
@@ -1693,7 +1693,7 @@ pub async fn trigger_drill(
 
     // Run drill async. Uses post_long: a plain `post` caps the whole round trip at 60s,
     // but the agent-side restore this triggers is budgeted 220s (database) to 360s
-    // (volume: 300s restore + 60s probe) — see drill_scheduler.rs's identical fix for the
+    // (volume: 300s restore + 60s probe) - see drill_scheduler.rs's identical fix for the
     // scheduled path, which this on-demand button shares the same underlying agent
     // handlers with.
     tokio::spawn(async move {
@@ -1797,7 +1797,7 @@ pub struct DrillsResponse {
     pub total: i64,
 }
 
-/// GET /api/backup-orchestrator/drills — List drills (paginated).
+/// GET /api/backup-orchestrator/drills - List drills (paginated).
 pub async fn list_drills(
     State(state): State<AppState>,
     AdminUser(_claims): AdminUser,
@@ -1839,7 +1839,7 @@ pub struct ChainReportBackup {
     pub sha256_hash: Option<String>,
     pub previous_hash: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
-    // Kind-specific extras — exactly one set is populated, the others are None.
+    // Kind-specific extras - exactly one set is populated, the others are None.
     pub site_id: Option<Uuid>,
     pub database_id: Option<Uuid>,
     pub container_id: Option<String>,
@@ -1874,7 +1874,7 @@ pub struct ChainReportDrill {
 }
 
 // No validity verdict here, deliberately. `chain_valid` is written TRUE by every
-// one of its seven INSERTs — five literal, two by column default — is UPDATEd
+// one of its seven INSERTs - five literal, two by column default - is UPDATEd
 // nowhere, and no verifier exists that could ever compute it: `previous_hash` is
 // copied out of the newest row rather than recomputed from the predecessor
 // artifact. A verdict this document cannot evaluate has no business being
@@ -1913,7 +1913,7 @@ fn parse_chain_kind(kind: &str) -> Result<&'static str, ApiError> {
 ///
 /// v2.8.2: refactored from build_site_chain_report. Backup-row shape varies
 /// per kind so each branch issues its own SELECT; the verifications/drills
-/// queries are uniform — they just take `backup_type` as a parameter.
+/// queries are uniform - they just take `backup_type` as a parameter.
 async fn build_chain_report(
     state: &AppState,
     kind: &'static str,
@@ -1921,13 +1921,13 @@ async fn build_chain_report(
     caller_id: Uuid,
 ) -> Result<ChainReport, ApiError> {
     // Every branch below joins `servers` and scopes by `sv.is_local OR sv.user_id =
-    // caller_id` — the same predicate `list_volume_backups`/`restore_volume_backup`
+    // caller_id` - the same predicate `list_volume_backups`/`restore_volume_backup`
     // already established for this exact fleet (v2.184.0). Before this fix `AdminUser`
     // alone gated these two handlers, and every query here was a bare `WHERE id = $1`:
     // any admin could pull another admin's backup provenance (site domain, db/container
-    // names, filenames, full hash chain, every verification and drill) as JSON or PDF —
+    // names, filenames, full hash chain, every verification and drill) as JSON or PDF -
     // the same bug `list_all_backups` below carries, just reached through a different
-    // route. A `server_id` predating the fleet backfill (NULL, database/volume only —
+    // route. A `server_id` predating the fleet backfill (NULL, database/volume only -
     // `sites.server_id` is NOT NULL) fails closed via the JOIN rather than falling back
     // to "visible to nobody in particular", matching the established precedent.
     let backup = match kind {
@@ -2024,7 +2024,7 @@ async fn build_chain_report(
                 db_type: None,
             }
         }
-        // parse_chain_kind already gates this — defensive only.
+        // parse_chain_kind already gates this - defensive only.
         _ => return Err(err(StatusCode::BAD_REQUEST, "Unsupported backup kind")),
     };
 
@@ -2119,7 +2119,7 @@ fn slug(s: &str) -> String {
     out.trim_matches('-').to_string()
 }
 
-/// GET /api/backup-orchestrator/chain-report/{kind}/{id} — Chain-of-trust
+/// GET /api/backup-orchestrator/chain-report/{kind}/{id} - Chain-of-trust
 /// JSON for one backup of any kind (site | database | volume). Single
 /// artifact, full provenance chain (backup integrity hashes + every
 /// verification + every restore drill).
@@ -2133,7 +2133,7 @@ pub async fn chain_report_json(
     Ok(Json(report))
 }
 
-/// GET /api/backup-orchestrator/chain-report/{kind}/{id}/pdf — Chain-of-trust
+/// GET /api/backup-orchestrator/chain-report/{kind}/{id}/pdf - Chain-of-trust
 /// PDF rendered via typst. First call lazy-installs typst into
 /// /var/lib/dockpanel/typst (~30MB, one-time). 503 if install/compile fails.
 pub async fn chain_report_pdf(

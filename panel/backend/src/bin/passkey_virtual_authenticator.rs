@@ -1,12 +1,12 @@
 //! A standalone WebAuthn client+authenticator, independent of the server's own
 //! implementation, that drives the REAL passkey HTTP ceremony end to end
-//! against a running dockpanel-api — the harness §G4 of
+//! against a running dockpanel-api - the harness §G4 of
 //! `tests/passkey-ceremony-pin-e2e.sh` named as the missing proof for the
 //! `uv_capable` fix: "needs a `uv` column and a virtual-authenticator harness
 //! to prove the flip."
 //!
 //! It does NOT call any internal server function or read the database
-//! directly — it only holds P-256 keypairs and constructs the exact bytes a
+//! directly - it only holds P-256 keypairs and constructs the exact bytes a
 //! real browser + hardware authenticator would produce (CBOR attestation
 //! object, WebAuthn authenticatorData, DER-signed assertions), then talks to
 //! the public API. That is what makes this a proof of the *enforcement*
@@ -28,7 +28,7 @@
 //!    verify its holder is not newly locked out by this ship.
 //!
 //! Run via `tests/passkey-uv-enforcement-e2e.sh`, which builds and invokes
-//! this binary against a live local instance — matching how
+//! this binary against a live local instance - matching how
 //! `nginx-headers-pin-e2e.sh`/`update-rollback-pin-e2e.sh` are this repo's
 //! other EXECUTE-class pin suites, per `reference_dockpanel_ops`.
 
@@ -36,7 +36,7 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use p256::ecdsa::{signature::Signer, Signature, SigningKey, VerifyingKey};
 // `p256`'s `ecdsa` 0.16 pulls in `rand_core` 0.6 (its `CryptoRngCore` bound),
 // which is a DIFFERENT major version than the `rand = "0.9"` crate this
-// backend otherwise uses — `rand::rng()`'s `ThreadRng` does not implement the
+// backend otherwise uses - `rand::rng()`'s `ThreadRng` does not implement the
 // 0.6 traits. Use p256's own re-exported RNG for key generation; `rand`'s
 // `RngCore` is still fine for filling plain credential-id bytes below.
 use p256::elliptic_curve::rand_core::OsRng as P256OsRng;
@@ -89,7 +89,7 @@ impl VirtualAuthenticator {
         URL_SAFE_NO_PAD.encode(&self.credential_id)
     }
 
-    /// COSE_Key CBOR for this authenticator's public key — kty=EC2(2),
+    /// COSE_Key CBOR for this authenticator's public key - kty=EC2(2),
     /// crv=P-256(1), alg=ES256(-7), plus the x/y coordinates
     /// `parse_cose_p256_key` actually reads.
     fn cose_public_key(&self) -> Vec<u8> {
@@ -109,7 +109,7 @@ impl VirtualAuthenticator {
     }
 
     /// Registration-shaped authenticatorData: rpIdHash‖flags‖signCount‖aaguid‖
-    /// credIdLen‖credId‖COSE key. `uv` selects whether the UV flag is set —
+    /// credIdLen‖credId‖COSE key. `uv` selects whether the UV flag is set -
     /// this is the ONLY thing distinguishing the two credentials in this file.
     fn registration_auth_data(&self, rp_id_hash: &[u8; 32], uv: bool, sign_count: u32) -> Vec<u8> {
         let mut flags = UP | AT;
@@ -118,14 +118,14 @@ impl VirtualAuthenticator {
         out.extend_from_slice(rp_id_hash);
         out.push(flags);
         out.extend_from_slice(&sign_count.to_be_bytes());
-        out.extend_from_slice(&[0u8; 16]); // aaguid — value is unchecked by the server
+        out.extend_from_slice(&[0u8; 16]); // aaguid - value is unchecked by the server
         out.extend_from_slice(&(self.credential_id.len() as u16).to_be_bytes());
         out.extend_from_slice(&self.credential_id);
         out.extend_from_slice(&self.cose_public_key());
         out
     }
 
-    /// Assertion-shaped authenticatorData: just the fixed 37-byte header — no
+    /// Assertion-shaped authenticatorData: just the fixed 37-byte header - no
     /// attested-credential-data block, matching a real `.get()` ceremony.
     fn assertion_auth_data(&self, rp_id_hash: &[u8; 32], uv: bool, sign_count: u32) -> Vec<u8> {
         let mut flags = UP;
@@ -210,7 +210,7 @@ async fn main() {
     let email = std::env::var("DOCKPANEL_TEST_EMAIL").unwrap_or_else(|_| "admin@dockpanel.dev".into());
     let password = std::env::var("DOCKPANEL_TEST_PASSWORD").unwrap_or_else(|_| "testpassword".into());
     // Matches get_rp_id_from_headers' Origin-header fallback (this box has no
-    // BASE_URL configured) — an explicit Origin makes the derivation
+    // BASE_URL configured) - an explicit Origin makes the derivation
     // deterministic instead of depending on how the HTTP client fills Host.
     let origin = "https://127.0.0.1".to_string();
     let rp_id_hash = rp_id_hash_for("127.0.0.1");
@@ -221,17 +221,17 @@ async fn main() {
     let mut bad = |msg: &str| { fail += 1; println!("  \x1b[31m\u{2717}\x1b[0m {msg}"); };
 
     println!("==============================================");
-    println!("  Passkey UV enforcement — virtual authenticator");
+    println!("  Passkey UV enforcement - virtual authenticator");
     println!("==============================================\n");
 
     let token = match login(&base, &origin, &email, &password).await {
         Ok(t) => t,
-        Err(e) => { eprintln!("FATAL: could not log in ({e}) — is dockpanel-api running at {base}?"); std::process::exit(2); }
+        Err(e) => { eprintln!("FATAL: could not log in ({e}) - is dockpanel-api running at {base}?"); std::process::exit(2); }
     };
     let ctx = Ctx { base: base.clone(), origin: origin.clone(), client: reqwest::Client::new(), token };
 
     // This box is a real (demo) admin account, so every credential this
-    // binary plants is removed again before exit, success or failure — see
+    // binary plants is removed again before exit, success or failure - see
     // the cleanup block at the bottom, which always runs.
     let mut created_ids: Vec<String> = Vec::new();
 
@@ -245,7 +245,7 @@ async fn main() {
 
     if have_a {
         match run_login(&ctx, &auth_a, &rp_id_hash, false, 2).await {
-            Ok(()) => bad("A1 login WITHOUT UV on a UV-capable credential was ACCEPTED — enforcement is not working"),
+            Ok(()) => bad("A1 login WITHOUT UV on a UV-capable credential was ACCEPTED - enforcement is not working"),
             Err(e) if e.contains("401") || e.contains("400") => ok(&format!("A1 (context) login WITHOUT UV on a UV-capable credential was refused ({e})")),
             Err(e) => bad(&format!("A1 login without UV failed for the WRONG reason: {e}")),
         }
@@ -255,7 +255,7 @@ async fn main() {
             Err(e) => bad(&format!("A2 login with UV should have succeeded, got: {e}")),
         }
     } else {
-        println!("  \x1b[33m~\x1b[0m A1/A2 skipped — A0 registration did not succeed");
+        println!("  \x1b[33m~\x1b[0m A1/A2 skipped - A0 registration did not succeed");
     }
 
     // ── Credential B: registers WITHOUT user verification (legacy-shaped) ──
@@ -269,13 +269,13 @@ async fn main() {
     if have_b {
         match run_login(&ctx, &auth_b, &rp_id_hash, false, 2).await {
             Ok(()) => ok("B1 login WITHOUT UV on a possession-only credential still succeeds (no regression)"),
-            Err(e) => bad(&format!("B1 grandfathering broken — possession-only login was refused: {e}")),
+            Err(e) => bad(&format!("B1 grandfathering broken - possession-only login was refused: {e}")),
         }
     } else {
-        println!("  \x1b[33m~\x1b[0m B1 skipped — B0 registration did not succeed");
+        println!("  \x1b[33m~\x1b[0m B1 skipped - B0 registration did not succeed");
     }
 
-    // ── Cleanup — always, regardless of pass/fail, since this runs against a
+    // ── Cleanup - always, regardless of pass/fail, since this runs against a
     //    real admin account's real passkey list. ──────────────────────────
     for id in &created_ids {
         let resp = ctx

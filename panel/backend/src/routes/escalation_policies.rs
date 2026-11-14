@@ -2,7 +2,7 @@
 //!
 //! Admin-only CRUD over `escalation_policies`. Policies are referenced
 //! from `alert_rules.escalation_policy_id` (nullable FK with ON DELETE
-//! SET NULL — operator removing a policy reverts every rule that used it
+//! SET NULL - operator removing a policy reverts every rule that used it
 //! back to the pre-W3 hardcoded 15/30-min cadence).
 
 use axum::{
@@ -112,7 +112,7 @@ fn validate_route(route: &str) -> Result<(), &'static str> {
 }
 
 /// SSRF: `webhook:<url>` routes reach the notification client (which refuses redirects),
-/// but the destination must still not resolve to an internal address — validate_route only
+/// but the destination must still not resolve to an internal address - validate_route only
 /// checks the scheme. Async, so it runs at the create/update call site rather than inside
 /// the sync validate_input. Parity with the alerts/monitors write paths.
 async fn validate_webhook_routes(input: &PolicyInput) -> Result<(), ApiError> {
@@ -128,7 +128,7 @@ async fn validate_webhook_routes(input: &PolicyInput) -> Result<(), ApiError> {
 
 /// Reject `on_call_schedule:<uuid>` routes pointing at a schedule that does not
 /// exist, OR that the caller doesn't own. `validate_route` only parses the
-/// UUID, so a policy could be saved with a dangling rota reference — either by
+/// UUID, so a policy could be saved with a dangling rota reference - either by
 /// typo, or by the editor's read-modify-write racing a concurrent schedule
 /// delete and writing the stale steps back after `delete_schedule` had already
 /// rewritten them. A dangling route is not inert: it resolves to zero users,
@@ -137,7 +137,7 @@ async fn validate_webhook_routes(input: &PolicyInput) -> Result<(), ApiError> {
 /// the first place.
 ///
 /// ⚠ SECURITY (s437): the ownership half is new. Without it, a policy could
-/// legitimately reference — and therefore page — another tenant's on-call
+/// legitimately reference - and therefore page - another tenant's on-call
 /// rotation, which now also carries its own `user_id`. "Does not exist" is
 /// used for the ownership-denied case too (not "not owned"), matching this
 /// codebase's convention elsewhere of never confirming another tenant's
@@ -176,20 +176,20 @@ async fn validate_schedule_routes(
 
 /// Reject `user:<uuid>` routes pointing at a user the caller may not page:
 /// anyone other than themselves, or a user they directly manage
-/// (`users.reseller_id = caller`) — the same ownership shape `list`/`create`
+/// (`users.reseller_id = caller`) - the same ownership shape `list`/`create`
 /// in `routes/users.rs` deliberately do NOT enforce (the user directory is
 /// shared across every admin on the install), but paging someone is not
 /// browsing a directory.
 ///
 /// ⚠ SECURITY: `validate_route` only parses the UUID as a shape check.
 /// Without this, ANY admin could route an escalation step at ANY other
-/// user's UUID — trivially discoverable via `GET /api/users`, which lists
-/// every user on the install with no scoping — then attach that policy to
+/// user's UUID - trivially discoverable via `GET /api/users`, which lists
+/// every user on the install with no scoping - then attach that policy to
 /// an alert rule they own and trigger it, delivering the alert's
 /// subject/message to that user's real email/Slack/Discord/PagerDuty/webhook
 /// with no consent and no way for the victim to trace who set it up. Exact
 /// sibling of the `on_call_schedule:` gap `validate_schedule_routes` closed
-/// at s437 — same file, same validator set, same threat model, different
+/// at s437 - same file, same validator set, same threat model, different
 /// route shape.
 async fn validate_user_routes(
     db: &sqlx::PgPool,
@@ -227,15 +227,15 @@ async fn validate_user_routes(
     Ok(())
 }
 
-/// GET /api/escalation-policies — Admin: list this tenant's policies.
+/// GET /api/escalation-policies - Admin: list this tenant's policies.
 ///
 /// ⚠ SECURITY (s437): this table carried no `user_id` at all until this
-/// release — every route here gated on `AdminUser` (role) alone, so any
+/// release - every route here gated on `AdminUser` (role) alone, so any
 /// admin on the install could list, read, write or delete every OTHER
 /// tenant's escalation policies. Scoped the same way `alerts.rs`/`servers.rs`
 /// scope a caller-supplied resource: never widens for admin, admin included.
 /// `used_by_rule_count`'s subquery needs no extra scoping beyond the outer
-/// `p.user_id` filter — `alert_rules.escalation_policy_id` can only point at
+/// `p.user_id` filter - `alert_rules.escalation_policy_id` can only point at
 /// a same-tenant policy now that `attach_escalation_policy` (alerts.rs)
 /// checks both sides' ownership.
 pub async fn list_policies(
@@ -254,7 +254,7 @@ pub async fn list_policies(
     Ok(Json(rows))
 }
 
-/// GET /api/escalation-policies/{id} — Admin: fetch a single policy, scoped
+/// GET /api/escalation-policies/{id} - Admin: fetch a single policy, scoped
 /// to the caller's own tenant.
 pub async fn get_policy(
     State(state): State<AppState>,
@@ -277,7 +277,7 @@ pub async fn get_policy(
     }
 }
 
-/// POST /api/escalation-policies — Admin: create a policy, owned by the
+/// POST /api/escalation-policies - Admin: create a policy, owned by the
 /// creating admin's own tenant.
 pub async fn create_policy(
     State(state): State<AppState>,
@@ -306,7 +306,7 @@ pub async fn create_policy(
     Ok(Json(row))
 }
 
-/// PUT /api/escalation-policies/{id} — Admin: replace a policy, scoped to
+/// PUT /api/escalation-policies/{id} - Admin: replace a policy, scoped to
 /// the caller's own tenant.
 pub async fn update_policy(
     State(state): State<AppState>,
@@ -343,7 +343,7 @@ pub async fn update_policy(
     }
 }
 
-/// DELETE /api/escalation-policies/{id} — Admin: delete a policy, scoped to
+/// DELETE /api/escalation-policies/{id} - Admin: delete a policy, scoped to
 /// the caller's own tenant.
 ///
 /// `alert_rules.escalation_policy_id` is `ON DELETE SET NULL`, so any rule

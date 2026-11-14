@@ -16,7 +16,7 @@ use crate::services::activity;
 use crate::services::agent::AgentHandle;
 use crate::AppState;
 
-/// GET /api/health — Public health check (includes DB connectivity).
+/// GET /api/health - Public health check (includes DB connectivity).
 pub async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
     let db_ok = sqlx::query("SELECT 1").execute(&state.db).await.is_ok();
 
@@ -36,7 +36,7 @@ pub async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
     }
 }
 
-/// GET /api/system/info — Proxy to agent's system info (admin only).
+/// GET /api/system/info - Proxy to agent's system info (admin only).
 pub async fn info(
     State(_state): State<AppState>,
     AdminUser(_claims): AdminUser,
@@ -49,7 +49,7 @@ pub async fn info(
     Ok(Json(data))
 }
 
-/// GET /api/agent/diagnostics — Proxy to agent's diagnostics (admin only).
+/// GET /api/agent/diagnostics - Proxy to agent's diagnostics (admin only).
 pub async fn diagnostics(
     State(_state): State<AppState>,
     AdminUser(_claims): AdminUser,
@@ -62,7 +62,7 @@ pub async fn diagnostics(
     Ok(Json(data))
 }
 
-/// POST /api/agent/diagnostics/fix — Apply a one-click fix.
+/// POST /api/agent/diagnostics/fix - Apply a one-click fix.
 ///
 /// Mostly a proxy to the agent, with ONE fix the agent cannot perform and the
 /// panel can.
@@ -70,22 +70,22 @@ pub async fn diagnostics(
 /// **`renew-ssl:{domain}` was a button that could only fail.** The agent's
 /// diagnostics offers it on every certificate inside 30 days
 /// (`diagnostics.rs::check_ssl_expiry`), but `apply_fix` has no arm for it, so it
-/// fell through to `Unknown fix action` — which the agent's route maps to
+/// fell through to `Unknown fix action` - which the agent's route maps to
 /// **500**, and `agent_error` preserves an agent's own sentence only for 4xx. So
 /// the operator got `Operation failed. Reference: {uuid}`: indistinguishable
 /// from a transient fault, which invites a retry, and every click wrote a
 /// `tracing::error!` incident describing a working agent as broken.
 ///
-/// The agent cannot fix this itself and never could — renewal needs the site's
+/// The agent cannot fix this itself and never could - renewal needs the site's
 /// runtime, root, PHP version and an ACME contact, all of which live in the
 /// panel's database, and an agent has no database. So the panel takes the fix.
 /// Doing it here rather than in the agent is also what makes it ARRIVE:
-/// `security_scanner` already records the same reasoning — "an agent is only
+/// `security_scanner` already records the same reasoning - "an agent is only
 /// updated when somebody updates it… declining here is what makes the fix arrive
 /// with the PANEL".
 ///
-/// A certificate under `/etc/dockpanel/ssl` with no `sites` row — a DNS-01
-/// wildcard apex, or one placed by hand — now gets a sentence saying so instead
+/// A certificate under `/etc/dockpanel/ssl` with no `sites` row - a DNS-01
+/// wildcard apex, or one placed by hand - now gets a sentence saying so instead
 /// of an incident id. That is still a refusal, but it is an ANSWER.
 pub async fn diagnostics_fix(
     State(state): State<AppState>,
@@ -98,13 +98,13 @@ pub async fn diagnostics_fix(
     if let Some(domain) = fix_id.strip_prefix("renew-ssl:") {
         // Resolution is two statements on purpose, and it lives HERE rather than
         // behind a helper because this is the handler that chooses a destination:
-        // a reader — and the wrong-host-dispatch census — must be able to see the
+        // a reader - and the wrong-host-dispatch census - must be able to see the
         // host being named without following a call.
         //
         // The first statement names the row ON THE HOST THAT RAISED THE FINDING.
         // `sites.domain` is unique only per server (`idx_sites_domain_server`), so
         // a lookup on the name alone can hand back a different machine's site and
-        // this handler would renew the wrong one — the same defect this ship fixes
+        // this handler would renew the wrong one - the same defect this ship fixes
         // in `security_scanner`. The second re-reads it through
         // `SITE_CALLER_PREDICATE`, the shared authorisation every other site
         // handler uses, so this new door decides nothing about who may open it:
@@ -124,10 +124,10 @@ pub async fn diagnostics_fix(
             // cannot later collapse it into an incident id the way the agent's 500
             // did.
             //
-            // ⚠ It must NOT claim the certificate came from outside DockPanel,
+            // ⚠ It must NOT claim the certificate came from outside CyberHunter - Panel,
             // because very often it did not: the agent issues certificates for
             // Docker apps, Compose stacks, Git deploys and mail domains, and NONE
-            // of those becomes a `sites` row — a Docker app has no table at all, it
+            // of those becomes a `sites` row - a Docker app has no table at all, it
             // exists only as a labelled container. Saying "whatever put it there is
             // what renews it" to an operator whose own panel put it there is the
             // same species of defect as the button this branch replaced. So the
@@ -136,7 +136,7 @@ pub async fn diagnostics_fix(
             // These lookups are deliberately not server-scoped. `mail_domains.server_id`
             // was NULL on every panel-created row for five months and
             // `git_deploys.domain` is nullable, so a server term here would turn a
-            // true "a mail domain claims this name" into a silent "nothing does" —
+            // true "a mail domain claims this name" into a silent "nothing does" -
             // trading a wrong sentence for a wronger one. Naming the owner
             // approximately is worth more than naming nothing precisely.
             let claimed_by: Option<(String,)> = sqlx::query_as(
@@ -152,9 +152,9 @@ pub async fn diagnostics_fix(
             .unwrap_or(None);
 
             // A stack is the one claimant whose answer depends on its TLS MODE.
-            // "DockPanel issued this and a redeploy reissues it" is true of an
+            // "CyberHunter - Panel issued this and a redeploy reissues it" is true of an
             // `acme` stack and FALSE of a `provided` one, whose live certificate
-            // is the operator's own, served from the registry — the expiring
+            // is the operator's own, served from the registry - the expiring
             // file this button was clicked about is then a leftover under the
             // per-domain tree, and redeploying reissues nothing. Telling that
             // operator to redeploy is the same species of wrong sentence this
@@ -183,18 +183,18 @@ pub async fn diagnostics_fix(
             let tail = match claimed_by {
                 Some((_,)) if matches!(stack_mode, Some(mode) if mode != "acme") => {
                     "A Compose stack in this panel uses that name, but it serves a registered \
-                     certificate rather than a Let's Encrypt one — so this expiring file is a \
+                     certificate rather than a Let's Encrypt one - so this expiring file is a \
                      leftover from before that change, and nothing renews it because nothing \
                      serves it. Removing it is safe; the stack is unaffected."
                         .to_string()
                 }
                 Some((kind,)) => format!(
-                    "A {kind} in this panel uses that name, and DockPanel issued this \
-                     certificate for it — but only certificates attached to a SITE can be \
+                    "A {kind} in this panel uses that name, and CyberHunter - Panel issued this \
+                     certificate for it - but only certificates attached to a SITE can be \
                      renewed from here. Redeploy that {kind} to reissue it."
                 ),
                 None => "No site, mail domain, Git deploy, Docker app or Compose stack in \
-                         this panel claims that name — so this is a certificate DockPanel \
+                         this panel claims that name - so this is a certificate CyberHunter - Panel \
                          does not manage, such as a DNS-01 wildcard or one installed by \
                          hand, and it is renewed wherever it was issued."
                     .to_string(),
@@ -219,7 +219,7 @@ pub async fn diagnostics_fix(
 
         // The renewal's own `{ok, domain}` body is deliberately dropped: this
         // endpoint answers the Diagnostics screen, which reads `{success, message}`.
-        // The `?` is the load-bearing part — a PRECONDITION_FAILED from
+        // The `?` is the load-bearing part - a PRECONDITION_FAILED from
         // `resolve_acme_contact`, or a 4xx the agent authored, reaches the operator
         // as that sentence instead of a reference id.
         let _renewed =
@@ -254,7 +254,7 @@ pub async fn diagnostics_fix(
     Ok(Json(data))
 }
 
-/// GET /api/agent/recommendations — Auto-optimization recommendations (admin only).
+/// GET /api/agent/recommendations - Auto-optimization recommendations (admin only).
 pub async fn recommendations(
     State(_state): State<AppState>,
     AdminUser(_claims): AdminUser,
@@ -267,7 +267,7 @@ pub async fn recommendations(
     Ok(Json(data))
 }
 
-/// POST /api/system/cleanup — Proxy to agent's disk cleanup (admin only).
+/// POST /api/system/cleanup - Proxy to agent's disk cleanup (admin only).
 pub async fn disk_cleanup(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -286,7 +286,7 @@ pub async fn disk_cleanup(
     Ok(Json(data))
 }
 
-/// POST /api/system/hostname — Proxy to agent's hostname change (admin only).
+/// POST /api/system/hostname - Proxy to agent's hostname change (admin only).
 pub async fn change_hostname(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -306,7 +306,7 @@ pub async fn change_hostname(
     Ok(Json(data))
 }
 
-/// GET /api/system/updates — List available package updates (admin only).
+/// GET /api/system/updates - List available package updates (admin only).
 pub async fn updates_list(
     State(_state): State<AppState>,
     AdminUser(_claims): AdminUser,
@@ -321,7 +321,7 @@ pub async fn updates_list(
 
 /// How long an update stream may stay *silent* before it is declared wedged.
 ///
-/// This is not a budget for the update — apt is allowed to take as long as it
+/// This is not a budget for the update - apt is allowed to take as long as it
 /// takes. It only has to say something every ten minutes, which comfortably
 /// covers the quietest legitimate stretches (unpacking a large package,
 /// `Generating locales`, a slow mirror mid-download) while still failing a
@@ -331,13 +331,13 @@ const UPDATE_STREAM_IDLE_TIMEOUT_SECS: u64 = 600;
 /// How long a finished update's log is kept for late SSE reconnects.
 ///
 /// The browser replays the full history on reconnect, so this window is what
-/// lets an operator who lost the connection — closed the laptop, changed
-/// network, hit the tail of a service restart — come back and still find out
+/// lets an operator who lost the connection - closed the laptop, changed
+/// network, hit the tail of a service restart - come back and still find out
 /// whether the update succeeded. At 60s it was shorter than the gap it needed
 /// to cover.
 const UPDATE_LOG_RETENTION_SECS: u64 = 900;
 
-/// POST /api/system/updates/apply — Apply package updates (admin only).
+/// POST /api/system/updates/apply - Apply package updates (admin only).
 /// Returns install_id for SSE progress tracking via /api/services/install/{id}/log.
 /// Proxies to agent which runs apt with streaming NDJSON output, forwarded
 /// line-by-line as SSE events for a live terminal experience.
@@ -460,7 +460,7 @@ pub async fn updates_apply(
     }))))
 }
 
-/// GET /api/system/updates/count — Get count of available updates (admin only).
+/// GET /api/system/updates/count - Get count of available updates (admin only).
 pub async fn updates_count(
     State(_state): State<AppState>,
     AdminUser(_claims): AdminUser,
@@ -473,7 +473,7 @@ pub async fn updates_count(
     Ok(Json(data))
 }
 
-/// POST /api/system/reboot — Reboot the system (admin only).
+/// POST /api/system/reboot - Reboot the system (admin only).
 pub async fn system_reboot(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -508,14 +508,14 @@ pub async fn install_status(
 ///
 /// Deliberately far above the agent's own `INSTALL_TIMEOUT` (300s in
 /// `services::pkg::transact`), because the agent does work either side of that
-/// clock — refreshing the package index, adding a third-party repo — and the
+/// clock - refreshing the package index, adding a third-party repo - and the
 /// budget has to cover the whole call, not the part that happens to be measured.
 ///
 /// It used to be 60s, from the untimed `post`, over an operation the agent
 /// budgets five minutes for. Nothing was cancelled by that: the agent finished
 /// the install while this side had already written *"agent request timed out
 /// after 60s"* into the log the operator was watching. A caller timeout shorter
-/// than the callee's does not bound anything — it only decides which of the two
+/// than the callee's does not bound anything - it only decides which of the two
 /// gets to describe the outcome, and picks the one that does not know it.
 const INSTALL_AGENT_TIMEOUT_SECS: u64 = 900;
 
@@ -532,7 +532,7 @@ pub(crate) async fn install_service_with_log(
     let install_id = Uuid::new_v4();
 
     // One line here covers every service install and uninstall route plus both
-    // PHP routes — they all funnel through this helper.
+    // PHP routes - they all funnel through this helper.
     crate::helpers::register_provision_log(
         &state.provision_logs,
         &state.deploy_owners,
@@ -577,7 +577,7 @@ pub(crate) async fn install_service_with_log(
                 // `success: false`. Reading only the status code would paint that
                 // green with the explanation printed underneath it.
                 //
-                // Absent means success — most installers answer `{"ok": true}` or a
+                // Absent means success - most installers answer `{"ok": true}` or a
                 // status object with no such field, and treating a missing field as
                 // failure would turn every one of them red.
                 let ok = resp
@@ -653,12 +653,12 @@ pub async fn install_ufw(
     install_service_with_log(&state, agent, claims.sub, &claims.email, "UFW Firewall", "/services/install/ufw", None).await
 }
 
-/// GET /api/services/install/{install_id}/log — SSE stream of install progress.
+/// GET /api/services/install/{install_id}/log - SSE stream of install progress.
 ///
 /// Despite the path, this is the panel's general provisioning stream: the UI
 /// points backup ids, restore ids, site-deploy ids, mail-install ids and
 /// system-update ids at it as well as service installs. So it cannot authorize
-/// by feature — and it used to authorize by nothing at all. It took `AdminUser`,
+/// by feature - and it used to authorize by nothing at all. It took `AdminUser`,
 /// discarded the claims, and looked the id up bare, which handed any key any
 /// feature had put in the shared map to any admin: including another tenant's
 /// site provisioning log, and the cleartext CMS admin password on it.
@@ -668,7 +668,7 @@ pub async fn install_ufw(
 /// role". It also repairs the opposite half of the same mistake: backups and
 /// site deploys are owner-authorized routes open to any user, so a non-admin
 /// who started one could never read back the log of the job they had just
-/// launched — the stream 403'd the one person entitled to it.
+/// launched - the stream 403'd the one person entitled to it.
 pub async fn install_log(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -700,7 +700,7 @@ pub async fn install_log(
     });
 
     // The underlying channel closes (and this stream ends) once the install
-    // finishes and its map entry is dropped — but an install in progress at
+    // finishes and its map entry is dropped - but an install in progress at
     // shutdown time can still run well past the graceful-drain window, so
     // race it against the panel's own shutdown signal too.
     Ok(
@@ -791,7 +791,7 @@ pub async fn disable_auto_updates(
 
 // The "Panel IP Whitelist" proxy that stood here was removed in v2.90.0. It relayed a
 // list of addresses to the agent, which wrote them to a file on the agent host that
-// nothing on any install ever read — no nginx include, no enforcement, nowhere. The
+// nothing on any install ever read - no nginx include, no enforcement, nowhere. The
 // panel's real IP restriction is a setting enforced at every session-minting door in
 // `auth.rs`, and it now owns the single operator control on the Account tab.
 //
@@ -805,11 +805,11 @@ pub async fn install_powerdns(
     // pdns_api_url/pdns_api_key live in the global `settings` table (no per-server
     // row), but installation is per-server (this handler is ServerScope-scoped, same
     // as Redis/Fail2Ban/Cloudflare Tunnel). Installing on a second server would
-    // silently overwrite the first server's credentials — every existing PowerDNS
+    // silently overwrite the first server's credentials - every existing PowerDNS
     // zone would then point at the wrong authoritative server with no error anywhere.
     // `pdns_server_id` records which server currently owns the saved credentials;
     // absent means either no install yet or a pre-existing install from before this
-    // check shipped (grandfathered — not blocked).
+    // check shipped (grandfathered - not blocked).
     let owner: Option<(String,)> = sqlx::query_as(
         "SELECT value FROM settings WHERE key = 'pdns_server_id'",
     )
@@ -830,7 +830,7 @@ pub async fn install_powerdns(
                 return Err(err(
                     StatusCode::CONFLICT,
                     &format!(
-                        "PowerDNS is already configured for server '{label}'. Uninstall it there first — installing on a second server would overwrite those credentials and orphan its DNS zones."
+                        "PowerDNS is already configured for server '{label}'. Uninstall it there first - installing on a second server would overwrite those credentials and orphan its DNS zones."
                     ),
                 ));
             }
@@ -879,7 +879,7 @@ pub async fn install_powerdns(
 
         emit("install", "Installing PowerDNS", "in_progress", None);
 
-        // `post_long` for the same reason as the mail installers — this is an apt install
+        // `post_long` for the same reason as the mail installers - this is an apt install
         // plus a service start, and 60s is not a budget for that.
         match agent
             .post_long("/services/install/powerdns", forward_body, 900)
@@ -936,7 +936,7 @@ pub async fn install_powerdns(
     }))))
 }
 
-/// GET /api/system/disk-io — Proxy to agent's disk I/O stats (admin only).
+/// GET /api/system/disk-io - Proxy to agent's disk I/O stats (admin only).
 pub async fn disk_io(
     State(_state): State<AppState>,
     AdminUser(_claims): AdminUser,
@@ -1051,7 +1051,7 @@ pub async fn uninstall_powerdns(
 ) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
     // Custom (not the shared install_service_with_log helper) because a successful
     // uninstall must also free the `pdns_server_id` ownership slot install_powerdns
-    // guards on — otherwise uninstalling here would leave this server permanently
+    // guards on - otherwise uninstalling here would leave this server permanently
     // recorded as the owner and block ever installing PowerDNS anywhere else.
     let install_id = Uuid::new_v4();
 
@@ -1094,7 +1094,7 @@ pub async fn uninstall_powerdns(
         {
             Ok(_) => {
                 // Only clear the saved credentials if THIS server is the recorded
-                // owner (or no owner was ever recorded — pre-existing install from
+                // owner (or no owner was ever recorded - pre-existing install from
                 // before pdns_server_id shipped). Uninstalling on a server that never
                 // owned the install must not wipe another server's live credentials.
                 let owner: Result<Option<(String,)>, _> = sqlx::query_as(
@@ -1182,7 +1182,7 @@ pub async fn uninstall_cloudflared(
     install_service_with_log(&state, agent, claims.sub, &claims.email, "Cloudflare Tunnel (uninstall)", "/services/uninstall/cloudflared", None).await
 }
 
-/// POST /api/traefik/install — Install Traefik reverse proxy.
+/// POST /api/traefik/install - Install Traefik reverse proxy.
 pub async fn traefik_install(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -1211,7 +1211,7 @@ pub async fn traefik_install(
     Ok(Json(result))
 }
 
-/// POST /api/traefik/uninstall — Remove Traefik.
+/// POST /api/traefik/uninstall - Remove Traefik.
 pub async fn traefik_uninstall(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -1237,7 +1237,7 @@ pub async fn traefik_uninstall(
     Ok(Json(result))
 }
 
-/// GET /api/traefik/status — Get Traefik status.
+/// GET /api/traefik/status - Get Traefik status.
 pub async fn traefik_status(
     State(_state): State<AppState>,
     AdminUser(_claims): AdminUser,

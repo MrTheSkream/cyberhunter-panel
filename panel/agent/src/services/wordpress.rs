@@ -18,7 +18,7 @@ pub async fn ensure_cli() -> Result<(), String> {
         return Ok(());
     }
     // curl writes to /usr/local/bin which isn't in the agent's ReadWritePaths
-    // under ProtectSystem=strict — must run unsandboxed.
+    // under ProtectSystem=strict - must run unsandboxed.
     let out = safe_command_unsandboxed("curl", &[])
         .args([
             "-sS",
@@ -65,10 +65,10 @@ async fn wp_inner(domain: &str, args: &[&str], skip_plugins: bool) -> Result<Str
 /// `wp_inner` derives the root from the domain and always lands on `public/`;
 /// the vulnerability scanner resolves its own root because a WordPress install
 /// is not always under `public/`. It therefore needs this same invocation with
-/// a different path — and hand-rolling a second one is exactly what went wrong:
+/// a different path - and hand-rolling a second one is exactly what went wrong:
 /// that copy shelled out to `php` against a phar under the agent's private
-/// tmp — a file nothing in this tree ever writes, and which `PrivateTmp=yes`
-/// puts out of reach of anyone who might place one there — and it
+/// tmp - a file nothing in this tree ever writes, and which `PrivateTmp=yes`
+/// puts out of reach of anyone who might place one there - and it
 /// omitted `--allow-root`, which the agent needs because it runs as root and
 /// wp-cli refuses outright without it. Both arms failed, and the scan reported
 /// a clean site.
@@ -89,12 +89,12 @@ pub(crate) async fn wp_at_root(
         cmd.arg("--skip-plugins").arg("--skip-themes");
     }
     // This is the crate's single wp-cli choke point (see the doc comment above),
-    // so it ran every plugin install, core update and db import unbounded — no
+    // so it ran every plugin install, core update and db import unbounded - no
     // timeout at all, and no kill_on_drop either. A hang here (a stalled
     // download, a locked wp_options table) blocked the request forever, and even
     // an upstream cancellation (the connection closing, a future request-level
     // timeout) would have left the wp-cli child running orphaned rather than
-    // stopped — the exact "timeout doesn't actually stop the thing" class fixed
+    // stopped - the exact "timeout doesn't actually stop the thing" class fixed
     // elsewhere in the agent crate, just never reaching wordpress.rs's own only
     // subprocess entry point.
     let out = tokio::time::timeout(
@@ -271,14 +271,14 @@ pub async fn install(
 
     // Create wp-config.php (--skip-plugins --skip-themes for safety)
     //
-    // These two calls predate `wp_at_root` — the file's own doc comment on that
-    // function is what a hand-rolled second implementation already cost once —
+    // These two calls predate `wp_at_root` - the file's own doc comment on that
+    // function is what a hand-rolled second implementation already cost once -
     // and never got folded into it, so they kept its exact pre-fix shape: no
     // timeout, no kill_on_drop. Same fix, applied directly here rather than
     // rerouting through wp_at_root (whose signature assumes --skip-plugins
     // covers both plugins and themes together, which happens to match here, but
     // these two calls carry additional db-credential args wp_at_root's plain
-    // `args: &[&str]` already accepts fine — kept separate only to avoid
+    // `args: &[&str]` already accepts fine - kept separate only to avoid
     // widening this session's diff into a call-site migration).
     let out = tokio::time::timeout(
         std::time::Duration::from_secs(600),
@@ -352,12 +352,12 @@ pub async fn install(
         .ok();
 
     // wp-cli's `config create` leaves wp-config.php at the process umask's default
-    // (644 here) — tighten to 640, same fix wp_vulnerability.rs's "wp-config-perms"
+    // (644 here) - tighten to 640, same fix wp_vulnerability.rs's "wp-config-perms"
     // hardening check already applies, but on a POST-INSTALL opt-in pass only.
     // This blocks reads from any OTHER local account on the box; it does not (and
     // via chmod alone cannot) isolate this site from another tenant's own PHP-FPM
     // pool or client-role shell, since every site currently shares the identical
-    // www-data:www-data identity — that is the separate, already-tracked
+    // www-data:www-data identity - that is the separate, already-tracked
     // per-site-OS-user architecture question (#85), unchanged by this fix.
     safe_command("chmod")
         .args(["640", &format!("{path}/wp-config.php")])
@@ -393,7 +393,7 @@ impl CanonicalUrlOutcome {
 /// Decide whether a stored canonical URL should be moved to HTTPS.
 ///
 /// Returns the replacement only when the stored value is exactly the plain-HTTP
-/// form of this vhost's own domain — the state DockPanel itself creates when it
+/// form of this vhost's own domain - the state CyberHunter - Panel itself creates when it
 /// installs a site before the certificate exists. Any other value (a different
 /// host, a sub-path, an already-secure URL) was chosen by the operator and is
 /// left alone: promoting it would silently repoint someone's site.
@@ -412,7 +412,7 @@ pub fn https_promotion_target(current: &str, domain: &str) -> Option<String> {
 /// Called once a certificate is in place. A site installed before its
 /// certificate is reachable and correct on HTTP, but the moment nginx starts
 /// redirecting to HTTPS the stored URL is the thing that decides what every
-/// generated link, redirect and asset reference says — so this is what finishes
+/// generated link, redirect and asset reference says - so this is what finishes
 /// the job, not a cosmetic tidy-up.
 pub async fn promote_site_url_to_https(domain: &str) -> CanonicalUrlOutcome {
     if !detect(domain) {
@@ -446,7 +446,7 @@ pub async fn promote_site_url_to_https(domain: &str) -> CanonicalUrlOutcome {
 /// answer for another whose domain merely EXTENDS it: `# wp-auto-update-example.com`
 /// is a substring of `# wp-auto-update-example.community`. Toggling auto-update
 /// on `example.com`, or simply deleting that site, therefore stripped
-/// `example.community`'s line — silently ending core, plugin and theme security
+/// `example.community`'s line - silently ending core, plugin and theme security
 /// updates for a site the actor did not own, with nothing logged against it.
 fn auto_update_marker(domain: &str) -> String {
     format!("# wp-auto-update-{domain}")
@@ -475,12 +475,12 @@ pub async fn set_auto_update(domain: &str, enabled: bool) -> Result<(), String> 
     // failure (swallowed by `unwrap_or_default`) and a non-zero exit (the `map`
     // never looked at `o.status`). Either one produced `""`, and the twenty lines
     // below then hand `""` straight back to `crontab -` as root's COMPLETE new
-    // content — so a transient failure here rewrote root's entire crontab, every
+    // content - so a transient failure here rewrote root's entire crontab, every
     // tenant's jobs and every system entry, down to at most this one WordPress
     // line. Reached from an ordinary authenticated request naming ONE site.
     let current = crate::services::crontab::read_crontab().await?;
 
-    // Remove existing auto-update line for this domain — and ONLY this domain.
+    // Remove existing auto-update line for this domain - and ONLY this domain.
     let filtered: Vec<&str> = current
         .lines()
         .filter(|l| !line_marked_for(l, &marker))
@@ -503,7 +503,7 @@ pub async fn set_auto_update(domain: &str, enabled: bool) -> Result<(), String> 
 ///
 /// Line-anchored for the same reason the removal is: the unanchored form
 /// reported `example.com` as enabled off `example.community`'s line, and
-/// `delete_site` used that answer to decide whether to run the strip — so the
+/// `delete_site` used that answer to decide whether to run the strip - so the
 /// mis-read and the destructive act were the same bug twice.
 pub fn is_auto_update_enabled(domain: &str) -> bool {
     let marker = auto_update_marker(domain);
@@ -637,14 +637,14 @@ pub async fn update_with_rollback(domain: &str) -> Result<serde_json::Value, Str
     // restores it unconditionally. Anything else that writes into this
     // site's files while that window is open (hardening, a backup restore, a
     // staging sync) would otherwise be silently discarded by the rollback, or
-    // itself discard the update — see site_lock's module doc.
+    // itself discard the update - see site_lock's module doc.
     let _guard = crate::site_lock::lock_site(domain).await;
 
     let mut log: Vec<String> = Vec::new();
 
     // 1. Health check before update
     if !health_check(domain).await {
-        return Err("Site failed pre-update health check — skipping update".to_string());
+        return Err("Site failed pre-update health check - skipping update".to_string());
     }
     log.push("Pre-update health check: passed".into());
 
@@ -674,7 +674,7 @@ pub async fn update_with_rollback(domain: &str) -> Result<serde_json::Value, Str
     let healthy = health_check(domain).await;
 
     if !healthy {
-        log.push("Post-update health check: FAILED — rolling back".into());
+        log.push("Post-update health check: FAILED - rolling back".into());
         match rollback_from_snapshot(domain, &snapshot).await {
             Ok(()) => {
                 log.push("Rollback completed successfully".into());
@@ -732,7 +732,7 @@ mod canonical_url_tests {
     fn never_repoints_a_url_the_operator_chose() {
         // Each of these is a working configuration somebody set on purpose.
         // Rewriting any of them would move a live site to an address the
-        // operator never picked — a worse bug than the one being fixed.
+        // operator never picked - a worse bug than the one being fixed.
         for stored in [
             "http://other-domain.com",       // headless / separate front end
             "http://example.com/blog",       // WordPress in a subdirectory

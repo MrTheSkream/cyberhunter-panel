@@ -12,7 +12,7 @@ const STAGING_ROOT: &str = "/var/backups/dockpanel/.staging";
 // The three roots below are indirected through functions ONLY so the unit tests
 // can run hermetically under a temp directory: the real paths need root and a
 // provisioned box, which CI is neither. The override exists exclusively in
-// `cfg(test)` builds — a release binary has no way to relocate these.
+// `cfg(test)` builds - a release binary has no way to relocate these.
 #[cfg(not(test))]
 fn webroot_root() -> PathBuf { PathBuf::from(WEBROOT) }
 #[cfg(not(test))]
@@ -29,7 +29,7 @@ fn backups_root() -> PathBuf { test_root().join("backups") }
 #[cfg(test)]
 fn staging_root() -> PathBuf { test_root().join("backups/.staging") }
 
-/// Directory inside the archive that holds everything DockPanel adds to a site
+/// Directory inside the archive that holds everything CyberHunter - Panel adds to a site
 /// backup beyond the webroot itself. Deliberately NOT under `./` so it is a
 /// distinct top-level member and can be extracted (and excluded) on its own.
 const PAYLOAD_DIR: &str = ".dockpanel-backup";
@@ -37,15 +37,15 @@ const PAYLOAD_DIR: &str = ".dockpanel-backup";
 /// Make the whole backup tree root-only, repairing what is already on disk.
 ///
 /// Everything under `/var/backups/dockpanel` is a restorable copy of something
-/// secret: the panel's own database — which carries `servers.agent_token` in
+/// secret: the panel's own database - which carries `servers.agent_token` in
 /// CLEARTEXT, and that token is both the Bearer credential for every
 /// authenticated agent endpoint and the HMAC key the agent verifies its own
-/// root-PTY tickets with (`routes/terminal.rs`) — plus every tenant's database
+/// root-PTY tickets with (`routes/terminal.rs`) - plus every tenant's database
 /// dump and every site archive, `wp-config.php` included.
 ///
 /// The tree was created `0755` and each writer used a plain shell redirect or
 /// `fs::write`, so files landed `0644`. Both panel services run as root, so
-/// nothing legitimate ever needed the world bits — but on a panel host that
+/// nothing legitimate ever needed the world bits - but on a panel host that
 /// also serves sites, `www-data` is the uid EVERY hosted site's PHP runs as,
 /// and `services/command_filter.rs` already records that every site resolves to
 /// that one uid. Measured on the demo box at v2.87.0: **17 of 17 files readable
@@ -56,8 +56,8 @@ const PAYLOAD_DIR: &str = ".dockpanel-backup";
 /// bits are defence in depth for anything that gets moved out.
 ///
 /// Repairing on every start rather than only fixing the writers is deliberate.
-/// Three writers produce these files — this agent, the panel's auto-healer, and
-/// a root crontab line `setup.sh` installs — and a fix that only corrects new
+/// Three writers produce these files - this agent, the panel's auto-healer, and
+/// a root crontab line `setup.sh` installs - and a fix that only corrects new
 /// writes would leave every install that already holds a backup exposed for
 /// ever. That is the same delivery shape as the s280 install-template lesson.
 /// Idempotent, cheap, and it walks a directory that holds tens of files.
@@ -70,7 +70,7 @@ pub fn secure_backup_tree() {
 /// Split out for ONE reason: the tests must not share `backups_root()`. Nine
 /// tests in this module use that single fixed path and cargo runs them
 /// concurrently, so an arm written against it races another test's
-/// `remove_dir_all` — which is exactly what happened. The first symlink arm
+/// `remove_dir_all` - which is exactly what happened. The first symlink arm
 /// written here PASSED against a deliberately broken `tighten()`, twice, and
 /// only a mutation revealed it was measuring an empty directory.
 fn secure_tree_at(root: &Path) {
@@ -121,7 +121,7 @@ fn secure_tree_at(root: &Path) {
     walk(root, &mut loosened);
     if loosened > 0 {
         tracing::warn!(
-            "Tightened {loosened} world-readable entries under {} — a backup there \
+            "Tightened {loosened} world-readable entries under {} - a backup there \
              carries the panel database, which holds agent tokens in cleartext",
             root.display()
         );
@@ -140,7 +140,7 @@ mod backup_perm_tests {
         std::fs::symlink_metadata(p).unwrap().permissions().mode() & 0o777
     }
 
-    /// A root of this arm's OWN, never `backups_root()` — see `secure_tree_at`.
+    /// A root of this arm's OWN, never `backups_root()` - see `secure_tree_at`.
     fn isolated_root() -> PathBuf {
         let d = std::env::temp_dir().join(format!("dp-bkperm-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&d).unwrap();
@@ -148,7 +148,7 @@ mod backup_perm_tests {
     }
 
     /// The defect, reproduced: a 0755 tree of 0644 dumps is readable by any uid
-    /// on the box — and on a panel host that also serves sites, that uid is
+    /// on the box - and on a panel host that also serves sites, that uid is
     /// `www-data`, which runs every tenant's PHP. Measured on the demo box at
     /// v2.87.0: 17 of 17 files readable as www-data, the newest a full pg_dump
     /// carrying `servers.agent_token` in cleartext.
@@ -213,7 +213,7 @@ pub struct DbSpec {
     pub password: String,
 }
 
-/// A database that could not be dumped or restored, and why. Never swallowed —
+/// A database that could not be dumped or restored, and why. Never swallowed -
 /// a backup that silently lost a database is the defect this whole path exists
 /// to close.
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
@@ -259,7 +259,7 @@ pub struct BackupInfo {
     /// Why a file sitting in a backup directory cannot be used, and how to fix it.
     ///
     /// `None` for every real backup, and omitted from the JSON when absent, so the
-    /// site- and volume-backup responses — which share this struct — are byte-identical
+    /// site- and volume-backup responses - which share this struct - are byte-identical
     /// to what they were before this field existed. Only the database listing sets it,
     /// and only for a file it would otherwise have dropped on the floor: an operator who
     /// copies a dump into the directory and gets an empty list back has been told
@@ -269,7 +269,7 @@ pub struct BackupInfo {
 }
 
 /// What a restore actually did. `ok()` is the only thing callers should treat
-/// as success — a restore that put the files back but not the database is a
+/// as success - a restore that put the files back but not the database is a
 /// failure with a partially-changed site, not a success with a footnote.
 #[derive(serde::Serialize, Default)]
 pub struct RestoreReport {
@@ -447,14 +447,14 @@ pub async fn create_backup(domain: &str, databases: &[DbSpec]) -> Result<BackupI
         std::time::Duration::from_secs(300),
         // safe_command sets no kill_on_drop, so a timed-out (dropped) future
         // would otherwise leave `tar` running in the background against the
-        // staged plaintext copy below — see git_build.rs/deploy.rs's fetch
+        // staged plaintext copy below - see git_build.rs/deploy.rs's fetch
         // fixes and database.rs:317, migration.rs:91, database_backup.rs:424,
         // security_scanner.rs:633 for the same fix elsewhere in this crate.
         safe_command("tar").args(&tar_args).kill_on_drop(true).output(),
     )
     .await;
 
-    // The staged dumps are a full plaintext copy of the site's data — remove
+    // The staged dumps are a full plaintext copy of the site's data - remove
     // them whatever happened to tar.
     if let Some(stage) = &staging {
         let _ = std::fs::remove_dir_all(stage);
@@ -473,7 +473,7 @@ pub async fn create_backup(domain: &str, databases: &[DbSpec]) -> Result<BackupI
     let meta = std::fs::metadata(&filepath)
         .map_err(|e| format!("Failed to read backup metadata: {e}"))?;
 
-    // Warn if backup exceeds 5GB — may indicate bloated site or logs in webroot
+    // Warn if backup exceeds 5GB - may indicate bloated site or logs in webroot
     const BACKUP_SIZE_WARN: u64 = 5 * 1024 * 1024 * 1024;
     if meta.len() > BACKUP_SIZE_WARN {
         tracing::warn!(
@@ -560,10 +560,10 @@ pub fn list_backups(domain: &str) -> Result<Vec<BackupInfo>, String> {
     Ok(backups)
 }
 
-/// Extract the DockPanel payload out of an archive into `stage`, if it has one.
+/// Extract the CyberHunter - Panel payload out of an archive into `stage`, if it has one.
 ///
 /// Returns `Ok(None)` for an archive that predates the payload (every archive
-/// made before v2.34.0) — that is a normal, expected shape, not an error.
+/// made before v2.34.0) - that is a normal, expected shape, not an error.
 async fn extract_payload(archive: &str, stage: &Path) -> Result<Option<Manifest>, String> {
     let stage_str = stage
         .to_str()
@@ -597,7 +597,7 @@ async fn extract_payload(archive: &str, stage: &Path) -> Result<Option<Manifest>
         return Err(format!("Failed to read backup payload: {stderr}"));
     }
 
-    // The archive's top-level PAYLOAD_DIR member can itself be a symlink — tar
+    // The archive's top-level PAYLOAD_DIR member can itself be a symlink - tar
     // extracts it as asked, with no traversal for tar's own protections to
     // catch, and plain `std::fs` calls below would follow it transparently.
     // Refuse rather than read manifest.json through a link this backup does
@@ -608,7 +608,7 @@ async fn extract_payload(archive: &str, stage: &Path) -> Result<Option<Manifest>
         .unwrap_or(false)
     {
         return Err(format!(
-            "Backup payload '{PAYLOAD_DIR}' is a symlink, not a directory — refusing to read it"
+            "Backup payload '{PAYLOAD_DIR}' is a symlink, not a directory - refusing to read it"
         ));
     }
 
@@ -623,7 +623,7 @@ async fn extract_payload(archive: &str, stage: &Path) -> Result<Option<Manifest>
 
     if manifest.schema > MANIFEST_SCHEMA {
         return Err(format!(
-            "Backup was made by a newer DockPanel (manifest schema {}, this agent understands {MANIFEST_SCHEMA}). Update this server before restoring it.",
+            "Backup was made by a newer CyberHunter - Panel (manifest schema {}, this agent understands {MANIFEST_SCHEMA}). Update this server before restoring it.",
             manifest.schema
         ));
     }
@@ -670,7 +670,7 @@ pub async fn restore_backup(
     )
     .await;
 
-    // The staged dumps are the site's data in plaintext — never leave them behind.
+    // The staged dumps are the site's data in plaintext - never leave them behind.
     let _ = std::fs::remove_dir_all(&stage);
 
     result
@@ -750,7 +750,7 @@ async fn restore_inner(
         };
 
         // `entry.file` comes from `manifest.json` inside the archive being
-        // restored — not generated by this agent on the restore path. An
+        // restored - not generated by this agent on the restore path. An
         // absolute or traversal-shaped value makes `PathBuf::join` discard
         // `db_dir` entirely (`Path::join` on an absolute component replaces
         // the base), pointing `dump_path` at an arbitrary file this
@@ -881,7 +881,7 @@ pub async fn restore_single_file(domain: &str, filename: &str, file_path: &str) 
     // dumps are the site's entire content in plaintext and the target is a
     // publicly-served document root. Today the archive's payload members carry
     // no `./` prefix while this function always adds one, so tar would not match
-    // them anyway — but that is an accident of member naming, and the guard
+    // them anyway - but that is an accident of member naming, and the guard
     // should not depend on it.
     let normalized = file_path.strip_prefix("./").unwrap_or(file_path);
     if normalized == PAYLOAD_DIR || normalized.starts_with(&format!("{PAYLOAD_DIR}/")) {
@@ -966,7 +966,7 @@ mod db_payload_tests {
     fn spec(db_name: &str, db_type: &str) -> DbSpec {
         DbSpec {
             // A container that does not exist, so the dump fails without needing
-            // a live database — what is under test is how the failure is REPORTED.
+            // a live database - what is under test is how the failure is REPORTED.
             container_name: format!("dp-pin-absent-{db_name}"),
             db_name: db_name.to_string(),
             db_type: db_type.to_string(),
@@ -1050,7 +1050,7 @@ mod db_payload_tests {
         assert!(site.root().join("index.html").exists(), "the file marker must come back");
     }
 
-    /// The payload must never be extracted into the document root — the dumps are
+    /// The payload must never be extracted into the document root - the dumps are
     /// the site's entire content in plaintext and the webroot is served publicly.
     /// It must also count as a failure when its database cannot be restored.
     #[tokio::test]
@@ -1134,7 +1134,7 @@ mod db_payload_tests {
     }
 
     /// `manifest.json`'s `file` field is attacker-controlled once an archive
-    /// exists on disk (it's just JSON inside the tar, no symlink needed) — an
+    /// exists on disk (it's just JSON inside the tar, no symlink needed) - an
     /// absolute path makes `PathBuf::join` discard `db_dir` entirely and read
     /// straight from the named path. The guard must refuse it before ever
     /// touching that path, not merely fail later trying to read it.
@@ -1182,7 +1182,7 @@ mod db_payload_tests {
         );
     }
 
-    /// The archive's top-level PAYLOAD_DIR member can itself be a symlink —
+    /// The archive's top-level PAYLOAD_DIR member can itself be a symlink -
     /// tar extracts it with no complaint (there is no write-through-an-
     /// obstruction for tar's own default protections to catch, since the
     /// requested member IS the symlink). Plain `std::fs` calls that follow

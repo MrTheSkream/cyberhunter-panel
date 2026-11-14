@@ -53,7 +53,7 @@ pub async fn emit_event(pool: &PgPool, event_type: &str, data: serde_json::Value
 
     for (ext_id, webhook_url, webhook_secret) in extensions {
         // No AppState here (fire-and-forget delivery path), so the JWT secret
-        // comes from the environment rather than `state.config.jwt_secret` —
+        // comes from the environment rather than `state.config.jwt_secret` -
         // same shape as `notifications::get_user_channels`/`uptime::send_alerts`.
         let webhook_secret = crate::services::secrets_crypto::decrypt_credential_from_env(&webhook_secret);
         let pool = pool.clone();
@@ -78,14 +78,14 @@ pub async fn emit_event(pool: &PgPool, event_type: &str, data: serde_json::Value
                     tracing::error!("HMAC key invalid for extension {ext_id}, skipping delivery");
                     let _ = sqlx::query(
                         "INSERT INTO extension_events (extension_id, event_type, payload, response_body, duration_ms) \
-                         VALUES ($1, $2, $3, 'HMAC key error — delivery skipped', 0)"
+                         VALUES ($1, $2, $3, 'HMAC key error - delivery skipped', 0)"
                     ).bind(ext_id).bind(&event_type).bind(&payload_str).execute(&pool).await;
                     ACTIVE_DELIVERIES.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
                     return; // Exit this spawned task, don't deliver unsigned webhook
                 }
             };
 
-            // SSRF re-validation at send time (DNS-rebind defense — parity with
+            // SSRF re-validation at send time (DNS-rebind defense - parity with
             // webhook_gateway::forward_to_route), pinned to the address it
             // approves rather than validated-then-reconnected: the shared
             // http_client()'s resolver would otherwise look `webhook_url`'s
@@ -210,7 +210,7 @@ pub fn fire_event(pool: &PgPool, event_type: &str, data: serde_json::Value) {
                 // client refuses redirects). Skip the whole retry chain if it fails.
                 //
                 // Pinned ONCE, before the retry loop, and the SAME client
-                // reused for every attempt — not re-validated-and-reconnected
+                // reused for every attempt - not re-validated-and-reconnected
                 // per retry. A loop that re-resolved `dest`'s host on each of
                 // up to 6 attempts, spread over exponential backoff, widens
                 // the validate/connect gap to however long the whole chain

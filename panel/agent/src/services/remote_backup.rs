@@ -8,7 +8,7 @@ use crate::safe_cmd::safe_command;
 /// condition to answer with a 4xx. Reporting it as a 5xx makes the panel replace
 /// the whole sentence with an incident reference, so the operator is told their
 /// agent broke when the agent is working perfectly and the box is simply missing
-/// a package — which is the state s289 measured and the message below was
+/// a package - which is the state s289 measured and the message below was
 /// written to end.
 pub const SSHPASS_MISSING: &str =
     "sshpass is not installed on this server, and it is required for \
@@ -47,15 +47,15 @@ impl Drop for TempFileGuard {
 ///
 /// These calls used `--fail`, which fails on 4xx/5xx and says nothing about **3xx**.
 /// Without `-L`, curl does not follow a redirect either: it prints the redirect body,
-/// transfers no payload, and **exits 0**. So an endpoint that answers 301 — an S3
+/// transfers no payload, and **exits 0**. So an endpoint that answers 301 - an S3
 /// bucket addressed in the wrong region, or an `http://` endpoint whose provider
-/// redirects to `https://` — made `upload_s3` return `Ok`, the agent answer
+/// redirects to `https://` - made `upload_s3` return `Ok`, the agent answer
 /// `{"success":true}`, and the panel light the "remote" badge for an object that was
 /// never written. Measured on a live box (s289): policy run reported
 /// *"1 successes, 0 failures, 0 not uploaded off-site"* against an empty bucket.
 ///
 /// Following redirects is NOT the fix: an AWS SigV4 signature is bound to the host
-/// and path it was computed for, so a followed redirect authenticates as garbage —
+/// and path it was computed for, so a followed redirect authenticates as garbage -
 /// and on 301/302 curl would downgrade the `PUT` to `GET`. The fix is to stop
 /// treating "not an error status" as "the bytes arrived": require an explicit 2xx.
 ///
@@ -81,7 +81,7 @@ async fn s3_curl(
         std::time::Duration::from_secs(timeout_secs),
         // safe_command sets no kill_on_drop, so a timed-out (dropped) future
         // would otherwise leave `curl` running in the background against the
-        // S3 endpoint — see git_build.rs/deploy.rs/backups.rs's identical fix
+        // S3 endpoint - see git_build.rs/deploy.rs/backups.rs's identical fix
         // and database.rs:317, migration.rs:91, database_backup.rs:424,
         // security_scanner.rs:633 for the same fix elsewhere in this crate.
         safe_command("curl").args(&full).kill_on_drop(true).output(),
@@ -96,7 +96,7 @@ async fn s3_curl(
         None => (String::new(), stdout.trim().to_string()),
     };
 
-    // curl itself failed (DNS, refused connection, TLS) — there is no HTTP status.
+    // curl itself failed (DNS, refused connection, TLS) - there is no HTTP status.
     let code: u16 = code_str.parse().map_err(|_| {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let detail = if stderr.trim().is_empty() { body.clone() } else { stderr.trim().to_string() };
@@ -106,7 +106,7 @@ async fn s3_curl(
     Ok((code, body))
 }
 
-/// True only for 2xx. A 3xx is not success — see [`s3_curl`].
+/// True only for 2xx. A 3xx is not success - see [`s3_curl`].
 fn s3_ok(code: u16) -> bool {
     (200..300).contains(&code)
 }
@@ -192,7 +192,7 @@ pub async fn upload_s3(
 /// promising they were "kept in step deliberately". They were not: `ConnectTimeout`
 /// was set on the test and missing from the upload, so the two operations the
 /// operator is told are equivalent could hang differently. A hand-maintained
-/// invariant between two copies is the thing that keeps failing here — so there is
+/// invariant between two copies is the thing that keeps failing here - so there is
 /// now one copy and the promise is structural.
 ///
 /// There is no longer a port-flag parameter: both operations speak the SFTP
@@ -202,7 +202,7 @@ pub async fn upload_s3(
 ///
 /// The two settings encoded here each cost a release to find (s288):
 ///
-/// * `UserKnownHostsFile=/etc/dockpanel/known_hosts` — `accept-new` means "trust on
+/// * `UserKnownHostsFile=/etc/dockpanel/known_hosts` - `accept-new` means "trust on
 ///   first use, then pin", and pinning is a WRITE. ssh's default target is
 ///   `~/.ssh/known_hosts`, which under this unit's `ProtectHome=yes` cannot be
 ///   created: *"Could not create directory '/root/.ssh' (Read-only file system)"*.
@@ -218,7 +218,7 @@ pub async fn upload_s3(
 ///
 ///   That trap has a second entrance, found s339: **`sftp -b` sets `BatchMode` by
 ///   itself**, so the password case has to say `BatchMode=no` out loud or every
-///   password-authenticated destination dies at `Permission denied` — the identical
+///   password-authenticated destination dies at `Permission denied` - the identical
 ///   s288 failure, arriving through the flag instead of through this list.
 fn sftp_opts(port: u16, password: Option<&str>, key_path: Option<&str>) -> Vec<String> {
     let mut args: Vec<String> = vec![
@@ -250,7 +250,7 @@ fn sftp_opts(port: u16, password: Option<&str>, key_path: Option<&str>) -> Vec<S
 /// A batch line is parsed by sftp's own tokeniser, **not by a shell**, and the
 /// difference is not cosmetic: an unquoted space splits the path in two, and
 /// `put local /backups/my dir/f.tgz` then writes to `/backups/my` under the
-/// SOURCE filename and **exits 0**. Measured s339 — a success report for an
+/// SOURCE filename and **exits 0**. Measured s339 - a success report for an
 /// archive that landed somewhere else under another name, which is a worse
 /// outcome than the failure this whole change is fixing.
 ///
@@ -318,7 +318,7 @@ static PROBE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::n
 /// Join both of a finished command's streams into one operator-facing detail.
 ///
 /// Reading only `stderr` is what made issue #102 unreadable: `internal-sftp`
-/// writes its refusal — *"This service allows sftp connections only."* — to
+/// writes its refusal - *"This service allows sftp connections only."* - to
 /// **stdout**, leaving stderr holding nothing but ssh's known-hosts banner. The
 /// operator was shown `Warning: Permanently added '[host]:port' ...` as the entire
 /// cause of a failed backup, and on any later connection, with the key already
@@ -371,14 +371,14 @@ async fn run_sftp(
     }
     // safe_command sets no kill_on_drop, so a timed-out (dropped) future would
     // otherwise leave sftp/sshpass running in the background against the remote
-    // host — the sibling s3_curl() above already carries this fix (v2.204.0);
+    // host - the sibling s3_curl() above already carries this fix (v2.204.0);
     // this call site was out of that commit's scope and has carried the gap
     // since. Same fix as database.rs:317, migration.rs:91, database_backup.rs:424,
     // security_scanner.rs:633 and 20+ other call sites in this crate.
     cmd.kill_on_drop(true);
 
     // `sftp -b -` reads its command script from stdin, which keeps the script out
-    // of the filesystem entirely — no temp file to create under `ProtectSystem=
+    // of the filesystem entirely - no temp file to create under `ProtectSystem=
     // strict`, and no window where a world-readable batch names the destination.
     // Writing before reading is safe only because these scripts are a few hundred
     // bytes: a script large enough to fill the pipe buffer would deadlock against
@@ -411,7 +411,7 @@ async fn run_sftp(
             // `sshpass` is a separate package and the agent shells out to it for
             // every password-authenticated destination. When it is absent the raw
             // error is "No such file or directory (os error 2)", which names neither
-            // the binary nor the remedy — s289 measured exactly that, as an opaque
+            // the binary nor the remedy - s289 measured exactly that, as an opaque
             // 502, on a fresh install where nothing had installed it.
             if prog == "sshpass" && e.kind() == std::io::ErrorKind::NotFound {
                 SSHPASS_MISSING.to_string()
@@ -450,12 +450,12 @@ pub async fn upload_sftp(
 
     tracing::info!("Uploading {filename} via SFTP to {remote_dest}");
 
-    // Create the destination directory, then transfer — both over the SFTP
+    // Create the destination directory, then transfer - both over the SFTP
     // subsystem, in one connection.
     //
     // Both steps used to be SSH **exec** requests (`ssh host "mkdir -p ..."`, then
-    // `scp`), and an sshd with `ForceCommand internal-sftp` — OpenSSH's own
-    // documented way to run a chrooted, SFTP-only account — replaces whatever
+    // `scp`), and an sshd with `ForceCommand internal-sftp` - OpenSSH's own
+    // documented way to run a chrooted, SFTP-only account - replaces whatever
     // command the client asked for with the SFTP subsystem. So the `mkdir` was
     // discarded and the upload failed for every such destination (issue #102).
     //
@@ -467,7 +467,7 @@ pub async fn upload_sftp(
     // s339 against a chrooted sshd: default scp exit 0, `scp -O` exit 1.
     //
     // Nothing created the directory at all before s289; that fix is preserved here,
-    // one component at a time — see `sftp_mkdir_script` for why it cannot be one call.
+    // one component at a time - see `sftp_mkdir_script` for why it cannot be one call.
     let mut script = sftp_mkdir_script(dir);
     script.push_str(&format!(
         "put {} {}\n",
@@ -506,7 +506,7 @@ pub async fn upload_sftp(
 /// The test used to `HEAD` the bucket root, while an upload `PUT`s an object into
 /// `path_prefix`. Those need different permissions and different paths, so a
 /// read-only key, a key scoped to another prefix, and a bucket that answers 301 all
-/// reported "S3 connection successful" and then failed — or silently did nothing —
+/// reported "S3 connection successful" and then failed - or silently did nothing -
 /// at the first real backup. A test that connects differently from the upload is a
 /// test of nothing; s289 measured a green Test against a destination whose bucket
 /// stayed empty through a full policy run.
@@ -582,7 +582,7 @@ pub async fn test_s3(
 
     if !s3_ok(del_code) && del_code != 404 {
         return Err(format!(
-            "S3 write succeeded but the test object could not be removed ({}) — \
+            "S3 write succeeded but the test object could not be removed ({}) - \
              retention will not be able to delete old backups either",
             s3_detail(del_code, &del_body)
         ));
@@ -594,8 +594,8 @@ pub async fn test_s3(
 /// Test SFTP access by doing what an upload does.
 ///
 /// Connecting and running `exit` proved only that the credential authenticates. It
-/// never touched `remote_path`, so a destination whose directory did not exist —
-/// including the `/backups` default, which exists on almost no server — reported
+/// never touched `remote_path`, so a destination whose directory did not exist -
+/// including the `/backups` default, which exists on almost no server - reported
 /// "SFTP connection successful" and then failed every real upload with
 /// *"No such file or directory"* (measured s289). The test now creates the
 /// directory and writes a probe file into it, which is exactly the sequence
@@ -611,12 +611,12 @@ pub async fn test_sftp(
     let dir = remote_path.trim_end_matches('/');
     reject_unquotable_path(dir)?;
 
-    // Create the directory, write a probe, remove it — the three things an upload
+    // Create the directory, write a probe, remove it - the three things an upload
     // does, over the same transport an upload uses. Testing over a DIFFERENT
     // transport is how issue #102 stayed invisible from the panel: the test and the
     // upload both spoke SSH exec, so a server that refuses exec failed both, but a
     // test that had spoken sftp while uploads spoke scp would have been green over a
-    // broken destination — the s289 defect this function was written to end.
+    // broken destination - the s289 defect this function was written to end.
     //
     // A local file is required: `put /dev/null` is refused outright ("not a regular
     // file", measured s339), so the probe is a real zero-byte file in the agent's
@@ -630,7 +630,7 @@ pub async fn test_sftp(
     let probe_local_str = probe_local.to_string_lossy().to_string();
 
     let script = if dir.is_empty() {
-        // No path to probe, so this proves only that the SFTP subsystem opens —
+        // No path to probe, so this proves only that the SFTP subsystem opens -
         // which is still more than an auth handshake proves.
         "pwd\n".to_string()
     } else {
@@ -663,7 +663,7 @@ pub async fn test_sftp(
     )
     .await;
 
-    // Removed on every path, including the error ones — a probe left in the agent's
+    // Removed on every path, including the error ones - a probe left in the agent's
     // tmp for each failed Test Connection is a slow leak nobody would look for.
     let _ = tokio::fs::remove_file(&probe_local).await;
 
@@ -673,7 +673,7 @@ pub async fn test_sftp(
         Ok(())
     } else {
         // Authentication failures and permission failures read very differently to
-        // an operator, and the raw output distinguishes them — so pass it through
+        // an operator, and the raw output distinguishes them - so pass it through
         // rather than collapsing both into "connection failed".
         Err(format!("SFTP test failed: {}", command_detail(&output)))
     }
@@ -718,7 +718,7 @@ pub async fn list_s3(
         return Err(format!("S3 list failed: {}", s3_detail(code, &body)));
     }
 
-    // Parse XML response — extract <Key> elements
+    // Parse XML response - extract <Key> elements
     let keys: Vec<String> = body
         .split("<Key>")
         .skip(1)
@@ -760,7 +760,7 @@ pub async fn delete_s3(
 
     drop(config_guard);
 
-    // S3 answers 204 for a delete, and 404 for an object already gone — both mean
+    // S3 answers 204 for a delete, and 404 for an object already gone - both mean
     // "it is not there", which is what the caller asked for.
     if s3_ok(code) || code == 404 {
         Ok(())
@@ -781,7 +781,7 @@ mod tests {
     fn quotes_paths_a_batch_parser_would_otherwise_split() {
         assert_eq!(sftp_quote("/backups"), "\"/backups\"");
         assert_eq!(sftp_quote("/my backups"), "\"/my backups\"");
-        // Single quotes are literal inside double quotes — the shell form had to
+        // Single quotes are literal inside double quotes - the shell form had to
         // escape these and the batch form must not.
         assert_eq!(sftp_quote("/od'brien"), "\"/od'brien\"");
         // These two are the only characters that need escaping.
@@ -827,7 +827,7 @@ mod tests {
     }
 
     /// `sftp -b` sets BatchMode itself, and BatchMode disables the password auth
-    /// `sshpass` exists to answer — the s288 defect, reachable a second way.
+    /// `sshpass` exists to answer - the s288 defect, reachable a second way.
     #[test]
     fn batchmode_is_turned_off_for_password_auth_and_on_for_keys() {
         let pw = sftp_opts(22, Some("secret"), None);
@@ -878,7 +878,7 @@ mod tests {
     /// `DOCKPANEL_SFTP_LAB=user:password@host:port:/remote/path` and run
     /// `cargo test -- --ignored`. Run s339 against a chrooted Debian sshd in a
     /// container. CI is unaffected because the test is `#[ignore]`d, not because
-    /// it quietly returns — that distinction is the whole point of the note below.
+    /// it quietly returns - that distinction is the whole point of the note below.
     ///
     /// v2.95.1 shipped a reverted transport partly because this test used to
     /// return early when the variable was unset: a run that executed NOTHING
@@ -928,7 +928,7 @@ mod tests {
         assert!(dest.contains("dockpanel-sftp-lab-upload.txt"));
         let _ = tokio::fs::remove_file(&local).await;
 
-        // A path that cannot exist must still FAIL — otherwise the arms above only
+        // A path that cannot exist must still FAIL - otherwise the arms above only
         // prove the happy direction, and a function that always returns Ok would
         // pass every one of them.
         let err = test_sftp(host, port, user, Some(pass), None, "/proc/nope")

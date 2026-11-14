@@ -10,7 +10,7 @@ const DEFAULT_LISTEN_ADDR: &str = "127.0.0.1:3081";
 
 /// Mirrors `api.env`'s `LISTEN_ADDR=` convention (`scripts/setup.sh`) so an
 /// operator who already knows how to move the API off loopback has the same
-/// knob here — nginx's `/mcp/` location proxies to whatever this resolves to.
+/// knob here - nginx's `/mcp/` location proxies to whatever this resolves to.
 /// Defaults to loopback-only when the file (or the key) is absent, which is
 /// the safer default for a brand-new surface nobody has opted into yet.
 fn listen_addr() -> String {
@@ -33,15 +33,15 @@ async fn main() {
     let addr = listen_addr();
 
     // rmcp's own DNS-rebinding guard (`allowed_hosts`) defaults to loopback
-    // names only — correct for a locally-run dev server a malicious webpage
+    // names only - correct for a locally-run dev server a malicious webpage
     // might blind-request, wrong for this one: nginx forwards the real Host
     // header for every `/mcp` request, so the default rejects 100% of real
     // traffic with "Forbidden: Host header is not allowed" (caught live,
-    // going through nginx — a direct loopback curl never exercises it, which
+    // going through nginx - a direct loopback curl never exercises it, which
     // is how this shipped once already undetected). Emptying the list
     // disables that check per the library's own documented behavior; it's
     // redundant anyway now that `auth::require_bearer_token` below is the
-    // real gate — an attacker who can't produce the token can't do anything
+    // real gate - an attacker who can't produce the token can't do anything
     // regardless of which Host header they send.
     let config = StreamableHttpServerConfig::default().disable_allowed_hosts();
     let service = StreamableHttpService::new(
@@ -50,7 +50,7 @@ async fn main() {
         config,
     );
 
-    // Without this, `/mcp` has no caller authentication at all — every tool
+    // Without this, `/mcp` has no caller authentication at all - every tool
     // call in tools.rs authenticates its OWN outbound request to the panel
     // API from a fixed file, never the inbound one, so anyone who could reach
     // this endpoint got the operator's own admin-scoped access for free.

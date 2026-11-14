@@ -9,7 +9,7 @@ use crate::safe_cmd::safe_command;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-// Scanner lives inside the DockPanel data dir so it works under the hardened
+// Scanner lives inside the CyberHunter - Panel data dir so it works under the hardened
 // agent sandbox (ProtectSystem=strict, ProtectHome=yes) without needing write
 // access to /usr/local/bin or $HOME.
 const GRYPE_DIR: &str = "/var/lib/dockpanel/scanners";
@@ -19,7 +19,7 @@ const GRYPE_DB_CACHE: &str = "/var/lib/dockpanel/scanners/grype-db";
 // Pinned to a known release rather than "latest" so the exact binary we run is
 // reviewable and reproducible. Anchore's install.sh already sha256-verifies the
 // downloaded archive against its release checksums.txt unconditionally (read
-// upstream to confirm — not gated behind any flag), so this pin closes the
+// upstream to confirm - not gated behind any flag), so this pin closes the
 // remaining gap: without a TAG argument the script both re-resolves "latest"
 // on every install AND is fetched from the mutable `main` ref. Bump deliberately.
 const GRYPE_VERSION: &str = "v0.118.0";
@@ -52,7 +52,7 @@ pub async fn is_installed() -> bool {
     tokio::fs::metadata(GRYPE_BIN).await.is_ok()
 }
 
-/// Install grype via Anchore's official installer script into the DockPanel
+/// Install grype via Anchore's official installer script into the CyberHunter - Panel
 /// data directory so the hardened agent sandbox can read/write it.
 pub async fn install_grype() -> Result<(), String> {
     if is_installed().await {

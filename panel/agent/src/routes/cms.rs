@@ -50,13 +50,13 @@ async fn install(
             return Err(err(StatusCode::BAD_REQUEST, "Invalid admin_email"));
         }
     }
-    // Validate db_pass: no newlines/null bytes, and none of '#' '/' '?' —
+    // Validate db_pass: no newlines/null bytes, and none of '#' '/' '?' -
     // install_drupal() builds `mysql://{user}:{pass}@{host}/{db}` and hands
     // it to drush as one `--db-url=` argv; empirically verified against
     // PHP's own parse_url() (which Drupal's Connection::
     // createConnectionOptionsFromUrl() feeds this string through
     // unmodified, no urldecode() anywhere on the path) that '/' and '?'
-    // make parse_url() fail outright and '#' does too when in the password —
+    // make parse_url() fail outright and '#' does too when in the password -
     // percent-encoding was considered and rejected, since that same parser
     // never decodes escapes, so an encoded char would reach the DB driver
     // as a literal "%23" instead of round-tripping.
@@ -72,7 +72,7 @@ async fn install(
         }
     }
     // Validate db_host: previously had NO validation at all, unlike every
-    // other credential field. A literal '#' here is worse than in db_pass —
+    // other credential field. A literal '#' here is worse than in db_pass -
     // parse_url() doesn't fail, it silently truncates the host and turns
     // the rest into a URL fragment (empirically verified), which would
     // point install_drupal()'s drush call at the wrong database host

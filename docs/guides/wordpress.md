@@ -2,9 +2,9 @@
 
 ## Prerequisites
 
-- DockPanel installed and running
+- CyberHunter - Panel installed and running
 - A domain with an A record pointing to your server's IP (see [Getting Started](../getting-started.md#dns-setup))
-- Port 80 and 443 open in your firewall (DockPanel opens these during install)
+- Port 80 and 443 open in your firewall (CyberHunter - Panel opens these during install)
 
 ## Create a WordPress Site
 
@@ -28,7 +28,7 @@ The CLI creates the site with PHP and SSL. WordPress CMS installation is availab
 
 ## What Happens Automatically
 
-When you create a WordPress site, DockPanel performs these steps in sequence:
+When you create a WordPress site, CyberHunter - Panel performs these steps in sequence:
 
 1. **Creates the document root** at `/var/www/example.com/public/`
 2. **Creates a MySQL database** in a Docker container with auto-generated credentials
@@ -43,10 +43,10 @@ You can watch each step complete in real-time from the panel.
 ### The site's address, before and after the certificate
 
 WordPress stores the address it thinks it lives at, and it redirects visitors to
-that address. So DockPanel installs the site at `http://example.com` — the URL
+that address. So CyberHunter - Panel installs the site at `http://example.com` - the URL
 the server can serve on the spot, whether or not a certificate has arrived yet.
 
-The moment a certificate is in place, DockPanel moves the stored address to
+The moment a certificate is in place, CyberHunter - Panel moves the stored address to
 `https://example.com` and Nginx starts redirecting HTTP to HTTPS. That happens
 automatically on every path that can produce a certificate: the one issued during
 site creation, a retry from the site's SSL card, a DNS-01 or wildcard
@@ -54,7 +54,7 @@ certificate, and an uploaded custom certificate. You do not have to change the
 WordPress Address or Site Address by hand.
 
 If you had already set a different address (a separate front end, WordPress in a
-subdirectory, a `www.` canonical host), DockPanel leaves it exactly as it is.
+subdirectory, a `www.` canonical host), CyberHunter - Panel leaves it exactly as it is.
 
 ## Post-Install
 
@@ -66,7 +66,7 @@ Once the site is created:
 
 ### WordPress Toolkit
 
-DockPanel includes a WordPress Toolkit (sidebar > WordPress) that provides:
+CyberHunter - Panel includes a WordPress Toolkit (sidebar > WordPress) that provides:
 
 - **Multi-site dashboard** -- See all WordPress installations on the server
 - **Vulnerability scanning** -- Checks plugins against 14 known exploited vulnerabilities. Manual "Scan" button, plus an optional scheduled background sweep (Settings → WordPress Vulnerability Scanning, off by default) that rescans every WordPress site on an interval and alerts on critical or high severity findings -- the direct peer of Docker image scanning's own scheduled sweep.
@@ -79,7 +79,7 @@ DockPanel includes a WordPress Toolkit (sidebar > WordPress) that provides:
 
 **Symptom**: Site creation fails with a message about PHP-FPM socket not found.
 
-**Fix**: Install the version from the **PHP Version** control itself — on the
+**Fix**: Install the version from the **PHP Version** control itself - on the
 create-site form, or on an existing site's detail page. Since v2.49.0 it lists
 what this server has and offers to install anything it does not, streaming the
 install as it runs.
@@ -95,14 +95,14 @@ dockpanel php list
 dockpanel php install 8.3
 ```
 
-DockPanel validates that PHP-FPM is available before writing the Nginx config and will tell you exactly which version to install.
+CyberHunter - Panel validates that PHP-FPM is available before writing the Nginx config and will tell you exactly which version to install.
 
 ### SSL provisioning fails
 
 **Symptom**: Site is created but shows HTTP only, or SSL provisioning returns an error.
 
 The site still works over HTTP while you sort this out, and it moves itself to
-HTTPS as soon as a certificate is issued — there is nothing to change inside
+HTTPS as soon as a certificate is issued - there is nothing to change inside
 WordPress afterwards.
 
 **Causes and fixes**:

@@ -68,7 +68,7 @@ export default function Deploy() {
 
   // Settled, not all-or-nothing: these are two independent GETs (deploy config,
   // deploy logs), and a rejection from either used to fall into one bare catch
-  // that never set `config` — so a genuinely-configured site with a broken
+  // that never set `config` - so a genuinely-configured site with a broken
   // logs fetch looked identical to "never configured". See Databases.tsx's
   // loadTableDetails for the same fix applied to the same class of bug.
   const load = async () => {
@@ -116,7 +116,7 @@ export default function Deploy() {
 
   useEffect(() => { load(); }, [id]);
 
-  // Breadcrumb-only: the domain, not the site's full record — same
+  // Breadcrumb-only: the domain, not the site's full record - same
   // best-effort fetch Backups.tsx/Crons.tsx/Files.tsx already do for their
   // own "Sites / {domain} / ..." trail.
   useEffect(() => {

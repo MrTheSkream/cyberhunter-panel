@@ -22,13 +22,13 @@ use crate::AppState;
 
 #[derive(serde::Deserialize)]
 pub struct AnalyzeRequest {
-    /// A path already on the server's disk. Mutually exclusive with `url` —
+    /// A path already on the server's disk. Mutually exclusive with `url` -
     /// exactly one of the two must be set.
     #[serde(default)]
     pub path: String,
     pub source: Option<String>, // "cpanel", "plesk", "hestiacp"
     /// Fetch the archive from this URL instead of requiring the operator SFTP
-    /// it up first (previously the only path — `Migration.tsx` said exactly
+    /// it up first (previously the only path - `Migration.tsx` said exactly
     /// that). The agent downloads it into the same `/var/backups/` tree a
     /// manually-placed archive already had to live under, then analysis
     /// proceeds exactly as before.
@@ -55,8 +55,8 @@ pub struct ImportDbItem {
     pub engine: String,
     /// Which imported site this database belongs to.
     ///
-    /// A `databases` row cannot exist without one — the column is NOT NULL with
-    /// no default — and a control-panel archive does not record the association,
+    /// A `databases` row cannot exist without one - the column is NOT NULL with
+    /// no default - and a control-panel archive does not record the association,
     /// so it has to come from the operator. Optional on the wire because a
     /// single-site archive has only one possible answer and the import resolves
     /// it without asking; when the run imports several sites and this is absent,
@@ -114,19 +114,19 @@ fn emit_step(
 ///
 /// Deliberately LONGER than the agent's own extraction budget
 /// (`EXTRACT_TIMEOUT_SECS` in the agent's `services::migration`) so that when a
-/// giant archive runs out of time it is the *agent* that says so — naming the
-/// archive and the budget — instead of this side winning the race and reporting
+/// giant archive runs out of time it is the *agent* that says so - naming the
+/// archive and the budget - instead of this side winning the race and reporting
 /// a contentless "agent request timed out". A caller timeout shorter than the
 /// callee's does not bound anything the callee did not already bound; it only
 /// replaces a real diagnosis with a generic one.
 const ANALYZE_AGENT_TIMEOUT_SECS: u64 = 1860;
 
 /// Panel-side budget for the agent's URL-fetch call, same "60s longer than the
-/// agent's own ceiling" shape as [`ANALYZE_AGENT_TIMEOUT_SECS`] above — the
+/// agent's own ceiling" shape as [`ANALYZE_AGENT_TIMEOUT_SECS`] above - the
 /// agent's `FETCH_TIMEOUT_SECS` is 1800s.
 const FETCH_AGENT_TIMEOUT_SECS: u64 = 1860;
 
-/// Best-effort archive extension for a URL-fetched file's on-disk name —
+/// Best-effort archive extension for a URL-fetched file's on-disk name -
 /// cosmetic only. The agent's own extractor tries gzip then plain tar
 /// regardless of what this names it, so a wrong guess here fails exactly the
 /// same way a wrong guess in a manually-copied filename already would; this
@@ -157,15 +157,15 @@ const ENGINE_READY_TIMEOUT_SECS: u64 = 120;
 /// **Accepted, not performed.** Walking a cPanel archive is minutes of work for
 /// any real account, and every gateway between the browser and this handler
 /// gives up long before that: Cloudflare at 100s, the nginx `setup.sh` writes at
-/// `proxy_read_timeout 300s`, and this panel's own `TimeoutLayer` at 300s — all
+/// `proxy_read_timeout 300s`, and this panel's own `TimeoutLayer` at 300s - all
 /// of them shorter than the agent call below. Running the analysis inline
 /// therefore *guaranteed* a 524/504 for precisely the archives the wizard exists
 /// to import (#91), and raising any one of those numbers would only move the
 /// size at which it breaks.
 ///
 /// So the row is inserted `analyzing`, the agent call moves to a spawned task,
-/// and this returns `202` immediately. The verdict lands in the row — `analyzed`
-/// with an inventory, or `failed` carrying the agent's real message — which is
+/// and this returns `202` immediately. The verdict lands in the row - `analyzed`
+/// with an inventory, or `failed` carrying the agent's real message - which is
 /// what `GET /api/migration/{id}` serves. That row is the durable part: it
 /// outlives the request, the tab, and a reload. It does not outlive the process,
 /// which is what `finalize_analyzing_on_startup` below exists to close out.
@@ -216,7 +216,7 @@ pub async fn analyze(
     // A URL fetch doesn't know its final on-disk path until the download
     // completes, but `backup_path` is populated from the moment the row
     // exists (every other reader of this table assumes that). Compute it
-    // deterministically now instead — it doubles as the exact destination the
+    // deterministically now instead - it doubles as the exact destination the
     // agent is told to write the file to.
     let resolved_path = if let Some(ref u) = url {
         format!(
@@ -250,7 +250,7 @@ pub async fn analyze(
     let source_owned = source.to_string();
 
     tokio::spawn(async move {
-        // A URL fetch happens first — a failure here is recorded the exact
+        // A URL fetch happens first - a failure here is recorded the exact
         // same way an analyze failure already is below, so the operator sees
         // one consistent "failed, here's why" in the row instead of this
         // request hanging on a slow remote host (the same reasoning that
@@ -340,7 +340,7 @@ pub async fn analyze(
                 // There is no HTTP response left to shape this into, so the
                 // agent's own sentence goes into the row verbatim and the poller
                 // reads it out of `result.error`. This is now the ONLY place the
-                // reason for a failed analysis is ever recorded — #90 was that
+                // reason for a failed analysis is ever recorded - #90 was that
                 // reason being replaced by a generic one on the way out.
                 tracing::error!("Migration {migration_id}: analysis failed: {e}");
                 let _ = sqlx::query(
@@ -361,18 +361,18 @@ pub async fn analyze(
 /// Close out analyses that were in flight when the process died.
 ///
 /// The analysis runs in a `tokio::spawn`, so a restart takes it with no chance
-/// to write its own verdict — and an `analyzing` row with nothing left to
+/// to write its own verdict - and an `analyzing` row with nothing left to
 /// finish it is a spinner the operator can never clear. Same shape, and the same
 /// remedy, as `panel_update::finalize_pending_on_startup`: on boot, nothing is
 /// running, so every row still claiming to be is stale by definition.
 ///
 /// `importing` rows are swept too, for the same reason and by the same argument
-/// — that path has always spawned, so it has always had this hole.
+/// - that path has always spawned, so it has always had this hole.
 pub async fn finalize_analyzing_on_startup(pool: &sqlx::PgPool) {
     // Two statuses, two different truths, so two sentences. Analysis only reads
     // the archive, so an interrupted one leaves nothing behind and starting again
-    // is the whole remedy. An import MUTATES as it goes — it writes nginx vhosts,
-    // `sites` rows and database containers one selection at a time — so an
+    // is the whole remedy. An import MUTATES as it goes - it writes nginx vhosts,
+    // `sites` rows and database containers one selection at a time - so an
     // interrupted one has done part of the work, and telling the operator to run
     // it again would be telling them to re-import over what already landed.
     // Saying "nothing was left half-done" over that row would be false.
@@ -380,7 +380,7 @@ pub async fn finalize_analyzing_on_startup(pool: &sqlx::PgPool) {
         (
             "analyzing",
             "The panel restarted while this archive was being analysed. Nothing was \
-             changed on the server — analysis only reads — so run it again.",
+             changed on the server - analysis only reads - so run it again.",
         ),
         (
             "importing",
@@ -468,13 +468,13 @@ pub async fn list(
 /// customer domain, claims that domain, inserts a `sites` row that names its host
 /// permanently, and creates database containers. The archive those writes are fed
 /// from was unpacked and staged by the analyse step, on the host that step ran
-/// against — which is why `analyze` records the server on the migration row in the
+/// against - which is why `analyze` records the server on the migration row in the
 /// first place. Reading the destination back off the caller's server selection
 /// therefore asked a question the row had already answered, and answered it
 /// differently the moment an operator switched servers between analysing and
 /// importing: vhosts for somebody's live domains published on a machine that must
 /// not serve them, the domain claim registered against that machine, `sites` rows
-/// bound to it for good, database containers built there — and then not one file
+/// bound to it for good, database containers built there - and then not one file
 /// copied, because the staged archive was still sitting on the other host. Half a
 /// migration on the wrong box, and the half that landed is the half that answers
 /// DNS.
@@ -489,7 +489,7 @@ pub async fn import(
 
     // The fourth handler that writes `sites` rows, and the only one that writes
     // them in bulk: this starts a background job that imports every analysed
-    // domain at once. Gated here, at the entry point, rather than in that loop —
+    // domain at once. Gated here, at the entry point, rather than in that loop -
     // a lockdown declared mid-import should not tear down a run already in
     // flight and leave half a migration behind, and the loop's own domain claim
     // stays the authority on individual rows.
@@ -498,8 +498,8 @@ pub async fn import(
     // ceiling exists to bound how many sites an account can conjure; a bulk
     // import is an operator asking for exactly that, from a source they named,
     // and applying a limit of three would break the feature rather than guard it.
-    // A lockdown is the different question — whether the panel should be creating
-    // anything at all right now — and the answer there is the same as everywhere.
+    // A lockdown is the different question - whether the panel should be creating
+    // anything at all right now - and the answer there is the same as everywhere.
     if crate::services::security_hardening::is_locked_down(&state.db).await {
         return Err(err(StatusCode::SERVICE_UNAVAILABLE, "System is in lockdown mode"));
     }
@@ -525,13 +525,13 @@ pub async fn import(
     // Both halves of the destination come from the row: the id, because it is
     // written into the `sites` rows and passed to the domain claim, and the handle,
     // because it is what actually creates the vhosts and the database containers.
-    // Resolved BEFORE the status moves to 'importing' — a migration refused here has
+    // Resolved BEFORE the status moves to 'importing' - a migration refused here has
     // not started, and marking it started would leave the operator a row they have
     // to reason about for a run that never happened.
     //
     // A row that names no server is refused rather than guessed at. The column is
     // filled by `analyze` and has been for every migration since the fleet work, so
-    // the `None` arm means a row older than that — and the one thing that must never
+    // the `None` arm means a row older than that - and the one thing that must never
     // happen to an older row is having a host chosen for it by whoever opened the
     // page. `agent_for_site_server` refuses an unreachable host on the same
     // principle: not importing is recoverable, importing onto the wrong machine is
@@ -583,7 +583,7 @@ pub async fn import(
 
     // Registered only once nothing above can still bail. Creating the log first
     // meant this `?` returned a 500 while leaving a log and an owner behind for
-    // the whole TTL — and `progress` would then answer 200 on a stream nothing
+    // the whole TTL - and `progress` would then answer 200 on a stream nothing
     // would ever emit to, so the page sat on "Provisioning…" until the sweep.
     crate::helpers::register_provision_log(
         &state.provision_logs,
@@ -605,17 +605,17 @@ pub async fn import(
     // The imported domains are client-supplied (`ImportSiteItem.domain`) and are
     // never reconciled against what the analyse step actually found, so they get
     // the same guard as any other claim. Carried into the task because
-    // `is_reserved_domain_for` reads the Host header — BASE_URL is empty on a
+    // `is_reserved_domain_for` reads the Host header - BASE_URL is empty on a
     // routine install, which is the whole reason that variant exists.
     let claim_headers = headers.clone();
     // Carried for the same reason as the headers: the claim happens inside the
     // spawned task, after `claims` has been moved. `import` is already
-    // admin-only (`require_admin` above), so this can never be a client today —
+    // admin-only (`require_admin` above), so this can never be a client today -
     // it is passed so that the choke point sees a real role from every caller
     // rather than a placeholder some later refactor would have to remember.
     let claim_role = claims.role.clone();
     // The claim asks every online member whether a Docker app already holds the
-    // domain — an app's domain lives only in a container label, so no SQL leg can
+    // domain - an app's domain lives only in a container label, so no SQL leg can
     // see it. That needs the registry rather than this task's single handle.
     let claim_agents = state.agents.clone();
 
@@ -634,7 +634,7 @@ pub async fn import(
         // Every site row this run creates, in order. The databases loop below
         // needs one: `databases.site_id` is NOT NULL, so a database imported
         // without a site has nowhere to be stored. Recorded when the row lands
-        // rather than when the whole site succeeds — a site whose files failed
+        // rather than when the whole site succeeds - a site whose files failed
         // to copy still has a valid row, and refusing its databases as well
         // would punish them for an unrelated failure.
         let mut imported_sites: Vec<(String, Uuid)> = Vec::new();
@@ -653,7 +653,7 @@ pub async fn import(
                 None,
             );
 
-            // Is this domain claimable? Same guard as every other path — which
+            // Is this domain claimable? Same guard as every other path - which
             // here also supplies the format and reserved-domain checks the import
             // never had, and extends "already exists" past the `sites` table to
             // git deploys and Docker apps. Note the ORDER below: the vhost is
@@ -693,11 +693,11 @@ pub async fn import(
                 }
             };
 
-            // 1. Create nginx site via agent — except when the required config
+            // 1. Create nginx site via agent - except when the required config
             // simply cannot be known from a file-tree scan.
             //
             // `detect_runtime` (agent's `services::migration`) only ever answers
-            // "php", "node", "python", or "static" — never anything requiring
+            // "php", "node", "python", or "static" - never anything requiring
             // MORE than a domain to configure, except that "php" needs a
             // PHP-FPM socket and "node"/"python" need a port AND a start
             // command, none of which a cPanel/Plesk/HestiaCP archive records.
@@ -705,11 +705,11 @@ pub async fn import(
             // NOT fail: `put_site` skips its entire validation/resolution block
             // when the field is absent, and `render_site_config` then silently
             // defaults to a socket path (`/run/php/php-fpm.sock`) that does not
-            // exist under this project's own versioned PHP-FPM convention — an
+            // exist under this project's own versioned PHP-FPM convention - an
             // always-broken config reported as a success. "node"/"python" are
             // worse: without `proxy_port`, `create_app_service` never runs at
             // all (it needs both a command AND a port), and the rendered config
-            // then defaults to `proxy_pass http://127.0.0.1:3000` — pointing at
+            // then defaults to `proxy_pass http://127.0.0.1:3000` - pointing at
             // nothing, or worse, at whatever unrelated thing happens to be
             // listening on 3000.
             //
@@ -718,11 +718,11 @@ pub async fn import(
             // normal validation run. For "node"/"python" (and defensively any
             // value besides the four `detect_runtime` emits, since this field
             // is client-supplied JSON, not re-validated against the inventory),
-            // there is nothing safe to send — creating the vhost anyway would
+            // there is nothing safe to send - creating the vhost anyway would
             // either point at a wrong port or, if pointed at "static" instead,
             // serve the app's raw source (`.env`, config with DB credentials)
             // over HTTP. Skip the vhost; the site row and file copy below still
-            // land, so nothing imported is lost — it just needs a human to set
+            // land, so nothing imported is lost - it just needs a human to set
             // the port/command from the site's Settings afterward.
             let runtime = &site_item.runtime;
             // Multi-IP: an imported site starts on the primary address (its row's
@@ -758,7 +758,7 @@ pub async fn import(
                             }
                             None => {
                                 needs_config = Some(
-                                    "no running PHP-FPM version was found on this server — \
+                                    "no running PHP-FPM version was found on this server - \
                                      install one and set it from the site's PHP Version \
                                      control after import"
                                         .to_string(),
@@ -768,7 +768,7 @@ pub async fn import(
                     }
                     Err(_) => {
                         needs_config = Some(
-                            "could not check installed PHP versions on this server — set \
+                            "could not check installed PHP versions on this server - set \
                              the PHP version from the site's Settings after import"
                                 .to_string(),
                         );
@@ -777,7 +777,7 @@ pub async fn import(
             } else if runtime != "static" {
                 needs_config = Some(format!(
                     "{runtime} sites need a port and start command, which can't be \
-                     detected from the backup — set them from the site's Settings after import"
+                     detected from the backup - set them from the site's Settings after import"
                 ));
             }
 
@@ -801,10 +801,10 @@ pub async fn import(
             // claim recorded above it, this permanent binding and the file copy
             // below all name one machine. A site row outlives the request that made
             // it and is what every later handler reads to decide which host to talk
-            // to, so a wrong value here is not a failed import — it is a site that
+            // to, so a wrong value here is not a failed import - it is a site that
             // is quietly asked about on the wrong machine for the rest of its life.
             //
-            // Status is 'error' rather than 'active' when no vhost was written —
+            // Status is 'error' rather than 'active' when no vhost was written -
             // nothing serves this domain yet, and 'active' would say otherwise.
             let initial_status = if needs_config.is_some() { "error" } else { "active" };
             let site_result = sqlx::query_as::<_, (Uuid,)>(
@@ -851,7 +851,7 @@ pub async fn import(
                 tracing::error!("{msg}");
                 emit_step(&logs, id, &step_key, &format!("Site {domain}"), "error", Some(msg.clone()));
                 if let Some(arr) = results["errors"].as_array_mut() { arr.push(serde_json::json!(msg)); }
-                // Site record exists but files failed — mark as error status
+                // Site record exists but files failed - mark as error status
                 let _ = sqlx::query("UPDATE sites SET status = 'error', updated_at = NOW() WHERE id = $1")
                     .bind(site_id)
                     .execute(&db)
@@ -861,7 +861,7 @@ pub async fn import(
             }
 
             let done_message = match &needs_config {
-                Some(reason) => format!("Imported — needs configuration: {reason}"),
+                Some(reason) => format!("Imported - needs configuration: {reason}"),
                 None => "Imported".to_string(),
             };
             emit_step(
@@ -911,7 +911,7 @@ pub async fn import(
             // Resolved BEFORE anything is created, because the answer decides
             // whether this database can be imported at all. `databases.site_id`
             // is NOT NULL with no default, so a row without one cannot be
-            // written — and the container is created first, so discovering that
+            // written - and the container is created first, so discovering that
             // after the fact leaves a running database the panel can never list,
             // reach or delete, holding a password that exists nowhere else.
             //
@@ -923,7 +923,7 @@ pub async fn import(
                     let wanted = d.trim_end_matches('.').to_ascii_lowercase();
                     match imported_sites.iter().find(|(dom, _)| *dom == wanted) {
                         Some((_, sid)) => Some(*sid),
-                        // Not imported in this run — but it may be a site the
+                        // Not imported in this run - but it may be a site the
                         // caller already has, which is what makes "import the
                         // site first, then the databases" work. Through the
                         // shared helper, never a query of our own: a private
@@ -1004,12 +1004,12 @@ pub async fn import(
                 }
             };
 
-            // Insert the DB record BEFORE calling the agent — mirrors
+            // Insert the DB record BEFORE calling the agent - mirrors
             // `databases::create`'s own "insert first" pattern
             // (routes/databases.rs:233-244, comment: "Insert DB record first to
             // atomically claim the port (unique index prevents races)"). The
             // port SELECT above is unlocked, exactly like `find_available_port`,
-            // so it cannot rule out a second concurrent picker on its own — a
+            // so it cannot rule out a second concurrent picker on its own - a
             // second migration import, or an ordinary `POST /databases` running
             // the identical unlocked query. What used to make that race land as
             // an opaque Docker bind failure was the ORDER: the old code called
@@ -1040,7 +1040,7 @@ pub async fn import(
                 Ok(Some((rid,))) => rid,
                 Ok(None) => {
                     let msg =
-                        format!("Database {db_name} already exists on that site — not imported.");
+                        format!("Database {db_name} already exists on that site - not imported.");
                     tracing::warn!("{msg}");
                     emit_step(&logs, id, &step_key, &format!("Database {db_name}"), "error", Some(msg.clone()));
                     if let Some(arr) = results["databases_failed"].as_array_mut() { arr.push(serde_json::json!(db_name)); }
@@ -1050,14 +1050,14 @@ pub async fn import(
                 }
                 // `databases_site_name_unique` is named explicitly above, so a
                 // unique violation reaching here can only be the OTHER unique
-                // index, `idx_databases_port_unique` — a concurrent picker won
+                // index, `idx_databases_port_unique` - a concurrent picker won
                 // the same port first. Named separately from a generic DB error
                 // because it tells the operator the truth: retrying the same
                 // database, unmodified, is expected to work.
                 Err(e) if e.to_string().contains("idx_databases_port_unique") => {
                     let msg = format!(
                         "Port {port} for database {db_name} was claimed by a concurrent \
-                         operation — not imported. Retry the import for this database."
+                         operation - not imported. Retry the import for this database."
                     );
                     tracing::warn!("{msg}");
                     emit_step(&logs, id, &step_key, &format!("Database {db_name}"), "error", Some(msg.clone()));
@@ -1078,8 +1078,8 @@ pub async fn import(
             };
 
             // Create database container via agent. The row above now holds this
-            // exact port under a uniqueness guarantee, so this call — and Docker
-            // — are the only thing left that can fail.
+            // exact port under a uniqueness guarantee, so this call - and Docker
+            // - are the only thing left that can fail.
             let create_body = serde_json::json!({
                 "name": db_name,
                 "engine": engine,
@@ -1100,7 +1100,7 @@ pub async fn import(
                     if let Some(arr) = results["databases_failed"].as_array_mut() { arr.push(serde_json::json!(db_name)); }
                     if let Some(arr) = results["errors"].as_array_mut() { arr.push(serde_json::json!(msg)); }
                     // The row claimed this port and name but no container exists
-                    // for it — delete it (mirrors `databases::create`'s own
+                    // for it - delete it (mirrors `databases::create`'s own
                     // agent-failure cleanup) so a retry isn't blocked by a row
                     // for a database that was never actually created.
                     let _ = sqlx::query("DELETE FROM databases WHERE id = $1")
@@ -1114,8 +1114,8 @@ pub async fn import(
 
             // Record the real container_id now that the agent has returned one
             // (mirrors `databases::create`'s own post-agent UPDATE). Not fatal to
-            // the import if this write fails — the row and the container both
-            // exist either way, this only affects later delete/restart lookups —
+            // the import if this write fails - the row and the container both
+            // exist either way, this only affects later delete/restart lookups -
             // so a failure here is logged and the import continues rather than
             // tearing down a container that is already running.
             if let Err(e) = sqlx::query("UPDATE databases SET container_id = $1 WHERE id = $2")
@@ -1146,7 +1146,7 @@ pub async fn import(
             // `mariadb:11` runs a bootstrap server during initialisation and does
             // not accept the application user until that finishes, which takes
             // well over five seconds on an ordinary box. The import then failed
-            // with `ERROR 1045 (28000): Access denied` — a credentials message
+            // with `ERROR 1045 (28000): Access denied` - a credentials message
             // for a timing problem, so the operator is sent to look at a password
             // that was never wrong. Driven on a fresh box at s369; this is the
             // step whose own label already claims to be waiting for the engine.
@@ -1230,7 +1230,7 @@ pub async fn import(
             .as_array()
             .map(|a| a.is_empty())
             .unwrap_or(true);
-        let final_status = if has_errors { "done" } else { "done" }; // always "done" — errors are in result JSON
+        let final_status = if has_errors { "done" } else { "done" }; // always "done" - errors are in result JSON
 
         let _ = sqlx::query(
             "UPDATE migrations SET status = $1, result = $2, updated_at = NOW() WHERE id = $3",
@@ -1269,7 +1269,7 @@ pub async fn import(
 }
 
 // ──────────────────────────────────────────────────────────────
-// GET /api/migration/{id}/progress — SSE stream
+// GET /api/migration/{id}/progress - SSE stream
 // ──────────────────────────────────────────────────────────────
 
 /// SSE stream of migration import progress.
@@ -1320,7 +1320,7 @@ pub async fn progress(
     });
 
     // The underlying channel closes (and this stream ends) once the import
-    // finishes and its map entry is dropped — but an import in progress at
+    // finishes and its map entry is dropped - but an import in progress at
     // shutdown time can still run well past the graceful-drain window, so
     // race it against the panel's own shutdown signal too.
     let stream = snapshot_stream
@@ -1341,11 +1341,11 @@ pub async fn progress(
 /// Delete a migration record and clean up temp files.
 ///
 /// The staging directory this cleans up is on the host that unpacked the archive,
-/// which the row names — so that is where the cleanup goes, rather than wherever
+/// which the row names - so that is where the cleanup goes, rather than wherever
 /// the server picker happens to be pointing. Sent to any other machine the call
 /// succeeds and does nothing: no staging directory exists there under this id, so
 /// the agent has nothing to delete and says so cheerfully, while the real
-/// extracted copy — a whole cPanel account's files — stays on disk with the panel
+/// extracted copy - a whole cPanel account's files - stays on disk with the panel
 /// record that could have found it now deleted.
 pub async fn remove(
     State(state): State<AppState>,
@@ -1378,7 +1378,7 @@ pub async fn remove(
     // differs from the import. The record is panel state: it has to stay deletable
     // after the machine that staged it has been decommissioned, or a fleet
     // shrinking by one server leaves rows nobody can ever clear. So the cleanup is
-    // skipped and said out loud — the files are named as still being there — rather
+    // skipped and said out loud - the files are named as still being there - rather
     // than aimed at a host that never had them, which is the outcome that looks
     // like success and is not one.
     match crate::helpers::agent_for_site_server(&state, migration.server_id, &migration.backup_path)
@@ -1390,13 +1390,13 @@ pub async fn remove(
             }
         }
         Err(_) => tracing::warn!(
-            "Migration {id}: deleting the record without cleaning up — the server it was \
+            "Migration {id}: deleting the record without cleaning up - the server it was \
              staged on could not be resolved, so the extracted files remain on that host"
         ),
     }
 
     // Delete from DB. Scoped by user_id like every other statement in this file
-    // (get_one, list, import's fetch, and the SELECT just above this DELETE) —
+    // (get_one, list, import's fetch, and the SELECT just above this DELETE) -
     // this was the one exception, relying entirely on that preceding SELECT's
     // ownership check still being valid, with no intervening await that could
     // invalidate it today. Scoping it directly matches the file's own discipline

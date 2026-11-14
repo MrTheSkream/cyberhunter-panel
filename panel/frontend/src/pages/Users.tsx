@@ -145,7 +145,7 @@ export default function Users() {
 
   // The door of last resort for an account whose authenticator is gone. Offered
   // only on rows that actually have an enrolment (`totp_enabled`), and never on
-  // your own row — the API refuses that too, because resetting your own 2FA from
+  // your own row - the API refuses that too, because resetting your own 2FA from
   // here would turn the factor off with no code presented at all.
   const handleReset2fa = async (id: string) => {
     setResetting2fa(true);
@@ -260,8 +260,8 @@ export default function Users() {
                   </td>
                   <td className="px-5 py-4">
                     {/* `reseller` is deliberately not editable here. This control
-                        writes `users.role` and nothing else — `users.rs` has no
-                        reference to `reseller_profiles` — so choosing it minted an
+                        writes `users.role` and nothing else - `users.rs` has no
+                        reference to `reseller_profiles` - so choosing it minted an
                         account that got the Reseller nav group and whose own panel
                         answered 404, and choosing away from it left an orphan
                         profile behind. Both directions belong to the Resellers
@@ -456,7 +456,7 @@ export default function Users() {
                   <option value="client">Client</option>
                   <option value="admin">Admin</option>
                 </select>
-                <p className="text-xs text-dark-400 mt-1">Admin has full access. User has limited access. <strong>Client</strong> can manage only the sites transferred to it and cannot create new ones — transfer a site from its own page. To make someone a <strong>reseller</strong>, create the account here and promote it in <Link to="/resellers" className="text-rust-400 hover:underline">Resellers</Link> — a reseller needs quotas and a profile, not just a role.</p>
+                <p className="text-xs text-dark-400 mt-1">Admin has full access. User has limited access. <strong>Client</strong> can manage only the sites transferred to it and cannot create new ones - transfer a site from its own page. To make someone a <strong>reseller</strong>, create the account here and promote it in <Link to="/resellers" className="text-rust-400 hover:underline">Resellers</Link> - a reseller needs quotas and a profile, not just a role.</p>
               </div>
             </div>
             <div className="flex justify-end gap-2 mt-6">
@@ -568,12 +568,12 @@ export default function Users() {
               alone, and should enrol a new device straight away.
             </p>
             <p className="text-xs text-dark-300 mb-1">
-              Any passkeys they have registered are <span className="text-dark-100">not</span> removed —
+              Any passkeys they have registered are <span className="text-dark-100">not</span> removed -
               a passkey is an independent factor and signs in on its own. This action repairs a
               locked-out account; it is not a way to lock someone out.
             </p>
             <p className="text-xs text-warn-400 mb-4">
-              Do this only when you are satisfied the request came from the account holder — it
+              Do this only when you are satisfied the request came from the account holder - it
               removes their second factor.
             </p>
             <div className="flex justify-end gap-2">

@@ -23,7 +23,7 @@ pub struct WebhookEndpoint {
     // The shared secret this endpoint verifies signatures with. It used to ride
     // out to the browser on every list of the Webhook Gateway screen: the struct
     // is returned straight to the client and nothing suppressed the field. The
-    // SPA never displayed it, which is why it went unnoticed — it was on the
+    // SPA never displayed it, which is why it went unnoticed - it was on the
     // wire, not on the page. Six other route modules already suppress a stored
     // credential this way (`cdn`, `dns`, `extensions`, `servers`, `sites`,
     // `update`); this one did not.
@@ -40,7 +40,7 @@ pub struct WebhookEndpoint {
     // verify with, which is what the operator needs to know and what the secret
     // itself must never be used to answer. Endpoints stored before the presence
     // check below can hold a verifying mode with no secret, and there is no
-    // update route — the only repair is delete and recreate — so the screen has
+    // update route - the only repair is delete and recreate - so the screen has
     // to be able to say so.
     #[sqlx(default)]
     pub verify_secret_set: bool,
@@ -131,7 +131,7 @@ pub struct PaginationQuery {
 
 // ── Endpoint CRUD ───────────────────────────────────────────────────────────
 
-/// GET /api/webhook-gateway/endpoints — List endpoints.
+/// GET /api/webhook-gateway/endpoints - List endpoints.
 pub async fn list_endpoints(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -150,7 +150,7 @@ pub async fn list_endpoints(
     Ok(Json(endpoints))
 }
 
-/// POST /api/webhook-gateway/endpoints — Create an endpoint.
+/// POST /api/webhook-gateway/endpoints - Create an endpoint.
 pub async fn create_endpoint(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -169,7 +169,7 @@ pub async fn create_endpoint(
 
     // Blank is absent. The form posts "" for a field the operator left empty, so
     // taking the strings as they arrive is how an endpoint came to be stored
-    // asking for HMAC verification it had no secret to perform — displayed as
+    // asking for HMAC verification it had no secret to perform - displayed as
     // `hmac_sha256`, verifying nothing.
     let verify_secret = req
         .verify_secret
@@ -194,7 +194,7 @@ pub async fn create_endpoint(
 
     // Encrypted at rest: this is the HMAC key the panel re-derives a
     // signature with on every inbound delivery, so it must stay recoverable
-    // rather than hashed — same shape as `alert_rules`/`monitors`'s
+    // rather than hashed - same shape as `alert_rules`/`monitors`'s
     // notification secrets.
     let encrypted_verify_secret = verify_secret
         .map(|s| crate::services::secrets_crypto::encrypt_credential(s, &state.config.jwt_secret))
@@ -225,7 +225,7 @@ pub async fn create_endpoint(
     Ok((StatusCode::CREATED, Json(endpoint)))
 }
 
-/// DELETE /api/webhook-gateway/endpoints/{id} — Delete an endpoint.
+/// DELETE /api/webhook-gateway/endpoints/{id} - Delete an endpoint.
 pub async fn delete_endpoint(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -255,12 +255,12 @@ pub async fn delete_endpoint(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// PUT /api/webhook-gateway/endpoints/{id} — Open or close the public door.
+/// PUT /api/webhook-gateway/endpoints/{id} - Open or close the public door.
 ///
 /// `enabled` is what the inbound receiver reads before it will look at a request
 /// at all, and until this handler existed nothing in the product could write it:
 /// the column was born TRUE and stayed TRUE for the life of the row. Shutting a
-/// public door therefore meant deleting the endpoint — which cascades away every
+/// public door therefore meant deleting the endpoint - which cascades away every
 /// delivery and every route attached to it, so the only way to stop traffic was
 /// to destroy the record of the traffic that had already arrived. Closing a door
 /// and discarding its history are different operations and an operator has to be
@@ -293,7 +293,7 @@ pub async fn set_endpoint_enabled(
 
 // ── Deliveries (Inspector) ──────────────────────────────────────────────────
 
-/// GET /api/webhook-gateway/endpoints/{id}/deliveries — List deliveries.
+/// GET /api/webhook-gateway/endpoints/{id}/deliveries - List deliveries.
 pub async fn list_deliveries(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -321,7 +321,7 @@ pub async fn list_deliveries(
     Ok(Json(deliveries))
 }
 
-/// POST /api/webhook-gateway/deliveries/{delivery_id}/replay — Replay a delivery to its matching routes.
+/// POST /api/webhook-gateway/deliveries/{delivery_id}/replay - Replay a delivery to its matching routes.
 pub async fn replay_delivery(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -351,7 +351,7 @@ pub async fn replay_delivery(
     // A replay is the same delivery arriving a second time, so it obeys the same
     // routing decision. This loop used to hand the body to every enabled route
     // whatever its filter said, while the inbound path skipped the ones that did
-    // not match — so replaying sent the payload to destinations the operator had
+    // not match - so replaying sent the payload to destinations the operator had
     // deliberately excluded, each with that route's stored headers attached and
     // its retry budget behind it. The guide has always described replay as going
     // to the matching routes; only the code disagreed.
@@ -381,7 +381,7 @@ pub async fn replay_delivery(
 
 // ── Routes CRUD ─────────────────────────────────────────────────────────────
 
-/// GET /api/webhook-gateway/endpoints/{id}/routes — List routes.
+/// GET /api/webhook-gateway/endpoints/{id}/routes - List routes.
 pub async fn list_routes(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -405,7 +405,7 @@ pub async fn list_routes(
     Ok(Json(routes))
 }
 
-/// POST /api/webhook-gateway/endpoints/{id}/routes — Create a route.
+/// POST /api/webhook-gateway/endpoints/{id}/routes - Create a route.
 pub async fn create_route(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -447,7 +447,7 @@ pub async fn create_route(
     Ok((StatusCode::CREATED, Json(route)))
 }
 
-/// DELETE /api/webhook-gateway/routes/{route_id} — Delete a route.
+/// DELETE /api/webhook-gateway/routes/{route_id} - Delete a route.
 pub async fn delete_route(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -468,11 +468,11 @@ pub async fn delete_route(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// PUT /api/webhook-gateway/routes/{route_id} — Stop or resume forwarding.
+/// PUT /api/webhook-gateway/routes/{route_id} - Stop or resume forwarding.
 ///
 /// The outbound half of the same severance. A route is an arbitrary external
 /// destination with the operator's own headers attached and a retry budget, and
-/// three queries gate on its `enabled` column — but nothing could write it, so
+/// three queries gate on its `enabled` column - but nothing could write it, so
 /// stopping data leaving the box for a third party meant deleting the route and
 /// its counters with it. Ownership is enforced through the parent endpoint, the
 /// same shape `delete_route` uses.
@@ -505,7 +505,7 @@ pub async fn set_route_enabled(
 
 // ── Public Inbound Webhook Receiver ─────────────────────────────────────────
 
-/// POST /api/webhooks/gateway/{token} — Receive an inbound webhook (public, no auth).
+/// POST /api/webhooks/gateway/{token} - Receive an inbound webhook (public, no auth).
 pub async fn receive_webhook(
     State(state): State<AppState>,
     Path(token): Path<String>,
@@ -553,7 +553,7 @@ pub async fn receive_webhook(
     // writer at all: the column could only ever hold TRUE or NULL, the list's red
     // "Invalid" badge could never render, and the guide's promise that "failed
     // verifications are logged" was false. A rejected delivery is the one an
-    // operator most needs to see — it is the only evidence that something is
+    // operator most needs to see - it is the only evidence that something is
     // signing badly, or not signing at all.
     //
     // The trade-off is stated rather than hidden: a caller who knows the endpoint
@@ -581,7 +581,7 @@ pub async fn receive_webhook(
     .bind(endpoint.id)
     .execute(&state.db).await;
 
-    // Reject anything the endpoint asked to verify and could not vouch for —
+    // Reject anything the endpoint asked to verify and could not vouch for -
     // including a delivery it had no secret to check, which used to pass.
     if let Some(reason) = verdict.rejection() {
         return Err(err(StatusCode::UNAUTHORIZED, reason));
@@ -637,7 +637,7 @@ pub(crate) enum SignatureVerdict {
     Valid,
     /// Verification ran and the request did not satisfy it.
     Invalid,
-    /// The endpoint asks for verification it cannot perform — no secret, no
+    /// The endpoint asks for verification it cannot perform - no secret, no
     /// header, or a mode this build does not implement. Never a pass: a promise
     /// that cannot be kept is not the same as no promise.
     Unverifiable,
@@ -656,7 +656,7 @@ impl SignatureVerdict {
     }
 
     /// The sentence sent back to the caller, or `None` to accept the delivery.
-    /// It travels as a 401 so it reaches the sender intact — `error.rs` passes a
+    /// It travels as a 401 so it reaches the sender intact - `error.rs` passes a
     /// sentence through only on a 4xx.
     pub(crate) fn rejection(self) -> Option<&'static str> {
         match self {
@@ -673,7 +673,7 @@ impl SignatureVerdict {
 /// Grade one delivery against the endpoint's verification settings.
 ///
 /// Split out from the handler so the decision can be tested without a database
-/// or a socket — every way this can be wrong is a way an unsigned request gets
+/// or a socket - every way this can be wrong is a way an unsigned request gets
 /// treated as a signed one.
 pub(crate) fn classify_signature(
     verify_mode: &str,
@@ -689,7 +689,7 @@ pub(crate) fn classify_signature(
     // Blank is absent, exactly as at creation. A blank secret is not a weak
     // secret: `Hmac::new_from_slice` accepts a zero-length key, so an endpoint
     // stored with `verify_secret = ""` used to verify signatures against the
-    // empty key — and anyone who guessed that could compute one, be recorded
+    // empty key - and anyone who guessed that could compute one, be recorded
     // `signature_valid = true`, and be relayed onward as authentic.
     let secret = verify_secret.map(str::trim).filter(|s| !s.is_empty());
     let header_name = verify_header.map(str::trim).filter(|s| !s.is_empty());
@@ -765,7 +765,7 @@ fn verify_hmac_sha1(secret: &str, body: &[u8], signature_header: &str) -> bool {
 /// how the two came to disagree about where a delivery goes.
 ///
 /// A route with no filter takes everything, and a body that will not parse as
-/// JSON is admitted rather than dropped — the inbound behaviour this preserves.
+/// JSON is admitted rather than dropped - the inbound behaviour this preserves.
 /// The filter selects destinations; it is not a security control, and nothing
 /// here should be read as one.
 fn route_admits(route: &WebhookRoute, body: &str) -> bool {
@@ -778,7 +778,7 @@ fn route_admits(route: &WebhookRoute, body: &str) -> bool {
     parsed.pointer(path).and_then(|v| v.as_str()).unwrap_or("") == value.as_str()
 }
 
-/// The settings the webhook-gateway HTTP client shares — extracted so
+/// The settings the webhook-gateway HTTP client shares - extracted so
 /// `forward_to_route` can build a fresh, PINNED client (below) with the same
 /// settings, rather than duplicating them.
 fn webhook_client_builder() -> reqwest::ClientBuilder {
@@ -796,7 +796,7 @@ async fn forward_to_route(db: &sqlx::PgPool, route: &WebhookRoute, body: &str, d
     // An attacker could register a route pointing to a public IP, then change DNS
     // to resolve to an internal IP before the webhook fires.
     //
-    // Pinned ONCE here and the resulting client reused for every retry below —
+    // Pinned ONCE here and the resulting client reused for every retry below -
     // this loop runs up to 11 attempts (retry_count.min(10)) spread over
     // exponential backoff that can span minutes, and a shared client whose own
     // resolver looked `destination_url`'s host up again on each attempt would
@@ -917,7 +917,7 @@ mod signature_verdict_tests {
     const SECRET: &str = "s3cr3t-shared-with-github";
 
     /// Build the signature a correctly-configured sender would send, under an
-    /// arbitrary key — including the empty one, which is the whole point of
+    /// arbitrary key - including the empty one, which is the whole point of
     /// `empty_secret_does_not_authenticate_an_empty_key_signature`.
     fn sha256_signature(key: &[u8], body: &[u8]) -> String {
         let mut mac =
@@ -973,7 +973,7 @@ mod signature_verdict_tests {
     #[test]
     fn a_verifying_mode_with_no_secret_is_rejected_not_waved_through() {
         // The shape a raw API call could store: mode set, secret absent. It used
-        // to reach `None` — indistinguishable from "not configured" — and pass.
+        // to reach `None` - indistinguishable from "not configured" - and pass.
         let v = classify(
             "hmac_sha256",
             None,
@@ -1001,7 +1001,7 @@ mod signature_verdict_tests {
         // The form posted "" for a field left blank, so an endpoint could be
         // stored with `verify_secret = Some("")` and a real header name. HMAC
         // accepts a zero-length key, so the arm matched and anyone who guessed
-        // the secret was empty could produce a signature that verified — and be
+        // the secret was empty could produce a signature that verified - and be
         // RECORDED as authentic before being relayed. That is worse than the
         // null-secret pass, because it writes a true attestation.
         let forged = sha256_signature(b"", BODY);

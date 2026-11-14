@@ -1,4 +1,4 @@
-# Contributing to DockPanel
+# Contributing to CyberHunter - Panel
 
 Thanks for your interest in contributing! This guide covers development setup, code style, and the PR process.
 
@@ -57,14 +57,14 @@ The frontend dev server proxies `/api` to `127.0.0.1:3080` (see `panel/frontend/
 
 ```
 panel/
-├── agent/       # Rust — host-level operations (Docker, Nginx, SSL, terminal)
+├── agent/       # Rust - host-level operations (Docker, Nginx, SSL, terminal)
 │   ├── src/routes/     # HTTP endpoint handlers (39 files)
 │   └── src/services/   # Business logic (40 files)
-├── backend/     # Rust — API server, auth, DB, multi-server dispatch
+├── backend/     # Rust - API server, auth, DB, multi-server dispatch
 │   ├── src/routes/     # REST endpoints (62 files)
 │   ├── src/services/   # Background tasks (36 files)
 │   └── migrations/     # SQL migrations (138 files)
-├── cli/         # Rust — CLI tool (clap-based)
+├── cli/         # Rust - CLI tool (clap-based)
 │   └── src/commands/   # Subcommand handlers (11 files)
 └── frontend/    # React 19 + TypeScript + Tailwind 4
     └── src/pages/      # Lazy-loaded page components (52 files)
@@ -95,11 +95,11 @@ panel/
 1. Describe what the PR does and why.
 2. List any new environment variables, migrations, or dependencies.
 3. Confirm you've built and tested locally.
-4. Keep PRs reasonably sized — large PRs are harder to review.
+4. Keep PRs reasonably sized - large PRs are harder to review.
 
 ## Filing Issues
 
-- **Bug reports**: Include OS, DockPanel version, steps to reproduce, and relevant logs (`journalctl -u dockpanel-api -n 50`).
+- **Bug reports**: Include OS, CyberHunter - Panel version, steps to reproduce, and relevant logs (`journalctl -u dockpanel-api -n 50`).
 - **Feature requests**: Describe the use case, not just the solution.
 
 ## Key Files

@@ -20,7 +20,7 @@ pub struct VolumeBackupRequest {
     pub container_name: String,
 }
 
-/// POST /volume-backups/create — Backup a Docker volume.
+/// POST /volume-backups/create - Backup a Docker volume.
 async fn create(
     Json(req): Json<VolumeBackupRequest>,
 ) -> Result<Json<BackupInfo>, ApiErr> {
@@ -41,7 +41,7 @@ async fn create(
     Ok(Json(info))
 }
 
-/// GET /volume-backups/{container_name}/list — List volume backups.
+/// GET /volume-backups/{container_name}/list - List volume backups.
 async fn list(
     Path(container_name): Path<String>,
 ) -> Result<Json<Vec<BackupInfo>>, ApiErr> {
@@ -58,7 +58,7 @@ pub struct VolumeRestoreRequest {
     pub volume_name: String,
 }
 
-/// POST /volume-backups/{container_name}/restore/{filename} — Restore a volume backup.
+/// POST /volume-backups/{container_name}/restore/{filename} - Restore a volume backup.
 async fn restore(
     Path((container_name, filename)): Path<(String, String)>,
     Json(req): Json<VolumeRestoreRequest>,
@@ -89,7 +89,7 @@ async fn restore(
     Ok(Json(serde_json::json!({ "success": true })))
 }
 
-/// DELETE /volume-backups/{container_name}/{filename} — Delete a volume backup.
+/// DELETE /volume-backups/{container_name}/{filename} - Delete a volume backup.
 async fn remove(
     Path((container_name, filename)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {

@@ -15,8 +15,8 @@ fn err(status: StatusCode, msg: &str) -> ApiErr {
 }
 
 /// Optional body for the create/restore routes, naming the databases that
-/// belong to the site. The agent cannot resolve these itself — it has no access
-/// to the panel's `databases` table — so the backend passes them down with
+/// belong to the site. The agent cannot resolve these itself - it has no access
+/// to the panel's `databases` table - so the backend passes them down with
 /// decrypted credentials. Absent body ⇒ files only, exactly as before.
 #[derive(serde::Deserialize, Default)]
 struct SiteDbBody {
@@ -24,7 +24,7 @@ struct SiteDbBody {
     databases: Vec<backups::DbSpec>,
 }
 
-/// POST /backups/{domain}/create — Create a backup.
+/// POST /backups/{domain}/create - Create a backup.
 async fn create(
     Path(domain): Path<String>,
     body: Option<Json<SiteDbBody>>,
@@ -41,7 +41,7 @@ async fn create(
     Ok(Json(info))
 }
 
-/// GET /backups/{domain}/list — List backups.
+/// GET /backups/{domain}/list - List backups.
 async fn list(
     Path(domain): Path<String>,
 ) -> Result<Json<Vec<backups::BackupInfo>>, ApiErr> {
@@ -54,11 +54,11 @@ async fn list(
     Ok(Json(list))
 }
 
-/// POST /backups/{domain}/restore/{filename} — Restore from backup.
+/// POST /backups/{domain}/restore/{filename} - Restore from backup.
 ///
 /// A restore that put the files back but could not load a database is reported
 /// as a FAILURE (500) carrying the full report, not as a success with a
-/// footnote — the site's files have already been replaced and the operator has
+/// footnote - the site's files have already been replaced and the operator has
 /// to know that.
 async fn restore(
     Path((domain, filename)): Path<(String, String)>,
@@ -68,7 +68,7 @@ async fn restore(
         return Err(err(StatusCode::BAD_REQUEST, "Invalid domain format"));
     }
 
-    // Held through the extraction+chown below — see site_lock's module doc
+    // Held through the extraction+chown below - see site_lock's module doc
     // for why a restore and e.g. a concurrent hardening apply must not
     // interleave on the same site's files.
     let _guard = crate::site_lock::lock_site(&domain).await;
@@ -80,7 +80,7 @@ async fn restore(
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
 
     // `restore_backup`'s tar extraction runs `--no-same-owner`, which leaves the
-    // whole site root:root — unwritable by the www-data-running app until this
+    // whole site root:root - unwritable by the www-data-running app until this
     // runs.
     chown_restored_tree(&format!("/var/www/{domain}")).await;
 
@@ -114,7 +114,7 @@ async fn restore(
     Ok(Json(payload))
 }
 
-/// GET /backups/{domain}/browse/{filename} — List files in a backup archive.
+/// GET /backups/{domain}/browse/{filename} - List files in a backup archive.
 async fn browse(
     Path((domain, filename)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
@@ -133,7 +133,7 @@ struct RestoreFileRequest {
     path: String,
 }
 
-/// POST /backups/{domain}/restore-file/{filename} — Restore a single file from backup.
+/// POST /backups/{domain}/restore-file/{filename} - Restore a single file from backup.
 async fn restore_file(
     Path((domain, filename)): Path<(String, String)>,
     Json(body): Json<RestoreFileRequest>,
@@ -142,7 +142,7 @@ async fn restore_file(
         return Err(err(StatusCode::BAD_REQUEST, "Invalid domain format"));
     }
 
-    // Held through the extraction+chown below, same as `restore` above —
+    // Held through the extraction+chown below, same as `restore` above -
     // site_lock.rs's own "every operation" invariant was false for this
     // route until now.
     let _guard = crate::site_lock::lock_site(&domain).await;
@@ -151,13 +151,13 @@ async fn restore_file(
         .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
 
-    // Same gap as `restore` above — the extracted member comes back root-owned.
+    // Same gap as `restore` above - the extracted member comes back root-owned.
     chown_restored_tree(&format!("/var/www/{domain}")).await;
 
     Ok(Json(serde_json::json!({ "success": true, "restored_path": body.path })))
 }
 
-/// DELETE /backups/{domain}/{filename} — Delete a backup.
+/// DELETE /backups/{domain}/{filename} - Delete a backup.
 async fn remove(
     Path((domain, filename)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
@@ -175,11 +175,11 @@ use crate::safe_cmd::safe_command;
 /// Hand a restored site tree back to the web server without exposing `.git`.
 ///
 /// `restore_backup`'s tar extraction runs `--no-same-owner`, so the whole
-/// site comes back root-owned — unwritable to the web-server-running app
+/// site comes back root-owned - unwritable to the web-server-running app
 /// until this runs. A blanket `chown -R www-data:www-data` over the whole
 /// tree would also hand the application `.git/config` and `.git/hooks/` if
 /// this site uses Git Deploy, which the next `git_build.rs` deploy then reads
-/// and executes as root — the same defect `deploy.rs` was fixed to avoid (see
+/// and executes as root - the same defect `deploy.rs` was fixed to avoid (see
 /// its own `hand_tree_to_web_user` doc comment). Mirror that split here:
 /// chown everything except `.git` to www-data, then explicitly re-secure
 /// `.git` to root, rather than trust whatever ownership the extraction

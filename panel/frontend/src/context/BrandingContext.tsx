@@ -9,7 +9,7 @@ export interface Branding {
 }
 
 const defaultBranding: Branding = {
-  panelName: "DockPanel",
+  panelName: "CyberHunter - Panel",
   logoUrl: "",
   accentColor: "",
   hideBranding: false,
@@ -26,7 +26,7 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
       .then((r) => r.json())
       .then((data) => {
         setBranding({
-          panelName: data.panel_name || "DockPanel",
+          panelName: data.panel_name || "CyberHunter - Panel",
           logoUrl: data.logo_url || "",
           accentColor: data.accent_color || "",
           hideBranding: data.hide_branding || false,

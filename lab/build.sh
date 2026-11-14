@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Compilation des crates Rust de DockPanel dans un conteneur, sans toucher à la copie de travail.
+# Compilation des crates Rust de CyberHunter - Panel dans un conteneur, sans toucher à la copie de travail.
 #
 # Lancé depuis Windows (PowerShell ou Git Bash) :
 #   docker run --rm -v F:/Project/cyberhunter-panel:/src:ro -v dp-cargo-registry:/usr/local/cargo/registry \

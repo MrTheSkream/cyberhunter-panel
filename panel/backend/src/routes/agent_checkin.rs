@@ -35,7 +35,7 @@ pub struct CheckinRequest {
     pub cert_fingerprint: Option<String>,
 }
 
-/// POST /api/agent/checkin — Agent reports system info and heartbeat.
+/// POST /api/agent/checkin - Agent reports system info and heartbeat.
 /// Authenticated via Bearer token matching the server's agent_token.
 pub async fn checkin(
     State(state): State<AppState>,
@@ -121,7 +121,7 @@ pub async fn checkin(
                 tracing::info!("Captured cert fingerprint for server {server_id}: {fp}");
             }
             Some(existing) if existing.as_bytes().ct_eq(fp.as_bytes()).into() => {
-                // Match — nothing to do.
+                // Match - nothing to do.
             }
             Some(_) => {
                 tracing::error!(
@@ -129,7 +129,7 @@ pub async fn checkin(
                 );
                 return Err(err(
                     StatusCode::FORBIDDEN,
-                    "cert fingerprint mismatch — rotate the pin to accept a new cert",
+                    "cert fingerprint mismatch - rotate the pin to accept a new cert",
                 ));
             }
         }

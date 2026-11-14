@@ -63,7 +63,7 @@ pub struct ListQuery {
 
 #[derive(serde::Deserialize)]
 pub struct CreateDbRequest {
-    /// Exactly one of `site_id` / `stack_id` must be set — see `resolve_owner`.
+    /// Exactly one of `site_id` / `stack_id` must be set - see `resolve_owner`.
     pub site_id: Option<Uuid>,
     pub stack_id: Option<Uuid>,
     pub name: String,
@@ -83,7 +83,7 @@ pub struct Database {
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
-/// GET /api/databases — List all databases for the current user.
+/// GET /api/databases - List all databases for the current user.
 pub async fn list(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -92,13 +92,13 @@ pub async fn list(
 ) -> Result<Json<Vec<Database>>, ApiError> {
     let (limit, offset) = paginate(params.limit, params.offset);
 
-    // Same admin-widening create() already grants (helpers::SITE_CALLER_PREDICATE) —
+    // Same admin-widening create() already grants (helpers::SITE_CALLER_PREDICATE) -
     // without it, a database an admin creates on a tenant's site via the local-box
     // arm becomes invisible to its own creator (v2.216.0 audit finding).
     //
     // LEFT JOIN both possible owner tables and COALESCE: a row has exactly one
     // non-null owner FK (chk_databases_owner), so each row matches at most one
-    // owner across the two joins and COALESCE picks whichever is present — one
+    // owner across the two joins and COALESCE picks whichever is present - one
     // query covers site-owned and stack-owned databases without a UNION.
     let dbs: Vec<Database> = sqlx::query_as(
         "SELECT d.id, d.site_id, d.stack_id, d.name, d.engine, d.db_user, d.container_id, d.port, d.created_at \
@@ -121,7 +121,7 @@ pub async fn list(
     Ok(Json(dbs))
 }
 
-/// Resolve the host + a caller-facing label for a database's owner — a site or a
+/// Resolve the host + a caller-facing label for a database's owner - a site or a
 /// stack (GH #64: standalone DB provisioning), exactly one of which the caller must
 /// supply. The label only names `agent_for_site_server`'s refusal log line; no domain
 /// is loaded on these paths, so callers still identify the target by database name.
@@ -163,13 +163,13 @@ async fn resolve_owner(
     }
 }
 
-/// POST /api/databases — Create a new database.
+/// POST /api/databases - Create a new database.
 pub async fn create(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
     Json(body): Json<CreateDbRequest>,
 ) -> Result<(StatusCode, Json<Database>), ApiError> {
-    // Verify ownership — and take the host from the same row while we are here. The
+    // Verify ownership - and take the host from the same row while we are here. The
     // container is created on whichever host the handle points at and then recorded
     // against this owner, so a misdispatch leaves a `databases` row naming a
     // container that does not exist on the owner's own machine, while the wrong
@@ -183,7 +183,7 @@ pub async fn create(
 
     // Hard per-account cap on total databases (independent of reseller quota) so a
     // single tenant cannot exhaust the shared, host-wide DB port pool / host RAM.
-    // Counts both site-owned and stack-owned rows (COALESCE — chk_databases_owner
+    // Counts both site-owned and stack-owned rows (COALESCE - chk_databases_owner
     // guarantees exactly one of the two joins matches per row).
     let (db_count,): (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM databases d \
@@ -216,8 +216,8 @@ pub async fn create(
             "Database name must be alphanumeric with underscores",
         ));
     }
-    // ⛔ The AGENT is the authority on this name — it is what creates the
-    // container — and its `is_valid_name` demands an alphanumeric FIRST
+    // ⛔ The AGENT is the authority on this name - it is what creates the
+    // container - and its `is_valid_name` demands an alphanumeric FIRST
     // character. Without this clause the panel accepted `_mydata`, called the
     // agent, and handed the operator the agent's own refusal: a form the product
     // had just validated, answered by a machine. The rule belongs where the
@@ -246,7 +246,7 @@ pub async fn create(
         ));
     }
 
-    // Check uniqueness per-owner (site OR stack — whichever the caller supplied;
+    // Check uniqueness per-owner (site OR stack - whichever the caller supplied;
     // resolve_owner already refused a request naming both or neither).
     let existing: Option<(Uuid,)> = sqlx::query_as(
         "SELECT id FROM databases WHERE site_id IS NOT DISTINCT FROM $1 \
@@ -283,7 +283,7 @@ pub async fn create(
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &format!("Encryption failed: {e}")))?;
 
     // Atomically reserve one slot against the caller's reseller quota (if any). The old
-    // check-then-increment was TOCTOU-racy — concurrent creates all read the same stale
+    // check-then-increment was TOCTOU-racy - concurrent creates all read the same stale
     // `used_databases` and each incremented past `max`. A conditional UPDATE ... RETURNING
     // makes the check and the increment one statement. Released on any failure below.
     let reserved_quota = reserve_reseller_db_slot(&state, claims.sub).await?;
@@ -318,7 +318,7 @@ pub async fn create(
     // Call agent to create container. `stack_id` tells the agent to join the
     // stack's own private bridge network (already used to give the stack's other
     // containers name-based reachability) instead of the shared, ICC-disabled
-    // `dockpanel-db` bridge every site-owned database uses — the stack network is
+    // `dockpanel-db` bridge every site-owned database uses - the stack network is
     // single-tenant by construction, so this introduces no new cross-tenant
     // exposure, and every panel-side query/backup/credential operation already
     // reaches the container via `docker exec`, which is unaffected by which
@@ -365,14 +365,14 @@ pub async fn create(
     Ok((StatusCode::CREATED, Json(db_record)))
 }
 
-/// GET /api/databases/{id}/credentials — Get database connection details.
+/// GET /api/databases/{id}/credentials - Get database connection details.
 pub async fn credentials(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    // Admin-widened to match create()/list() — see the v2.216.0 audit note on list().
-    // LEFT JOIN both owner tables + COALESCE, same pattern as list() — see its comment.
+    // Admin-widened to match create()/list() - see the v2.216.0 audit note on list().
+    // LEFT JOIN both owner tables + COALESCE, same pattern as list() - see its comment.
     let row: Option<(String, String, String, Option<i32>, Option<String>)> = sqlx::query_as(
         "SELECT d.name, d.engine, d.db_password_enc, d.port, d.container_id \
          FROM databases d \
@@ -417,13 +417,13 @@ pub async fn credentials(
     })))
 }
 
-/// DELETE /api/databases/{id} — Delete a database and its container.
+/// DELETE /api/databases/{id} - Delete a database and its container.
 pub async fn remove(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    // Verify ownership through site — and take the host from the same row while we
+    // Verify ownership through site - and take the host from the same row while we
     // are here. The join to `sites` was already carrying the ownership term; the
     // host it also knows about was thrown away, and the agent came from the request
     // header instead. That is a destructive mismatch in both directions: the panel
@@ -431,8 +431,8 @@ pub async fn remove(
     // machine either destroys a same-named `dockpanel-db-{name}` container that
     // belongs to somebody else's tenant, or fails to find one while the real
     // container is orphaned on its own host with its row already gone.
-    // Admin-widened to match create()/list() — see the v2.216.0 audit note on list().
-    // LEFT JOIN both owner tables + COALESCE, same pattern as list() — see its comment.
+    // Admin-widened to match create()/list() - see the v2.216.0 audit note on list().
+    // LEFT JOIN both owner tables + COALESCE, same pattern as list() - see its comment.
     let db: Option<(Uuid, String, Option<String>, Option<Uuid>, String)> = sqlx::query_as(
         "SELECT d.id, d.name, d.container_id, COALESCE(s.server_id, st.server_id), \
          COALESCE(s.domain, st.name) FROM databases d \
@@ -496,7 +496,7 @@ pub(crate) async fn purge_dumps_if_unclaimed(
     site_server_id: Option<Uuid>,
 ) {
     let name = name.to_string();
-    // Take the dumps with it — but only once nothing else is using them.
+    // Take the dumps with it - but only once nothing else is using them.
     //
     // The dump directory is named for the DATABASE and nothing else, while the
     // name is unique only per SITE, so two live databases belonging to two
@@ -505,8 +505,8 @@ pub(crate) async fn purge_dumps_if_unclaimed(
     // than the leak being closed and would be discovered at a restore.
     //
     // ⚠ A row whose site names no server is counted as possibly-here rather than
-    // elsewhere. It cannot be acted on through the panel — the agent lookup above
-    // refuses it — but its dumps, if any, are on some host, and this host is one
+    // elsewhere. It cannot be acted on through the panel - the agent lookup above
+    // refuses it - but its dumps, if any, are on some host, and this host is one
     // of the candidates. Doubt keeps the files; only positive evidence that
     // nothing else claims the name removes them. The reverse default trades a
     // disclosed leak for silent data loss.
@@ -545,13 +545,13 @@ pub(crate) async fn purge_dumps_if_unclaimed(
 }
 
 
-/// Helper: fetch database info (name, engine, password, port) — and the id of the server
-/// the owning site actually runs on — with an ownership check.
+/// Helper: fetch database info (name, engine, password, port) - and the id of the server
+/// the owning site actually runs on - with an ownership check.
 ///
 /// The join to `sites` was here all along for the ownership term, and `sites` is where the
 /// authoritative `server_id` lives; the column simply was not selected. So every caller
 /// below answered WHICH DATABASE from this row and then took WHICH HOST from `ServerScope`
-/// — an `X-Server-Id` request header that falls back to the LOCAL agent whenever the caller
+/// - an `X-Server-Id` request header that falls back to the LOCAL agent whenever the caller
 /// owns no `servers` row. No non-admin ever owns one (the only INSERT is admin-gated), so
 /// for a tenant whose database lives on a fleet member that fallback was always the wrong
 /// machine, and nothing in the response said so.
@@ -560,7 +560,7 @@ pub(crate) async fn purge_dumps_if_unclaimed(
 /// DECRYPTED database password, and every caller forwards it to the agent it chose, which
 /// spends it on a `docker exec -e MYSQL_PWD=…` child process. A misdispatch therefore
 /// handed one tenant's live credential to a host their database does not run on, in the
-/// argv/environment of a process on that host — a disclosure that happened on ordinary
+/// argv/environment of a process on that host - a disclosure that happened on ordinary
 /// read-only calls like listing tables, with no error for anyone to notice.
 ///
 /// The row is the authority for the host exactly as it is for the ownership check, so the
@@ -570,18 +570,18 @@ pub(crate) async fn purge_dumps_if_unclaimed(
 /// these paths, so callers identify the target by database name.
 ///
 /// `Option<Uuid>` because the column is `NOT NULL` in the schema but optional in the
-/// structs that predate the fleet work — a `None` means a row older than the backfill, and
+/// structs that predate the fleet work - a `None` means a row older than the backfill, and
 /// guessing a host for it is the thing that must not happen.
 async fn get_db_info(
     state: &AppState,
     id: Uuid,
     user_id: Uuid,
 ) -> Result<(String, String, String, i32, Option<Uuid>), ApiError> {
-    // Admin-widened to match create()/list() — see the v2.216.0 audit note on list().
+    // Admin-widened to match create()/list() - see the v2.216.0 audit note on list().
     // This is the shared chokepoint for tables/table_schema/query/table_indexes/
     // foreign_keys/schema_overview/update_pitr_config/pitr_restore/reset_password/
-    // dumps/import — one fix here covers all 11 callers.
-    // LEFT JOIN both owner tables + COALESCE, same pattern as list() — see its comment.
+    // dumps/import - one fix here covers all 11 callers.
+    // LEFT JOIN both owner tables + COALESCE, same pattern as list() - see its comment.
     let row: Option<(String, String, String, Option<i32>, Option<String>, Option<Uuid>)> = sqlx::query_as(
         "SELECT d.name, d.engine, d.db_password_enc, d.port, d.container_id, \
          COALESCE(s.server_id, st.server_id) \
@@ -617,7 +617,7 @@ async fn get_db_info(
     Ok((name, engine, password, port, site_server_id))
 }
 
-/// GET /api/databases/{id}/tables — List tables in the database.
+/// GET /api/databases/{id}/tables - List tables in the database.
 pub async fn tables(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -663,7 +663,7 @@ pub async fn tables(
 
 /// The one charset any table name is interpolated under.
 ///
-/// `/databases/query` has no bind-parameter channel — the agent's `QueryDbRequest`
+/// `/databases/query` has no bind-parameter channel - the agent's `QueryDbRequest`
 /// carries `sql` and nothing else, and the statement is handed verbatim to
 /// `mariadb -e` / `psql -c`. So every table name that reaches a statement is
 /// interpolated, and this predicate is the only thing standing between a path
@@ -671,7 +671,7 @@ pub async fn tables(
 /// metacharacter, which is what makes `'{table}'` safe to build.
 ///
 /// It lives here as ONE function on purpose. There were two copies with two
-/// different charsets — the interpolating one refused `-`, the other allowed it —
+/// different charsets - the interpolating one refused `-`, the other allowed it -
 /// and a divergence between a validator and the statement it guards is the bug
 /// this file already shipped once.
 fn is_safe_table_name(table: &str) -> bool {
@@ -680,7 +680,7 @@ fn is_safe_table_name(table: &str) -> bool {
         && table.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-/// GET /api/databases/{id}/tables/{table} — Get table schema (columns, types).
+/// GET /api/databases/{id}/tables/{table} - Get table schema (columns, types).
 pub async fn table_schema(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -695,12 +695,12 @@ pub async fn table_schema(
     let agent = crate::helpers::agent_for_site_server(&state, site_server_id, &name).await?;
 
     // Interpolated, not bound. `29d959b` rewrote these two statements to use `?`/`$1`
-    // for injection safety and sent the values under a `"params"` key — but the agent
+    // for injection safety and sent the values under a `"params"` key - but the agent
     // has never had a `params` field to receive them, so serde dropped it and the
     // placeholder reached the engine unbound. Every column listing 400'd from
     // 2026-03-23 until this fix, invisibly, because the caller swallowed the error.
     // The sibling `table_indexes` below always interpolated and always worked; this
-    // now matches it, which also keeps the fix backend-only — a bind channel would
+    // now matches it, which also keeps the fix backend-only - a bind channel would
     // need the agent to ship in lockstep, and an old agent would still fail.
     let sql = match engine.as_str() {
         "mysql" | "mariadb" => format!(
@@ -739,7 +739,7 @@ pub struct SqlQueryRequest {
     pub sql: String,
 }
 
-/// POST /api/databases/{id}/query — Execute a SQL query.
+/// POST /api/databases/{id}/query - Execute a SQL query.
 pub async fn query(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -761,7 +761,7 @@ pub async fn query(
     // The host comes from the site's row, never from the caller's server switcher. This
     // request body carries the tenant's DECRYPTED database password to the agent, which
     // puts it in a `docker exec -e MYSQL_PWD=…` child process; sent to a machine the
-    // database does not run on, the credential is disclosed to that host — and the query
+    // database does not run on, the credential is disclosed to that host - and the query
     // either runs against a same-named container belonging to someone else or fails with a
     // "not found" that reads like an ordinary error.
     let agent = crate::helpers::agent_for_site_server(&state, site_server_id, &name).await?;
@@ -783,7 +783,7 @@ pub async fn query(
         .map_err(sql_error)
 }
 
-/// GET /api/databases/{id}/indexes/{table} — Get indexes for a table.
+/// GET /api/databases/{id}/indexes/{table} - Get indexes for a table.
 pub async fn table_indexes(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -827,7 +827,7 @@ pub async fn table_indexes(
     agent.post("/databases/query", Some(agent_body)).await.map(Json).map_err(sql_error)
 }
 
-/// GET /api/databases/{id}/foreign-keys — Get all foreign key relationships.
+/// GET /api/databases/{id}/foreign-keys - Get all foreign key relationships.
 pub async fn foreign_keys(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -876,7 +876,7 @@ pub async fn foreign_keys(
     agent.post("/databases/query", Some(agent_body)).await.map(Json).map_err(sql_error)
 }
 
-/// GET /api/databases/{id}/schema-overview — Full schema overview for visual browser.
+/// GET /api/databases/{id}/schema-overview - Full schema overview for visual browser.
 /// Returns tables, columns, indexes, and foreign keys in a single call.
 pub async fn schema_overview(
     State(state): State<AppState>,
@@ -886,7 +886,7 @@ pub async fn schema_overview(
     let (name, engine, password, _port, site_server_id) =
         get_db_info(&state, id, claims.sub).await?;
     // Both halves of the join below go through this one handle, so it has to be the
-    // site's own host — otherwise the two concurrent queries carry the decrypted
+    // site's own host - otherwise the two concurrent queries carry the decrypted
     // password to a foreign machine twice over.
     let agent = crate::helpers::agent_for_site_server(&state, site_server_id, &name).await?;
     let container = format!("dockpanel-db-{name}");
@@ -1034,13 +1034,13 @@ pub struct PitrConfigRequest {
     pub retention_hours: Option<i32>,
 }
 
-/// GET /api/databases/{id}/pitr — Get PITR configuration.
+/// GET /api/databases/{id}/pitr - Get PITR configuration.
 pub async fn pitr_config(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    // Verify ownership — admin-widened to match create()/list() (v2.216.0 audit note).
+    // Verify ownership - admin-widened to match create()/list() (v2.216.0 audit note).
     // Owner is either a site or a stack (chk_databases_owner enforces exactly one).
     let _db: (String,) = sqlx::query_as(
         "SELECT name FROM databases WHERE id = $1 AND (\
@@ -1083,7 +1083,7 @@ pub async fn pitr_config(
     }
 }
 
-/// PUT /api/databases/{id}/pitr — Enable/configure PITR.
+/// PUT /api/databases/{id}/pitr - Enable/configure PITR.
 pub async fn update_pitr_config(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -1092,7 +1092,7 @@ pub async fn update_pitr_config(
     Json(body): Json<PitrConfigRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     // Ownership + container-readiness check (get_db_info also enforces the H1 guard).
-    // No agent call on this path — the handler only persists the intent flag (see the
+    // No agent call on this path - the handler only persists the intent flag (see the
     // note below), so the server id this now returns has nothing to dispatch.
     let (name, _engine, _password, _port, _site_server_id) =
         get_db_info(&state, id, claims.sub).await?;
@@ -1100,7 +1100,7 @@ pub async fn update_pitr_config(
     let hours = body.retention_hours.unwrap_or(24).max(1).min(720);
 
     // NOTE (v2.19.0): the previous implementation ran `ALTER SYSTEM SET archive_mode='on'`
-    // on enable but the disable path had no inverse — so archiving was un-revertable through
+    // on enable but the disable path had no inverse - so archiving was un-revertable through
     // the panel and grew WAL without bound after a container restart (the archive_command
     // targeted a directory that the accompanying mkdir/pg_basebackup never created, because
     // those posted to a non-existent agent `/exec` route and were swallowed with `let _ =`).
@@ -1131,7 +1131,7 @@ pub async fn update_pitr_config(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// POST /api/databases/{id}/pitr/restore — Restore to a specific point in time.
+/// POST /api/databases/{id}/pitr/restore - Restore to a specific point in time.
 pub async fn pitr_restore(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -1154,7 +1154,7 @@ pub async fn pitr_restore(
     ))
 }
 
-/// POST /api/databases/{id}/reset-password — Reset the database password.
+/// POST /api/databases/{id}/reset-password - Reset the database password.
 /// Generates a new random password, updates the database container via the agent,
 /// then stores the encrypted password in the panel DB and returns it to the user.
 pub async fn reset_password(
@@ -1178,8 +1178,8 @@ pub async fn reset_password(
     // credential the panel no longer knows.
     //
     // The agent's mysql/mariadb branch used to reach the account as container-root and
-    // ignore the `old_password` this body sends. That never worked — the branch could not
-    // authenticate at all — and it now authenticates AS THE TENANT with this password, so
+    // ignore the `old_password` this body sends. That never worked - the branch could not
+    // authenticate at all - and it now authenticates AS THE TENANT with this password, so
     // the value below is load-bearing rather than decorative. See the note on
     // `services::database::reset_password` in the agent crate for the measurement.
     let agent = crate::helpers::agent_for_site_server(&state, site_server_id, &name).await?;
@@ -1241,25 +1241,25 @@ pub async fn reset_password(
     })))
 }
 
-/// GET /api/databases/{id}/dumps — What is sitting in this database's dump directory.
+/// GET /api/databases/{id}/dumps - What is sitting in this database's dump directory.
 ///
 /// The intake pattern here is the migration wizard's, not the file manager's: the
 /// operator puts the dump on the server themselves and the panel takes it by NAME. That
 /// is deliberate. A dump travels as base64-in-JSON through two axum services with a 2 MiB
-/// body limit each, so the file manager tops out around 1.5 MB — and a `.sql` under
+/// body limit each, so the file manager tops out around 1.5 MB - and a `.sql` under
 /// 1.5 MB is close to a rounding error. `Migration.tsx` has told operators to SFTP the
 /// archive up and hand the panel a path since the wizard shipped, and a 40 GB cPanel
 /// backup already moves through this product that way.
 ///
 /// ⛔ ADMIN ONLY, and this is a security boundary rather than a tidiness rule. The
 /// directory is keyed by DATABASE NAME, and a name is reusable. Deleting a database now
-/// also purges that directory — but only when no surviving row on the same host still
+/// also purges that directory - but only when no surviving row on the same host still
 /// answers to the name, so the door below still has to assume leftovers exist: dumps
 /// written before this behaviour shipped are still there, and a shared name keeps them
 /// deliberately. `databases.name` is unique only per SITE (the global
 /// constraint was dropped in `20260312000000_data_integrity.sql`). So a tenant who
 /// creates a database with a name a previous tenant used would, under a
-/// tenant-reachable listing, see and be able to import that tenant's leftover dumps —
+/// tenant-reachable listing, see and be able to import that tenant's leftover dumps -
 /// which are unencrypted for ad-hoc backups. Row-scoping (what
 /// `/api/backup-orchestrator/db-backups` does) cannot fix it, because the whole point of
 /// this door is files that have no row. `require_admin` can, and costs nothing real:
@@ -1283,13 +1283,13 @@ pub async fn dumps(
 
     // The agent answers "is this a backup at all". Whether a given backup can go into
     // THIS database is a second question it cannot answer, because it does not know the
-    // engine — so it is answered here and annotated onto each entry, and the import
+    // engine - so it is answered here and annotated onto each entry, and the import
     // handler enforces the identical rule below. Annotating without enforcing would be a
     // UI that merely asks nicely.
     let mut entries = match listing {
         serde_json::Value::Array(a) => a,
         // A shape we do not recognise is not an empty directory, and must not render as
-        // one — the empty state is a positive claim about the disk.
+        // one - the empty state is a positive claim about the disk.
         other => return Ok(Json(other)),
     };
     for entry in &mut entries {
@@ -1308,7 +1308,7 @@ pub async fn dumps(
 /// Why a real backup still cannot be imported into THIS database, if it cannot.
 ///
 /// Split out as a pure function so the boundary is judgeable with no request, no agent
-/// and no database — the `exceeds_upload_limit` shape from v2.137.0 — and so the
+/// and no database - the `exceeds_upload_limit` shape from v2.137.0 - and so the
 /// listing and the import door cannot drift apart: they are the same call.
 fn import_blocked_reason(filename: &str, engine: &str) -> Option<String> {
     if filename.ends_with(".enc") {
@@ -1321,7 +1321,7 @@ fn import_blocked_reason(filename: &str, engine: &str) -> Option<String> {
                 .to_string(),
         );
     }
-    // `.archive.gz` is MongoDB's dump format — `dump_mongo` is its only producer. Fed to
+    // `.archive.gz` is MongoDB's dump format - `dump_mongo` is its only producer. Fed to
     // a postgres or mariadb restore it becomes a BSON stream piped into `psql`, which
     // fails deep inside the pipe on content rather than at the door.
     let is_mongo = matches!(engine, "mongo" | "mongodb");
@@ -1341,14 +1341,14 @@ pub struct ImportDbRequest {
     pub filename: String,
 }
 
-/// POST /api/databases/{id}/import — Import a dump the operator placed on the server.
+/// POST /api/databases/{id}/import - Import a dump the operator placed on the server.
 ///
 /// Answers the half of issue #121 that v2.137.0 left open. The importer itself is not new
 /// and is not written here: the agent's `POST /db-backups/{db}/restore/{filename}` already
 /// pins the path per database, validates every identifier it puts on an argv, passes the
 /// password by environment rather than command line, and reads the child's exit status
 /// instead of treating EOF as success. What did not exist was a door onto it for a dump the
-/// operator brought themselves — only for one the panel had taken.
+/// operator brought themselves - only for one the panel had taken.
 ///
 /// ⛔ Admin only, for the reason documented on [`dumps`] above.
 pub async fn import(
@@ -1377,7 +1377,7 @@ pub async fn import(
         return Err(err(
             StatusCode::BAD_REQUEST,
             "That filename cannot be used. Backup names may contain letters, digits, \
-             dash, underscore and dot only — rename the file on the server and try again.",
+             dash, underscore and dot only - rename the file on the server and try again.",
         ));
     }
 
@@ -1407,7 +1407,7 @@ pub async fn import(
     // ⛔ The timeout is taken HERE rather than read off the error that comes back, and
     // that is not a style choice. `AgentError::Request` is minted for a URI that would
     // not build and for a connection that dropped mid-flight as well as for a timeout,
-    // and the REMOTE client does not mint it for a timeout at all — it maps every
+    // and the REMOTE client does not mint it for a timeout at all - it maps every
     // failure, timeouts included, to `AgentError::Connection`. So matching on the variant
     // told fleet operators their agent was offline while the import ran fine, and told
     // local operators an import was "still running" when nothing had ever been sent.
@@ -1426,12 +1426,12 @@ pub async fn import(
             );
             // Deliberately NOT reported as a failure. The import is still running inside
             // the container, and the operator's natural response to "failed" is to run it
-            // again — on top of a database that is mid-write, which is the one genuinely
+            // again - on top of a database that is mid-write, which is the one genuinely
             // destructive thing this information could cause.
             return Err(err(
                 StatusCode::GATEWAY_TIMEOUT,
                 &format!(
-                    "The import is still running on the server — it was NOT cancelled and \
+                    "The import is still running on the server - it was NOT cancelled and \
                      must not be started again. A dump that takes longer than {budget}s \
                      outlasts the panel's request timeout, so there is nothing left here to \
                      watch it with. Browse the tables in a few minutes to see it finish."

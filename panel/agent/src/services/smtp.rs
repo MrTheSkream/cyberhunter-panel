@@ -1,6 +1,6 @@
 use crate::safe_cmd::{safe_command, safe_command_sync, safe_command_sync_unsandboxed};
 
-/// msmtp's own default config path is `/etc/msmtprc` — a BARE FILE at the top of
+/// msmtp's own default config path is `/etc/msmtprc` - a BARE FILE at the top of
 /// `/etc`, which `ProtectSystem=strict` makes read-only. `ReadWritePaths` names
 /// `/etc/postfix`, `/etc/dovecot`, `/etc/php` and a dozen more, and it cannot
 /// help here: marking a file that does not exist yet is inert, and CREATING it
@@ -8,7 +8,7 @@ use crate::safe_cmd::{safe_command, safe_command_sync, safe_command_sync_unsandb
 ///
 /// So `POST /smtp/configure` answered
 /// `Failed to write /etc/msmtprc: Read-only file system (os error 30)` on every
-/// install running the shipped unit — the SMTP relay could never be configured,
+/// install running the shipped unit - the SMTP relay could never be configured,
 /// and v2.123.0's permission hardening below was hardening a path that never ran.
 ///
 /// This is the same shape as `/etc/opendkim.conf`, and takes the same cure the
@@ -20,7 +20,7 @@ const MSMTP_CONFIG: &str = "/etc/dockpanel/msmtprc";
 /// Named so the route can answer it as a precondition rather than a fault.
 ///
 /// Test Email spawned msmtp and reported a failed spawn as a 5xx, which the
-/// panel replaces with an incident id — so an operator whose host simply has no
+/// panel replaces with an incident id - so an operator whose host simply has no
 /// msmtp concluded their credentials or their relay were wrong and went to debug
 /// the mail provider. Two things make it ordinary rather than exotic: the binary
 /// is installed only by `ensure_msmtp` below, which runs on `configure`, so a
@@ -29,7 +29,7 @@ const MSMTP_CONFIG: &str = "/etc/dockpanel/msmtprc";
 /// panel's own precondition check reads a panel-global setting, not per-host
 /// state, so it passes while this host has nothing.
 pub const MSMTP_MISSING: &str =
-    "This server has no msmtp binary, so it cannot send mail yet — your SMTP \
+    "This server has no msmtp binary, so it cannot send mail yet - your SMTP \
      settings are not the problem. Save the SMTP settings again while this server \
      is online to install and configure it. On RHEL-family systems the panel \
      cannot install msmtp automatically; install it with your package manager.";
@@ -101,7 +101,7 @@ pub fn configure(
 
     // `from_full_name` is the only thing that makes msmtp put a display
     // name on the `From:` header it auto-adds to outgoing mail (msmtp's
-    // `from` command is envelope-from only — a bare address, never a
+    // `from` command is envelope-from only - a bare address, never a
     // display name). Omitted entirely when blank rather than emitted as
     // `from_full_name ` with nothing after it, since msmtp's own argument
     // grammar reads "the rest of the line" for this directive and an
@@ -113,7 +113,7 @@ pub fn configure(
     };
 
     let config = format!(
-        r#"# DockPanel SMTP configuration — managed automatically
+        r#"# CyberHunter - Panel SMTP configuration - managed automatically
 defaults
 auth           on
 tls            {tls}
@@ -130,8 +130,8 @@ password       {password}
 "#
     );
 
-    // Create the file 0600 from the outset. `fs::write` creates under the umask —
-    // 0644 on every distro the installer supports — and line 6 of what is being
+    // Create the file 0600 from the outset. `fs::write` creates under the umask -
+    // 0644 on every distro the installer supports - and line 6 of what is being
     // written is the SMTP password, so create-then-chmod published the password to
     // every local account for the length of the write. The old
     // `set_permissions(...).ok()` also discarded its own failure, in which case
@@ -154,7 +154,7 @@ password       {password}
     written.map_err(|e| format!("Failed to write {MSMTP_CONFIG}: {e}"))?;
 
     // `.mode()` applies only when the file is CREATED, so a config already on disk
-    // keeps whatever mode it has — including a 0644 left by a pre-v2.123.0 agent,
+    // keeps whatever mode it has - including a 0644 left by a pre-v2.123.0 agent,
     // which is the case an upgrade has to repair. Asserted explicitly, and this
     // time the failure is returned rather than swallowed: there is no sensible way
     // to carry on having failed to protect a stored password.
@@ -167,7 +167,7 @@ password       {password}
     }
 
     // Also configure PHP to use msmtp as sendmail. The config no longer lives at
-    // msmtp's default path, so every reader has to be told where it is — PHP
+    // msmtp's default path, so every reader has to be told where it is - PHP
     // included, or `mail()` silently falls back to a file that is not there.
     let php_ini_content = format!("sendmail_path = /usr/bin/msmtp -t --file={MSMTP_CONFIG}\n");
     let msmtp_ini_dir = "/etc/php/mods-available";
@@ -194,7 +194,7 @@ password       {password}
     // Create the relay log named by `logfile` above. msmtp writes it as whoever
     // sent the mail: root for the panel's own Test Email, `www-data` for anything
     // PHP relays through `sendmail_path` (every FPM pool this agent writes runs as
-    // www-data). 0666 was the shortest way to let both — and it also made the log
+    // www-data). 0666 was the shortest way to let both - and it also made the log
     // world-READABLE, which is envelope metadata (who mailed whom, when), and
     // world-WRITABLE, so any local account could forge entries or fill the disk.
     //
@@ -204,12 +204,12 @@ password       {password}
     // from msmtp-as-www-data and break relaying to fix a disclosure. Repairing a
     // loud problem must not manufacture a silent one, so that case keeps the old
     // mode and says why.
-    // Only CREATE it here — never truncate an existing one. `configure()`
+    // Only CREATE it here - never truncate an existing one. `configure()`
     // runs on every SMTP settings save (the frontend always re-PUTs all 7
     // `smtp_*` keys, even on an unrelated field edit, and the backend then
     // pushes this to every online fleet member), so an unconditional
     // `fs::write(path, "")` was wiping the real mail relay history on every
-    // save — including the save an operator makes WHILE debugging a mail
+    // save - including the save an operator makes WHILE debugging a mail
     // problem using this exact log.
     if !std::path::Path::new("/var/log/msmtp.log").exists() {
         std::fs::write("/var/log/msmtp.log", "").ok();
@@ -228,7 +228,7 @@ password       {password}
         } else {
             tracing::warn!(
                 "SMTP: no www-data group to own /var/log/msmtp.log, so it stays \
-                 world-writable — PHP relays keep logging, but envelope metadata in \
+                 world-writable - PHP relays keep logging, but envelope metadata in \
                  it is readable by any local account on this host."
             );
         }
@@ -246,20 +246,20 @@ pub async fn send_test(to: &str, from: &str, from_name: &str) -> Result<String, 
             return Err(format!("{label} must not contain newlines or null bytes"));
         }
     }
-    let subject = "DockPanel SMTP Test";
+    let subject = "CyberHunter - Panel SMTP Test";
     let body = format!(
         "From: {from_name} <{from}>\r\n\
          To: {to}\r\n\
          Subject: {subject}\r\n\
          Content-Type: text/plain; charset=utf-8\r\n\
          \r\n\
-         This is a test email from DockPanel.\r\n\
+         This is a test email from CyberHunter - Panel.\r\n\
          If you received this, your SMTP configuration is working correctly.\r\n"
     );
 
     // `--file` is not optional: the config is no longer at msmtp's default path,
     // so without it Test Email reads a file that does not exist and reports the
-    // operator's credentials as wrong — a message about the wrong thing, which is
+    // operator's credentials as wrong - a message about the wrong thing, which is
     // exactly what MSMTP_MISSING above exists to avoid.
     let mut child = safe_command("msmtp")
         .args(["--file", MSMTP_CONFIG, "--read-envelope-from", to])

@@ -25,8 +25,8 @@ pub static ACTIVE_TERMINALS: std::sync::atomic::AtomicU32 = std::sync::atomic::A
 /// The panic button used to run `pkill -u www-data -f bash`, which is a guess
 /// about which processes are ours, and it guessed wrong in the one direction
 /// that matters: a SERVER terminal is deliberately kept as root
-/// (`open_pty_shell`), so the single most dangerous shell on the box — the one
-/// an intruder with a stolen admin session is holding — was the one process the
+/// (`open_pty_shell`), so the single most dangerous shell on the box - the one
+/// an intruder with a stolen admin session is holding - was the one process the
 /// emergency control could not reach. A registry is not a guess.
 pub static TERMINAL_PIDS: std::sync::Mutex<Vec<(i32, bool)>> =
     std::sync::Mutex::new(Vec::new());
@@ -73,7 +73,7 @@ struct TerminalTicket {
     sub: String,
     purpose: String,
     /// Whether this session may be recorded. A SIGNED claim, never a query
-    /// param — the browser holds the ticket and dials the agent directly, so a
+    /// param - the browser holds the ticket and dials the agent directly, so a
     /// param would let the user switch off the recording of their own session.
     /// Absent means an older panel minted the ticket: keep recording, which is
     /// what that panel already expected.
@@ -83,11 +83,11 @@ struct TerminalTicket {
     /// fix for an escalation: the scope used to come from the `?domain=` query
     /// param, so a site-scoped ticket dialled with the domain omitted opened a
     /// ROOT shell with no privilege drop. Now the ticket decides. Absent means
-    /// an older panel that did not bind it — see the fallback below.
+    /// an older panel that did not bind it - see the fallback below.
     scope: Option<String>,
 }
 
-/// GET /terminal/ws — WebSocket terminal.
+/// GET /terminal/ws - WebSocket terminal.
 /// Auth via ?token= query param (short-lived JWT ticket signed by the API).
 async fn ws_handler(
     State(state): State<AppState>,
@@ -150,7 +150,7 @@ async fn ws_handler(
     // param let a site-scoped ticket open a root shell by omitting the domain.
     // `@server` is the root shell (the panel only mints it for an admin, and it
     // is not a valid domain); any other value is a site. A ticket with no scope
-    // came from a panel too old to bind it — fall back to the param it expected,
+    // came from a panel too old to bind it - fall back to the param it expected,
     // and say so, so an unscoped root shell is visible in the log rather than
     // silent.
     let domain = match ticket_scope.as_deref() {
@@ -230,7 +230,7 @@ fn open_pty_shell(cwd: &str, cols: u16, rows: u16, site_domain: Option<&str>) ->
             // New session (detach from parent terminal)
             libc::setsid();
 
-            // Open slave side — this becomes our controlling terminal
+            // Open slave side - this becomes our controlling terminal
             let slave_cstr = std::ffi::CString::new(slave_name.as_str()).unwrap();
             let slave_fd = libc::open(slave_cstr.as_ptr(), libc::O_RDWR);
             if slave_fd < 0 {
@@ -249,7 +249,7 @@ fn open_pty_shell(cwd: &str, cols: u16, rows: u16, site_domain: Option<&str>) ->
             }
 
             // Close all inherited FDs > 2 (master PTY, DB connections, TLS sockets, etc.)
-            // Must use raw libc (opendir/readdir/closedir) — NOT std::fs::read_dir which
+            // Must use raw libc (opendir/readdir/closedir) - NOT std::fs::read_dir which
             // allocates memory (violates async-signal-safety after fork) and the iterator
             // holds its own FD which we'd close from under it (causing closedir EBADF panic).
             let proc_fd_dir = libc::opendir(b"/proc/self/fd\0".as_ptr() as *const _);
@@ -274,17 +274,17 @@ fn open_pty_shell(cwd: &str, cols: u16, rows: u16, site_domain: Option<&str>) ->
 
             // Set env vars.
             //
-            // ⚠ `putenv` STORES THE POINTER — it does not copy. Every variable
+            // ⚠ `putenv` STORES THE POINTER - it does not copy. Every variable
             // below used to be a `CString` bound inside the block that sets it,
             // so Rust freed it at that block's closing brace while `environ`
             // kept pointing at the freed chunk, and `execv` runs AFTER those
-            // braces — by which time the five `CString`s built for the exec
+            // braces - by which time the five `CString`s built for the exec
             // itself had reused the memory. It was not theoretical: `/etc/
             // bash.bashrc` here sets `PS1` with `\w`, which prints `~` when the
             // cwd equals `$HOME`, and the child chdirs to `/root` and intends
             // `HOME=/root`. All 17 asciicast recordings on the demo box open
             // `root@host:/root#`; NONE opens `root@host:~#`. So HOME has been
-            // dead in every root terminal this panel has ever served — `--login`
+            // dead in every root terminal this panel has ever served - `--login`
             // could not expand `~/.bash_profile`, and a bare `cd` failed.
             //
             // `setenv` COPIES both halves, so the lifetime question disappears
@@ -306,8 +306,8 @@ fn open_pty_shell(cwd: &str, cols: u16, rows: u16, site_domain: Option<&str>) ->
                     let gid = (*pw).pw_gid;
                     // EVERY ONE OF THESE MUST SUCCEED, and their results used to
                     // be discarded. `setuid` returns EAGAIN when the target uid
-                    // is at RLIMIT_NPROC — reachable on a busy box, since
-                    // www-data also runs every PHP-FPM worker — and a discarded
+                    // is at RLIMIT_NPROC - reachable on a busy box, since
+                    // www-data also runs every PHP-FPM worker - and a discarded
                     // failure falls straight through to the `execv` below and
                     // hands the SITE'S OWNER a root shell in their own webroot.
                     // The `_exit(1)` in the else-arm already states the
@@ -338,7 +338,7 @@ fn open_pty_shell(cwd: &str, cols: u16, rows: u16, site_domain: Option<&str>) ->
                     // (blocks setuid binaries like su, sudo, pkexec, etc.)
                     libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0);
 
-                    // Set HOME to site directory. `setenv`, not `putenv` — see
+                    // Set HOME to site directory. `setenv`, not `putenv` - see
                     // the note above `TERM`; these three are the variables the
                     // use-after-free destroyed.
                     let k_home = std::ffi::CString::new("HOME").unwrap();
@@ -357,11 +357,11 @@ fn open_pty_shell(cwd: &str, cols: u16, rows: u16, site_domain: Option<&str>) ->
                     // Restrict umask so created files aren't world-readable
                     libc::umask(0o077);
                 } else {
-                    // www-data user not found — abort rather than run as root
+                    // www-data user not found - abort rather than run as root
                     libc::_exit(1);
                 }
             } else {
-                // Server terminal — keep root
+                // Server terminal - keep root
                 let k_home = std::ffi::CString::new("HOME").unwrap();
                 let v_home = std::ffi::CString::new("/root").unwrap();
                 libc::setenv(k_home.as_ptr(), v_home.as_ptr(), 1);
@@ -493,7 +493,7 @@ async fn handle_terminal(mut socket: WebSocket, domain: String, user_email: Stri
     let is_site_terminal = !domain.is_empty();
     let domain_str = if domain.is_empty() { "server" } else { &domain };
 
-    // Feature 5: Open session recording file — only when the panel's
+    // Feature 5: Open session recording file - only when the panel's
     // `security_session_recording` toggle allows it. Until v2.46.0 this ran
     // unconditionally and the toggle was inert, so switching it off changed
     // nothing while the UI reported "Session recording disabled".
@@ -550,7 +550,7 @@ async fn handle_terminal(mut socket: WebSocket, domain: String, user_email: Stri
     // Main loop: multiplex PTY output and WebSocket input
     loop {
         tokio::select! {
-            // Timeout branch — fires even on idle sessions
+            // Timeout branch - fires even on idle sessions
             _ = tokio::time::sleep_until(session_deadline) => {
                 let _ = socket.send(Message::Text(
                     "\r\n\x1b[1;33mSession timed out (30 minutes). Reconnect to continue.\x1b[0m\r\n".into()
@@ -586,7 +586,7 @@ async fn handle_terminal(mut socket: WebSocket, domain: String, user_email: Stri
                                     if let Some(data) = cmd.get("data").and_then(|d| d.as_str()) {
                                         // Characters are forwarded immediately for echo, but
                                         // Enter is held until the completed line is judged.
-                                        // ONE path — see `observe_input`; the raw-text arm
+                                        // ONE path - see `observe_input`; the raw-text arm
                                         // below calls exactly the same three lines.
                                         let seen = observe_input(data, &mut cmd_buffer, is_site_terminal);
                                         let mut blocked = false;
@@ -656,7 +656,7 @@ async fn handle_terminal(mut socket: WebSocket, domain: String, user_email: Stri
         let mut status = 0i32;
         let ret = libc::waitpid(child_pid as i32, &mut status, libc::WNOHANG);
         if ret == 0 {
-            // Still alive after SIGTERM — force kill and blocking reap
+            // Still alive after SIGTERM - force kill and blocking reap
             libc::kill(child_pid as i32, libc::SIGKILL);
             libc::waitpid(child_pid as i32, &mut status, 0);
         }
@@ -687,7 +687,7 @@ enum Observed {
 /// `{"type":"input"}` arm, which classified, and once inside the raw-text arm,
 /// which only ever ran the BLOCK half and only for site terminals. Since
 /// `Terminal.tsx` sends JSON at all seven of its senders, the raw arm is a path
-/// the product's own UI never uses — so the ONE input path with no detection was
+/// the product's own UI never uses - so the ONE input path with no detection was
 /// the one only a non-browser client takes, which is the client an intruder
 /// with a stolen admin session uses. `TERMINAL_PIDS`' own doc above names that
 /// adversary. Measured on the demo box at v2.87.0, same site, same account,
@@ -695,7 +695,7 @@ enum Observed {
 ///
 /// ⚠ HONEST BOUND, so nobody reads more into this than it delivers. A line is
 /// reconstructed from keystrokes, so anything that moves the cursor makes the
-/// reconstruction diverge from what the shell will execute — typing
+/// reconstruction diverge from what the shell will execute - typing
 /// `echo cmod 777`, then seven LEFTs, then `h` runs `echo chmod 777` and is
 /// measured here as `echo cmod 777[D…h`, which matches nothing. That was true
 /// before this change and is true after it. What this function guarantees is
@@ -712,7 +712,7 @@ fn observe_input(data: &str, buf: &mut String, is_site_terminal: bool) -> Vec<Ob
             if line.is_empty() {
                 continue;
             }
-            // The block check stays gated on `is_site_terminal` deliberately —
+            // The block check stays gated on `is_site_terminal` deliberately -
             // an administrator's SERVER shell must keep `cd ..`, which
             // `client-role-and-server-ownership-pin-e2e.sh` §D pins. Only the
             // SUSPICIOUS half is ungated, because a root shell is precisely
@@ -757,8 +757,8 @@ fn write_suspicious_event(event_type: &str, user_email: &str, domain: &str, comm
 /// intrusion channel when the line is worth an operator's attention.
 ///
 /// A REFUSAL is reported. It used to `break` out of the loop before the
-/// classifier ran, so the strongest thing this product can observe — "I just
-/// refused `sudo` on a shell someone is holding" — produced a single
+/// classifier ran, so the strongest thing this product can observe - "I just
+/// refused `sudo` on a shell someone is holding" - produced a single
 /// `tracing::warn` on the `terminal_audit` target, which has NO consumer
 /// outside the agent's own journal (0 hits across `panel/backend/src` and
 /// `panel/frontend/src`). It reached neither the audit log the panel renders
@@ -768,8 +768,8 @@ fn write_suspicious_event(event_type: &str, user_email: &str, domain: &str, comm
 /// `security_hardening::record_suspicious_event_at` counts every row in
 /// `suspicious_events` within the window against `security_lockdown_threshold`
 /// (default 5 in 10 minutes) and a trip blocks every non-admin for 24h. But
-/// `TERMINAL_BLOCKED_PATTERNS` contains a bare `".."` SUBSTRING — its own
-/// comment admits `echo "done..."` is refused — so a tenant trips refusals by
+/// `TERMINAL_BLOCKED_PATTERNS` contains a bare `".."` SUBSTRING - its own
+/// comment admits `echo "done..."` is refused - so a tenant trips refusals by
 /// accident. Counting those toward auto-lockdown would convert a blunt
 /// blocklist into a self-inflicted outage. The ingest therefore audits this
 /// type and does not count it; see `auto_healer::security_ingest_suspicious_events`.
@@ -886,7 +886,7 @@ mod observe_tests {
         assert_eq!(as_raw_frame("sudo id\nls -la\n", true), ["blocked"]);
     }
 
-    /// The block half STAYS gated on the terminal kind — widening it would take
+    /// The block half STAYS gated on the terminal kind - widening it would take
     /// `cd ..` away from an administrator's server shell, which
     /// `client-role-and-server-ownership-pin-e2e.sh` §D pins in the other
     /// direction.
@@ -905,7 +905,7 @@ mod observe_tests {
     /// The honest bound, asserted so nobody later reads the fix as more than it
     /// is: the line is rebuilt from KEYSTROKES, so cursor movement makes the
     /// reconstruction diverge from what the shell runs. Verified live at
-    /// v2.87.0 — `echo cmod 777`, seven LEFTs, `h` runs `echo chmod 777` and is
+    /// v2.87.0 - `echo cmod 777`, seven LEFTs, `h` runs `echo chmod 777` and is
     /// observed as neither blocked nor suspicious. This test exists to make that
     /// limit explicit rather than discovered.
     #[test]

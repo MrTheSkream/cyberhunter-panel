@@ -1,6 +1,6 @@
-# Fonctionnalité 1 — Multi-IP (sites + IP d'envoi mail)
+# Fonctionnalité 1 - Multi-IP (sites + IP d'envoi mail)
 
-Statut : **proposition v2, à valider** — 2026-11-14. Base : v2.242.1 (commit d'import `20342eb`).
+Statut : **proposition v2, à valider** - 2026-11-14. Base : v2.242.1 (commit d'import `20342eb`).
 v2 : alignée sur le fonctionnement de HestiaCP (vérifié dans son code : `v-add-sys-ip`, `v-add-mail-domain`, template Exim).
 
 ## 1. Contexte
@@ -19,9 +19,9 @@ v2 : alignée sur le fonctionnement de HestiaCP (vérifié dans son code : `v-ad
 | HELO | **PTR de l'IP d'envoi**, résolu par Exim à chaque envoi (repli : hostname du serveur) |
 | DNS | A du domaine = IP du domaine web |
 
-### Ce que fait DockPanel aujourd'hui (vérifié dans le code et dans la VM)
+### Ce que fait CyberHunter - Panel aujourd'hui (vérifié dans le code et dans la VM)
 - **Web** : `detect_bind_ip()` (`agent/src/services/nginx.rs:502`) devine l'IP de la route par défaut à chaque rendu de vhost (`:748`). Tous les vhosts écoutent `IP_principale:80/443` + `[::]:80/443`, sans `listen 80` générique : **les autres IP ne servent rien** (test VM : .11/.12 → connexion refusée).
-- **DNS/SPF** : une seule IP par serveur, `helpers::public_ip_for_server()` (`backend/src/helpers.rs:1210`) — pour le serveur local elle interroge **ipify** (dans le labo : ton IP perso de box).
+- **DNS/SPF** : une seule IP par serveur, `helpers::public_ip_for_server()` (`backend/src/helpers.rs:1210`) - pour le serveur local elle interroge **ipify** (dans le labo : ton IP perso de box).
 - **Mail** : Postfix sans `smtp_bind_address` ni `sender_dependent_*` ; `master.cf` écrit une fois à l'install ; pas de `smtp_helo_name`. Maps `hash:` reconstruites par `POST /mail/sync`.
 - Aucun inventaire ni gestion des IP du serveur.
 
@@ -88,7 +88,7 @@ ALTER TABLE mail_domains ADD COLUMN IF NOT EXISTS send_ip_id UUID REFERENCES ser
 
 ### 4.3 Vhost nginx
 - `SiteConfig` (`agent/src/routes/nginx.rs:16`) gagne `bind_ip: Option<String>` (`serde(default)` → compatible).
-- `bind_ip` accepte une IPv4 **ou la valeur spéciale `"primary"`** (IP principale détectée par l'agent — le backend ne peut pas la connaître : son « IP du serveur local » vient d'ipify).
+- `bind_ip` accepte une IPv4 **ou la valeur spéciale `"primary"`** (IP principale détectée par l'agent - le backend ne peut pas la connaître : son « IP du serveur local » vient d'ipify).
 - Validation dans `put_site` : IPv4 valide **et présente sur une interface** (sinon nginx refuserait de démarrer).
 - `render_site_config` choisit l'IP dans cet ordre :
   1. `bind_ip` = IPv4 → cette IP ; = `"primary"` → `detect_bind_ip()` ;
@@ -98,7 +98,7 @@ ALTER TABLE mail_domains ADD COLUMN IF NOT EXISTS send_ip_id UUID REFERENCES ser
 - `services/ssl.rs:992-1017` copie `SiteConfig` champ par champ : on y ajoute `bind_ip`.
 - Les chemins qui patchent le texte (redirections, alias, protection par mot de passe, désactivation/réactivation) gardent les `listen` existants.
 
-### 4.4 Postfix — IP d'envoi par domaine
+### 4.4 Postfix - IP d'envoi par domaine
 `SyncDomain` (`agent/src/routes/mail.rs:35-47`) gagne `send_ip: Option<String>` et `helo: Option<String>` (déjà résolus par le backend). À chaque `POST /mail/sync` :
 1. **`/etc/postfix/sender_transport`** (hash) : `@domaine  dp-ip-192-0-2-107:` pour chaque domaine dont l'IP d'envoi n'est pas l'IP principale ; `postmap`.
 2. **`master.cf`** : bloc géré entre marqueurs, entièrement régénéré :
@@ -173,7 +173,7 @@ Journal d'activité : `server_ip.add/remove/update`, `site.ip.change`, `mail.dom
 5. Mail : serveur mail installé, `a.lab` (site sur `.11`, IP d'envoi auto) et `b.lab` (sans site, forcé sur `.12`). Récepteur SMTP de test sur l'hôte `192.168.250.1:25` qui journalise IP source + HELO ; envoi vers `test@[192.168.250.1]` → `a.lab` sort de `.11`, `b.lab` de `.12` ; on passe le site `a.lab` sur `.10` → son mail suit ; changer la limite d'envoi → les `dp-ip-*` suivent.
    **Prérequis à ton accord** : règle du pare-feu Windows « port 25 entrant » limitée à l'interface `vEthernet (DockPanelLab)`, supprimée après le test.
 6. Supprimer une IP utilisée → refus.
-7. **Non testé dans le labo** : sortie IPv6 (pas d'IPv6) — `inet_protocols=ipv4` vérifié par lecture de `master.cf`. PTR : le labo n'a pas de PTR réel → test du repli (HELO = hostname) et d'un PTR simulé.
+7. **Non testé dans le labo** : sortie IPv6 (pas d'IPv6) - `inet_protocols=ipv4` vérifié par lecture de `master.cf`. PTR : le labo n'a pas de PTR réel → test du repli (HELO = hostname) et d'un PTR simulé.
 
 ## 8. Décisions
 Validées : IPv6 partagée ; pas de propriétaire d'IP ; Docker/git/panel sur l'IP principale ; mail à IP choisie en IPv4 seulement.
@@ -183,4 +183,4 @@ Ajustées pour coller à HestiaCP (à confirmer) :
 3. HELO = **PTR lu automatiquement**, rafraîchissable.
 
 ## 9. Pour la migration (plus tard, rappel)
-Sur ton serveur, 6 IP vivent dans `60-hestia.yaml` : si DockPanel est installé **à la place de HestiaCP sur la même machine**, ce fichier doit être repris dans `60-dockpanel.yaml` **avant** de désinstaller HestiaCP, sinon les IP disparaissent au reboot suivant. Sur un serveur neuf, on les ajoute simplement par le panel (et on les rattache côté OVH).
+Sur ton serveur, 6 IP vivent dans `60-hestia.yaml` : si CyberHunter - Panel est installé **à la place de HestiaCP sur la même machine**, ce fichier doit être repris dans `60-dockpanel.yaml` **avant** de désinstaller HestiaCP, sinon les IP disparaissent au reboot suivant. Sur un serveur neuf, on les ajoute simplement par le panel (et on les rattache côté OVH).

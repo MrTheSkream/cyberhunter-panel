@@ -2,17 +2,17 @@
 #
 # Regression pin for the RESOURCE-MUTATION AUDIT LOG extension.
 #
-# WHAT THIS CLOSES. DockPanel already had two logging paths: `activity::
+# WHAT THIS CLOSES. CyberHunter - Panel already had two logging paths: `activity::
 # log_activity(...)`, which writes to the MUTABLE `activity_logs` table (no
 # trigger stops an UPDATE/DELETE on it), and `security_hardening::audit_log
 # (...)`, which writes to the IMMUTABLE `security_audit_log` table (a Postgres
 # trigger blocks UPDATE/DELETE on it) plus an append-only tamper-resistant
 # file. Before this change, audit_log was only ever called from auth.rs,
-# security.rs, git_deploys.rs, passkeys.rs and services/auto_healer.rs — every
+# security.rs, git_deploys.rs, passkeys.rs and services/auto_healer.rs - every
 # OTHER destructive or privilege-sensitive action (deleting a site or server,
 # promoting/demoting a reseller, resetting another user's password or 2FA,
 # rotating a secret or server token, disabling SSH password auth, etc.) only
-# ever reached the mutable table. DockPanel supports teams/resellers/multiple
+# ever reached the mutable table. CyberHunter - Panel supports teams/resellers/multiple
 # admins, so a compromised admin account or a malicious insider could perform
 # one of those actions and then edit or delete the activity_logs row that
 # recorded it, leaving zero forensic trace.
@@ -22,13 +22,13 @@
 # call in panel/backend/src/routes) as destructive, privilege-changing,
 # credential-lifecycle, or infrastructure-topology mutations, and each now
 # ALSO writes an immutable audit_log() entry alongside its existing
-# log_activity() call — same actor, same target, same details, reusing the
+# log_activity() call - same actor, same target, same details, reusing the
 # real caller IP wherever `headers: HeaderMap` could be threaded through
 # (adding that parameter to 81 handlers that didn't already have it). A live
 # smoke test against this box's real Postgres during development found a
 # 97th site the survey's grep pattern couldn't see: auth.rs's login handler
 # has a THIRD logging variant, log_activity_system(...), on the "no such
-# account" branch — the one call in the whole codebase that uses it, and (per
+# account" branch - the one call in the whole codebase that uses it, and (per
 # its own comment) "the branch that matters for detection", since credential
 # stuffing and username enumeration are attempts against emails that don't
 # exist. Fixed and added to this pin (§3) as its own targeted assertion,
@@ -50,7 +50,7 @@ bad() { FAIL=$((FAIL+1)); printf '  \033[0;31m✗\033[0m %s\n' "$1"; }
 ROUTES=panel/backend/src/routes
 MIGRATION=panel/backend/migrations/20260324000000_security_enhancements.sql
 
-# Strip line comments only — a block-comment stripper is what deleted 485
+# Strip line comments only - a block-comment stripper is what deleted 485
 # lines of real code until s294; this deliberately does the narrow, safe thing.
 code() { sed 's://.*$::' "$1"; }
 
@@ -65,7 +65,7 @@ for f in $FILES; do
 done
 [ -f "$MIGRATION" ] || { echo "missing $MIGRATION"; exit 1; }
 
-# ── 1. Per-file audit_log() call counts — the count-based backstop ─────
+# ── 1. Per-file audit_log() call counts - the count-based backstop ─────
 #
 # Each number is the file's TOTAL security_hardening::audit_log(...) call
 # count after this change (pre-existing calls + the ones this change added).
@@ -117,7 +117,7 @@ check_count users 6
 check_count webhook_gateway 1
 check_count whmcs 2
 
-# ── 2. Grand total — independent of how the per-file counts above sum ──
+# ── 2. Grand total - independent of how the per-file counts above sum ──
 TOTAL=0
 for f in $FILES; do
   n=$(code "$ROUTES/$f.rs" | grep -c "audit_log(")
@@ -129,17 +129,17 @@ else
   bad "grand total audit_log() calls: expected 113, found $TOTAL"
 fi
 
-# ── 3. Targeted content checks — the highest-value / trickiest sites ───
+# ── 3. Targeted content checks - the highest-value / trickiest sites ───
 #
 # A call-count match doesn't prove the RIGHT event fired with the RIGHT
-# severity — a swapped severity or a copy-pasted wrong event_type would still
+# severity - a swapped severity or a copy-pasted wrong event_type would still
 # leave the count untouched. These spell out the sites where getting it wrong
 # would matter most (the four "critical"-severity destructive actions) and
 # the trickiest mechanical shapes (dynamic event strings, and the oauth.rs
 # sites where the real caller IP was sitting right there and had to be wired
 # in, not left as None).
 # Each file's code is flattened ONCE into a variable (never piped into a
-# boolean grep — a `producer | grep -q` under `set -o pipefail` reads a
+# boolean grep - a `producer | grep -q` under `set -o pipefail` reads a
 # successful early-exit match as a failure the moment grep stops reading
 # before the producer finishes writing, the exact SIGPIPE-false-negative
 # class this project's own pipefail-sigpipe-pin-e2e.sh exists to catch).
@@ -158,11 +158,11 @@ must_contain() {
   flat_needle=$(printf '%s' "$needle" | tr -d ' \t\n')
   case "$flat" in
     *"$flat_needle"*) ok "$desc" ;;
-    *) bad "$desc — pattern not found (whitespace-insensitive): $needle" ;;
+    *) bad "$desc - pattern not found (whitespace-insensitive): $needle" ;;
   esac
 }
 
-# The four CRITICAL-severity destructive actions — an attacker (or a script
+# The four CRITICAL-severity destructive actions - an attacker (or a script
 # bug) silently downgrading one of these to "warning" is exactly the kind of
 # regression a count-only check would miss.
 must_contain "$SITES_FLAT" '"site.delete", Some(&claims.email), ip.as_deref(),
@@ -192,7 +192,7 @@ must_contain "$SERVERS_FLAT" '"server.rotate_token",
         None,
         "critical",' "server.rotate_token is audit-logged at severity=critical"
 
-# Dynamic event strings — the action isn't a literal, so the regression to
+# Dynamic event strings - the action isn't a literal, so the regression to
 # guard against is someone "simplifying" the call to a hardcoded half of the
 # branch (e.g. always "user.suspend" even on the unsuspend path).
 must_contain "$USERS_FLAT" 'audit_log(
@@ -208,7 +208,7 @@ must_contain "$DNS_FLAT" '&format!("dns.cf.setting.{setting}"), Some(&claims.ema
 # Postgres during development caught the second one: the discovery survey
 # grepped for `log_activity(` and `log_activity_on_server(`, and the
 # non-existent-account branch calls a THIRD variant, `log_activity_system(`,
-# which was never in scope — so the mechanical `audit_log()` pass silently
+# which was never in scope - so the mechanical `audit_log()` pass silently
 # skipped the one call this codebase's own comment calls "the branch that
 # matters for detection": credential stuffing and username enumeration are,
 # by definition, attempts against emails that do not exist, so a login-audit
@@ -216,9 +216,9 @@ must_contain "$DNS_FLAT" '&format!("dns.cf.setting.{setting}"), Some(&claims.ema
 # complete while missing the actual attack signal.
 must_contain "$AUTH_FLAT" '"auth.login_failed", Some(&u.email), Some(&ip),' "auth.login_failed (wrong password, real account) is audit-logged"
 must_contain "$AUTH_FLAT" '"auth.login_failed", Some(&body.email), Some(&ip),
-                None, None, Some("unknown_user"), None, "warning",' "auth.login_failed (no such account — the actual enumeration/credential-stuffing signal) is audit-logged"
+                None, None, Some("unknown_user"), None, "warning",' "auth.login_failed (no such account - the actual enumeration/credential-stuffing signal) is audit-logged"
 
-# oauth.rs — all three call sites originally logged ip_address/actor_ip as a
+# oauth.rs - all three call sites originally logged ip_address/actor_ip as a
 # literal `None` even though `headers`/a computed `ip` was available in scope
 # for the session-row insert a few lines away. Left as None, every OAuth
 # audit entry would be forensically useless for IP-based investigation.

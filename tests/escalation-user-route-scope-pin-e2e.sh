@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
-# escalation-user-route-scope-pin-e2e.sh — s442
+# escalation-user-route-scope-pin-e2e.sh - s442
 #
 # ONE PROPERTY: an escalation-policy `user:<uuid>` step can only ever page a
-# user the policy's owner is allowed to page — themselves, or a user they
-# directly manage — never an arbitrary third party.
+# user the policy's owner is allowed to page - themselves, or a user they
+# directly manage - never an arbitrary third party.
 #
 # `panel/backend/src/routes/escalation_policies.rs`'s `validate_route` only
 # parsed `user:<uuid>` as a UUID shape check. Its sibling shape,
 # `on_call_schedule:<uuid>`, got an ownership check at s437
 # (`validate_schedule_routes`) after the identical class of bug was found for
-# rota references — `user:` never got the matching fix. The gap was live:
+# rota references - `user:` never got the matching fix. The gap was live:
 # `GET /api/users` lists every user on the install with no scoping (by
 # design, for the shared admin directory), so any admin could discover a
 # victim's UUID, save an escalation policy with a `user:<victim>` step,
 # attach it to an alert rule they own (`attach_escalation_policy` only
 # re-checks rule/policy ownership, never the policy's own route steps), and
-# trigger it — delivering the alert to the victim's real
+# trigger it - delivering the alert to the victim's real
 # email/Slack/Discord/PagerDuty/webhook with no consent and no way for them
 # to trace who set it up.
 #
@@ -40,7 +40,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
 echo
 echo "=================================================="
-echo "  escalation-policy user: route ownership — source pins (s442)"
+echo "  escalation-policy user: route ownership - source pins (s442)"
 echo "=================================================="
 echo
 
@@ -100,7 +100,7 @@ echo "── §A validate_user_routes exists, scoped by reseller_id ──"
 if [ -n "$VALIDATE_USER_BODY" ]; then
   ok "A1 validate_user_routes exists"
 else
-  bad "A1 validate_user_routes is missing — every arm below measures nothing"
+  bad "A1 validate_user_routes is missing - every arm below measures nothing"
 fi
 
 if has "$VALIDATE_USER_BODY" 'strip_prefix\("user:"\)'; then
@@ -127,13 +127,13 @@ echo "── §B paging yourself doesn't need an ownership check ──"
 if has "$VALIDATE_USER_BODY" 'target_id == owner_id'; then
   ok "B1 a self-route is special-cased"
 else
-  bad "B1 no self-route special case — an admin might not even be able to page themselves"
+  bad "B1 no self-route special case - an admin might not even be able to page themselves"
 fi
 
 if before "$VALIDATE_USER_BODY" "target_id == owner_id" "sqlx::query_as"; then
   ok "B2 the self-check happens BEFORE the DB round trip (short-circuits it)"
 else
-  bad "B2 the self-check is positioned after the DB query — dead code or wrong order"
+  bad "B2 the self-check is positioned after the DB query - dead code or wrong order"
 fi
 
 # ── §C both write paths call it ───────────────────────────────────────────
@@ -157,13 +157,13 @@ echo "── §D validation runs before the row is written, not instead of the s
 if before "$CREATE_BODY" "validate_schedule_routes" "validate_user_routes"; then
   ok "D1 create_policy still calls validate_schedule_routes (not replaced)"
 else
-  bad "D1 create_policy no longer calls validate_schedule_routes before validate_user_routes — the schedule fix may have been dropped"
+  bad "D1 create_policy no longer calls validate_schedule_routes before validate_user_routes - the schedule fix may have been dropped"
 fi
 
 if before "$CREATE_BODY" "validate_user_routes" "INSERT INTO escalation_policies"; then
   ok "D2 create_policy validates before the INSERT"
 else
-  bad "D2 create_policy's validation runs after (or the INSERT doesn't wait for it) — position wrong"
+  bad "D2 create_policy's validation runs after (or the INSERT doesn't wait for it) - position wrong"
 fi
 
 if before "$UPDATE_BODY" "validate_schedule_routes" "validate_user_routes"; then
@@ -175,7 +175,7 @@ fi
 if before "$UPDATE_BODY" "validate_user_routes" "UPDATE escalation_policies"; then
   ok "D4 update_policy validates before the UPDATE"
 else
-  bad "D4 update_policy's validation runs after (or the UPDATE doesn't wait for it) — position wrong"
+  bad "D4 update_policy's validation runs after (or the UPDATE doesn't wait for it) - position wrong"
 fi
 
 # ── §E non-disclosure convention preserved ────────────────────────────────
@@ -184,7 +184,7 @@ echo "── §E rejection never confirms another user's existence differently �
 if has "$VALIDATE_USER_BODY" 'does not exist'; then
   ok "E1 the rejection message matches validate_schedule_routes's non-disclosure phrasing"
 else
-  bad "E1 rejection message text changed — verify it doesn't leak ownership vs. non-existence"
+  bad "E1 rejection message text changed - verify it doesn't leak ownership vs. non-existence"
 fi
 
 echo

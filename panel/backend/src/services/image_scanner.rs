@@ -1,5 +1,5 @@
 // Background sweeper for per-image vulnerability scans.
-// Iterates the deduped set of images currently used by DockPanel-managed
+// Iterates the deduped set of images currently used by CyberHunter - Panel-managed
 // containers and rescans any whose newest finding is older than the
 // configured interval. Distinct from services::security_scanner which
 // runs the full-server scan.
@@ -17,7 +17,7 @@ const STARTUP_DELAY: Duration = Duration::from_secs(10 * 60);  // 10 minutes
 /// Sweep every online server's images, not just the panel's.
 ///
 /// Like the security scanner this asks a MACHINE what it is running, so there
-/// is no row whose `server_id` could be threaded — it needs the fleet loop. It
+/// is no row whose `server_id` could be threaded - it needs the fleet loop. It
 /// hard-coded the local handle, so a member's containers were never swept
 /// and its images never scanned, while the Apps page badged them with whatever
 /// the panel happened to have found for an image of the same name.
@@ -62,7 +62,7 @@ async fn sweep_once(pool: &PgPool, member: &FleetMember) -> Result<(), String> {
         return Ok(());
     }
 
-    // Gather distinct images from running DockPanel-managed apps.
+    // Gather distinct images from running CyberHunter - Panel-managed apps.
     let apps = agent
         .get("/apps")
         .await
@@ -90,7 +90,7 @@ async fn sweep_once(pool: &PgPool, member: &FleetMember) -> Result<(), String> {
     for image in images {
         // Skip if a fresh enough scan exists FOR THIS SERVER. Unscoped, one
         // host's fresh scan of `postgres:16` suppressed the rescan on every
-        // other host running it — indefinitely, since the suppressor keeps
+        // other host running it - indefinitely, since the suppressor keeps
         // refreshing itself.
         let last: Option<(chrono::DateTime<chrono::Utc>,)> = sqlx::query_as(
             "SELECT scanned_at FROM image_scan_findings WHERE server_id = $1 AND image = $2 \

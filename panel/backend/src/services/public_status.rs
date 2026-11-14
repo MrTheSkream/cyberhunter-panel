@@ -1,8 +1,8 @@
 //! The one gate the unauthenticated status-page surface passes through.
 //!
-//! Four routes answer with no authentication at all — `/api/status-page`,
+//! Four routes answer with no authentication at all - `/api/status-page`,
 //! `/api/status-page/public`, `/api/status-page/subscribe` and
-//! `/api/status-page/unsubscribe` — and until v2.70.0 exactly **one** of them
+//! `/api/status-page/unsubscribe` - and until v2.70.0 exactly **one** of them
 //! checked anything:
 //!
 //! - `monitors::status_page` read `settings.status_page_enabled` and failed
@@ -18,8 +18,8 @@
 //!
 //! The consequence was not theoretical. `/status` is served by
 //! `public_status_page`, not by the documented endpoint, so every install
-//! published its alert engine's output — `service_down` and `disk` incidents
-//! naming the operator's own hosts and services — from first boot, with no
+//! published its alert engine's output - `service_down` and `disk` incidents
+//! naming the operator's own hosts and services - from first boot, with no
 //! operator action, while `docs/guides/status-page.md` promised that a disabled
 //! status page returns 404 and the only control for the flag that actually
 //! governed it was an unlabelled checkbox on a different screen.
@@ -30,8 +30,8 @@
 //! `tests/status-page-gate-pin-e2e.sh` fails the build when a route registered
 //! on the public `/api/status-page*` surface does not reach this gate.
 //!
-//! `status_page_config.enabled` survives as a *secondary* switch — it hides the
-//! enhanced page while leaving the monitor endpoint up — but it is no longer a
+//! `status_page_config.enabled` survives as a *secondary* switch - it hides the
+//! enhanced page while leaving the monitor endpoint up - but it is no longer a
 //! publish decision, which is why its DEFAULT TRUE is now harmless and
 //! deliberately left alone.
 
@@ -58,7 +58,7 @@ pub async fn is_enabled(pool: &PgPool) -> bool {
 }
 
 /// The decision itself, extracted so the fail-closed property is testable
-/// without a database — the same reason `alert_engine::ssl_decision` exists.
+/// without a database - the same reason `alert_engine::ssl_decision` exists.
 ///
 /// `None` covers both "no such setting" and "the query failed", because the
 /// caller collapses an error into `None`: a panel that cannot read its own
@@ -70,7 +70,7 @@ fn means_enabled(value: Option<&str>) -> bool {
 /// `is_enabled`, as the guard clause a public handler starts with.
 ///
 /// Answers 404 rather than 403 so a disabled status page is indistinguishable
-/// from an install that never had one — the same answer the documented
+/// from an install that never had one - the same answer the documented
 /// endpoint has always given, and the one the guide promises.
 pub async fn require_enabled(pool: &PgPool) -> Result<(), ApiError> {
     if is_enabled(pool).await {
@@ -80,13 +80,13 @@ pub async fn require_enabled(pool: &PgPool) -> Result<(), ApiError> {
     }
 }
 
-/// The tenant `routes::incidents::public_status_page` currently publishes —
+/// The tenant `routes::incidents::public_status_page` currently publishes -
 /// same tie-break, extracted so `subscribe`/`unsubscribe`/`list_subscribers`
 /// agree with the public page on who "the" status page belongs to instead of
 /// treating `status_page_subscribers` as install-wide.
 ///
 /// Falls back to the install's very first user when no `status_page_config`
-/// row exists at all — reachable because `status_page_enabled` (checked by
+/// row exists at all - reachable because `status_page_enabled` (checked by
 /// `is_enabled` above) lives on a different settings screen than
 /// `status_page_config`, so a visitor can reach `/subscribe` before an admin
 /// has ever touched status-page settings. `None` only if `users` itself is

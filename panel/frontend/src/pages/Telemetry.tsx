@@ -69,7 +69,7 @@ interface UpdateStateView {
   available_version?: string | null;
   channel: string;
   /// Verdict of the last snapshot restore. A restore stops and restarts the
-  /// panel, so its outcome cannot come back through the request that began it —
+  /// panel, so its outcome cannot come back through the request that began it -
   /// the backend reads it from a file the restore writes on every exit path.
   last_restore?: {
     snapshot_id: string;
@@ -165,7 +165,7 @@ interface DriftReport {
 }
 
 function fmtDriftVal(v: unknown): string {
-  if (v === null || v === undefined) return "—";
+  if (v === null || v === undefined) return "-";
   if (typeof v === "boolean") return v ? "on" : "off";
   if (typeof v === "object") return JSON.stringify(v);
   return String(v);
@@ -188,7 +188,7 @@ function FieldDiffTable({ fields }: { fields: FieldDiff[] }) {
               <td className="px-2 py-1 font-mono text-dark-300">
                 {f.field}
                 {f.sensitive && (
-                  <span className="text-dark-600 ml-1" title="secret — compared by presence only">🔒</span>
+                  <span className="text-dark-600 ml-1" title="secret - compared by presence only">🔒</span>
                 )}
               </td>
               <td className="px-2 py-1 text-dark-400 break-all">{fmtDriftVal(f.reference)}</td>
@@ -228,8 +228,8 @@ const CATEGORY_COLORS: Record<string, string> = {
 
 export default function Telemetry() {
   // Deep-linkable tab (see Monitoring.tsx for the pattern). The Dashboard's
-  // "DockPanel vX is available → View Update" banner links here, and everything
-  // it promises — version status, release notes, apply/rollback — lives on the
+  // "CyberHunter - Panel vX is available → View Update" banner links here, and everything
+  // it promises - version status, release notes, apply/rollback - lives on the
   // Updates tab, while this page opened on Events.
   const TELEMETRY_TABS = ["events", "updates", "config"] as const;
   type TelemetryTab = (typeof TELEMETRY_TABS)[number];
@@ -296,7 +296,7 @@ export default function Telemetry() {
       setAgentAutoUpdate(data?.agent_auto_update_enabled === "true");
     } catch {
       // Non-fatal: the card renders as off, and the panel is the enforcer
-      // anyway — an agent only updates when this endpoint says so.
+      // anyway - an agent only updates when this endpoint says so.
     }
   };
 
@@ -324,7 +324,7 @@ export default function Telemetry() {
       const data = await api.get<UpdateStateView>("/update/status");
       setUpdateState(data);
     } catch {
-      // empty — telemetry tab still works if status is unreachable
+      // empty - telemetry tab still works if status is unreachable
     }
   };
   const loadSnapshots = async () => {
@@ -350,7 +350,7 @@ export default function Telemetry() {
       // Default the reference to the local server (or the first available).
       setDriftReference(prev => prev || (data?.find(s => s.is_local) || data?.[0])?.id || "");
     } catch {
-      // empty — the card shows the single-server hint if this never loads
+      // empty - the card shows the single-server hint if this never loads
     }
   };
   const runDrift = async () => {
@@ -441,7 +441,7 @@ export default function Telemetry() {
 
   useEffect(() => {
     if (showApplyProgress && updateState && updateState.state !== "in_flight") {
-      // Update flow reached a terminal state — leave the modal open so
+      // Update flow reached a terminal state - leave the modal open so
       // the operator can read the outcome, but stop polling.
     }
   }, [updateState, showApplyProgress]);
@@ -476,7 +476,7 @@ export default function Telemetry() {
     try {
       const target = `v${config.update_available_version}`;
       await api.post("/update/apply", { target_version: target });
-      flash("Update started — services may briefly become unavailable.", "success");
+      flash("Update started - services may briefly become unavailable.", "success");
       // First status poll fires immediately (the useEffect interval kicks
       // in once showApplyProgress is true).
       loadUpdateState();
@@ -498,7 +498,7 @@ export default function Telemetry() {
       flash(
         resp.available_version
           ? `Available: v${resp.available_version}`
-          : "No update available — you are on the latest version.",
+          : "No update available - you are on the latest version.",
         "success"
       );
       await Promise.all([loadConfig(), loadUpdateState()]);
@@ -540,7 +540,7 @@ export default function Telemetry() {
     setRollingBack(true);
     try {
       await api.post("/update/rollback", { snapshot_id: snapshotId });
-      flash("Rollback started — services restarting.", "success");
+      flash("Rollback started - services restarting.", "success");
       // The api will die mid-restore; rely on next page load to recover.
     } catch (e: unknown) {
       flash(e instanceof Error ? e.message : "Rollback failed", "error");
@@ -677,7 +677,7 @@ export default function Telemetry() {
   const totalPages = Math.ceil(total / limit);
 
   // Every "is there an update" question on this page answers from the backend's
-  // derived flag, never from the mere presence of the stored version — that row
+  // derived flag, never from the mere presence of the stored version - that row
   // outlives the release it names on any panel upgraded from the shell (#98).
   const updateAvailable = Boolean(config.update_available && config.update_available_version);
 
@@ -727,7 +727,7 @@ export default function Telemetry() {
           {!updateState.last_restore.ok
             && updateState.last_restore.detail?.includes("nothing changed") && (
             <div className="mt-1 text-dark-400">
-              The database is applied in a single transaction — a failure before the
+              The database is applied in a single transaction - a failure before the
               "database" stage completes leaves it exactly as it was.
             </div>
           )}
@@ -756,7 +756,7 @@ export default function Telemetry() {
         <div>
           <h1 className="page-header-title">Telemetry & Updates</h1>
           <p className="text-xs text-dark-400 mt-0.5">
-            Diagnostic reporting and version management{config.current_version ? ` — v${config.current_version}` : ""}
+            Diagnostic reporting and version management{config.current_version ? ` - v${config.current_version}` : ""}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -782,7 +782,7 @@ export default function Telemetry() {
             <svg className="w-5 h-5 text-rust-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
             <div>
               <span className="text-sm font-medium text-rust-300">
-                DockPanel v{config.update_available_version} available
+                CyberHunter - Panel v{config.update_available_version} available
               </span>
               <span className="text-xs text-dark-400 ml-2">
                 (current: v{config.current_version})
@@ -879,7 +879,7 @@ export default function Telemetry() {
           {events.length === 0 ? (
             <div className="bg-dark-800 border border-dark-600 rounded-lg p-8 text-center text-dark-400 text-sm">
               {eventsError
-                ? "Could not load telemetry events — the request failed. Try again."
+                ? "Could not load telemetry events - the request failed. Try again."
                 : "No telemetry events recorded yet. Events are captured automatically when errors or issues occur."}
             </div>
           ) : (
@@ -958,7 +958,7 @@ export default function Telemetry() {
         <div className="space-y-4">
           {/* Verdicts of the last update and the last rollback, most recent
               first, ABOVE everything else on the tab.
-              They rendered inside the Snapshots card until v2.48.0 — seventh of
+              They rendered inside the Snapshots card until v2.48.0 - seventh of
               seven, so the one operator who most needs them, the one whose
               update just failed, scrolled past Version Status, Release Notes,
               Channel, Agent Auto-Update, Apply and the snapshot list to reach
@@ -1003,7 +1003,7 @@ export default function Telemetry() {
             <div className="bg-dark-800 border border-dark-600 rounded-lg p-4">
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-sm font-medium text-dark-100">
-                  Release Notes — v{config.update_available_version}
+                  Release Notes - v{config.update_available_version}
                 </h3>
                 {safeHttpUrl(config.update_release_url) && (
                   <a href={safeHttpUrl(config.update_release_url)!} target="_blank" rel="noopener noreferrer"
@@ -1043,13 +1043,13 @@ export default function Telemetry() {
               {(updateState?.channel || "stable") === "stable" &&
                 "GA releases only (recommended for production)."}
               {updateState?.channel === "candidate" &&
-                "Includes pre-release builds — may break, snapshot rollback is your safety net."}
+                "Includes pre-release builds - may break, snapshot rollback is your safety net."}
               {updateState?.channel === "hold" &&
                 "Auto-polling disabled. Use Check Now to manually look for updates."}
             </div>
           </div>
 
-          {/* s233: agent auto-update. Off unless switched on here — the panel
+          {/* s233: agent auto-update. Off unless switched on here - the panel
               answers every agent's version query with "nothing to do" until it
               is, because there is no other way to reach a remote agent. */}
           <div className="bg-dark-800 border border-dark-600 rounded-lg p-4">
@@ -1058,7 +1058,7 @@ export default function Telemetry() {
                 <h3 className="text-sm font-medium text-dark-100">Agent Auto-Update</h3>
                 <p className="text-xs text-dark-400 mt-1 max-w-xl">
                   Remote agents update <span className="text-dark-200">themselves</span> to this
-                  panel&apos;s release (v{config.current_version || updateState?.current_version || "—"}),
+                  panel&apos;s release (v{config.current_version || updateState?.current_version || "-"}),
                   unattended, within 6 hours of it changing. Each box verifies the download against
                   the release checksums, confirms the new agent answers <code>/health</code>, and
                   rolls back if it does not. Leave this off to update the fleet only when you choose
@@ -1066,7 +1066,7 @@ export default function Telemetry() {
                 </p>
                 {(updateState?.channel || "stable") === "hold" && agentAutoUpdate && (
                   <p className="text-xs text-warn-400 mt-2">
-                    Channel is on Hold — nothing will move until you change it.
+                    Channel is on Hold - nothing will move until you change it.
                   </p>
                 )}
               </div>
@@ -1174,7 +1174,7 @@ export default function Telemetry() {
                       {isRollback ? (
                         <Fragment>
                           <span className="text-xs text-warn-400">
-                            Destructive — the database is reverted to this snapshot. Anything
+                            Destructive - the database is reverted to this snapshot. Anything
                             created since (including tables added by a newer version) is removed.
                             A copy of the current database is saved first.
                           </span>
@@ -1262,7 +1262,7 @@ export default function Telemetry() {
                           {formatDate(r.started_at)} ·{" "}
                           {Array.isArray(r.progress)
                             ? `${r.progress.filter(p => p.status === "succeeded").length}/${r.progress.length} succeeded`
-                            : "—"}
+                            : "-"}
                           {r.include_panel ? " · panel last" : ""}
                         </div>
                         {/* The reason a member failed was recorded but never
@@ -1291,7 +1291,7 @@ export default function Telemetry() {
                           r.progress.some(p => p.status === "skipped") && (
                             <div className="mt-1 text-warn-400">
                               {r.progress.filter(p => p.status === "skipped").length} server(s)
-                              skipped — the run halted on the first failure
+                              skipped - the run halted on the first failure
                             </div>
                           )}
                       </div>
@@ -1306,8 +1306,8 @@ export default function Telemetry() {
           <div className="bg-dark-800 border border-dark-600 rounded-lg p-4">
             <h3 className="text-sm font-medium text-dark-100 mb-1">Fleet Configuration Drift</h3>
             <div className="text-xs text-dark-400 mb-3">
-              Compare each server's operational posture — alert rules, per-site config, cron jobs and
-              backup coverage — against a reference server. Read-only; computed on demand from the panel.
+              Compare each server's operational posture - alert rules, per-site config, cron jobs and
+              backup coverage - against a reference server. Read-only; computed on demand from the panel.
             </div>
 
             {driftServers.length < 2 ? (
@@ -1547,8 +1547,8 @@ export default function Telemetry() {
               <ul className="list-disc list-inside space-y-1 ml-2">
                 <li>Error messages and stack context (no file paths or user data)</li>
                 <li>Service health status (running/stopped)</li>
-                <li>System specs (OS, RAM, CPU count — no IP addresses or hostnames)</li>
-                <li>DockPanel version</li>
+                <li>System specs (OS, RAM, CPU count - no IP addresses or hostnames)</li>
+                <li>CyberHunter - Panel version</li>
               </ul>
               <p>All personal information (IPs, emails, domains, usernames, tokens) is <strong className="text-dark-100">automatically stripped</strong> before sending.</p>
               <p>Use the <strong className="text-dark-100">Preview Report</strong> button to see exactly what would be sent.</p>
@@ -1599,7 +1599,7 @@ export default function Telemetry() {
               </pre>
             </div>
             <div className="px-4 py-2 border-t border-dark-600 text-xs text-dark-400">
-              The events above are exactly what would be sent, PII stripped. The "system" block is local diagnostic context — only version and installation ID actually leave this box.
+              The events above are exactly what would be sent, PII stripped. The "system" block is local diagnostic context - only version and installation ID actually leave this box.
             </div>
           </div>
         </div>

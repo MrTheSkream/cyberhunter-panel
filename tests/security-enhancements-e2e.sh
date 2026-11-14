@@ -22,7 +22,7 @@ test_it() {
 }
 
 echo "═══════════════════════════════════════════════"
-echo "  DockPanel Security Enhancements E2E Tests"
+echo "  CyberHunter - Panel Security Enhancements E2E Tests"
 echo "═══════════════════════════════════════════════"
 
 # Login to get admin token

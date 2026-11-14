@@ -15,7 +15,7 @@ interface MailServiceState {
 
 /** The full shape `/mail/status` returns.
  *
- * The agent computes `running` as `postfix && dovecot && opendkim && configured` —
+ * The agent computes `running` as `postfix && dovecot && opendkim && configured` -
  * four terms. A banner that names two of them sends the operator to check services
  * that may both be perfectly healthy, which is what GitHub #110's reporter hit.
  * `configured` is the term with no service to check at all: it means opendkim.conf
@@ -95,7 +95,7 @@ interface DnsCheckItem {
 
 // A DNSxL that could not be reached is not a DNSxL that said "no". `listed` is null
 // for any zone whose RFC 5782 control probe failed, and `status` is the verdict the
-// card must render — "clean" is reserved for a run in which every zone was asked.
+// card must render - "clean" is reserved for a run in which every zone was asked.
 interface BlacklistReport {
   ip: string;
   results: { rbl: string; name: string; listed: boolean | null; checked: boolean }[];
@@ -148,12 +148,12 @@ export default function Mail() {
    *
    * This deliberately has NO early `return <Navigate>`. The one that used to be
    * here sat ABOVE the forty `useState` calls below it, so the number of hooks
-   * this component rendered depended on whether `user` had arrived yet — the
+   * this component rendered depended on whether `user` had arrived yet - the
    * hazard was pre-existing and is removed by adopting the house pattern rather
    * than by patching it. Sites.tsx has always done it this way: read the role,
    * render conditionally, let the backend scope the data.
    *
-   * `isAdmin` gates the HOST-level console — the mail server itself, and every
+   * `isAdmin` gates the HOST-level console - the mail server itself, and every
    * service that belongs to the machine rather than to a domain. A non-admin
    * gets the part the backend will actually answer: their own domains, and the
    * mailboxes, aliases and DNS records under them.
@@ -327,7 +327,7 @@ export default function Mail() {
   useEffect(() => { loadDomains(); }, []);
 
   // The HOST-level console. Every call below is AdminUser in the backend, so for
-  // any other role this block is eight guaranteed 403s — and they would not even
+  // any other role this block is eight guaranteed 403s - and they would not even
   // read as failures: each `.catch` swallows into an empty state, which is how a
   // client would have been shown "Mail Server Not Installed" for a mail server
   // that is running perfectly well. Not firing them is the fix; hiding the
@@ -603,13 +603,13 @@ export default function Mail() {
         />
       )}
 
-      {/* Mail Server Not Installed — redirect to Services.
+      {/* Mail Server Not Installed - redirect to Services.
           ADMIN ONLY, and not merely because installing is an admin action. This
           block links to /settings, which is `adminOnly` in the nav registry, so
           for anybody else it is a call to action pointing at a door that is not
           on their map. It reached them by accident, too: `mail_status` is
           AdminUser, its 403 is caught into {installed:false}, and this is what
-          that renders. A client's mail server is not uninstalled — it is simply
+          that renders. A client's mail server is not uninstalled - it is simply
           none of their business, and the honest answer is to say nothing. */}
       {isAdmin && mailStatus && !mailStatus.installed && (
         <div className="mb-6 bg-dark-800 border border-dark-500 p-5">
@@ -633,7 +633,7 @@ export default function Mail() {
           {(() => {
             /* Name the term that is actually false. The old copy said "Check Postfix
                and Dovecot services" for every cause, including the two it does not
-               mention — so an operator whose services were both `active` was told to
+               mention - so an operator whose services were both `active` was told to
                look at them, found nothing wrong, and had learned nothing (#110). */
             const stopped = (["postfix", "dovecot", "opendkim"] as const).filter(
               (s) => mailStatus[s] && !mailStatus[s]!.running
@@ -643,7 +643,7 @@ export default function Mail() {
             if (stopped.length === 0 && unconfigured) {
               return (
                 <>
-                  Mail server packages are installed but the setup did not finish — OpenDKIM
+                  Mail server packages are installed but the setup did not finish - OpenDKIM
                   is not configured yet. The services themselves are fine; re-run{" "}
                   <span className="font-medium">Settings &rarr; Services &rarr; Install Mail Server</span>{" "}
                   to complete it.
@@ -654,7 +654,7 @@ export default function Mail() {
               const names = stopped.map((s) => label[s]).join(", ");
               return (
                 <>
-                  Mail server is installed but not running &mdash;{" "}
+                  Mail server is installed but not running -{" "}
                   <span className="font-medium">{names}</span>{" "}
                   {stopped.length === 1 ? "is" : "are"} stopped
                   {unconfigured ? ", and OpenDKIM is not configured yet" : ""}.
@@ -668,7 +668,7 @@ export default function Mail() {
         </div>
       )}
 
-      {/* Mail Services — rspamd, webmail, relay, blacklist, rate limit, TLS.
+      {/* Mail Services - rspamd, webmail, relay, blacklist, rate limit, TLS.
           All six belong to the machine, not to a domain, and all six are
           AdminUser. The `isAdmin` term is not redundant beside
           `mailStatus?.installed`: mailStatus is null for a non-admin because the
@@ -851,7 +851,7 @@ export default function Mail() {
               <div key={r.rbl} className="flex items-center gap-2 text-xs py-1">
                 <div className={`w-2 h-2 rounded-full shrink-0 ${!r.checked ? "bg-dark-400" : r.listed ? "bg-danger-400" : "bg-rust-500"}`} />
                 <span className={!r.checked ? "text-dark-400" : r.listed ? "text-danger-400" : "text-dark-300"}>
-                  {r.name}{!r.checked && " — no answer"}
+                  {r.name}{!r.checked && " - no answer"}
                 </span>
               </div>
             ))}
@@ -970,7 +970,7 @@ export default function Mail() {
               <div className="bg-dark-800 border border-dark-500 p-12 text-center">
                 <svg className="w-12 h-12 text-dark-300 mx-auto mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}><path strokeLinecap="round" strokeLinejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 8.91a2.25 2.25 0 0 1-1.07-1.916V6.75" /></svg>
                 {/* The empty state has to say something different to the roles
-                    that cannot act on it — the rule Sites.tsx states in its own
+                    that cannot act on it - the rule Sites.tsx states in its own
                     empty state, and this is the same screen for the same people.
                     "Add a mail domain to get started" is advice a non-admin
                     cannot take: `create_domain` is AdminUser, and mail reaches
@@ -1002,7 +1002,7 @@ export default function Mail() {
               </div>
               <div className="flex border-b border-dark-600 px-5">
                 {/* Queue and Logs are the machine's mail queue and the whole
-                    host's mail log — `get_queue` and `mail_logs`, both
+                    host's mail log - `get_queue` and `mail_logs`, both
                     AdminUser. They are not a filtered view of this domain, so
                     there is nothing to scope them down to. */}
                 {(isAdmin
@@ -1160,7 +1160,7 @@ export default function Mail() {
                                   admin half even though the mailbox beside it
                                   does not. Edit and Delete on the same row are
                                   `update_account` / `delete_account`, both
-                                  AuthUser — they stay. */}
+                                  AuthUser - they stay. */}
                               {isAdmin && (
                               <button disabled={backingUp === acc.email} onClick={async () => {
                                 setBackingUp(acc.email);
@@ -1231,7 +1231,7 @@ export default function Mail() {
                       </div>
                     )}
 
-                    {/* Mailbox Backups — `mailbox_backups`, `mailbox_restore`
+                    {/* Mailbox Backups - `mailbox_backups`, `mailbox_restore`
                         and `mailbox_backup_delete` are all AdminUser, and the
                         list is host-wide rather than scoped to this domain.
                         `backups` is already empty for a non-admin because the
@@ -1342,7 +1342,7 @@ export default function Mail() {
                         Required DNS Records
                         <InfoTip id="mail.domain.records" />
                       </h3>
-                      {/* The RECORDS come from `domain_dns`, which is AuthUser —
+                      {/* The RECORDS come from `domain_dns`, which is AuthUser -
                           a site owner needs to see what to publish, and that is
                           the whole point of the tab. VERIFYING them is
                           `dns_check`, which is AdminUser, so the button goes and
@@ -1398,7 +1398,7 @@ export default function Mail() {
                       <div className={`mb-4 p-4 border text-xs ${effectiveSendIp.ptr ? "bg-dark-900 border-dark-500" : "bg-warn-500/10 border-warn-500/20"}`}>
                         <div className="flex items-center gap-2 mb-2">
                           <span className="px-2 py-0.5 text-xs font-medium bg-accent-500/15 text-accent-400">PTR</span>
-                          <span className="text-dark-200">Reverse DNS of the sending IP — set at your IP provider (e.g. OVH), not in this zone</span>
+                          <span className="text-dark-200">Reverse DNS of the sending IP - set at your IP provider (e.g. OVH), not in this zone</span>
                         </div>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 font-mono">
                           <div><span className="text-dark-300">IP: </span><span className="text-dark-50">{effectiveSendIp.public_ip || effectiveSendIp.ip}</span></div>
@@ -1438,7 +1438,7 @@ export default function Mail() {
                   </div>
                 )}
 
-                {/* Settings Tab — sending IP (admin only) */}
+                {/* Settings Tab - sending IP (admin only) */}
                 {isAdmin && tab === "settings" && (
                   <div className="space-y-4">
                     <h3 className="text-xs text-dark-300 uppercase tracking-widest">Sending IP</h3>

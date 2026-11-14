@@ -184,7 +184,7 @@ export default function Maintenance() {
           </svg>
           <p className="text-dark-200 text-sm">No maintenance windows scheduled.</p>
           <p className="text-dark-300 text-xs mt-1">
-            Standing alerts — offline, service, container, resource and SSL expiry — are held
+            Standing alerts - offline, service, container, resource and SSL expiry - are held
             during a window. One-off reports (backup, cron, security) still arrive.
           </p>
         </div>
@@ -210,7 +210,7 @@ export default function Maintenance() {
                     )}
                   </div>
                   <p className="text-xs text-dark-300 font-mono mt-1">
-                    {new Date(w.starts_at).toLocaleString()} — {new Date(w.ends_at).toLocaleString()}
+                    {new Date(w.starts_at).toLocaleString()} - {new Date(w.ends_at).toLocaleString()}
                   </p>
                 </div>
                 <button

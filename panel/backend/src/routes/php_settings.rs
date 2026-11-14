@@ -1,4 +1,4 @@
-//! Per-site PHP settings — `conception/02-php-contrats.md` (A1 for the payload
+//! Per-site PHP settings - `conception/02-php-contrats.md` (A1 for the payload
 //! sent to the agent, B1–B4 for the API).
 //!
 //! Storage: `sites.php_settings` (JSONB, overrides only:
@@ -6,11 +6,11 @@
 //! `php_isolation`, `php_disable_shell`, plus the pre-existing columns
 //! `php_memory_mb` (memory_limit), `php_max_workers` (pm.max_children) and
 //! `max_upload_mb` (default upload_max_filesize). `memory_limit` and
-//! `max_children` live ONLY in their columns — never in the JSONB — so the
+//! `max_children` live ONLY in their columns - never in the JSONB - so the
 //! Limits form and this card can never shadow each other.
 //!
 //! Every `SiteConfig` sent for a PHP site carries `php_pool`, built by
-//! [`php_pool_for_site`] / [`php_pool_json`] — the single constructor. The
+//! [`php_pool_for_site`] / [`php_pool_json`] - the single constructor. The
 //! builder is infallible on purpose: it runs from SSL renewal, the auto-healer
 //! and the security scanner, so a malformed stored value is dropped (default
 //! used) rather than allowed to fail an unrelated rebuild.
@@ -281,7 +281,7 @@ pub fn validate_extra_entry(k: &str, v: &str) -> Result<(), FieldError> {
         return Err(ferr("extra", format!("'{k}' cannot be set as an extra directive")));
     }
     if field(k).is_some() {
-        return Err(ferr("extra", format!("'{k}' is a managed setting — set it in the form above")));
+        return Err(ferr("extra", format!("'{k}' is a managed setting - set it in the form above")));
     }
     if !safe_ini_value(v) {
         return Err(ferr(
@@ -310,7 +310,7 @@ pub fn validate_extra(entries: &[(String, String)]) -> Result<(), FieldError> {
 
 /// Stored per-site overrides, re-validated: an invalid stored value is
 /// dropped (the default applies) rather than sent to the agent.
-/// `memory_limit` is never read from here — it lives in `php_memory_mb`.
+/// `memory_limit` is never read from here - it lives in `php_memory_mb`.
 pub fn stored_values(settings: &Value) -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
     if let Some(obj) = settings.get("values").and_then(Value::as_object) {
@@ -379,7 +379,7 @@ pub fn is_legacy(settings: &Value) -> bool {
 
 /// B1 defaults. `memory_limit`'s default is the column default (256M): the
 /// site's own `php_memory_mb` is its value, not its default. Upload follows
-/// the nginx limit `max_upload_mb` (not clamped to the 2048 form bound —
+/// the nginx limit `max_upload_mb` (not clamped to the 2048 form bound -
 /// bounds apply to overrides only, and `update_limits` allows up to 10240).
 pub fn defaults(max_upload_mb: i32) -> BTreeMap<String, String> {
     let upload = i64::from(max_upload_mb.max(1));
@@ -402,7 +402,7 @@ pub fn defaults(max_upload_mb: i32) -> BTreeMap<String, String> {
 /// Values applied to the pool: overrides on top of defaults, memory from the
 /// column, post_max_size never below upload_max_filesize.
 ///
-/// Legacy rows ([`is_legacy`]): no code defaults — only memory_limit, the
+/// Legacy rows ([`is_legacy`]): no code defaults - only memory_limit, the
 /// stored overrides and, when upload is overridden but post is not, the
 /// derived post_max_size (a post inherited from php.ini could be below the
 /// upload the site asked for). Every other key is absent = global php.ini.
@@ -478,7 +478,7 @@ pub fn effective_pool(row: &PhpRow, eff: &BTreeMap<String, String>) -> Pool {
     }
 }
 
-/// THE `php_pool` constructor (A1): full effective values, defaults included —
+/// THE `php_pool` constructor (A1): full effective values, defaults included -
 /// except for legacy rows, whose `values` omit the keys inherited from the
 /// global php.ini (C bis).
 pub fn php_pool_json(row: &PhpRow) -> Value {
@@ -578,7 +578,7 @@ pub fn response_json(site: &Site, can_admin: bool) -> Value {
 
 #[derive(Debug, PartialEq)]
 pub enum UpdateError {
-    /// 403 — an owner sent an admin-only field.
+    /// 403 - an owner sent an admin-only field.
     Forbidden(String),
     /// 400 `{error, field}`.
     Invalid(FieldError),
@@ -804,7 +804,7 @@ async fn site_for_caller(state: &AppState, id: Uuid, claims: &crate::auth::Claim
     .ok_or_else(|| err(StatusCode::NOT_FOUND, "Site not found"))
 }
 
-/// GET /api/sites/{id}/php-settings — owner or admin (B1).
+/// GET /api/sites/{id}/php-settings - owner or admin (B1).
 pub async fn get_site_php_settings(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -814,7 +814,7 @@ pub async fn get_site_php_settings(
     Ok(Json(response_json(&site, claims.role == "admin")))
 }
 
-/// PUT /api/sites/{id}/php-settings — owner: `values` only; admin: all (B2).
+/// PUT /api/sites/{id}/php-settings - owner: `values` only; admin: all (B2).
 ///
 /// Columns are written inside a transaction, the agent rebuilds vhost + pool
 /// from the updated row, and the transaction commits only if the agent
@@ -936,7 +936,7 @@ pub fn validate_ini_body(body: &Value) -> Result<Value, FieldError> {
     }
 }
 
-/// GET /api/php/ini/{version} — admin (B3, proxies A2).
+/// GET /api/php/ini/{version} - admin (B3, proxies A2).
 pub async fn get_php_ini(
     State(_state): State<AppState>,
     AdminUser(_claims): AdminUser,
@@ -951,7 +951,7 @@ pub async fn get_php_ini(
     Ok(Json(res))
 }
 
-/// PUT /api/php/ini/{version} — admin (B3, proxies A3). The agent tests the
+/// PUT /api/php/ini/{version} - admin (B3, proxies A3). The agent tests the
 /// file and restarts FPM, so this gets a long budget.
 pub async fn put_php_ini(
     State(state): State<AppState>,

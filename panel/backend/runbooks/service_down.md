@@ -18,7 +18,7 @@ The agent's service-health check found the named systemd unit in a `failed`, `in
    ```
    nginx -t
    ```
-4. For php-fpm, list all installed pools — multi-version installs have one unit per major:
+4. For php-fpm, list all installed pools - multi-version installs have one unit per major:
    ```
    systemctl list-units 'php*-fpm.service'
    ```
@@ -27,11 +27,11 @@ The agent's service-health check found the named systemd unit in a `failed`, `in
 
 - Bad config after a recent edit (`nginx -t` will say so)
 - Disk full (`/var/log` filled by an unrotated log)
-- Port conflict (another process bound the port — `ss -lntp | grep :<port>`)
+- Port conflict (another process bound the port - `ss -lntp | grep :<port>`)
 - OOM kill (`dmesg | grep -i 'killed process'`)
 - Failed dependency (e.g., postgresql failed → keepalived → nginx)
 - Permissions broken after a manual chown/chmod
 
 ## Escalation
 
-Wake a human if the service won't restart after fixing config and clearing disk. Public-facing 5xx on customer sites is page-grade — don't sit on it past 10 min.
+Wake a human if the service won't restart after fixing config and clearing disk. Public-facing 5xx on customer sites is page-grade - don't sit on it past 10 min.

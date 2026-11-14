@@ -40,7 +40,7 @@ pub async fn send_email(
     // Decrypt the password (handles legacy plaintext values gracefully)
     let password = crate::services::secrets_crypto::decrypt_credential_from_env(&password_raw);
     let from_email = get("smtp_from").ok_or("SMTP from address not configured")?;
-    let from_name = get("smtp_from_name").unwrap_or_else(|| "DockPanel".to_string());
+    let from_name = get("smtp_from_name").unwrap_or_else(|| "CyberHunter - Panel".to_string());
     let encryption = get("smtp_encryption").unwrap_or_else(|| "starttls".to_string());
 
     let from: Mailbox = format!("{from_name} <{from_email}>")
@@ -101,7 +101,7 @@ pub async fn send_verification_email(
     let body = format!(
         r#"<div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
             <h2 style="color: #4f46e5;">Verify your email</h2>
-            <p>Click the button below to verify your DockPanel account:</p>
+            <p>Click the button below to verify your CyberHunter - Panel account:</p>
             <p style="margin: 24px 0;">
                 <a href="{link}" style="background-color: #4f46e5; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: 600;">
                     Verify Email
@@ -112,7 +112,7 @@ pub async fn send_verification_email(
         </div>"#
     );
 
-    send_email(pool, to, "Verify your DockPanel account", &body).await
+    send_email(pool, to, "Verify your CyberHunter - Panel account", &body).await
 }
 
 /// Send password reset link.
@@ -126,7 +126,7 @@ pub async fn send_reset_email(
     let body = format!(
         r#"<div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
             <h2 style="color: #4f46e5;">Reset your password</h2>
-            <p>Click the button below to reset your DockPanel password:</p>
+            <p>Click the button below to reset your CyberHunter - Panel password:</p>
             <p style="margin: 24px 0;">
                 <a href="{link}" style="background-color: #4f46e5; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: 600;">
                     Reset Password
@@ -137,5 +137,5 @@ pub async fn send_reset_email(
         </div>"#
     );
 
-    send_email(pool, to, "Reset your DockPanel password", &body).await
+    send_email(pool, to, "Reset your CyberHunter - Panel password", &body).await
 }

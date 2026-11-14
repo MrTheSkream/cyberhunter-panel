@@ -24,7 +24,7 @@ fn ok(msg: &str) -> Json<serde_json::Value> {
 ///
 /// ⛔ This number must equal `UPLOAD_MAX_FILE_BYTES` in the panel's
 /// `routes/files.rs`. The two are separate crates, so nothing but a pin can
-/// hold them together — `upload-refusal-pin-e2e.sh` compares them, along with
+/// hold them together - `upload-refusal-pin-e2e.sh` compares them, along with
 /// the figure published in `docs/guides/file-uploads.md`.
 ///
 /// It used to read 50 MB, and like the panel's 100 MB it could never fire: this
@@ -33,7 +33,7 @@ fn ok(msg: &str) -> Json<serde_json::Value> {
 /// handler ran. Two services, two unreachable numbers, one silent failure.
 const UPLOAD_MAX_FILE_BYTES: usize = 1_500_000;
 
-/// The refusal, worded as the panel words it — an agent 4xx is passed through
+/// The refusal, worded as the panel words it - an agent 4xx is passed through
 /// to the operator verbatim by `error.rs::agent_error`, so this sentence is
 /// read by a human and must say what to do instead.
 fn upload_too_large() -> ApiErr {
@@ -83,7 +83,7 @@ async fn file_upload(
     use base64::Engine as _;
     use crate::services::files as file_svc;
 
-    // Take the rejection rather than letting it short-circuit — see the panel's
+    // Take the rejection rather than letting it short-circuit - see the panel's
     // `upload_file`. Without this the body limit answers in plain text the
     // panel then relays as an unexplained 413.
     let Json(body) = body.map_err(|e| {
@@ -123,14 +123,14 @@ async fn file_upload(
     };
 
     // Confine strictly to the site root via the shared, symlink-safe resolver.
-    // (The former `domain == "_server"` magic-domain branch — a root-write primitive
+    // (The former `domain == "_server"` magic-domain branch - a root-write primitive
     // that could target /etc/nginx, /etc/dockpanel, /home, /opt via a hand-rolled,
-    // weaker traversal check — was removed in s247: it had no live caller anywhere in
+    // weaker traversal check - was removed in s247: it had no live caller anywhere in
     // the panel/CLI/scripts and was dead attack surface.)
     let full_path = file_svc::resolve_safe_path(&domain, &target_rel)
         .map_err(|e| err(StatusCode::BAD_REQUEST, &e))?;
 
-    // Create parent directory (safe — path already validated)
+    // Create parent directory (safe - path already validated)
     if let Some(parent) = full_path.parent() {
         tokio::fs::create_dir_all(parent).await
             .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &format!("Failed to create directory: {e}")))?;
@@ -147,7 +147,7 @@ async fn file_upload(
 // ── SSH Key Management ──────────────────────────────────────────────────
 
 /// The file these three handlers manage. sshd reads root's keys from here and
-/// nowhere else, so — unlike `known_hosts` in `services/remote_backup.rs` — it
+/// nowhere else, so - unlike `known_hosts` in `services/remote_backup.rs` - it
 /// cannot be relocated out of the sandbox's way.
 const AUTHORIZED_KEYS: &str = "/root/.ssh/authorized_keys";
 
@@ -157,7 +157,7 @@ const AUTHORIZED_KEYS: &str = "/root/.ssh/authorized_keys";
 /// `ProtectHome=yes`, which binds an inaccessible read-only directory over
 /// `/root` inside the agent's mount namespace, so an in-process `read_to_string`
 /// answers ENOENT for a file that exists. `ProtectHome=yes` landed 2026-03-13
-/// and these handlers landed 2026-03-15 — born broken, the next commit but one.
+/// and these handlers landed 2026-03-15 - born broken, the next commit but one.
 ///
 /// It failed in the worst possible direction: the read discarded its error into
 /// a default, so a failure became an empty string and the endpoint answered
@@ -166,18 +166,18 @@ const AUTHORIZED_KEYS: &str = "/root/.ssh/authorized_keys";
 /// and a pin that matches the comment describing it cannot fail.) Measured
 /// on the demo box at v2.87.0: three live ed25519 keys on disk, `GET /ssh-keys`
 /// → `{"keys":[]}`. The panel's only view of "who can SSH in as root" has shown
-/// nothing, always, on every install — a false all-clear on the most
+/// nothing, always, on every install - a false all-clear on the most
 /// consequential access list a server has. Add and Remove returned 500.
 ///
 /// ⚠ `ReadWritePaths=/root/.ssh` and `BindPaths=/root/.ssh` do NOT override
-/// `ProtectHome=yes` — both were measured in a transient unit and both still
+/// `ProtectHome=yes` - both were measured in a transient unit and both still
 /// hide the file. Either fix loosens `ProtectHome` itself, which is the exact
 /// direction `agent_unit.rs`'s `compiled_unit_is_the_hardened_one` exists to
 /// prevent, or it does what this does: run the handful of file operations
 /// unsandboxed, the precedent `services/wordpress.rs` already sets.
 ///
 /// `Ok(None)` means the file genuinely does not exist, which is a legitimate
-/// empty list. An unreadable file is an `Err` — the whole point of the fix.
+/// empty list. An unreadable file is an `Err` - the whole point of the fix.
 async fn read_authorized_keys() -> Result<Option<String>, String> {
     // `test -e` first so "absent" and "unreadable" are DIFFERENT answers rather
     // than being told apart by matching a locale-dependent error string.
@@ -305,7 +305,7 @@ async fn add_ssh_key(
         return Err(err(StatusCode::BAD_REQUEST, "SSH key options not allowed"));
     }
 
-    // A read that FAILED must not be mistaken for an empty key file — that is
+    // A read that FAILED must not be mistaken for an empty key file - that is
     // how an append would silently become a replace.
     let mut content = read_authorized_keys()
         .await
@@ -335,7 +335,7 @@ async fn remove_ssh_key(
     // ⚠ THE ORDER OF THESE TWO FIXES MATTERS, and getting only one of them
     // would have been worse than shipping neither. This read was also
     // `unwrap_or_default()`: on a failed read `content` is empty, every line is
-    // filtered out of nothing, and the write below stores `"\n"` — i.e. it
+    // filtered out of nothing, and the write below stores `"\n"` - i.e. it
     // DELETES EVERY ROOT SSH KEY ON THE BOX. Today that is inert only because
     // the write fails too, under the same sandbox. Repairing the sandbox alone
     // would have converted a dead feature into a destructive one on the first
@@ -426,7 +426,7 @@ async fn disable_auto_updates() -> Result<Json<serde_json::Value>, ApiErr> {
 // the ONLY references to the path in the entire repository:
 // no nginx include, no template, nothing compiled into either binary beyond the string
 // itself. Their own author had left the note "this WOULD be picked up by the panel's
-// nginx config" — it never was, from 2026-03-15 until removal. Meanwhile the panel
+// nginx config" - it never was, from 2026-03-15 until removal. Meanwhile the panel
 // grew a real IP restriction one week later, enforced in the backend at every door
 // that mints a session, and the two controls sat on the same settings tab with the
 // inert one listed first.
@@ -434,8 +434,8 @@ async fn disable_auto_updates() -> Result<Json<serde_json::Value>, ApiErr> {
 // Deliberately NOT finished instead of deleted: the file holds bare addresses, not
 // `allow`/`deny` directives, and lands in a directory no nginx glob reaches, so
 // "include it" was never one step away. Anything that did enforce at the web-server
-// layer would also be unrecoverable from the panel itself, which the backend check —
-// clearable with one SQL statement, documented — is not.
+// layer would also be unrecoverable from the panel itself, which the backend check -
+// clearable with one SQL statement, documented - is not.
 //
 // A stale copy of that file may still exist on an upgraded box. It is inert, it
 // always was, and nothing here reads or removes it.

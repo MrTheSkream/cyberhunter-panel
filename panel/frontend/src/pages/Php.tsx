@@ -131,7 +131,7 @@ export default function Php() {
       // Both editors show the same file: take both back from the response so a
       // later save of the other one cannot write stale content.
       adopt(await api.put<PhpIniResponse>(`/php/ini/${encodeURIComponent(data.version)}`, body));
-      setSuccess(kind === "values" ? `Values saved — PHP ${data.version} FPM restarted` : `php.ini saved — PHP ${data.version} FPM restarted`);
+      setSuccess(kind === "values" ? `Values saved - PHP ${data.version} FPM restarted` : `php.ini saved - PHP ${data.version} FPM restarted`);
     } catch (e) {
       setAgentError(e instanceof Error ? e.message : "Save failed");
     } finally {
@@ -158,7 +158,7 @@ export default function Php() {
             }}
             className="px-3 py-2 border border-dark-500 rounded-lg text-sm focus:ring-2 focus:ring-accent-500 focus:border-accent-500 outline-none"
           >
-            {versions.length === 0 && <option value="">—</option>}
+            {versions.length === 0 && <option value="">-</option>}
             {versions.map((v) => (
               <option key={v.version} value={v.version}>
                 PHP {v.version}{v.fpm_running ? "" : " (FPM stopped)"}
@@ -226,7 +226,7 @@ export default function Php() {
               </div>
               <div className="flex flex-wrap items-center justify-end gap-3">
                 {rawDirty && (
-                  <span className="text-xs text-warn-400">The file editor below has unsaved changes — save or discard them first.</span>
+                  <span className="text-xs text-warn-400">The file editor below has unsaved changes - save or discard them first.</span>
                 )}
                 {valuesDirty && (
                   <button type="button" disabled={saving != null} onClick={() => setDraft(draftFrom(data))} className={btnSecondary}>
@@ -267,7 +267,7 @@ export default function Php() {
               </p>
               <div className="flex flex-wrap items-center justify-end gap-3">
                 {valuesDirty && (
-                  <span className="text-xs text-warn-400">Main settings above have unsaved changes — save or discard them first.</span>
+                  <span className="text-xs text-warn-400">Main settings above have unsaved changes - save or discard them first.</span>
                 )}
                 {rawTooBig && <span className="text-xs text-danger-400">The file is larger than 512 KiB.</span>}
                 {rawDirty && (

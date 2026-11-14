@@ -22,7 +22,7 @@ pub const APP_DATA_DIR: &str = "/var/lib/dockpanel/apps";
 /// Named for the same reason as the directory above: the two are NOT the same string,
 /// and every recreate path has an `info.name` (the container) in hand while every path
 /// that touches data needs the app. Confusing the two is what put a migrated app's data
-/// somewhere the panel could not find it — see `app_data_name`.
+/// somewhere the panel could not find it - see `app_data_name`.
 pub const CONTAINER_NAME_PREFIX: &str = "dockpanel-app-";
 
 // ── Container auto-update detection ────────────────────────────────
@@ -79,7 +79,7 @@ fn parse_image_ref(image: &str) -> ImageRef {
 /// Look up saved registry credentials for an image reference.
 ///
 /// `docker login` (agent route `registry_login`) runs through `safe_command`,
-/// which points `DOCKER_CONFIG` at [`crate::safe_cmd::DOCKER_CONFIG_DIR`] — so
+/// which points `DOCKER_CONFIG` at [`crate::safe_cmd::DOCKER_CONFIG_DIR`] - so
 /// that is where a login actually lands, and every `create_image` pull below
 /// used to pass `credentials: None` regardless, meaning a private-image
 /// template or compose deploy failed even immediately after a successful
@@ -93,7 +93,7 @@ pub(crate) fn registry_credentials_for(image: &str) -> Option<bollard::auth::Doc
     let registry = parse_image_ref(image).registry;
     // `parse_image_ref` resolves an unqualified image to "registry-1.docker.io",
     // but `docker login` (no host given) writes the config under Docker Hub's
-    // legacy key — the two strings never match by equality.
+    // legacy key - the two strings never match by equality.
     let key = if registry == "registry-1.docker.io" || registry == "docker.io" {
         "https://index.docker.io/v1/"
     } else {
@@ -181,7 +181,7 @@ async fn get_registry_digest(image_ref: &ImageRef) -> Result<String, String> {
         }
         extract_digest(&resp)
     } else {
-        // Generic OCI registry — try anonymous access
+        // Generic OCI registry - try anonymous access
         let url = format!(
             "https://{}/v2/{}/manifests/{}",
             image_ref.registry, image_ref.repository, image_ref.tag
@@ -318,7 +318,7 @@ static GPU_RECOMMENDED_TEMPLATES: &[&str] = &[
 
 /// Startup arguments for the templates whose image default `CMD` does not start a
 /// server. Kept as a keyed list rather than a per-template field for the reason
-/// given above `GPU_RECOMMENDED_TEMPLATES` — every static declaration in the
+/// given above `GPU_RECOMMENDED_TEMPLATES` - every static declaration in the
 /// catalogue would otherwise have to be edited to add a field all but one leaves
 /// empty.
 ///
@@ -327,7 +327,7 @@ static GPU_RECOMMENDED_TEMPLATES: &[&str] = &[
 /// silently overriding them.
 ///
 /// `minio` needs it because `minio/minio`'s default `CMD` is `["minio"]`, which
-/// prints usage and **exits 0**. Nothing here crashes — the container simply has no
+/// prints usage and **exits 0**. Nothing here crashes - the container simply has no
 /// supervised process, so `unless-stopped` restarts it forever at `ExitCode: 0`
 /// (issue #101). `/data` is the path the template already mounts a volume at, so the
 /// served directory and the persisted directory are the same one; a `server` command
@@ -341,7 +341,7 @@ static GPU_RECOMMENDED_TEMPLATES: &[&str] = &[
 /// eleven entries below.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum DomainEnv {
-    /// Bare hostname — `example.com`.
+    /// Bare hostname - `example.com`.
     Host,
     /// `https` or `http`, as a word.
     Scheme,
@@ -359,7 +359,7 @@ enum DomainEnv {
     /// (`proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for` in both
     /// `templates/nginx/proxy.conf` and `https.conf`). An operator who puts
     /// Cloudflare in front adds a second entry; the value still makes the app
-    /// trust the proxy, it only shifts which entry it reads as the client — so
+    /// trust the proxy, it only shifts which entry it reads as the client - so
     /// this is right where it matters and imprecise where it does not.
     ProxyHops,
 }
@@ -368,20 +368,20 @@ enum DomainEnv {
 /// deploy form.
 ///
 /// Kept as a keyed list rather than a per-template field for the reason given
-/// above `GPU_RECOMMENDED_TEMPLATES` — every static declaration in the
+/// above `GPU_RECOMMENDED_TEMPLATES` - every static declaration in the
 /// catalogue would otherwise have to be edited to add a field all but six
 /// leave empty.
 ///
 /// **Why this exists.** Every entry names a variable the app uses to build its
 /// OWN absolute URLs: webhook registrations, OAuth callbacks, password-reset
 /// links. Left at the catalogue's `localhost:<port>` default, the app comes up
-/// and serves fine — and every URL it hands out points somewhere the visitor's
+/// and serves fine - and every URL it hands out points somewhere the visitor's
 /// browser cannot follow. The deploy form has collected the domain all along;
 /// until this change `deploy_app` used it for one container label and threw it
 /// away, so the operator had to know to retype it into a second field, and for
 /// n8n there was no field to retype it into (GitHub #111).
 ///
-/// An operator value that differs from the catalogue default always wins — see
+/// An operator value that differs from the catalogue default always wins - see
 /// the merge in [`deploy_app`]. This only fills a field nobody filled in.
 static TEMPLATE_DOMAIN_ENV: &[(&str, &[(&str, DomainEnv)])] = &[
     // n8n declares no env vars at all, so all four of these are additions the
@@ -421,7 +421,7 @@ static TEMPLATE_DOMAIN_ENV: &[(&str, &[(&str, DomainEnv)])] = &[
 /// and without it the backend requests a certificate as part of the same deploy
 /// (see `deploy_ssl_email` in the backend route). Both paths are public https.
 /// The one case this is optimistic about is a certificate that fails to issue,
-/// which leaves the derived value ahead of reality until it does — and an app
+/// which leaves the derived value ahead of reality until it does - and an app
 /// on a domain with no certificate is already broken in more visible ways.
 fn domain_env_for(template_id: &str, domain: &str) -> Vec<(&'static str, String)> {
     TEMPLATE_DOMAIN_ENV
@@ -451,14 +451,14 @@ fn domain_env_for(template_id: &str, domain: &str) -> Vec<(&'static str, String)
 /// [`deploy_app`] and nowhere else.
 ///
 /// Precedence, highest first:
-/// 1. An operator value that DIFFERS from the catalogue default — a deliberate
+/// 1. An operator value that DIFFERS from the catalogue default - a deliberate
 ///    choice, and it wins even over a derived value.
 /// 2. The derived value, when this template has one for the name.
 /// 3. The operator's value (i.e. one equal to the default).
 /// 4. The catalogue default.
 ///
 /// Rule 1 is the load-bearing one. Without it, an operator who typed their own
-/// `WEBHOOK_URL` would have it silently overwritten by the domain — which is
+/// `WEBHOOK_URL` would have it silently overwritten by the domain - which is
 /// the same class of bug as shipping `localhost`, just pointing the other way.
 fn merge_deploy_env(
     env_vars: &[EnvVarDef],
@@ -491,7 +491,7 @@ fn merge_deploy_env(
     // loop exists: its catalogue row is `env_vars: &[]`, so all four of its
     // domain-derived vars are additions no form field could have carried and
     // the loop above could never have reached. Skipped when the operator sent
-    // the key themselves — the extras loop directly above already emitted it,
+    // the key themselves - the extras loop directly above already emitted it,
     // and appending here as well would set the variable twice.
     for (name, value) in derived {
         if !env_vars.iter().any(|ev| ev.name == *name) && !env.contains_key(*name) {
@@ -501,7 +501,7 @@ fn merge_deploy_env(
     env_list
 }
 
-/// Whether this template fills `name` in from the claimed domain — the flag the
+/// Whether this template fills `name` in from the claimed domain - the flag the
 /// deploy form uses to tell the operator so, instead of showing them a
 /// `localhost` default it is about to override.
 fn is_domain_derived(template_id: &str, name: &str) -> bool {
@@ -540,7 +540,7 @@ static TEMPLATE_CMD: &[(&str, &[&str])] = &[
 /// The catalogue's command for whatever template a running container came from.
 ///
 /// A recreate has the container's RESOLVED `Cmd` in hand, which is the old image's default
-/// whenever the catalogue overrode nothing — so carrying that forward would pin a departing
+/// whenever the catalogue overrode nothing - so carrying that forward would pin a departing
 /// image's command onto its replacement. Going back to the template label instead gives the
 /// override where one exists and nothing where it does not, which is what lets the new
 /// image's own default apply.
@@ -559,25 +559,25 @@ fn template_cmd(id: &str) -> Option<Vec<String>> {
 }
 
 /// `tecnativa/docker-socket-proxy`'s per-endpoint ACL, spelled out in full and
-/// deny-by-default rather than left to the image's own defaults — the same
+/// deny-by-default rather than left to the image's own defaults - the same
 /// posture `deploy_app`'s `cap_drop: ALL` + explicit `cap_add` allowlist
 /// already takes for every template container. `CONTAINERS` and `INFO` are
 /// the only two granted: Dozzle's entire purpose is listing containers and
 /// streaming their logs (`CONTAINERS`), and its client calls `GET /info` on
 /// every connect to populate the remote host's CPU/memory/Docker-version
-/// card and decide whether the host is "available" at all — verified live
+/// card and decide whether the host is "available" at all - verified live
 /// (s426): with `INFO=0` Dozzle logged `Failed to get docker info` on every
 /// deploy and reported the host `available:false` even though container
 /// listing worked underneath, which would have shipped looking broken to
 /// every real user. `/info` returns daemon/host metadata only (OS, CPU
-/// count, Docker version) — no container, image or secret data — so
+/// count, Docker version) - no container, image or secret data - so
 /// granting it does not reopen the vector this whole sidecar exists to
 /// close. Nothing else Dozzle could ask for (exec into a container, create
 /// one, touch images/volumes/networks/swarm, or any POST at all) is enabled.
 ///
 /// ⚠ **`CONTAINERS=1` IS WIDER THAN "list and stream logs".** The proxy's own
 /// haproxy config grants it as a PATH PREFIX over the whole `/containers/*`
-/// family, not a per-endpoint allowlist within it — so anything reachable on
+/// family, not a per-endpoint allowlist within it - so anything reachable on
 /// this sidecar's exposed port also reaches `GET /containers/{id}/archive`
 /// (read a file out of a container's filesystem), `/export` (the whole
 /// filesystem as a tar), `/attach/ws` (attach to stdio), `/changes` and
@@ -622,7 +622,7 @@ static DOZZLE_PROXY_ENV: &[(&str, &str)] = &[
     ("ALLOW_UNPAUSE", "0"),
 ];
 
-/// Templates whose catalogue entry alone cannot serve their purpose — they
+/// Templates whose catalogue entry alone cannot serve their purpose - they
 /// need a companion container holding a capability (Docker API access) this
 /// panel deliberately never hands the app container itself. A side table
 /// rather than an `AppTemplateDef` field, for the same reason `TEMPLATE_CMD`
@@ -631,7 +631,7 @@ static DOZZLE_PROXY_ENV: &[(&str, &str)] = &[
 static TEMPLATE_SIDECAR: &[(&str, app_sidecar::SidecarDef)] = &[(
     "dozzle",
     app_sidecar::SidecarDef {
-        // Pinned, not :latest — verified equal digests at pin time
+        // Pinned, not :latest - verified equal digests at pin time
         // (sha256:a14e639c…) so this is not a functional change, only a
         // reproducibility one: a proxy sitting in front of the Docker socket
         // is exactly the kind of thing that should not silently change
@@ -654,7 +654,7 @@ fn template_sidecar(id: &str) -> Option<&'static app_sidecar::SidecarDef> {
 
 /// The sidecar a running container's template needs, read from the
 /// `dockpanel.app.template` label rather than the container's own live
-/// network attachments — the same reason `catalogue_cmd_for` reads the label
+/// network attachments - the same reason `catalogue_cmd_for` reads the label
 /// instead of the resolved `Cmd`: this is the panel's CURRENT policy for the
 /// template, not whatever the container happens to be doing right now.
 fn catalogue_sidecar_for(labels: Option<&HashMap<String, String>>) -> Option<&'static app_sidecar::SidecarDef> {
@@ -664,7 +664,7 @@ fn catalogue_sidecar_for(labels: Option<&HashMap<String, String>>) -> Option<&'s
 }
 
 /// Attach `env_list`/the returned `NetworkingConfig` to `app_name`'s sidecar
-/// network, if the template this container was deployed from has one —
+/// network, if the template this container was deployed from has one -
 /// called from EVERY recreate path (`update_app`'s stop/start fallback,
 /// `blue_green_update`, `change_container_image`, `update_env`), so an image
 /// swap or an env edit can never silently strand the app back on the default
@@ -708,12 +708,12 @@ pub struct UpdateResult {
     pub blue_green: bool,
     /// Container paths this update moved out of the writable layer and onto a bind
     /// mount. Non-empty only for an app deployed before its template declared the
-    /// path — see `migrate_unmounted_volumes`. Reported so the operator learns their
+    /// path - see `migrate_unmounted_volumes`. Reported so the operator learns their
     /// app just became durable rather than having it happen silently.
     pub migrated_volumes: Vec<String>,
     /// Host paths this update handed back to the uid the image runs as, because an
     /// EARLIER release migrated them with `docker cp` and left every file owned by
-    /// root — see `repair_root_owned_volumes`. Non-empty only on an install that
+    /// root - see `repair_root_owned_volumes`. Non-empty only on an install that
     /// was actually damaged, and reported for the same reason as the field above:
     /// an operator whose app has been failing since it was last updated deserves to
     /// be told that this is what was wrong with it.
@@ -730,7 +730,7 @@ pub struct DeployedApp {
     pub domain: Option<String>,
     /// Whether this box serves `domain` over HTTPS. Carried so the panel can
     /// link to the scheme that actually answers instead of assuming `https`
-    /// (issue #96 — an operator terminating TLS upstream serves plain HTTP).
+    /// (issue #96 - an operator terminating TLS upstream serves plain HTTP).
     /// Always false when there is no domain.
     pub ssl: bool,
     pub health: Option<String>,
@@ -740,21 +740,21 @@ pub struct DeployedApp {
     pub user_id: Option<String>,
 }
 
-// 79 of these entries pinned `:latest` — a deploy from the catalogue is not
+// 79 of these entries pinned `:latest` - a deploy from the catalogue is not
 // reproducible across two operators, or across the same operator's redeploy a
 // month later, and the SSL/backup/scan machinery elsewhere in this project
 // treats a container's image tag as meaningful metadata. 59 were re-pinned
 // here to the SPECIFIC tag that resolves to the byte-identical manifest
 // `:latest` already pointed to (every real per-architecture platform digest
 // matched, attestation/SBOM sub-manifests excluded since those regenerate on
-// every push independent of image content) — a zero-behavior-change pin,
+// every push independent of image content) - a zero-behavior-change pin,
 // verified live against each registry, never guessed (see the DEAD-tags
 // lesson two lines below this comment block: a guessed version can be
 // unpullable). The remaining 20 stay on `:latest` because no equivalent tag
 // exists at all, checked live rather than assumed:
 //   - erpnext, posthog, synapse: the registry's `:latest` build matches only a
 //     branch/commit-hash tag (`develop`, `master`, a bare `sha-*`), never a
-//     numbered release — pinning to one of those would look like a version
+//     numbered release - pinning to one of those would look like a version
 //     and mean nothing.
 //   - activepieces, dashy, dify, flowise, focalboard, keydb, superset: no tag
 //     in the registry (searched the 200 most-recently-pushed, or the full
@@ -762,7 +762,7 @@ pub struct DeployedApp {
 //   - audiobookshelf, changedetection, dragonflydb, homarr, homepage, huginn,
 //     paperless-ngx, zipline: same, on ghcr.io/dragonflydb's own registry.
 //   - curlimages/curl below (the network-probe helper, not a catalogue
-//     template) was deliberately left alone — a transient one-shot probe
+//     template) was deliberately left alone - a transient one-shot probe
 //     container is a different risk profile from a long-running deployed app.
 static TEMPLATES: &[AppTemplateDef] = &[
     // WordPress, Drupal, Joomla, PrestaShop moved to Sites (native PHP install)
@@ -784,7 +784,7 @@ static TEMPLATES: &[AppTemplateDef] = &[
             },
             // Without these two the container could never start, and nothing here
             // said so. `ghost:5` sets NODE_ENV=production, and Ghost's production
-            // default database client is MySQL — so a deploy dialled 127.0.0.1:3306
+            // default database client is MySQL - so a deploy dialled 127.0.0.1:3306
             // inside its own network namespace, got ECONNREFUSED, and exited 2. The
             // catalogue asked the operator for a Site URL and for nothing else, so
             // there was no field they could have filled in to prevent it.
@@ -793,7 +793,7 @@ static TEMPLATES: &[AppTemplateDef] = &[
             // container logs `connect ECONNREFUSED 127.0.0.1:3306` from
             // knex-migrator and stops. Ghost supports SQLite as a first-class
             // client, and the file below lands inside the volume this template
-            // already persists — which is what the comment under `volumes` has
+            // already persists - which is what the comment under `volumes` has
             // claimed all along.
             //
             // Left visible and editable rather than forced: an operator who wants
@@ -816,20 +816,20 @@ static TEMPLATES: &[AppTemplateDef] = &[
         ],
         // Ghost keeps its database, themes and uploaded images here, and the image
         // declares it as a VOLUME. Undeclared, Docker satisfied that with an
-        // ANONYMOUS volume — which `docker rm` leaves behind but the replacement
+        // ANONYMOUS volume - which `docker rm` leaves behind but the replacement
         // container never sees, so an update read as total data loss (#110).
         volumes: &["/var/lib/ghost/content"],
     },
     AppTemplateDef {
         id: "azuracast",
         name: "AzuraCast",
-        description: "Self-hosted web radio suite — station management, streaming, playlists, and listener stats in one all-in-one container",
+        description: "Self-hosted web radio suite - station management, streaming, playlists, and listener stats in one all-in-one container",
         category: "Media",
         image: "ghcr.io/azuracast/azuracast:stable",
         default_port: 8420,
         container_port: "80/tcp",
         // AzuraCast runs its own MariaDB inside the container, and the database
-        // refuses to initialise without a root password — it says so and stops.
+        // refuses to initialise without a root password - it says so and stops.
         // The template declared NO environment at all, so there was no field an
         // operator could have filled in.
         //
@@ -882,11 +882,11 @@ static TEMPLATES: &[AppTemplateDef] = &[
         env_vars: &[],
         volumes: &["/app/data"],
     },
-    // Portainer withdrawn (v2.178.0) — same defect as Dozzle above: it needs the
+    // Portainer withdrawn (v2.178.0) - same defect as Dozzle above: it needs the
     // host Docker socket to do anything (containers/images/volumes/networks
     // ARE the product) and `deploy_app` deliberately never mounts it. Unlike
-    // Dozzle it does not crash-loop — its web UI starts and serves a login page
-    // fine with no socket, then every real feature behind it fails — so it was
+    // Dozzle it does not crash-loop - its web UI starts and serves a login page
+    // fine with no socket, then every real feature behind it fails - so it was
     // never caught by the weekly Template Census's start/respond check. See
     // FEATURES.md §Withdrawn Claims.
     AppTemplateDef {
@@ -899,11 +899,11 @@ static TEMPLATES: &[AppTemplateDef] = &[
         container_port: "5678/tcp",
         // `N8N_BASIC_AUTH_USER` / `N8N_BASIC_AUTH_PASSWORD` used to live here. n8n
         // REMOVED basic auth in 1.0 and this template pins `n8nio/n8n:1`, so both were
-        // inert — the deploy form offered an "Admin Password" field that protected
+        // inert - the deploy form offered an "Admin Password" field that protected
         // nothing and told the operator their instance was credentialed when it was
         // not. Ownership is established by creating the owner account on first visit.
         env_vars: &[],
-        // THE #110 PATH. n8n defaults to SQLite and keeps everything here —
+        // THE #110 PATH. n8n defaults to SQLite and keeps everything here -
         // database.sqlite (workflows, executions, the owner account), the credential
         // encryption key in .n8n/config, and any community nodes. The image declares NO
         // volume of its own, so with nothing declared here the whole lot lived in the
@@ -986,7 +986,7 @@ static TEMPLATES: &[AppTemplateDef] = &[
     AppTemplateDef {
         id: "directus",
         name: "Directus",
-        description: "Open data platform — instant REST & GraphQL API for any SQL database",
+        description: "Open data platform - instant REST & GraphQL API for any SQL database",
         category: "CMS",
         image: "directus/directus:11",
         default_port: 8055,
@@ -1001,7 +1001,7 @@ static TEMPLATES: &[AppTemplateDef] = &[
     AppTemplateDef {
         id: "nextcloud",
         name: "Nextcloud",
-        description: "Self-hosted productivity platform — files, calendar, contacts, and more",
+        description: "Self-hosted productivity platform - files, calendar, contacts, and more",
         category: "Storage",
         image: "nextcloud:30",
         default_port: 8082,
@@ -1042,7 +1042,7 @@ static TEMPLATES: &[AppTemplateDef] = &[
         name: "Plausible Analytics",
         description: "Privacy-friendly alternative to Google Analytics",
         category: "Analytics",
-        // Was `plausible/analytics:v2` — an image the publisher ABANDONED. Every
+        // Was `plausible/analytics:v2` - an image the publisher ABANDONED. Every
         // tag in that Docker Hub repository (`v2`, `v2.0`, `v2.0.0` and `latest`
         // alike) resolves to one digest last pushed on 2023-07-12, and nothing has
         // been published there since; the page carries no deprecation notice, so
@@ -1055,8 +1055,8 @@ static TEMPLATES: &[AppTemplateDef] = &[
             EnvVarDef { name: "BASE_URL", label: "Site URL", default: "http://localhost:8000", required: true, secret: false },
             // Plausible needs BOTH a Postgres and a ClickHouse, and this template
             // used to ask for neither. Its own `runtime.exs` defaults them to the
-            // hostnames `plausible_db` and `plausible_events_db` — the service
-            // names in upstream's compose file — which resolve to nothing in a
+            // hostnames `plausible_db` and `plausible_events_db` - the service
+            // names in upstream's compose file - which resolve to nothing in a
             // single-container deploy, so the app crashed on a connection pool
             // timeout and wrote an Erlang crash dump. The operator was never shown
             // a field that could have prevented it.
@@ -1162,7 +1162,7 @@ static TEMPLATES: &[AppTemplateDef] = &[
     AppTemplateDef {
         id: "nocodb",
         name: "NocoDB",
-        description: "Open-source Airtable alternative — turn any database into a spreadsheet",
+        description: "Open-source Airtable alternative - turn any database into a spreadsheet",
         category: "Tools",
         image: "nocodb/nocodb:2026.08.2",
         default_port: 8085,
@@ -1179,7 +1179,7 @@ static TEMPLATES: &[AppTemplateDef] = &[
         default_port: 8086,
         container_port: "8080/tcp",
         env_vars: &[],
-        // SearXNG generates settings.yml — including its `secret_key` — into /etc/searxng
+        // SearXNG generates settings.yml - including its `secret_key` - into /etc/searxng
         // on first boot, and the image declares that path as a VOLUME. Only the config
         // half is declared here: /var/cache/searxng is a rebuildable cache and does not
         // need to survive anything.
@@ -1199,7 +1199,7 @@ static TEMPLATES: &[AppTemplateDef] = &[
     AppTemplateDef {
         id: "code-server",
         name: "VS Code Server",
-        description: "Run VS Code in the browser — full IDE accessible anywhere",
+        description: "Run VS Code in the browser - full IDE accessible anywhere",
         category: "Development",
         image: "codercom/code-server:4.131.0",
         default_port: 8443,
@@ -1238,7 +1238,7 @@ static TEMPLATES: &[AppTemplateDef] = &[
     AppTemplateDef {
         id: "mailpit",
         name: "Mailpit",
-        description: "Email testing tool — catches outgoing emails for dev/testing",
+        description: "Email testing tool - catches outgoing emails for dev/testing",
         category: "Development",
         image: "axllent/mailpit:v1.30",
         default_port: 8025,
@@ -1443,7 +1443,7 @@ static TEMPLATES: &[AppTemplateDef] = &[
     AppTemplateDef {
         id: "forgejo",
         name: "Forgejo",
-        description: "Community-driven Git forge — lightweight Gitea fork with extra features",
+        description: "Community-driven Git forge - lightweight Gitea fork with extra features",
         category: "Development",
         image: "codeberg.org/forgejo/forgejo:9",
         default_port: 3009,
@@ -1469,7 +1469,7 @@ static TEMPLATES: &[AppTemplateDef] = &[
             EnvVarDef { name: "DB_PASSWORD", label: "Database Password", default: "", required: true, secret: true },
         ],
         // Confirmed on the published image (s449): the app root is
-        // /var/www/app, not /var/app — the prior paths named a directory
+        // /var/www/app, not /var/app - the prior paths named a directory
         // that does not exist in the image at all, so `seed_volume_from_image`
         // (which only ever seeds an EMPTY bind) silently found nothing to
         // copy and every invoice-ninja deploy started with no `public`/
@@ -1536,7 +1536,7 @@ static TEMPLATES: &[AppTemplateDef] = &[
         ],
         volumes: &[],
     },
-    // Roundcube and Rspamd removed — use Mail → Webmail and Mail → Spam Filter instead
+    // Roundcube and Rspamd removed - use Mail → Webmail and Mail → Spam Filter instead
     // ─── AI / Machine Learning ──────────────────────────────────
     AppTemplateDef {
         id: "ollama",
@@ -1917,10 +1917,10 @@ static TEMPLATES: &[AppTemplateDef] = &[
         volumes: &["/config"],
     },
     // ─── Monitoring (additional) ────────────────────────────────
-    // Dozzle was withdrawn at v2.178.0 (#125 — it fatals with "Could not
+    // Dozzle was withdrawn at v2.178.0 (#125 - it fatals with "Could not
     // connect to any Docker Engine" because `deploy_app` deliberately never
     // mounts the host Docker socket into any one-click app) and reinstated at
-    // v2.179.0 behind a paired docker-socket-proxy sidecar instead — see
+    // v2.179.0 behind a paired docker-socket-proxy sidecar instead - see
     // `TEMPLATE_SIDECAR` and `services::app_sidecar`. The socket is real, but
     // this container never touches it: the sidecar does, on a network
     // nothing else can reach.
@@ -1969,7 +1969,7 @@ static TEMPLATES: &[AppTemplateDef] = &[
         default_port: 8288,
         container_port: "80/tcp",
         env_vars: &[],
-        // `/database`, not `/database/filebrowser.db` — the same file-declared-as-a
+        // `/database`, not `/database/filebrowser.db` - the same file-declared-as-a
         // -volume mistake as Element Web, and here it got one step further before
         // failing: the container started, then exited with
         // `open /database/filebrowser.db: is a directory`.
@@ -1977,7 +1977,7 @@ static TEMPLATES: &[AppTemplateDef] = &[
         // Repointed at the parent rather than dropped, because unlike Element Web
         // there IS something to keep here. File Browser creates its database
         // inside this directory, so mounting the directory persists the users,
-        // shares and settings across an update — which is precisely what mounting
+        // shares and settings across an update - which is precisely what mounting
         // the file failed to do while looking like it did.
         volumes: &["/srv", "/database"],
     },
@@ -2018,7 +2018,7 @@ static TEMPLATES: &[AppTemplateDef] = &[
         env_vars: &[],
         volumes: &["/var/jenkins_home"],
     },
-    // Woodpecker CI already exists above — skipped duplicate
+    // Woodpecker CI already exists above - skipped duplicate
     // ─── Databases (additional) ─────────────────────────────────
     AppTemplateDef {
         id: "clickhouse",
@@ -2111,7 +2111,7 @@ static TEMPLATES: &[AppTemplateDef] = &[
             EnvVarDef { name: "AP_JWT_SECRET", label: "JWT Secret", default: "", required: true, secret: true },
             // Activepieces defaults to POSTGRES + a standalone Redis, neither of which
             // this single-container template deploys, so it could not start at all. The
-            // embedded pair is what upstream documents for the one-container install —
+            // embedded pair is what upstream documents for the one-container install -
             // and it is what makes the volume below meaningful, since PGLite is the
             // thing that writes into it. Both halves or neither.
             EnvVarDef { name: "AP_DB_TYPE", label: "Database Mode", default: "PGLITE", required: false, secret: false },
@@ -2542,7 +2542,7 @@ static TEMPLATES: &[AppTemplateDef] = &[
         volumes: &["/config", "/music", "/downloads"],
     },
     // The Readarr template was withdrawn s342. LinuxServer's image for it publishes
-    // an OCI index with ZERO manifests on both of its tags — `docker pull` exits 1
+    // an OCI index with ZERO manifests on both of its tags - `docker pull` exits 1
     // with "no matching manifest for linux/amd64", while the Sonarr and Radarr
     // controls return four manifests each. The upstream project is archived, last
     // pushed 2025-06-27, so there is nothing to repoint to. Same call as the four
@@ -2553,7 +2553,7 @@ static TEMPLATES: &[AppTemplateDef] = &[
     // to be empty. v2.96.0's sweep classified by error MESSAGE and could not see
     // it. Any future resolvability check has to assert the index is NON-EMPTY.
     //
-    // The exact reference is deliberately not spelled here — this file is the
+    // The exact reference is deliberately not spelled here - this file is the
     // subject of pins that grep raw source, and a name written in a comment
     // silently satisfies the absence arm meant to keep it gone.
     AppTemplateDef {
@@ -2670,12 +2670,12 @@ static TEMPLATES: &[AppTemplateDef] = &[
         default_port: 8307,
         container_port: "80/tcp",
         env_vars: &[],
-        // Was `/app/config.json` — a FILE. Every volume path here becomes a host
+        // Was `/app/config.json` - a FILE. Every volume path here becomes a host
         // DIRECTORY that is bind-mounted over the container path, so Docker was
         // asked to mount a directory onto a file and refused: the container could
         // not be CREATED at all, and the deploy failed before anything started.
         // That is the loudest failure in this catalogue and it survived every
-        // audit, because reading the entry tells you nothing — the string looks
+        // audit, because reading the entry tells you nothing - the string looks
         // exactly like the ones that work.
         //
         // Dropped rather than repointed. Element Web is a static single-page app;
@@ -2706,13 +2706,13 @@ static TEMPLATES: &[AppTemplateDef] = &[
         image: "traefik:v3",
         default_port: 8309,
         // 80, not 8080. Traefik with no configuration creates exactly ONE
-        // entryPoint — `http` on :80 — and the :8080 one only exists when
+        // entryPoint - `http` on :80 - and the :8080 one only exists when
         // `--api.insecure`, ping, prometheus or the REST provider asks for it.
         // None of those are set here, so nothing ever listened on 8080 and the
         // published port answered connection-refused forever. The image's own
         // Dockerfile declares EXPOSE 80 and nothing else.
         //
-        // The tempting fix — a start command passing `--api.insecure=true` — is
+        // The tempting fix - a start command passing `--api.insecure=true` - is
         // the wrong one, and this panel already wrote down why: `traefik.rs`
         // passes exactly that flag for the panel's OWN managed Traefik, above a
         // comment whose safety argument is that the port is bound to 127.0.0.1
@@ -2939,13 +2939,13 @@ pub const ENV_MASK: &str = "********";
 
 /// Env var names the shipped catalogue itself declares are NOT secret.
 ///
-/// The mask is chosen by substring — `KEY`, `AUTH`, `TOKEN`, `SECRET`,
-/// `PASSWORD` anywhere in the name — which is right for an unknown key and
+/// The mask is chosen by substring - `KEY`, `AUTH`, `TOKEN`, `SECRET`,
+/// `PASSWORD` anywhere in the name - which is right for an unknown key and
 /// wrong for several we ship ourselves: `KEYCLOAK_ADMIN` is a username,
 /// `NEXTAUTH_URL` is a URL, `AUTHENTIK_POSTGRESQL__HOST` is a hostname. All
 /// three contain a pattern; none is a secret; all three were shown as
-/// `********`, which is unreadable and — before the sentinel in [`update_env`]
-/// — unrecoverable once saved.
+/// `********`, which is unreadable and - before the sentinel in [`update_env`]
+/// - unrecoverable once saved.
 ///
 /// A name is allowlisted only if EVERY template that declares it says
 /// `secret: false`, so a name reused as a secret elsewhere keeps its mask, and
@@ -2956,7 +2956,7 @@ pub const ENV_MASK: &str = "********";
 ///
 /// `GET /apps/{id}/env` substitutes the mask for anything sensitive, the edit
 /// dialog is seeded from exactly that response and sends every field back, and
-/// **this container is the only place the real value is stored** — no table
+/// **this container is the only place the real value is stored** - no table
 /// holds a Docker app's environment. Without this, saving the dialog wrote the
 /// literal `********` over every masked variable and then removed the container
 /// that held the original, which for Vaultwarden's `ADMIN_TOKEN` and
@@ -3009,8 +3009,8 @@ pub fn catalogue_non_secret_env(name: &str) -> bool {
 
 /// The counterpart `GET /apps/{id}/env` was missing: a catalogue-declared
 /// `secret: true` name that doesn't happen to contain one of the route's
-/// substring patterns (PASSWORD/SECRET/KEY/TOKEN/CREDENTIAL/AUTH) — e.g.
-/// `DB_PASS`, `POSTGRES_PWD`, `DATABASE_URL` — was returned in the clear.
+/// substring patterns (PASSWORD/SECRET/KEY/TOKEN/CREDENTIAL/AUTH) - e.g.
+/// `DB_PASS`, `POSTGRES_PWD`, `DATABASE_URL` - was returned in the clear.
 pub fn catalogue_secret_env(name: &str) -> bool {
     TEMPLATES
         .iter()
@@ -3027,13 +3027,13 @@ pub fn list_templates() -> Vec<AppTemplate> {
 ///
 /// `deploy_app` creates each declared volume as a **root-owned** directory on the
 /// host and bind-mounts it. That is right for most images, which start as root and
-/// chown their own data directory in their entrypoint before dropping privileges —
+/// chown their own data directory in their entrypoint before dropping privileges -
 /// `postgres`, `mysql` and `mongo` all do exactly that.
 ///
 /// It is wrong for an image that declares a non-root `Config.User`, because that
 /// process starts **already dropped** and can never chown its way out: it cannot
 /// write the directory the template just mounted for it. Both ways that shows up
-/// are bad, and the quiet one is worse — either the container exits with
+/// are bad, and the quiet one is worse - either the container exits with
 /// `Permission denied`, or it comes up healthy and silently persists nothing.
 ///
 /// Measured over the catalogue by reading every image's config: 42 of 148 images
@@ -3042,7 +3042,7 @@ pub fn list_templates() -> Vec<AppTemplate> {
 pub(crate) struct VolumeOwner {
     uid: u32,
     /// `None` when no group could be resolved. The directory then keeps the group
-    /// it already has, which is enough — the owner can write either way.
+    /// it already has, which is enough - the owner can write either way.
     gid: Option<u32>,
     /// The literal `Config.User`, so the log names what it acted on.
     spec: String,
@@ -3058,7 +3058,7 @@ fn split_user_spec(spec: &str) -> (&str, Option<&str>) {
     }
 }
 
-/// Does this `Config.User` mean root? An empty field does — it is simply unset,
+/// Does this `Config.User` mean root? An empty field does - it is simply unset,
 /// which is how the overwhelming majority of images ship.
 fn user_spec_is_root(spec: &str) -> bool {
     matches!(split_user_spec(spec).0, "" | "root" | "0")
@@ -3095,7 +3095,7 @@ fn tar_extract_first_file(archive: &[u8]) -> Option<String> {
 ///
 /// ⚠ The archive comes from a THIRD PARTY's image, so every entry is checked to
 /// land inside `dest` before anything is written. An entry naming `..` or an
-/// absolute path is skipped, not sanitised — the only safe response to a tar that
+/// absolute path is skipped, not sanitised - the only safe response to a tar that
 /// tries to escape is to not write it.
 ///
 /// Only regular files and directories are materialised. Symlinks and hardlinks
@@ -3104,10 +3104,10 @@ fn tar_extract_first_file(archive: &[u8]) -> Option<String> {
 fn tar_extract_into(archive: &[u8], dest: &std::path::Path) -> std::io::Result<Vec<std::path::PathBuf>> {
     let mut written = Vec::new();
     // Keyed by the entry's own archive-internal `name` (prefix-joined, pre-
-    // leading-component-strip — the same coordinate space a hardlink's
+    // leading-component-strip - the same coordinate space a hardlink's
     // `linkname` is written in), value is where THIS archive actually put
     // it on disk. A type-1 entry below resolves against this, never the
-    // host filesystem — see the comment at that branch for why.
+    // host filesystem - see the comment at that branch for why.
     let mut written_by_name: std::collections::HashMap<String, std::path::PathBuf> =
         std::collections::HashMap::new();
     let mut offset = 0usize;
@@ -3122,7 +3122,7 @@ fn tar_extract_into(archive: &[u8], dest: &std::path::Path) -> std::io::Result<V
             String::from_utf8_lossy(&bytes[..end]).to_string()
         };
         // POSIX ustar splits a path over 100 bytes across `name` (0..100)
-        // and a `prefix` (345..500, joined with `/`) — reading `name` alone
+        // and a `prefix` (345..500, joined with `/`) - reading `name` alone
         // silently truncates/misplaces any seeded path past 100 bytes.
         let prefix = field(345..500);
         let raw_name = field(0..100);
@@ -3145,14 +3145,14 @@ fn tar_extract_into(archive: &[u8], dest: &std::path::Path) -> std::io::Result<V
         // Mode and ownership are NOT decoration. An image ships executable
         // entrypoints and per-user config, and an extractor that writes every
         // entry 0644 root:root hands the app a directory that looks right and
-        // behaves wrong — which is a worse failure than the empty one being
+        // behaves wrong - which is a worse failure than the empty one being
         // fixed, because it is silent.
         //
         // ⚠ But the archive's mode is NOT copied verbatim. Only the question "was
         // this executable?" is carried across; the answer is then expressed as a
         // fixed safe mode. Reproducing an image's bits faithfully would let a
         // third party's image put a world-writable or setuid file into a data
-        // directory on a host that runs other people's containers — which is the
+        // directory on a host that runs other people's containers - which is the
         // exact shortcut §4 of `app-volume-ownership-pin-e2e.sh` refuses, and
         // that arm is what caught this: it fired on the first version of this
         // function and it was right to.
@@ -3188,7 +3188,7 @@ fn tar_extract_into(archive: &[u8], dest: &std::path::Path) -> std::io::Result<V
             } else if kind == b'1' {
                 // Hard link (ustar typeflag '1'). Resolve `linkname` ONLY
                 // against a path THIS archive has already written, never the
-                // host filesystem — an extractor willing to hard-link an
+                // host filesystem - an extractor willing to hard-link an
                 // arbitrary host path into the target would hand the app a
                 // read primitive over anything the agent's uid can see. A
                 // linkname this archive hasn't written yet (out of order, or
@@ -3231,12 +3231,12 @@ fn tar_extract_into(archive: &[u8], dest: &std::path::Path) -> std::io::Result<V
 /// **This restores a Docker behaviour that binding opts out of.** When an empty
 /// NAMED volume is mounted over a path that has content in the image, Docker
 /// copies that content into the volume; when a BIND mount is used, it never does.
-/// This panel binds every declared volume — so it can hand the operator a
-/// directory they can see and back up — and in doing so silently deleted, from the
+/// This panel binds every declared volume - so it can hand the operator a
+/// directory they can see and back up - and in doing so silently deleted, from the
 /// container's point of view, every file its image shipped at that path.
 ///
 /// Proven rather than reasoned: the same `caddy:2` image, the same `/etc/caddy`,
-/// the same empty storage, differing only in mount type — bind exits 1 with
+/// the same empty storage, differing only in mount type - bind exits 1 with
 /// *"open /etc/caddy/Caddyfile: no such file or directory"*, while a named volume
 /// comes up listening and Docker has placed `Caddyfile` inside it.
 ///
@@ -3248,7 +3248,7 @@ fn tar_extract_into(archive: &[u8], dest: &std::path::Path) -> std::io::Result<V
 ///
 /// Two guards, both deliberate:
 ///   * it writes ONLY into a directory that is empty, so an operator's existing
-///     data is never touched — the same emptiness test `migrate_unmounted_volumes`
+///     data is never touched - the same emptiness test `migrate_unmounted_volumes`
 ///     uses before it moves anything;
 ///   * a failure is logged and swallowed. Before this existed the directory was
 ///     empty, which is exactly where a failure leaves it, so nothing regresses.
@@ -3314,7 +3314,7 @@ pub(crate) async fn seed_volume_from_image(
 
     // The probe is created with no HostConfig, so Docker materialises one anonymous
     // volume for every path the image declares as a VOLUME. Removing it without the
-    // volumes flag orphans every one of them, on every call, for ever — and nothing
+    // volumes flag orphans every one of them, on every call, for ever - and nothing
     // in the product ever reclaims them. The flag removes ONLY anonymous volumes;
     // named volumes and bind sources are untouched (measured against the daemon),
     // so it is safe here and at every sibling below.
@@ -3340,7 +3340,7 @@ pub(crate) async fn seed_volume_from_image(
             // every seeded file to one owner here would be less faithful than the
             // behaviour being restored, not more.
             tracing::info!(
-                "Seeded {} entr{} into {host_dir} from {image}:{container_path} — the image \
+                "Seeded {} entr{} into {host_dir} from {image}:{container_path} - the image \
                  ships files there, and a bind mount would otherwise hide them",
                 written.len(),
                 if written.len() == 1 { "y" } else { "ies" }
@@ -3388,7 +3388,7 @@ async fn read_file_from_image(docker: &Docker, image: &str, path: &str) -> Optio
         }
     }
 
-    // Same probe shape as `seed_volume_from_image` — see the note there.
+    // Same probe shape as `seed_volume_from_image` - see the note there.
     let _ = docker
         .remove_container(
             &created.id,
@@ -3447,7 +3447,7 @@ fn group_lookup(group: &str, name: &str) -> Option<u32> {
 /// directory to a different account, and `0777` would put a world-writable
 /// directory on a host that runs other people's containers. When the spec cannot
 /// be resolved this returns `None` and says so out loud, leaving the directory
-/// root-owned — the same state as before, but no longer a silent one.
+/// root-owned - the same state as before, but no longer a silent one.
 pub(crate) async fn resolve_volume_owner(docker: &Docker, image: &str) -> Option<VolumeOwner> {
     let spec = docker
         .inspect_image(image)
@@ -3516,7 +3516,7 @@ pub(crate) async fn resolve_volume_owner(docker: &Docker, image: &str) -> Option
 pub(crate) fn chown_to(path: &str, owner: &VolumeOwner) -> std::io::Result<()> {
     let c_path = std::ffi::CString::new(path)
         .map_err(|_| std::io::Error::other("volume path contains a NUL byte"))?;
-    // `-1` means "leave this one as it is" — the same call shape `main.rs` uses to
+    // `-1` means "leave this one as it is" - the same call shape `main.rs` uses to
     // set only the group on the agent socket.
     let gid = owner.gid.unwrap_or(u32::MAX);
     if unsafe { libc::chown(c_path.as_ptr(), owner.uid, gid) } == 0 {
@@ -3555,7 +3555,7 @@ fn lchown_to(path: &std::path::Path, owner: &VolumeOwner) -> std::io::Result<()>
 ///
 /// It has to happen, because `docker cp` does not preserve ownership on the way
 /// out of a container. Copying a container's files to the host writes them as the
-/// user running the command — root, for the agent — and `--archive` does not
+/// user running the command - root, for the agent - and `--archive` does not
 /// change that (measured on docker 29.7.2: a file owned by 1000:1000 inside the
 /// container arrives 0:0 either way). Chowning only the directory leaves the app
 /// holding its own data owned by a user it is not, and a non-root image then dies
@@ -3585,7 +3585,7 @@ fn chown_migrated_tree(root: &std::path::Path, owner: &VolumeOwner) -> std::io::
 /// Give back what the broken migration took, on an install it already broke.
 ///
 /// v2.111.0 through v2.113.1 copied an app's data onto a bind mount with
-/// `docker cp` — which writes as root — and then chowned only the directory, so
+/// `docker cp` - which writes as root - and then chowned only the directory, so
 /// every file underneath came back owned by root and a non-root image could not
 /// write its own data (#110). v2.113.2 stopped that happening. It could not undo
 /// it: `migrate_unmounted_volumes` runs only for a volume that is MISSING, and
@@ -3600,7 +3600,7 @@ fn chown_migrated_tree(root: &std::path::Path, owner: &VolumeOwner) -> std::io::
 /// image itself declares.** That is the narrowest rule that repairs what we did:
 /// a file owned by any third uid is left exactly as it was, so an ownership
 /// somebody chose deliberately is never disturbed. It is also a de-escalation in
-/// every case — from root to the unprivileged account the app already runs as,
+/// every case - from root to the unprivileged account the app already runs as,
 /// inside that app's own data directory. Root-run images are skipped entirely,
 /// because `resolve_volume_owner` returns `None` for them and there is nothing
 /// here to repair.
@@ -3628,7 +3628,7 @@ async fn repair_root_owned_volumes(
     let mut repaired = Vec::new();
     for src in sources {
         // Canonicalize then re-check the prefix, exactly as every other writer
-        // here does — the check is what proves the path is one of ours, and it
+        // here does - the check is what proves the path is one of ours, and it
         // only means anything after symlinks are resolved.
         let Ok(resolved) = std::fs::canonicalize(&src) else {
             continue;
@@ -3642,7 +3642,7 @@ async fn repair_root_owned_volumes(
             Ok(count) => {
                 tracing::info!(
                     "Repaired {resolved_str}: {count} root-owned path(s) given back to {} \
-                     for image user {:?} — this app was migrated by a release that left \
+                     for image user {:?} - this app was migrated by a release that left \
                      its data unwritable (#110)",
                     owner.uid,
                     owner.spec
@@ -3666,7 +3666,7 @@ fn errno_reset() {
 }
 
 /// Open `name` relative to `dir_fd` (or `libc::AT_FDCWD` for an absolute
-/// path) WITHOUT following a symlink — `ELOOP` if the entry has become one
+/// path) WITHOUT following a symlink - `ELOOP` if the entry has become one
 /// since it was named, rather than opening whatever it now points at. This is
 /// the primitive the whole rewrite below is built on: every other helper here
 /// resolves ONE path component against an already-open, already-verified
@@ -3700,7 +3700,7 @@ fn fstat_fd(fd: std::os::unix::io::RawFd) -> std::io::Result<libc::stat> {
     }
 }
 
-/// `lstat` one entry by NAME relative to an already-open parent — resolves
+/// `lstat` one entry by NAME relative to an already-open parent - resolves
 /// nothing above `dir_fd`, so a swapped ANCESTOR cannot redirect it (unlike
 /// stat-then-reopen-by-full-path, which re-walks every component from `/`).
 fn fstatat_nofollow(
@@ -3726,7 +3726,7 @@ fn fchown_fd(fd: std::os::unix::io::RawFd, owner: &VolumeOwner) -> std::io::Resu
 }
 
 /// `chown` one entry by name relative to an already-open parent, never
-/// following a symlink — the `fchownat`/`AT_SYMLINK_NOFOLLOW` sibling of
+/// following a symlink - the `fchownat`/`AT_SYMLINK_NOFOLLOW` sibling of
 /// `fstatat_nofollow` above, same reasoning.
 fn fchownat_nofollow(
     dir_fd: std::os::unix::io::RawFd,
@@ -3751,7 +3751,7 @@ fn fchownat_nofollow(
 }
 
 /// List a directory's immediate child names via `fdopendir` on a DUPLICATE of
-/// `dir_fd` — `fdopendir` takes ownership of whatever fd it's given and
+/// `dir_fd` - `fdopendir` takes ownership of whatever fd it's given and
 /// `closedir` closes it, so duplicating first means this reads exactly the
 /// directory the caller already verified without relinquishing (or double-
 /// closing) the caller's own fd.
@@ -3771,7 +3771,7 @@ fn read_dir_names(
     let mut names = Vec::new();
     loop {
         // readdir(3): NULL means either EOF or an error, and only errno
-        // (unchanged on EOF) tells them apart — reset it before every call.
+        // (unchanged on EOF) tells them apart - reset it before every call.
         errno_reset();
         let entry = unsafe { libc::readdir(dirp) };
         if entry.is_null() {
@@ -3800,14 +3800,14 @@ fn read_dir_names(
 ///
 /// **Rewritten around open file descriptors, not path strings (TOCTOU fix).** The
 /// original walk did `symlink_metadata(path)` (confirm root-owned, confirm
-/// directory) and THEN, as a separate call, `read_dir(path)` — re-resolving the
+/// directory) and THEN, as a separate call, `read_dir(path)` - re-resolving the
 /// same path a second time. A process with write access to its own bind-mounted
 /// volume (which every app has, by construction) can win that race: swap the
 /// directory for a symlink to anywhere on the host between the two calls, and the
 /// second one follows it, walking (and then `lchown`ing root-owned entries under)
 /// wherever the symlink points. Every primitive below resolves at most one path
 /// component, always against an already-open parent fd (`openat`/`fstatat`/
-/// `fchownat`, all `AT_SYMLINK_NOFOLLOW`/`O_NOFOLLOW`) — there is no point in the
+/// `fchownat`, all `AT_SYMLINK_NOFOLLOW`/`O_NOFOLLOW`) - there is no point in the
 /// walk where a name is looked up starting from `/` a second time, so there is no
 /// window for a swap to matter.
 fn chown_root_owned_entries(
@@ -3850,14 +3850,14 @@ fn chown_root_owned_entries(
         for name in read_dir_names(dir_fd)? {
             let Ok(st) = fstatat_nofollow(dir_fd, &name) else {
                 // Gone, or turned into something `AT_SYMLINK_NOFOLLOW` can't
-                // stat, between listing and here — skip it rather than error
+                // stat, between listing and here - skip it rather than error
                 // the whole walk out over one entry.
                 continue;
             };
             let is_dir = st.st_mode & libc::S_IFMT == libc::S_IFDIR;
             if is_dir {
                 // A directory's nlink counts its subdirectories (each one's
-                // `..` is a link back) — that is inherent to the filesystem,
+                // `..` is a link back) - that is inherent to the filesystem,
                 // not a hardlink-attack signal, so it is never a skip
                 // condition here. Always descend regardless of ownership: a
                 // root-owned FILE may sit under a directory owned by the
@@ -3869,7 +3869,7 @@ fn chown_root_owned_entries(
                 match openat_nofollow(dir_fd, &name, libc::O_DIRECTORY) {
                     Ok(child_fd) => stack.push(unsafe { std::fs::File::from_raw_fd(child_fd) }),
                     // Swapped for a symlink (or removed) between the
-                    // `fstatat` above and this open — refuse rather than
+                    // `fstatat` above and this open - refuse rather than
                     // follow. The exact race this rewrite closes; skip it.
                     Err(_) => continue,
                 }
@@ -3880,7 +3880,7 @@ fn chown_root_owned_entries(
                 // (disabled on some fleet members) lets an unprivileged
                 // process hardlink to a file it does not own, so a
                 // root-owned nlink>1 entry inside an app's own volume can be
-                // a planted link to a real host file — skip it. An ordinary
+                // a planted link to a real host file - skip it. An ordinary
                 // file's nlink is 1.
                 if st.st_nlink > 1 {
                     continue;
@@ -3910,7 +3910,7 @@ pub async fn deploy_app(
     // `dockpanel-app-<something>` owns the very directory a recreate of the app
     // `<something>` migrated into on releases v2.111.0 through v2.113.3, so the two would
     // share one tree and deleting either would take the other's data. The migration no
-    // longer writes there, but the installs it already wrote cannot be un-written — so the
+    // longer writes there, but the installs it already wrote cannot be un-written - so the
     // name is closed rather than left as a collision waiting to be found.
     if name.starts_with(CONTAINER_NAME_PREFIX) {
         return Err(format!(
@@ -3966,7 +3966,7 @@ pub async fn deploy_app(
 
     // Build environment variables: merge template defaults with user-supplied values
     let mut env_list = merge_deploy_env(template.env_vars, &env, &derived);
-    // Reasserted, not merely defaulted — see `SidecarDef::client_env_entry`.
+    // Reasserted, not merely defaulted - see `SidecarDef::client_env_entry`.
     if let Some(sc) = sidecar {
         env_list.retain(|e| !e.starts_with(&format!("{}=", sc.client_env_var)));
         env_list.push(sc.client_env_entry());
@@ -3992,7 +3992,7 @@ pub async fn deploy_app(
         resolve_volume_owner(&docker, template.image).await
     };
 
-    // Volume binds — create dirs and canonicalize to prevent symlink TOCTOU
+    // Volume binds - create dirs and canonicalize to prevent symlink TOCTOU
     let mut binds: Vec<String> = Vec::new();
     for vol in template.volumes {
         let host_dir = format!("{APP_DATA_DIR}/{name}{vol}");
@@ -4007,7 +4007,7 @@ pub async fn deploy_app(
         }
         // Give the directory the files the image ships at this path, if it ships
         // any and the directory is empty. Docker does this for a named volume and
-        // not for a bind, and this panel binds — so without it an image whose CMD
+        // not for a bind, and this panel binds - so without it an image whose CMD
         // reads its own shipped config finds an empty directory and exits.
         //
         // AFTER the prefix check, for the same reason the chown below is: the
@@ -4016,7 +4016,7 @@ pub async fn deploy_app(
         // borrow.
         seed_volume_from_image(&docker, template.image, vol, &resolved_str).await;
 
-        // Chown AFTER the prefix check, never before — the check is what proves the
+        // Chown AFTER the prefix check, never before - the check is what proves the
         // path is one of ours, and a chown is exactly the operation a symlink escape
         // would want to borrow.
         if let Some(owner) = &volume_owner {
@@ -4039,15 +4039,15 @@ pub async fn deploy_app(
     }
 
     // NOTE: the one-click catalogue deliberately never mounts the host Docker
-    // socket for ANY template's OWN container — it gives whatever runs with it
+    // socket for ANY template's OWN container - it gives whatever runs with it
     // full host escape capabilities, not just Docker visibility, regardless of
     // who was allowed to trigger the deploy. Portainer needed it for its core
     // purpose (create/stop/exec containers, manage volumes/networks) and stays
-    // withdrawn (v2.178.0; see FEATURES.md §Withdrawn Claims) — a read-only
+    // withdrawn (v2.178.0; see FEATURES.md §Withdrawn Claims) - a read-only
     // proxy would gut it and a write-permitting one reopens the risk. Dozzle
     // only ever needed to list containers and read logs, so it was reinstated
     // (v2.179.0) behind a `docker-socket-proxy` sidecar that holds the real
-    // socket instead — see `TEMPLATE_SIDECAR` / `services::app_sidecar`. An
+    // socket instead - see `TEMPLATE_SIDECAR` / `services::app_sidecar`. An
     // admin who wants a different socket-mounted tool anyway can still build
     // one via Docker → Create Stack, outside this sandboxing entirely.
 
@@ -4088,7 +4088,7 @@ pub async fn deploy_app(
             // cpu_percent is % of ONE core (100 = 1.0 core); values > 100 request multiple
             // cores, so cpu_quota may exceed cpu_period. The previous `cpu <= 100` bound
             // silently dropped the limit for any multi-core request → the container ran with
-            // UNLIMITED CPU (s237 audit — parity with update_limits which accepts 1..=10000).
+            // UNLIMITED CPU (s237 audit - parity with update_limits which accepts 1..=10000).
             host_config.cpu_period = Some(100_000);
             host_config.cpu_quota = Some(cpu.saturating_mul(1000).min(i64::MAX as u64) as i64);
         }
@@ -4097,7 +4097,7 @@ pub async fn deploy_app(
     // GPU passthrough (requires NVIDIA Container Toolkit installed on host).
     // Two modes: all-GPUs (count: -1) vs specific indices (device_ids).
     // Setting both fields would be rejected by the daemon, so they're mutually
-    // exclusive — device_ids wins when present, count is set otherwise.
+    // exclusive - device_ids wins when present, count is set otherwise.
     if gpu_enabled {
         let specific_ids: Option<Vec<String>> = gpu_indices
             .as_ref()
@@ -4117,7 +4117,7 @@ pub async fn deploy_app(
             }
         ]);
         // NOTE (s237 audit): GPU compute via the NVIDIA Container Toolkit does NOT need
-        // CAP_SYS_ADMIN — the device_requests above grant GPU access. Granting SYS_ADMIN would
+        // CAP_SYS_ADMIN - the device_requests above grant GPU access. Granting SYS_ADMIN would
         // reverse the cap_drop ALL hardening (it enables mount(2)/cgroup container→host escape),
         // so it is deliberately NOT added; the container keeps the same minimal cap set as any
         // other template. A workload that genuinely needs it should be an explicit opt-in.
@@ -4145,7 +4145,7 @@ pub async fn deploy_app(
         exposed_ports: Some(exposed_ports),
         host_config: Some(host_config),
         // Attaches to the sidecar's private network instead of the default
-        // bridge when this template has one — the SAME config every recreate
+        // bridge when this template has one - the SAME config every recreate
         // path (`update_app`, `blue_green_update`, `change_container_image`,
         // `update_env`) applies via `reattach_sidecar_if_any`, so an update
         // can never silently drop this back onto the default bridge.
@@ -4183,7 +4183,7 @@ pub async fn deploy_app(
         Ok(c) => c,
         Err(e) => {
             // A sidecar deployed above and never given a main container to pair
-            // with is not a partial app an operator could ever find or delete —
+            // with is not a partial app an operator could ever find or delete -
             // take it and its network with the failed deploy.
             if sidecar.is_some() {
                 app_sidecar::teardown(name).await;
@@ -4198,7 +4198,7 @@ pub async fn deploy_app(
     {
         // Clean up orphaned container on start failure. It never started, so any
         // anonymous volume Docker gave it for an unbound image VOLUME is empty by
-        // construction — take them with it rather than stranding the whole set on
+        // construction - take them with it rather than stranding the whole set on
         // every failed deploy. Bind sources hold the app's real data and are not
         // touched by the volumes flag.
         let _ = docker
@@ -4333,7 +4333,7 @@ pub async fn list_deployed_apps() -> Result<Vec<DeployedApp>, String> {
     Ok(apps)
 }
 
-/// This container's app name, read fresh from Docker — used by the
+/// This container's app name, read fresh from Docker - used by the
 /// power-action and removal paths below to find a paired sidecar (if any)
 /// without assuming the caller already has the labels in hand. `None` only
 /// when the container itself cannot be inspected, which every caller here
@@ -4509,15 +4509,15 @@ pub(crate) fn extract_host_port(
 }
 
 /// The same port [`extract_host_port`] reads for [`removal_identity`], for a
-/// caller that only has a container id — a fresh `inspect_container`, so it
+/// caller that only has a container id - a fresh `inspect_container`, so it
 /// works whether the container is running or stopped. `list_deployed_apps`'s
 /// own `port` field cannot substitute here: it is read from Docker's
-/// `list_containers` API, which only reports a LIVE (currently bound) port —
+/// `list_containers` API, which only reports a LIVE (currently bound) port -
 /// empty for a stopped ("parked") container even though its HostConfig still
 /// carries the binding. `None` here means either the container has no
 /// recorded binding or has been removed entirely (nothing left to inspect);
 /// a caller proving ownership of a vhost must treat both the same way
-/// `removal_identity` already does — refuse to delete rather than guess.
+/// `removal_identity` already does - refuse to delete rather than guess.
 pub(crate) async fn inspect_host_port(container_id: &str) -> Option<u16> {
     let docker = Docker::connect_with_local_defaults().ok()?;
     let info = docker.inspect_container(container_id, None).await.ok()?;
@@ -4533,7 +4533,7 @@ pub(crate) fn mounted_destinations(host_config: &bollard::service::HostConfig) -
     let mut dests = Vec::new();
     if let Some(binds) = &host_config.binds {
         for bind in binds {
-            // "<source>:<destination>[:<options>]" — the destination is the second
+            // "<source>:<destination>[:<options>]" - the destination is the second
             // field, so split from the left and take index 1.
             if let Some(dest) = bind.split(':').nth(1) {
                 if !dest.is_empty() {
@@ -4573,7 +4573,7 @@ fn unmounted_declared_volumes(
     let declared: &'static [&'static str] = match TEMPLATES.iter().find(|t| t.id == template_id) {
         Some(template) => template.volumes,
         // Not every managed container comes from the one-click catalogue, and the ones
-        // that do not were getting no migration at all — see `non_catalogue_volumes`.
+        // that do not were getting no migration at all - see `non_catalogue_volumes`.
         None => non_catalogue_volumes(template_id),
     };
     let mounted = mounted_destinations(host_config);
@@ -4588,7 +4588,7 @@ fn unmounted_declared_volumes(
 ///
 /// The label is not proof of a template. The mail stack installs its webmail container
 /// with `dockpanel.managed=true` and a template label of its own, and nothing in the
-/// catalogue answers to that name — so the lookup above found no row, returned no paths,
+/// catalogue answers to that name - so the lookup above found no row, returned no paths,
 /// and every recreate door removed the container with its writable layer and everything
 /// in it. That is #110 exactly, against a container the panel installs itself: the webmail
 /// app keeps its accounts, identities, contacts and preferences in a SQLite database, and
@@ -4596,7 +4596,7 @@ fn unmounted_declared_volumes(
 ///
 /// The path is measured, not assumed. The image's entrypoint selects a local SQLite store
 /// under `/var/roundcube/db` whenever no database is configured by environment, and the
-/// mail stack configures none — so that directory is the whole of its state.
+/// mail stack configures none - so that directory is the whole of its state.
 ///
 /// A compose service is the other container that reaches here, and it is genuinely fine:
 /// its mounts come from the stack's own YAML, so it arrives with its state already bound
@@ -4609,12 +4609,12 @@ fn non_catalogue_volumes(template_id: &str) -> &'static [&'static str] {
     }
 }
 
-/// The app's own name — the one whose directory under `APP_DATA_DIR` holds its data.
+/// The app's own name - the one whose directory under `APP_DATA_DIR` holds its data.
 ///
 /// `deploy_app` creates the container as `dockpanel-app-<app>` but writes its volume
 /// directories at `{APP_DATA_DIR}/<app>{vol}`, and `removal_identity` looks for them
 /// under `{APP_DATA_DIR}/<app>`. Every recreate path reads `info.name`, which is the
-/// CONTAINER name, and handed that straight to the migration below — so a rescued app's
+/// CONTAINER name, and handed that straight to the migration below - so a rescued app's
 /// data landed under a directory named for the container, where nothing else in the panel
 /// ever looks. The delete path could not find it to clean up, and because that directory
 /// never existed for an app deployed before its template declared a volume, not even the
@@ -4640,14 +4640,14 @@ fn app_data_name(labels: Option<&HashMap<String, String>>, container_name: &str)
 /// on the way through a recreate.
 ///
 /// Every recreate path stops the container, `docker rm`s it and rebuilds the replacement
-/// from a `docker inspect` of the original — and `docker rm` deletes the writable layer.
+/// from a `docker inspect` of the original - and `docker rm` deletes the writable layer.
 /// For a container with no mount covering the directory its app writes to, that layer IS
 /// the storage, so the recreate is unrecoverable deletion. GitHub #110 is exactly this: an
 /// n8n deployed while the template declared `volumes: &[]` came back at first-run state
 /// the first time its operator pressed Update, account and workflows gone.
 ///
 /// Declaring the volume fixes the NEXT deploy and does nothing for the containers already
-/// running. This closes that half — the destructive step becomes the repair. Limits, all
+/// running. This closes that half - the destructive step becomes the repair. Limits, all
 /// deliberate:
 ///
 /// - Only paths the container's OWN template declares and the container does not mount.
@@ -4685,7 +4685,7 @@ pub(crate) async fn migrate_unmounted_volumes(
         }
         std::fs::create_dir_all(&host_dir)
             .map_err(|e| format!("Failed to create {host_dir}: {e}"))?;
-        // Canonicalize then re-check the prefix, exactly as `deploy_app` does — the
+        // Canonicalize then re-check the prefix, exactly as `deploy_app` does - the
         // check is what proves the path is one of ours, and it has to happen after
         // symlinks are resolved.
         let resolved = std::fs::canonicalize(&host_dir)
@@ -4701,8 +4701,8 @@ pub(crate) async fn migrate_unmounted_volumes(
         // directly in the host directory instead of one level down inside a copy of it.
         //
         // ⚠ It does NOT carry ownership across. This comment used to claim the
-        // opposite — that the numeric uid/gid survived the copy, so a non-root app
-        // kept ownership of its own data — and that was simply wrong. `docker cp`
+        // opposite - that the numeric uid/gid survived the copy, so a non-root app
+        // kept ownership of its own data - and that was simply wrong. `docker cp`
         // out of a container writes as the user running it, which for the agent is
         // root, and `--archive` does not change it either (both measured). The tree
         // is therefore chowned explicitly below; without that the app is handed
@@ -4715,7 +4715,7 @@ pub(crate) async fn migrate_unmounted_volumes(
         if !out.status.success() {
             let err = String::from_utf8_lossy(&out.stderr);
             // A path the image never created carries nothing to lose. That is not a
-            // failure — but the bind is still added, so the NEXT recreate has somewhere
+            // failure - but the bind is still added, so the NEXT recreate has somewhere
             // durable to write.
             let absent = err.contains("No such container:path")
                 || err.contains("no such file or directory")
@@ -4727,7 +4727,7 @@ pub(crate) async fn migrate_unmounted_volumes(
                 ));
             }
             tracing::info!(
-                "Nothing to migrate at {vol} for {name} — the path does not exist in the \
+                "Nothing to migrate at {vol} for {name} - the path does not exist in the \
                  container; mounting it empty so future updates preserve it"
             );
         }
@@ -4737,7 +4737,7 @@ pub(crate) async fn migrate_unmounted_volumes(
         // host directory is now non-empty, so the refusal at the top of this loop
         // would decline every later attempt, turning a recoverable state into a
         // permanent one. As root, on a directory this function created moments ago,
-        // this call does not realistically fail — and if it somehow does, the app
+        // this call does not realistically fail - and if it somehow does, the app
         // is broken in a way the operator must see, so it is logged at error rather
         // than dressed down to a warning.
         if let Some(owner) = &owner {
@@ -4750,7 +4750,7 @@ pub(crate) async fn migrate_unmounted_volumes(
                 ),
                 Err(e) => tracing::error!(
                     "Could not chown migrated volume {resolved_str} to {}: {e}. The app runs \
-                     as {:?} and WILL be unable to write the data just rescued — chown the \
+                     as {:?} and WILL be unable to write the data just rescued - chown the \
                      directory by hand and recreate the app.",
                     owner.uid,
                     owner.spec
@@ -4759,7 +4759,7 @@ pub(crate) async fn migrate_unmounted_volumes(
         }
         binds.push(format!("{resolved_str}:{vol}"));
         migrated.push((*vol).to_string());
-        tracing::info!("Migrated {name}{vol} onto {resolved_str} — it now survives recreates");
+        tracing::info!("Migrated {name}{vol} onto {resolved_str} - it now survives recreates");
     }
 
     host_config.binds = Some(binds);
@@ -4770,7 +4770,7 @@ pub(crate) async fn migrate_unmounted_volumes(
 ///
 /// Blue-green starts the replacement while the original is still serving, and only
 /// stops the original after the health check and the nginx swap have both succeeded.
-/// For that window — up to 30s of health checking plus an nginx test and reload — two
+/// For that window - up to 30s of health checking plus an nginx test and reload - two
 /// processes are running against the SAME host paths, because `blue_green_update`
 /// clones the old `HostConfig` and rewrites only its port bindings.
 ///
@@ -4778,7 +4778,7 @@ pub(crate) async fn migrate_unmounted_volumes(
 /// replacement gets a fresh one and nothing is shared. It is data corruption when the
 /// state is a single-writer database sitting in a bind mount. Postgres, MySQL and Mongo
 /// self-protect with a pidfile lock, so they merely fail to start and the caller falls
-/// back to stop/start — noisy, but safe. **SQLite has no such lock**, so Ghost, Gitea,
+/// back to stop/start - noisy, but safe. **SQLite has no such lock**, so Ghost, Gitea,
 /// Bookstack and Vaultwarden would interleave writes from two processes silently.
 ///
 /// There is no way to ask an image whether it tolerates two writers, so the only sound
@@ -4810,7 +4810,7 @@ async fn blue_green_update(
     domain: &str,
     old_port: u16,
 ) -> Result<UpdateResult, String> {
-    // Held for the full duration — every `swap_nginx_proxy_port` call below
+    // Held for the full duration - every `swap_nginx_proxy_port` call below
     // (temp-port swap, and every rollback-to-old-port arm) writes the same
     // `{sites_dir()}/{domain}.conf` file `expose_domain`/`unexpose_domain`
     // now also lock. Single call site (update_app), no lock held by the
@@ -4840,14 +4840,14 @@ async fn blue_green_update(
     // container AND the stand-in name for the app `api`.
     let new_name = crate::services::ownership::blue_name(name);
 
-    // Clean up the leftover of a failed previous attempt — if it is ours.
+    // Clean up the leftover of a failed previous attempt - if it is ours.
     if let Ok(info) = docker.inspect_container(&new_name, None).await {
         let owner = crate::services::ownership::blue_leftover(
             info.config.as_ref().and_then(|c| c.labels.as_ref()),
         );
         if !owner.may_delete() {
             return Err(format!(
-                "A container named {new_name} exists and is not managed by DockPanel \
+                "A container named {new_name} exists and is not managed by CyberHunter - Panel \
                  ({owner:?}); refusing to force-remove it to make room for a blue-green swap"
             ));
         }
@@ -4868,7 +4868,7 @@ async fn blue_green_update(
             .ok();
     }
 
-    // Keyed off the real app name, not `new_name` (the temp blue container) —
+    // Keyed off the real app name, not `new_name` (the temp blue container) -
     // the sidecar and its network are the app's, unaffected by the swap.
     let app_name = app_data_name(config.labels.as_ref(), name);
     let mut env_list = config.env.clone().unwrap_or_default();
@@ -5030,12 +5030,12 @@ async fn blue_green_update(
     //
     // ORDER MATTERS, and the old order was destroy-then-rename with both
     // results discarded by `.ok()`. When the removal failed the rename could
-    // not possibly succeed — the name was still taken — and the function
+    // not possibly succeed - the name was still taken - and the function
     // returned `Ok` over a half-swapped host: the old container alive under
     // the real name, the new one alive as the stand-in, nginx pointing at the
     // stand-in. A reported-successful update that leaves the app listed
     // twice, with no self-heal on the next update. Ported from the identical
-    // fix in `git_build.rs::blue_green_update` (CHANGELOG v2.55.0) — that
+    // fix in `git_build.rs::blue_green_update` (CHANGELOG v2.55.0) - that
     // twin shares `find_free_port`/`health_check_port`/`swap_nginx_proxy_port`
     // with this function but never received the fix itself.
     //
@@ -5071,7 +5071,7 @@ async fn blue_green_update(
             .await
             .ok();
         return Err(format!(
-            "Could not free the container name for promotion: {e}. Rolled back — the previous \
+            "Could not free the container name for promotion: {e}. Rolled back - the previous \
              container is still serving {domain}."
         ));
     }
@@ -5086,7 +5086,7 @@ async fn blue_green_update(
         .await
     {
         // The name is free and the old container is untouched and still
-        // running — put it back under the real name.
+        // running - put it back under the real name.
         docker
             .rename_container(
                 old_container_id,
@@ -5114,7 +5114,7 @@ async fn blue_green_update(
             .await
             .ok();
         return Err(format!(
-            "Could not promote the new container: {e}. Rolled back — the previous container is \
+            "Could not promote the new container: {e}. Rolled back - the previous container is \
              still serving {domain}."
         ));
     }
@@ -5150,7 +5150,7 @@ async fn blue_green_update(
     Ok(UpdateResult {
         container_id: new_container.id,
         blue_green: true,
-        // Blue-green is only reached when nothing needed migrating — see `update_app`.
+        // Blue-green is only reached when nothing needed migrating - see `update_app`.
         migrated_volumes: Vec::new(),
         repaired_volumes: Vec::new(),
     })
@@ -5165,7 +5165,7 @@ enum PullVerdict {
     /// The pull reported no error. Carry on.
     Proceed,
     /// The pull failed, but what the tag resolves to on this server is not what
-    /// the container is running — so an update really is waiting on disk and
+    /// the container is running - so an update really is waiting on disk and
     /// applying it is the point of the button.
     ProceedFromLocal,
     /// The pull failed and the tag resolves to nothing on this server. The
@@ -5211,7 +5211,7 @@ pub async fn update_app(container_id: &str) -> Result<UpdateResult, String> {
 
     // Was this app running before we touched it? A recreate that always starts
     // the new container turns "update this app" into "update and start it", so
-    // pressing Update on something deliberately stopped brought it back up —
+    // pressing Update on something deliberately stopped brought it back up -
     // on a host where it had been stopped for a reason.
     //
     // Read from `status`, not `running`: bollard reports a PAUSED container as
@@ -5294,7 +5294,7 @@ pub async fn update_app(container_id: &str) -> Result<UpdateResult, String> {
         PullVerdict::RefuseMissing => {
             return Err(format!(
                 "'{image}' could not be pulled and no copy of it exists on this server, so \
-                 {name} was left untouched — recreating it would have removed a container \
+                 {name} was left untouched - recreating it would have removed a container \
                  that could not be rebuilt. The app is still running. Pull error: \
                  {pull_failure}"
             ));
@@ -5308,7 +5308,7 @@ pub async fn update_app(container_id: &str) -> Result<UpdateResult, String> {
         }
     }
 
-    // Try blue-green if app has a domain and a known port — and only if running two
+    // Try blue-green if app has a domain and a known port - and only if running two
     // copies of it at once cannot corrupt anything. See `shares_persistent_state`.
     if let (Some(domain), Some(old_port)) = (&domain, old_port) {
         // Check that nginx config exists for this domain
@@ -5363,7 +5363,7 @@ pub async fn update_app(container_id: &str) -> Result<UpdateResult, String> {
 
     // Stopped, so the app has flushed; not yet removed, so the data is still reachable.
     // This is the only window in which it can be rescued, and a failure here MUST abort
-    // before the remove below — the whole point is to not destroy what we came to save.
+    // before the remove below - the whole point is to not destroy what we came to save.
     let migrated =
         migrate_unmounted_volumes(APP_DATA_DIR, &docker, container_id, &app_name, &image, &unmounted, &mut host_config)
             .await
@@ -5375,7 +5375,7 @@ pub async fn update_app(container_id: &str) -> Result<UpdateResult, String> {
             })?;
 
     // Same window, the other direction: give back ownership of data an EARLIER
-    // release migrated and left root-owned. Not fatal — an app that is already
+    // release migrated and left root-owned. Not fatal - an app that is already
     // broken must not have its update refused as well.
     let repaired = repair_root_owned_volumes(&docker, &image, &host_config).await;
 
@@ -5435,7 +5435,7 @@ pub async fn update_app(container_id: &str) -> Result<UpdateResult, String> {
         tracing::info!("App updated (stop/start): {name} ({image})");
     } else {
         tracing::info!(
-            "App updated (stop/start): {name} ({image}) — and {} path(s) migrated onto \
+            "App updated (stop/start): {name} ({image}) - and {} path(s) migrated onto \
              persistent storage: {}",
             migrated.len(),
             migrated.join(", ")
@@ -5461,7 +5461,7 @@ pub async fn update_app(container_id: &str) -> Result<UpdateResult, String> {
 ///
 /// (s237 audit) The previous implementation recreated the container with a bare
 /// `docker run -d --name X --volumes-from Y --network bridge <image>`, which dropped
-/// EVERY hardening flag the original deploy applied — cap_drop ALL + the minimal cap_add
+/// EVERY hardening flag the original deploy applied - cap_drop ALL + the minimal cap_add
 /// allowlist, security_opt no-new-privileges, the published `127.0.0.1:<port>` binding
 /// (so the nginx reverse proxy 502'd), the restart policy, the memory/CPU limits, the env
 /// vars, and the `dockpanel.managed` labels (so the container vanished from the panel).
@@ -5473,7 +5473,7 @@ pub async fn update_app(container_id: &str) -> Result<UpdateResult, String> {
 /// change them and `deploy_app` never overrode either. **Its command is a different case and
 /// used to be treated the same, wrongly.** For the handful of templates the catalogue gives an
 /// explicit command to, `deploy_app` sets that command precisely because the image's own
-/// default does not serve — it prints usage and exits, which restarts for ever (#101). Letting
+/// default does not serve - it prints usage and exits, which restarts for ever (#101). Letting
 /// the image's default reassert itself here therefore broke every one of those templates the
 /// moment an operator changed its image, and the comment that used to sit on this line claimed
 /// the opposite was "the original run semantics". The command is re-derived from the template
@@ -5491,7 +5491,7 @@ pub async fn change_container_image(container_id: &str, new_image: &str) -> Resu
 
     // Was this app running before we touched it? A recreate that always starts
     // the new container turns "update this app" into "update and start it", so
-    // pressing Update on something deliberately stopped brought it back up —
+    // pressing Update on something deliberately stopped brought it back up -
     // on a host where it had been stopped for a reason.
     //
     // Read from `status`, not `running`: bollard reports a PAUSED container as
@@ -5569,7 +5569,7 @@ pub async fn change_container_image(container_id: &str, new_image: &str) -> Resu
     })?;
 
     // Repair against the image the container is about to RUN, not the one it is
-    // leaving — the uid that has to be able to write this data is the new one.
+    // leaving - the uid that has to be able to write this data is the new one.
     let _ = repair_root_owned_volumes(&docker, new_image, &host_config).await;
     docker
         .remove_container(
@@ -5650,13 +5650,13 @@ pub async fn get_app_env(container_id: &str) -> Result<Vec<(String, String)>, St
 /// the cleanup that follows can prove it owns each thing it deletes.
 ///
 /// Read in one inspect because after `remove_app` there is nothing left to ask.
-/// Every field is optional and a missing one means "cannot prove it" — the
+/// Every field is optional and a missing one means "cannot prove it" - the
 /// callers treat that as a refusal, per [`crate::services::ownership`].
 #[derive(Debug, Default, Clone)]
 pub struct RemovalIdentity {
-    /// `dockpanel.app.domain` — the vhost, cert dir and logs are named after it.
+    /// `dockpanel.app.domain` - the vhost, cert dir and logs are named after it.
     pub domain: Option<String>,
-    /// `dockpanel.app.name` — `/var/lib/dockpanel/apps/{name}` is named after it.
+    /// `dockpanel.app.name` - `/var/lib/dockpanel/apps/{name}` is named after it.
     pub name: Option<String>,
     /// The published host port. The app's vhost `proxy_pass`es to it, and it is
     /// the only thing in that file identifying which container it fronts.
@@ -5664,7 +5664,7 @@ pub struct RemovalIdentity {
     /// Whether this container actually bind-mounts out of
     /// `/var/lib/dockpanel/apps/{name}`.
     ///
-    /// A template deploy does; a compose service does not — its binds are
+    /// A template deploy does; a compose service does not - its binds are
     /// confined to `/var/lib/dockpanel/compose/`, so an identically-named
     /// compose service was deleting a template app's data directory while
     /// owning nothing under it.
@@ -5676,7 +5676,7 @@ pub struct RemovalIdentity {
     /// directory named for its CONTAINER, so the label-derived path pointed at nothing
     /// and the data was left behind on delete without so much as a warning. Taking the
     /// path from the mount that actually exists cleans up both spellings, and keeps the
-    /// compose protection above by construction — a bind outside `APP_DATA_DIR` yields
+    /// compose protection above by construction - a bind outside `APP_DATA_DIR` yields
     /// `None` and nothing is removed.
     pub app_dir: Option<String>,
 }
@@ -5753,7 +5753,7 @@ fn is_managed_labels(labels: Option<&HashMap<String, String>>) -> bool {
 /// the same `dockpanel.managed=true` boundary the `list` READ path already enforces, so an admin
 /// cannot act on the panel's own infrastructure containers by id (confused-deputy footgun). For the
 /// recreate paths (change_container_image/update_env) this runs on the ORIGINAL container before any
-/// stop/remove, and the recreation preserves the label — so the new container stays managed.
+/// stop/remove, and the recreation preserves the label - so the new container stays managed.
 pub async fn require_managed(container_id: &str) -> Result<(), String> {
     let docker =
         Docker::connect_with_local_defaults().map_err(|e| format!("Docker connect failed: {e}"))?;
@@ -5782,7 +5782,7 @@ pub async fn update_env(
 
     // Was this app running before we touched it? A recreate that always starts
     // the new container turns "update this app" into "update and start it", so
-    // pressing Update on something deliberately stopped brought it back up —
+    // pressing Update on something deliberately stopped brought it back up -
     // on a host where it had been stopped for a reason.
     //
     // Read from `status`, not `running`: bollard reports a PAUSED container as
@@ -5816,7 +5816,7 @@ pub async fn update_env(
 
     // Stop, migrate anything living in the writable layer, then remove.
     // Editing one environment variable recreates the container, so this door destroys an
-    // unmounted app's data exactly as thoroughly as Update does (#110) — it just does not
+    // unmounted app's data exactly as thoroughly as Update does (#110) - it just does not
     // sound like it. The migration has to happen before the remove, and a failure has to
     // abort before it.
     docker
@@ -5905,7 +5905,7 @@ pub async fn remove_app(container_id: &str) -> Result<(), String> {
     let docker =
         Docker::connect_with_local_defaults().map_err(|e| format!("Docker connect failed: {e}"))?;
 
-    // Read before removal — there is nothing left to ask afterwards, and this
+    // Read before removal - there is nothing left to ask afterwards, and this
     // is how the app's sidecar (if any) gets found and torn down alongside it.
     let app_name = current_app_name(&docker, container_id).await;
 
@@ -5940,7 +5940,7 @@ mod tests {
     use super::*;
 
     /// `minio/minio`'s default `CMD` is `["minio"]`, which prints usage and exits
-    /// 0 — so the container restarts forever at `ExitCode: 0` rather than serving
+    /// 0 - so the container restarts forever at `ExitCode: 0` rather than serving
     /// (issue #101). Verified against the image s339: without these arguments the
     /// container reached `restarting` with 7 restarts and exit 0; with them it ran
     /// with 0 restarts and answered 200 on both the S3 port and the console.
@@ -5962,20 +5962,20 @@ mod tests {
         );
     }
 
-    /// Absence is the default for an image whose entrypoint already serves — but
+    /// Absence is the default for an image whose entrypoint already serves - but
     /// absence is NOT proof that a template is fine.
     ///
     /// ⚠ **MinIO is not the only template in this class.** A catalogue audit found
     /// at least seven more whose image cannot come up as shipped, verified from
-    /// their image config: `cloudflared` (Cmd `["version"]` — prints a version and
+    /// their image config: `cloudflared` (Cmd `["version"]` - prints a version and
     /// exits, every time, while the template collects a TUNNEL_TOKEN it has no way
     /// to use), `ntfy`, `trivy` and `surrealdb` (multi-command CLI entrypoints with
     /// a null Cmd, so a bare run prints help), plus `keycloak`, `authentik` and
     /// `vllm`. `keycloak`'s own description says it *"Requires 'start-dev' command
-    /// override"* — written against a struct that then had no way to express one.
+    /// override"* - written against a struct that then had no way to express one.
     ///
-    /// ⚠ **The sentence that used to close this comment — "Only MinIO was
-    /// reported, reproduced and fixed; the rest are unfixed" — had been false for
+    /// ⚠ **The sentence that used to close this comment - "Only MinIO was
+    /// reported, reproduced and fixed; the rest are unfixed" - had been false for
     /// several releases when it was finally noticed.** Four of the seven
     /// (`cloudflared`, `ntfy`, `trivy`, `keycloak`) carry start commands in the
     /// table above and have for some time. The three genuinely still without one
@@ -6166,7 +6166,7 @@ mod tests {
         // The deploy form seeds every field from `default` and posts all of
         // them, so "the operator left it alone" arrives as the default value,
         // not as an absent key. If this branch broke, the fix would do nothing
-        // for the five templates that DO declare the var — which is the
+        // for the five templates that DO declare the var - which is the
         // majority of the affected catalogue.
         let t = template_by_id("ghost");
         let derived = domain_env_for("ghost", "blog.example.com");
@@ -6203,7 +6203,7 @@ mod tests {
     fn every_domain_derived_name_exists_on_the_template_it_is_keyed_to() {
         // A severed pair guard. Renaming or dropping a catalogue env var while
         // leaving its TEMPLATE_DOMAIN_ENV entry behind would derive a value
-        // nothing reads — the GPU_RECOMMENDED_TEMPLATES /
+        // nothing reads - the GPU_RECOMMENDED_TEMPLATES /
         // stable-diffusion-webui shape, which sat undetected for 19 releases.
         // n8n is the deliberate exception: it declares none of its four, which
         // is the whole reason they are derived.
@@ -6258,7 +6258,7 @@ mod tests {
         // The catalogue defaults embed the container port because without a
         // domain that is how you reach the app. Through the panel's nginx the
         // public URL has no port, and shipping one produces a URL that resolves
-        // to nothing — the failure this change exists to remove, reintroduced.
+        // to nothing - the failure this change exists to remove, reintroduced.
         for (template_id, vars) in TEMPLATE_DOMAIN_ENV {
             let derived = domain_env_for(template_id, "example.com");
             assert_eq!(derived.len(), vars.len());
@@ -6366,7 +6366,7 @@ mod tests {
     }
 
     /// The real `/etc/passwd` out of `prom/prometheus:v3`, whose `Config.User` is
-    /// the NAME `nobody` — resolvable only from inside the image.
+    /// the NAME `nobody` - resolvable only from inside the image.
     #[test]
     fn a_login_name_resolves_from_the_images_own_passwd() {
         let passwd = "root:x:0:0:root:/root:/bin/ash\nnobody:x:65534:65534:nobody:/home:/bin/false\n";
@@ -6428,7 +6428,7 @@ mod tests {
     /// file's whitespace-stripped source for a parenthesised template id followed
     /// by a comma. A tuple here flattens to exactly that shape and turns another
     /// suite red against correct code. Test DATA is raw source like anything else,
-    /// and so is this comment — that suite does not strip comments, so the shape
+    /// and so is this comment - that suite does not strip comments, so the shape
     /// must not be spelled out here either. Do not "tidy" this back into tuples.
     #[test]
     fn the_measured_victims_still_declare_the_volumes_they_could_not_write() {
@@ -6460,14 +6460,14 @@ mod tests {
     ///
     /// Every defect this file has shipped was found by something READING it:
     /// eighteen image references that did not resolve, thirty-one volumes the app
-    /// could not write, data deleted on update — three consecutive releases of
+    /// could not write, data deleted on update - three consecutive releases of
     /// hand-audit. The checks those produced live in `tests/` and read this source
     /// with `awk` and `grep`, which is why one of them has to open by asserting the
     /// catalogue still parses: a parser that quietly returns three entries reports
     /// the other hundred and forty-five as clean, and reads exactly like a pass.
     ///
     /// So emit it instead. The mechanism is the one
-    /// `services/prerequisites/copy.rs` already uses for the guidance manual — a
+    /// `services/prerequisites/copy.rs` already uses for the guidance manual - a
     /// committed artefact plus a test that FAILS when it stops matching the
     /// registry. It is not a reminder to regenerate; it stands between a changed
     /// template and a merge, and it gives the runtime census a catalogue that
@@ -6557,7 +6557,7 @@ mod tests {
                     )
                 });
             panic!(
-                "tests/fixtures/app-templates.json is out of date — the catalogue \
+                "tests/fixtures/app-templates.json is out of date - the catalogue \
                  changed and this artefact did not.\nFirst difference at line \
                  {line}:\n  committed: {committed}\n  registry:  {registry}\n\n\
                  Regenerate it:\n    \
@@ -6594,7 +6594,7 @@ mod tests {
     }
 
     /// Runs a `curlimages/curl` container on `network`, waits for it to exit,
-    /// and returns its exit code and log output — the harness the sidecar
+    /// and returns its exit code and log output - the harness the sidecar
     /// proxy test below uses to prove the ACL from OUTSIDE the proxy's own
     /// process, the same vantage point a real Dozzle container has.
     async fn run_probe(docker: &Docker, network: &str, name: &str, args: &[&str]) -> String {
@@ -6655,7 +6655,7 @@ mod tests {
     }
 
     /// Exercises the REAL `docker-socket-proxy` sidecar end to end against the
-    /// local daemon — not just that `app_sidecar::deploy` compiles, but that
+    /// local daemon - not just that `app_sidecar::deploy` compiles, but that
     /// the security property it exists for actually holds, from a probe
     /// container on the sidecar's own network (the same vantage point a real
     /// Dozzle container has, never the panel's own process).
@@ -6695,7 +6695,7 @@ mod tests {
             read.trim(),
             "200",
             "CONTAINERS=1 must let a probe on the private network list containers through the \
-             proxy — dozzle cannot do its entire job otherwise; got {read:?}"
+             proxy - dozzle cannot do its entire job otherwise; got {read:?}"
         );
 
         let write = run_probe(
@@ -6711,7 +6711,7 @@ mod tests {
         assert_eq!(
             write.trim(),
             "403",
-            "POST=0 must refuse container creation through the proxy — this is the actual \
+            "POST=0 must refuse container creation through the proxy - this is the actual \
              security boundary #125's fix depends on; got {write:?}"
         );
 
@@ -6727,7 +6727,7 @@ mod tests {
     }
 
     /// Build a minimal ustar header. Only the three fields the extractor reads
-    /// are populated — writing a checksum it never verifies would be describing a
+    /// are populated - writing a checksum it never verifies would be describing a
     /// format rather than testing the parser.
     fn tar_header(name: &str, size: usize, kind: u8, mode: u32) -> Vec<u8> {
         let mut h = vec![0u8; 512];
@@ -6745,7 +6745,7 @@ mod tests {
     }
 
     /// A link entry (typeflag '1' hardlink / '2' symlink) carrying a
-    /// `linkname` — `tar_header` alone leaves that field zeroed.
+    /// `linkname` - `tar_header` alone leaves that field zeroed.
     fn tar_entry_link(name: &str, kind: u8, linkname: &str) -> Vec<u8> {
         let mut h = tar_header(name, 0, kind, 0o644);
         h[157..157 + linkname.len()].copy_from_slice(linkname.as_bytes());
@@ -6766,9 +6766,9 @@ mod tests {
     /// the first version of this comment claimed the unprivileged half carried the
     /// `uid() == 0` filter and mutation testing showed it does not:
     ///
-    ///   * **unprivileged half** — defends the cheap top-level probe. A tree with
+    ///   * **unprivileged half** - defends the cheap top-level probe. A tree with
     ///     nothing root-owned must come back 0 and be left completely alone.
-    ///   * **root half** — defends the filter itself (a third party's uid survives
+    ///   * **root half** - defends the filter itself (a third party's uid survives
     ///     untouched), that root-owned paths really are handed over, and that a
     ///     second pass is a no-op.
     ///
@@ -6776,7 +6776,7 @@ mod tests {
     /// early for an unprivileged runner, so the walk it guards is never reached.
     /// Verified by planting exactly that and running BOTH ways.
     ///
-    /// Root is never load-bearing for a PASS — the unprivileged half asserts a real
+    /// Root is never load-bearing for a PASS - the unprivileged half asserts a real
     /// invariant and says out loud what it skipped, which is #491 from the far side.
     #[test]
     fn the_repair_touches_only_root_owned_paths() {
@@ -6795,7 +6795,7 @@ mod tests {
         };
 
         // Nothing here is root-owned (unless the suite itself runs as root, in
-        // which case everything just created is — handled below).
+        // which case everything just created is - handled below).
         if me != 0 {
             assert_eq!(
                 chown_root_owned_entries(&root, &owner).expect("walks"),
@@ -6807,7 +6807,7 @@ mod tests {
             return;
         }
 
-        // As root, the target must be an UNPRIVILEGED uid — the real case is an
+        // As root, the target must be an UNPRIVILEGED uid - the real case is an
         // image running as somebody other than root, and chowning root to root
         // would make the whole exercise an identity operation. (The first draft of
         // this test did exactly that and its second pass still found four.)
@@ -6824,7 +6824,7 @@ mod tests {
         )
         .expect("chown to the sentinel uid");
 
-        // volume, mine.db, sub, sub/nested — four root-owned paths. NOT third-party.
+        // volume, mine.db, sub, sub/nested - four root-owned paths. NOT third-party.
         let claimed = chown_root_owned_entries(&root, &owner).expect("walks");
         assert_eq!(claimed, 4, "expected the volume, two files and the subdirectory");
         assert_eq!(
@@ -6849,9 +6849,9 @@ mod tests {
     /// become a symlink by the moment the walk goes to OPEN it (the exact
     /// race window between the `fstatat` that classified it and the `openat`
     /// that descends into it) must be refused, not followed. A static
-    /// symlink present from the start is already caught earlier — by
+    /// symlink present from the start is already caught earlier - by
     /// `fstatat`'s own type check, which reports a link's `S_IFLNK`, not
-    /// `S_IFDIR` — so THIS is the test that actually exercises `O_NOFOLLOW`
+    /// `S_IFDIR` - so THIS is the test that actually exercises `O_NOFOLLOW`
     /// rather than being satisfied by that earlier, unrelated guard.
     /// [[project_dockpanel_tech_debt_p185]] carry F.
     #[test]
@@ -6872,7 +6872,7 @@ mod tests {
             .expect_err("O_NOFOLLOW must refuse to open a symlink, not follow it into a directory");
         // Linux reports ELOOP for a bare O_NOFOLLOW refusal, but ENOTDIR when
         // O_DIRECTORY is combined with it (the un-followed symlink itself is
-        // "not a directory") — either is a REFUSAL, which is what matters;
+        // "not a directory") - either is a REFUSAL, which is what matters;
         // what would be wrong is `Ok`, meaning it followed the link.
         assert!(
             matches!(err.raw_os_error(), Some(libc::ELOOP) | Some(libc::ENOTDIR)),
@@ -6884,7 +6884,7 @@ mod tests {
     }
 
     /// A symlink standing where a directory name is listed must never be
-    /// followed — the walk resolves fd-relative (`openat`/`O_NOFOLLOW`), so
+    /// followed - the walk resolves fd-relative (`openat`/`O_NOFOLLOW`), so
     /// an entry that turned into a link is refused (`ELOOP`), not descended
     /// into. [[project_dockpanel_tech_debt_p185]] carry F.
     #[test]
@@ -6905,7 +6905,7 @@ mod tests {
         let sentinel = outside.join("shadow");
         std::fs::write(&sentinel, b"root-only\n").expect("sentinel file");
         // `outside` and its sentinel are root-owned by construction (the test
-        // runs as root). A directory ENTRY that is actually a symlink to it —
+        // runs as root). A directory ENTRY that is actually a symlink to it -
         // the shape the walk must refuse to enter.
         std::os::unix::fs::symlink(&outside, root.join("escape")).expect("symlink");
 
@@ -6918,7 +6918,7 @@ mod tests {
             "the walk followed a symlink out of the volume and chowned a host file"
         );
         // The link itself, being root-owned, IS chowned as a link (matches
-        // the migration's own `lchown` behaviour) — but its target is not.
+        // the migration's own `lchown` behaviour) - but its target is not.
         assert_eq!(
             std::fs::symlink_metadata(root.join("escape")).expect("still there").uid(),
             4242,
@@ -6930,7 +6930,7 @@ mod tests {
 
     /// A root-owned entry with more than one link is a possible planted
     /// hardlink to a real host file (`fs.protected_hardlinks=0` allows an
-    /// unprivileged process to create one inside its own volume) — the walk
+    /// unprivileged process to create one inside its own volume) - the walk
     /// must never chown it, because chowning a shared inode repaints every
     /// name pointing at it. [[project_dockpanel_tech_debt_p185]] carry F.
     #[test]
@@ -6949,14 +6949,14 @@ mod tests {
         std::fs::create_dir_all(&root).expect("temp tree");
         std::fs::create_dir_all(&outside).expect("temp tree");
 
-        // A real host file, hardlinked from OUTSIDE the volume — nlink 2,
+        // A real host file, hardlinked from OUTSIDE the volume - nlink 2,
         // both names root-owned by construction.
         let real = outside.join("passwd");
         std::fs::write(&real, b"root:x:0:0::/root:/bin/bash\n").expect("host file");
         std::fs::hard_link(&real, root.join("linked")).expect("hard link");
 
         // Positive control: an ordinary root-owned file, nlink 1, in the same
-        // directory — must still be reclaimed, or this test would pass
+        // directory - must still be reclaimed, or this test would pass
         // just as well against a walk that skips EVERYTHING.
         std::fs::write(root.join("ordinary"), b"x").expect("ordinary file");
 
@@ -6982,7 +6982,7 @@ mod tests {
     ///
     /// Chowns to the CURRENT uid/gid on purpose. Setting a file you already own to
     /// the owner it already has is permitted for an unprivileged user, so this runs
-    /// identically for root on a dev box and for a non-root CI runner — the #491
+    /// identically for root on a dev box and for a non-root CI runner - the #491
     /// shape, where a harness passed locally only because root happened to be
     /// load-bearing and nobody noticed. What it measures is the WALK, which is the
     /// part that was wrong: the old code chowned the directory alone, and `docker
@@ -7013,7 +7013,7 @@ mod tests {
         assert_eq!(
             touched, 5,
             "expected the volume, its two files, its subdirectory and the symlink \
-             itself — got {touched}"
+             itself - got {touched}"
         );
         assert!(
             outside.join("untouched").exists(),
@@ -7046,7 +7046,7 @@ mod tests {
 
         // Modes carry across. An image ships executable entrypoints, and an
         // extractor that writes everything 0644 hands the app a directory that
-        // looks correct and fails at the first exec — silently, and only for the
+        // looks correct and fails at the first exec - silently, and only for the
         // templates whose shipped files matter most.
         // Asserts the executable BIT rather than a full mode. A literal spelling
         // the world-writable mode would trip §4 of app-volume-ownership-pin-e2e.sh,
@@ -7084,7 +7084,7 @@ mod tests {
         let sentinel = dir.join("escaped.txt");
 
         // `x/../escaped.txt` strips to `../escaped.txt`, which resolves to the
-        // PARENT of the destination — the classic tar-slip.
+        // PARENT of the destination - the classic tar-slip.
         let mut archive = tar_entry("x/../escaped.txt", b"owned\n", b'0');
         // Two levels up, in case one `..` is special-cased and a second is not.
         archive.extend(tar_entry("x/../../escaped-twice.txt", b"owned\n", b'0'));
@@ -7119,7 +7119,7 @@ mod tests {
     /// POSIX ustar splits a path over 100 bytes across `name` (0..100) and a
     /// `prefix` (345..500, joined with '/'). Reading `name` alone silently
     /// truncates or misplaces a seeded path that exceeds the single-field
-    /// limit — a real shape, not a contrivance: any template nesting a few
+    /// limit - a real shape, not a contrivance: any template nesting a few
     /// config directories reaches it.
     #[test]
     fn seeding_joins_the_ustar_prefix_field_for_a_long_path() {
@@ -7161,7 +7161,7 @@ mod tests {
     }
 
     /// A hardlink's `linkname` must resolve only against a path THIS archive
-    /// already wrote — never the host filesystem, or a seed archive gains a
+    /// already wrote - never the host filesystem, or a seed archive gains a
     /// read primitive over anything the agent's uid can see.
     #[test]
     fn seeding_hard_links_resolve_only_against_this_archives_own_entries() {
@@ -7172,7 +7172,7 @@ mod tests {
         // file, then a hardlink whose `linkname` names it.
         let mut archive = tar_entry("bin/real", b"#!/bin/sh\n", b'0');
         archive.extend(tar_entry_link("bin/alias", b'1', "bin/real"));
-        // A linkname this archive never wrote — must be dropped, not
+        // A linkname this archive never wrote - must be dropped, not
         // resolved against the host.
         archive.extend(tar_entry_link("bin/dangling", b'1', "/etc/shadow"));
 
@@ -7236,7 +7236,7 @@ mod tests {
         assert_eq!(app_data_name(Some(&labels), "dockpanel-app-n8n"), "n8n");
 
         // No label: strip the prefix the deploy added rather than keeping it. Getting
-        // this wrong is the whole defect — the migration wrote under the container name.
+        // this wrong is the whole defect - the migration wrote under the container name.
         assert_eq!(app_data_name(None, "dockpanel-app-ghost"), "ghost");
         assert_eq!(app_data_name(None, "something-else"), "something-else");
 
@@ -7261,7 +7261,7 @@ mod tests {
 
         // What v2.111.0 through v2.113.3 actually wrote. Before this, the delete path
         // rebuilt the path from the label, found nothing there, and left the data behind
-        // without even warning — because the label-derived directory did not exist.
+        // without even warning - because the label-derived directory did not exist.
         let legacy = vec![format!(
             "{APP_DATA_DIR}/dockpanel-app-n8n/home/node/.n8n:/home/node/.n8n"
         )];
@@ -7343,7 +7343,7 @@ mod tests {
             Some(vec!["serve".to_string()])
         );
 
-        // A template with no override gets none, so the NEW image's default applies —
+        // A template with no override gets none, so the NEW image's default applies -
         // which is the behaviour this path always intended.
         let ghost = labels_of(&[("dockpanel.app.template", "ghost")]);
         assert_eq!(catalogue_cmd_for(Some(&ghost)), None);
@@ -7376,8 +7376,8 @@ mod tests {
     /// load-bearing rather than tidy.
     ///
     /// The guard runs before the catalogue lookup, so with the guard in place this
-    /// refuses on the NAME. With the guard removed — which is exactly what a mutation
-    /// test does to it — an id naming a real template would carry straight on into
+    /// refuses on the NAME. With the guard removed - which is exactly what a mutation
+    /// test does to it - an id naming a real template would carry straight on into
     /// `deploy_app`'s pull and `create_container`, and the "test" would deploy a real
     /// container onto whatever box it was run on. That is not hypothetical: it happened
     /// on this project's own demo host, and the run that did it reported a clean kill.
@@ -7418,17 +7418,17 @@ mod tests {
     // above is. `app-template-images-pin-e2e.sh` §6 proves the command table
     // carries no entry for the templates a command cannot fix, by grepping this
     // file's whitespace-stripped source for a parenthesised template id followed
-    // by a comma — and that suite does not strip comments. A tuple here, in code
+    // by a comma - and that suite does not strip comments. A tuple here, in code
     // or in this sentence, flattens to precisely that shape and turns another
     // suite red against correct code. Do not "tidy" these into tuples.
     /// A template the census cannot judge because it needs something no automated
-    /// run can produce — and which the CATALOGUE does not already say so about.
+    /// run can produce - and which the CATALOGUE does not already say so about.
     ///
     /// ⚠ It is deliberately tiny, and it must stay tiny. The first version of this
     /// list was hand-written and named eight templates; **sixty-one** of the 148
     /// require an operator-supplied value, so it was wrong by fifty-three the day
     /// it shipped and would have reported every one of them BROKEN. A list that
-    /// has to enumerate a large, moving subset is a list that is always wrong —
+    /// has to enumerate a large, moving subset is a list that is always wrong -
     /// derive the rule instead, which `census_needs_operator_input` now does.
     /// What is left here is the residue that rule cannot see.
     static CENSUS_NEEDS_A_SERVICE_THE_CENSUS_CANNOT_SUPPLY: &[&str] = &[
@@ -7441,7 +7441,7 @@ mod tests {
     /// Does deploying this template require a value only a human can supply?
     ///
     /// A required field with no default is exactly how the catalogue says "the
-    /// operator must type this" — the deploy form refuses to submit without it.
+    /// operator must type this" - the deploy form refuses to submit without it.
     /// The census can only invent a syntactically plausible value, so for these
     /// templates a failure says nothing: it is indistinguishable from the census
     /// having guessed a database URL that points at nothing. Reporting them as
@@ -7456,7 +7456,7 @@ mod tests {
     /// Templates that genuinely do NOT work, are not fixed, and are recorded here
     /// rather than left to turn the census permanently red.
     ///
-    /// This list is DEBT, not an exemption — the difference from the list above
+    /// This list is DEBT, not an exemption - the difference from the list above
     /// matters and the two must never be merged. Above are templates the census
     /// cannot judge; here are templates it judged and found broken. A check that
     /// is always red gets ignored within a week, and one that quietly excuses its
@@ -7466,7 +7466,7 @@ mod tests {
     /// The census still reports when one of these starts working, so a row that
     /// stops being true cannot sit here unnoticed.
     ///
-    /// ⚠ Spelled `id | reason` for the same reason as the list above — see that
+    /// ⚠ Spelled `id | reason` for the same reason as the list above - see that
     /// comment before reformatting either of them.
     static CENSUS_KNOWN_BROKEN: &[&str] = &[
         "vector | its image ships NOTHING at /etc/vector, so there is nothing to \
@@ -7477,7 +7477,7 @@ mod tests {
          directory the template mounts, and the image ships no config anywhere. \
          Same choice as vector: author a starter garage.toml, or withdraw",
         "erpnext | gunicorn listens on 8000 while the catalogue publishes 8080, so \
-         nothing answers — and correcting the port alone would only expose the \
+         nothing answers - and correcting the port alone would only expose the \
          second failure, which is that a frappe bench needs MariaDB, Redis and a \
          site that only `bench new-site` creates",
         "authelia | prints its help and exits 0, the same shape as the templates \
@@ -7487,11 +7487,11 @@ mod tests {
          replacing a loud one",
         "flowise | an UPSTREAM defect on the tag pinned, not a catalogue mistake: \
          it initialises fully, then dies in connect-sqlite3 with `this.db.exec is \
-         not a function`. Precisely the decay this census exists to notice — \
+         not a function`. Precisely the decay this census exists to notice - \
          nothing in this repository changed",
         "wazuh | the manager is one container of a three-container stack. Its own \
          filebeat dials https://wazuh.indexer:9200, a compose service name that \
-         resolves to nothing in a single-container deploy — the same shape as \
+         resolves to nothing in a single-container deploy - the same shape as \
          plausible, and the template asks for no indexer",
     ];
 
@@ -7499,7 +7499,7 @@ mod tests {
     ///
     /// An image may declare a path persistent on its own account. Docker honours that by
     /// creating an anonymous volume for any such path the container does not otherwise
-    /// mount — and every recreate door builds the replacement from the original's
+    /// mount - and every recreate door builds the replacement from the original's
     /// `HostConfig`, which carries binds and knows nothing about anonymous volumes. So the
     /// replacement gets a brand-new empty one and the old one is orphaned: the app comes
     /// back at first-run state with its data still on the disk and nothing pointing at it.
@@ -7511,13 +7511,13 @@ mod tests {
     /// is a template whose catalogue entry should grow the path, measured rather than
     /// guessed: every image in the catalogue had its config blob read from its registry,
     /// and these are the declared paths the catalogue does not bind. The rows carry what is
-    /// actually lost, because "an anonymous volume exists" is not a severity — losing a
+    /// actually lost, because "an anonymous volume exists" is not a severity - losing a
     /// scratch directory every recreate is fine and losing a bundled database is not.
     ///
     /// The census reports BOTH directions, so a row that stops being true cannot sit here:
     /// an unlisted template that produces one fails the run, and a listed template that
     /// produces none is reported as a stale row. That second direction is what settles the
-    /// one question this list was NOT able to answer from the outside — whether a bind at a
+    /// one question this list was NOT able to answer from the outside - whether a bind at a
     /// parent path suppresses an image volume declared at a child of it, which is the whole
     /// of the first entry below.
     ///
@@ -7550,7 +7550,7 @@ mod tests {
          directory beside it is bound",
         "buildkite-agent | the image declares /buildkite and the catalogue binds nothing there",
         "sonarqube | scratch space only. The image declares a temp directory, and losing it \
-         on a recreate costs nothing — recorded so the row is not mistaken for an omission",
+         on a recreate costs nothing - recorded so the row is not mistaken for an omission",
         "searxng | a cache directory only, rebuilt on demand. Recorded for the same reason \
          as the row above",
         "erpnext | the bench log directory only. This template cannot start at all for the \
@@ -7569,7 +7569,7 @@ mod tests {
     /// A value for a required field the catalogue gives no default for.
     ///
     /// The deploy form makes the operator type one of these, so leaving it empty
-    /// would be testing a deploy the panel does not permit — the census would
+    /// would be testing a deploy the panel does not permit - the census would
     /// manufacture failures no user can reach.
     fn census_synthetic_value(name: &str, port: u16) -> String {
         let upper = name.to_ascii_uppercase();
@@ -7587,12 +7587,12 @@ mod tests {
         }
     }
 
-    /// THE RUNTIME CENSUS — the decay this repository structurally cannot see.
+    /// THE RUNTIME CENSUS - the decay this repository structurally cannot see.
     ///
     /// Every existing check over this catalogue reads the source: which tags do
     /// not resolve, which volumes the app cannot write, which images need a
     /// command. None of them can answer the only question an operator actually
-    /// asks — whether pressing Deploy produces something that works — and nothing
+    /// asks - whether pressing Deploy produces something that works - and nothing
     /// in this repository changes when the answer stops being yes. An upstream
     /// image adds a required setting, drops its embedded database, or moves the
     /// config it used to ship, and a catalogue entry that was correct on Tuesday
@@ -7604,7 +7604,7 @@ mod tests {
     ///
     /// It deploys through `deploy_app` ON PURPOSE rather than assembling an
     /// equivalent container config. A census that builds its own approximation
-    /// measures the approximation — and the empty bind mounts, the dropped
+    /// measures the approximation - and the empty bind mounts, the dropped
     /// capabilities, the volume chown and the command overlay are all decisions
     /// taken inside that function, every one of which has already been the cause
     /// of a real defect here.
@@ -7619,7 +7619,7 @@ mod tests {
     ///
     /// `TEMPLATE_CENSUS_SHARD=2/4` takes one quarter of the catalogue, which is
     /// how the scheduled workflow stays inside a runner's disk and time budget.
-    /// `TEMPLATE_CENSUS_PRUNE=1` deletes each image after measuring it — right on
+    /// `TEMPLATE_CENSUS_PRUNE=1` deletes each image after measuring it - right on
     /// a throwaway runner, wrong on a machine whose images someone is using.
     #[tokio::test]
     #[ignore = "creates real containers; run with TEMPLATE_CENSUS=1 … -- --ignored"]
@@ -7628,7 +7628,7 @@ mod tests {
             panic!(
                 "The runtime census was invoked without TEMPLATE_CENSUS=1.\n\
                  It deploys real containers and writes under {APP_DATA_DIR}. Refusing \
-                 rather than doing that by accident — see this test's documentation."
+                 rather than doing that by accident - see this test's documentation."
             );
         }
         let prune = std::env::var("TEMPLATE_CENSUS_PRUNE").is_ok();
@@ -7681,7 +7681,7 @@ mod tests {
             assert!(
                 !census_needs_operator_input(t),
                 "'{id}' is listed as known-broken, but it has a required field with \
-                 no default — the census supplies a synthetic value for that, so it \
+                 no default - the census supplies a synthetic value for that, so it \
                  cannot support the claim that the template is broken. Record it \
                  outside this list."
             );
@@ -7746,8 +7746,8 @@ mod tests {
 
             // Every mount Docker gave the container that is NOT one of our binds. Read
             // from the container rather than computed from the image, because the
-            // question this answers — which declared paths end up as an anonymous
-            // volume — depends on how the daemon resolves a declaration against the
+            // question this answers - which declared paths end up as an anonymous
+            // volume - depends on how the daemon resolves a declaration against the
             // mounts already present, and the daemon is the only honest source for that.
             let mut anonymous: Vec<String> = Vec::new();
             let mut deployed_ok = false;
@@ -7820,24 +7820,24 @@ mod tests {
             // Judged for EVERY template that produced a container, deliberately ahead of
             // the operator-input skip below. Whether a template can be judged on SERVING
             // and whether its data survives an update are different questions, and the
-            // second one is answerable for a template the census cannot configure — it
+            // second one is answerable for a template the census cannot configure - it
             // only has to start, and Docker creates the volume either way.
             if deployed_ok {
                 match (anonymous.is_empty(), anon_debt.get(t.id)) {
                     (true, None) => {}
                     (false, Some(why)) => {
-                        println!("  anonvol {} ({}) — recorded: {why}", t.id, anonymous.join(", "))
+                        println!("  anonvol {} ({}) - recorded: {why}", t.id, anonymous.join(", "))
                     }
                     (false, None) => {
-                        println!("  ANONVOL {} — {}", t.id, anonymous.join(", "));
-                        anon_unlisted.push(format!("{} — {}", t.id, anonymous.join(", ")));
+                        println!("  ANONVOL {} - {}", t.id, anonymous.join(", "));
+                        anon_unlisted.push(format!("{} - {}", t.id, anonymous.join(", ")));
                     }
                     (true, Some(why)) => {
                         // The other direction, and the one that keeps the list honest:
                         // this template was recorded as leaving data in an anonymous
                         // volume and no longer does.
                         println!("  ANONFIXED {} (recorded: {why})", t.id);
-                        anon_stale.push(format!("{} — recorded: {why}", t.id));
+                        anon_stale.push(format!("{} - recorded: {why}", t.id));
                     }
                 }
             }
@@ -7862,12 +7862,12 @@ mod tests {
                     // has expired, and a list nobody revisits stops describing
                     // anything at all.
                     println!("  SERVES  {} (listed as: {why})", t.id);
-                    unexpectedly_fine.push(format!("{} — listed as: {why}", t.id));
+                    unexpectedly_fine.push(format!("{} - listed as: {why}", t.id));
                 }
                 (Err(e), Some(_)) => println!("  listed  {} ({e})", t.id),
                 (Err(e), None) => {
-                    println!("  BROKEN  {} — {e}", t.id);
-                    broken.push(format!("{} — {e}", t.id));
+                    println!("  BROKEN  {} - {e}", t.id);
+                    broken.push(format!("{} - {e}", t.id));
                 }
             }
         }
@@ -7882,7 +7882,7 @@ mod tests {
         assert!(
             unexpectedly_fine.is_empty(),
             "{} template(s) are listed as unjudgeable or known-broken but now \
-             serve. Good news, and the list is stale — delete the rows:\n  {}",
+             serve. Good news, and the list is stale - delete the rows:\n  {}",
             unexpectedly_fine.len(),
             unexpectedly_fine.join("\n  ")
         );
@@ -7890,7 +7890,7 @@ mod tests {
             anon_unlisted.is_empty(),
             "{} template(s) put data in an anonymous volume that no recreate carries \
              across, and are not recorded as doing so. Every one of these loses whatever \
-             is at that path the next time its operator presses Update — declare the path \
+             is at that path the next time its operator presses Update - declare the path \
              in the template, or record it with what is actually lost:\n  {}",
             anon_unlisted.len(),
             anon_unlisted.join("\n  ")
@@ -7898,7 +7898,7 @@ mod tests {
         assert!(
             anon_stale.is_empty(),
             "{} template(s) are recorded as leaving data in an anonymous volume and no \
-             longer do. Good news, and the row is stale — delete it:\n  {}",
+             longer do. Good news, and the row is stale - delete it:\n  {}",
             anon_stale.len(),
             anon_stale.join("\n  ")
         );
@@ -7919,7 +7919,7 @@ mod tests {
     /// Deliberately NOT a connect to the published host port. Publishing on
     /// 127.0.0.1 requires the userland proxy, and docker-proxy binds that host
     /// port the instant the container starts, completing the TCP handshake with
-    /// nothing at all behind it — a connect succeeds against a container running
+    /// nothing at all behind it - a connect succeeds against a container running
     /// `sleep`. This census was first written that way, and every template it did
     /// not observe exiting looked like it served; the error surfaced only because
     /// a control was run against a container with nothing listening. A green that
@@ -7962,7 +7962,7 @@ mod tests {
         if container_port.ends_with("/udp") {
             return true;
         }
-        // The budget starts HERE, after the container exists — never at the top of
+        // The budget starts HERE, after the container exists - never at the top of
         // the loop, or a slow image pull spends it before anything is measured.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
         while std::time::Instant::now() < deadline {

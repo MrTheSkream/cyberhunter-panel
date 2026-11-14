@@ -1,8 +1,8 @@
 //! BYO-API-key LLM root-cause diagnosis for failed Git Deploy builds.
 //!
 //! Default-off (`ai_diagnosis_enabled`, see `routes::settings::ALLOWED_KEYS`).
-//! The operator supplies their own API key for one of four providers —
-//! Anthropic, OpenAI, Gemini, or Grok (xAI) — and triggers a diagnosis by hand
+//! The operator supplies their own API key for one of four providers -
+//! Anthropic, OpenAI, Gemini, or Grok (xAI) - and triggers a diagnosis by hand
 //! per failed deploy from the Git Deploys page. Nothing here runs on a
 //! schedule or fires automatically: every call is a deliberate, operator-paid
 //! request.
@@ -13,7 +13,7 @@ use sqlx::PgPool;
 use std::time::Duration;
 
 /// Failure output is truncated to this many *characters from the end* before
-/// it goes into the prompt — the failing step is almost always the tail of a
+/// it goes into the prompt - the failing step is almost always the tail of a
 /// build log, and this keeps the request small regardless of provider.
 const MAX_OUTPUT_CHARS: usize = 8000;
 
@@ -68,7 +68,7 @@ pub async fn load_config(
 
 /// Strip common secret shapes out of build/deploy output before it leaves the
 /// box for a third-party API. A failed build's log is exactly where a leaked
-/// env var, DB password, or CI token ends up printed — redaction happens
+/// env var, DB password, or CI token ends up printed - redaction happens
 /// unconditionally, with no setting to turn it off, because the person who
 /// can turn it off is not the one whose secret would leak.
 fn redact(text: &str) -> String {
@@ -86,7 +86,7 @@ fn redact(text: &str) -> String {
             // postgres://user:password@host, mysql://user:pass@host, redis://:pass@host, etc.
             regex::Regex::new(r#"([A-Za-z][A-Za-z0-9+.\-]*://[^:/\s]+:)([^@/\s]+)(@)"#)
                 .expect("static regex"),
-            // PEM private key blocks (SSH deploy keys, TLS keys) — drop the whole block.
+            // PEM private key blocks (SSH deploy keys, TLS keys) - drop the whole block.
             regex::Regex::new(
                 r#"(?s)-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----"#,
             )
@@ -131,11 +131,11 @@ fn build_prompt(ctx: &FailureContext) -> String {
     format!(
         "You are helping a system administrator diagnose a failed deployment on their \
          self-hosted server-management panel. Some values below may already be redacted \
-         as [REDACTED] — do not ask for them back, work with what's shown.\n\n\
+         as [REDACTED] - do not ask for them back, work with what's shown.\n\n\
          Site: {}\nCommit: {} ({})\nImage tag: {}\n\n\
          Build/deploy failure output (most recent lines last):\n```\n{}\n```\n\n\
          In plain terms, answer two things: (1) what most likely caused this failure, \
-         and (2) the specific, concrete fix to try next. Keep it short — a sysadmin is \
+         and (2) the specific, concrete fix to try next. Keep it short - a sysadmin is \
          going to act on this immediately, not read an essay.",
         ctx.site_name, ctx.commit_hash, ctx.commit_message, ctx.image_tag, body,
     )
@@ -165,7 +165,7 @@ pub async fn explain_failure(
 }
 
 /// Body text from a failed provider call, truncated so a verbose HTML error
-/// page or a pathological response can't blow up our own error payload —
+/// page or a pathological response can't blow up our own error payload -
 /// this text reaches the operator, never the API key.
 fn snippet(body: &str) -> String {
     let mut s: String = body.chars().take(500).collect();
@@ -176,7 +176,7 @@ fn snippet(body: &str) -> String {
 }
 
 /// Pull a human-readable message out of a failed provider response. Anthropic,
-/// OpenAI, and Gemini all nest it as `error.message` (an object) — but xAI's
+/// OpenAI, and Gemini all nest it as `error.message` (an object) - but xAI's
 /// error responses, confirmed live against api.x.ai (not assumed from docs),
 /// are the flat shape `{"error": "<string>", "code": "..."}` despite xAI's
 /// SUCCESS responses being otherwise OpenAI-shaped. Try the nested form
@@ -363,7 +363,7 @@ mod tests {
     #[test]
     fn extracts_flat_error_message_xai_shape() {
         // Confirmed live against api.x.ai: {"code":"invalid-argument","error":"..."}
-        // — a plain string, not an object with .message. Without this fallback
+        // - a plain string, not an object with .message. Without this fallback
         // every xAI error reports "unknown error" despite the API returning a
         // perfectly good one.
         let body = serde_json::json!({"code": "invalid-argument", "error": "Incorrect API key provided."});
@@ -380,7 +380,7 @@ mod tests {
     fn build_prompt_redacts_the_output_field() {
         // redact() is unit-tested directly above; this closes the gap between
         // "redact() works" and "build_prompt actually calls it on the field
-        // that reaches the wire" — the two could drift if a future edit read
+        // that reaches the wire" - the two could drift if a future edit read
         // from the wrong field or reordered redact-then-truncate.
         let ctx = FailureContext {
             site_name: "example.com".into(),

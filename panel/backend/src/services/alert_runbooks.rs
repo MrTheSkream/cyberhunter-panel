@@ -63,7 +63,7 @@ pub async fn get_runbook(pool: &PgPool, alert_type: &str) -> Option<RunbookView>
     })
 }
 
-/// List every known runbook — DB rows merged over the const slice. DB rows
+/// List every known runbook - DB rows merged over the const slice. DB rows
 /// win on collision; const-slice entries that have no DB row are returned
 /// with `is_default = true`.
 pub async fn list_runbooks(pool: &PgPool) -> Vec<RunbookView> {

@@ -30,7 +30,7 @@ struct EnableRequest {
 struct DisableRequest {
     uid: i32,
     gid: i32,
-    /// Whether this was the last SFTP-enabled site on the box — decided by
+    /// Whether this was the last SFTP-enabled site on the box - decided by
     /// the backend from the `sites` table, never re-derived here.
     last_sftp_site: bool,
 }

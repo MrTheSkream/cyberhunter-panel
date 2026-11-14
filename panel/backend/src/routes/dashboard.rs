@@ -4,7 +4,7 @@ use crate::auth::{AdminUser, AuthUser, ServerScope};
 use crate::error::{internal_error, require_admin, ApiError};
 use crate::AppState;
 
-/// GET /api/dashboard/intelligence — Server health score + top issues + SSL countdowns.
+/// GET /api/dashboard/intelligence - Server health score + top issues + SSL countdowns.
 pub async fn intelligence(
     AuthUser(claims): AuthUser,
     State(state): State<AppState>,
@@ -33,7 +33,7 @@ pub async fn intelligence(
     .await
     .map_err(|e| internal_error("intelligence", e))?;
 
-    // 3. Get SSL expiry data — scoped to user's sites AND their Docker Compose
+    // 3. Get SSL expiry data - scoped to user's sites AND their Docker Compose
     //    stacks. Both feed the SAME `ssl_countdowns` list, so making stacks
     //    visible here is enough to make them count in the health score
     //    (section 9) and recommendations (section 10) below too, with no
@@ -49,7 +49,7 @@ pub async fn intelligence(
 
     // `tls_mode`/`ssl_email` come along only to apply the SAME "an ACME stack
     // is ours" rule `certificate_dashboard_for_admin` and `check_stack_ssl_expiry`
-    // already enforce — a `provided` stack's `ssl_expiry` isn't the panel's
+    // already enforce - a `provided` stack's `ssl_expiry` isn't the panel's
     // certificate to warn about.
     let ssl_stacks: Vec<(
         uuid::Uuid,
@@ -82,7 +82,7 @@ pub async fn intelligence(
     };
 
     // Sorted by (expiry, candidate) so the merged top-5 stays soonest-first
-    // regardless of which table a row came from, then trimmed to 5 — each
+    // regardless of which table a row came from, then trimmed to 5 - each
     // source query is already capped at 5, so at most 10 candidates are ever
     // built here.
     let mut countdowns: Vec<(chrono::DateTime<chrono::Utc>, serde_json::Value)> = ssl_sites
@@ -96,7 +96,7 @@ pub async fn intelligence(
                     "days_left": days_left,
                     "severity": ssl_severity(days_left),
                     "expiry": expiry,
-                    // Always on the wire, even as null — a field present on some
+                    // Always on the wire, even as null - a field present on some
                     // rows and absent on others reaches TypeScript as `undefined`,
                     // and `undefined !== null` is true.
                     "stack_id": serde_json::Value::Null,
@@ -158,18 +158,18 @@ pub async fn intelligence(
 
     // Every read below this line is HOST-level, not tenant-level: the agent's own
     // diagnostics, the server's backup freshness, the server's last security scan.
-    // Sections 1-4 above are already `user_id = $2` for everyone, admin included —
+    // Sections 1-4 above are already `user_id = $2` for everyone, admin included -
     // this handler has always been "your alerts, your certificates". These three were
     // the exceptions, and each one reached a non-admin: `/diagnostics` is `AdminUser`
     // on its own route and was being forwarded verbatim; `stale_backups` counted every
     // tenant's sites on the box; `security_scans` has no user column to filter by at
     // all. So the scope is decided ONCE here rather than per-query.
     let host_scoped = claims.role == "admin";
-    // A non-admin's user_id, or NULL for an admin — the `$2 IS NULL OR` arm below is
+    // A non-admin's user_id, or NULL for an admin - the `$2 IS NULL OR` arm below is
     // what keeps this ONE query instead of two divergent ones.
     let tenant: Option<uuid::Uuid> = if host_scoped { None } else { Some(claims.sub) };
 
-    // 5. Get diagnostics from agent (admin only — `system::diagnostics` is AdminUser on
+    // 5. Get diagnostics from agent (admin only - `system::diagnostics` is AdminUser on
     //    its own route, and this handler must not be the way around that.)
     let mut diagnostics_summary = serde_json::json!(null);
     if host_scoped {
@@ -178,12 +178,12 @@ pub async fn intelligence(
         }
     }
 
-    // 6. Backup freshness — sites with no backup in the last 7 days.
+    // 6. Backup freshness - sites with no backup in the last 7 days.
     //    Server-wide for an admin; only the caller's own sites for anyone else.
     //
     //    A row whose schedule had a destination and whose upload failed does NOT
     //    count as a backup here. It is on local disk only, which is the one place
-    //    a disk failure takes with it — the case this tile exists to warn about.
+    //    a disk failure takes with it - the case this tile exists to warn about.
     let (stale_backups,): (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM sites s WHERE s.status = 'active' AND s.server_id = $1 \
          AND ($2::uuid IS NULL OR s.user_id = $2) \
@@ -196,7 +196,7 @@ pub async fn intelligence(
     .await
     .unwrap_or((0,));
 
-    // 7. Security scan — latest scan critical/warning counts. `security_scans` is keyed
+    // 7. Security scan - latest scan critical/warning counts. `security_scans` is keyed
     //    by server and has NO user column (20260312991000_security_scans.sql), so there
     //    is nothing to scope it by: a non-admin simply does not get a host scan result.
     let scan_findings: Option<(i32, i32)> = if host_scoped {
@@ -214,7 +214,7 @@ pub async fn intelligence(
     };
     let (scan_crits, scan_warns) = scan_findings.unwrap_or((0, 0));
 
-    // 8. Open incidents (scoped by user, not server — incidents are user-level)
+    // 8. Open incidents (scoped by user, not server - incidents are user-level)
     let (open_incidents,): (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM managed_incidents \
          WHERE user_id = $1 AND status NOT IN ('resolved', 'postmortem')",
@@ -349,10 +349,10 @@ pub async fn intelligence(
     Ok(Json(result))
 }
 
-/// GET /api/dashboard/docker — Docker container summary.
+/// GET /api/dashboard/docker - Docker container summary.
 ///
 /// Admin only, and it has to be: this asks the agent for `/apps`, the SAME call
-/// `docker_apps::list_apps` makes — and that handler gates it with `require_admin`.
+/// `docker_apps::list_apps` makes - and that handler gates it with `require_admin`.
 /// Containers on this box are not tenant-scoped in any way, so without the check
 /// this route was simply the ungated door to the list next door.
 pub async fn docker_summary(
@@ -379,11 +379,11 @@ pub async fn docker_summary(
     })))
 }
 
-/// GET /api/dashboard/metrics-history — Historical CPU/memory/disk data for charts.
+/// GET /api/dashboard/metrics-history - Historical CPU/memory/disk data for charts.
 /// Downsampled to ~96 points (one per 15-minute bucket) for efficient chart rendering.
 ///
 /// ⚠ SECURITY (s432): was unconditionally `WHERE ... server_id IN (SELECT id
-/// FROM servers WHERE user_id = $1)` — the same admin-scoping bug
+/// FROM servers WHERE user_id = $1)` - the same admin-scoping bug
 /// `servers::list`/`dashboard::fleet_overview` document: `servers.user_id`
 /// names whoever registered the row, not a tenant boundary. Unlike
 /// `fleet_overview`, this route serves every role, so (as in `intelligence`
@@ -427,11 +427,11 @@ pub async fn metrics_history(
     Ok(Json(serde_json::json!({ "points": points })))
 }
 
-/// GET /api/dashboard/gpu-metrics-history — Historical GPU metrics for charts.
+/// GET /api/dashboard/gpu-metrics-history - Historical GPU metrics for charts.
 /// Downsampled to ~96 points (one per 15-minute bucket) per GPU for efficient chart rendering.
 ///
 /// ⚠ SECURITY (s432): same admin-scoping bug and fix as `metrics_history`
-/// above — see that function's comment.
+/// above - see that function's comment.
 pub async fn gpu_metrics_history(
     AuthUser(claims): AuthUser,
     State(state): State<AppState>,
@@ -478,11 +478,11 @@ pub async fn gpu_metrics_history(
     Ok(Json(serde_json::json!({ "points": points })))
 }
 
-/// GET /api/dashboard/timeline — Unified chronological event feed.
+/// GET /api/dashboard/timeline - Unified chronological event feed.
 /// Merges recent events from deploys, backups, incidents, alerts, and security scans.
 ///
 /// ⚠ SECURITY (s432): every query below was unconditionally scoped to the
-/// caller's own `user_id` (or their own registered servers) — the same
+/// caller's own `user_id` (or their own registered servers) - the same
 /// admin-scoping bug `servers::list`/`dashboard::fleet_overview` document.
 /// As in `metrics_history` above, an admin now gets the fleet-wide feed via
 /// the widened `$1::uuid IS NULL OR` predicate; a non-admin is unchanged.
@@ -539,7 +539,7 @@ pub async fn timeline(
         }));
     }
 
-    // Recent incidents (fleet-wide for an admin, else filtered by user —
+    // Recent incidents (fleet-wide for an admin, else filtered by user -
     // matches fleet_overview's own active_incidents count)
     let incidents: Vec<(String, String, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
         "SELECT severity, title, created_at FROM managed_incidents \
@@ -611,21 +611,21 @@ pub async fn timeline(
     Ok(Json(events))
 }
 
-/// GET /api/dashboard/fleet — Unified health across all servers (admin only).
+/// GET /api/dashboard/fleet - Unified health across all servers (admin only).
 /// Aggregates firing alerts, active incidents, sites, databases, and latest
-/// metrics for EVERY server on the install — not just the ones the calling
+/// metrics for EVERY server on the install - not just the ones the calling
 /// admin happens to have registered.
 ///
 /// ⚠ SECURITY (s430): was `WHERE s.user_id = $1`, the same bug class
 /// `servers::list` documents and fixes at the top of this crate ("An
 /// administrator sees every machine; anybody else sees the ones they hold").
 /// `servers.user_id` names whoever REGISTERED the row, not a tenant boundary
-/// — so a second admin opened the Fleet dashboard to zero servers, zero
+/// - so a second admin opened the Fleet dashboard to zero servers, zero
 /// sites, zero alerts, despite being a full admin who can reach every one of
 /// those servers through every OTHER route. This handler only ever takes
 /// `AdminUser`, so unlike `intelligence` above (which also serves non-admin
 /// callers and needs the `$2::uuid IS NULL OR` widen) there is no narrower
-/// case to preserve — every caller here is an admin, so the fleet is simply
+/// case to preserve - every caller here is an admin, so the fleet is simply
 /// the whole fleet.
 pub async fn fleet_overview(
     State(state): State<AppState>,
@@ -650,7 +650,7 @@ pub async fn fleet_overview(
     .await
     .map_err(|e| internal_error("fleet overview", e))?;
 
-    // Active incidents — fleet-wide, same reasoning as the server list above.
+    // Active incidents - fleet-wide, same reasoning as the server list above.
     let active_incidents: (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM managed_incidents WHERE status NOT IN ('resolved', 'postmortem')",
     )
@@ -658,7 +658,7 @@ pub async fn fleet_overview(
     .await
     .unwrap_or((0,));
 
-    // MCP server status — mcp_server_enabled/mcp_bind_mode are records an
+    // MCP server status - mcp_server_enabled/mcp_bind_mode are records an
     // operator fills in from Settings → Services (dockpanel-mcp itself doesn't
     // read this table; its actual on/off state is the systemd unit). Surfacing
     // them here, rather than nowhere, means the same fleet-wide view an

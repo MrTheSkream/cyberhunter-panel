@@ -65,14 +65,14 @@ async fn list_dir(
 /// Status for a file-service error: a refusal the operator can act on, or a
 /// fault only an incident id should describe.
 ///
-/// Every sentence below is a decision the service made deliberately — a size
+/// Every sentence below is a decision the service made deliberately - a size
 /// cap, a text-vs-binary test, a name that is already taken, a path that is
 /// already gone. The agent stat'd the file successfully and refused; nothing
 /// broke. As 5xx the panel replaced all of them with "Operation failed.
 /// Reference: {uuid}", so "New Folder" onto an existing name and a genuine agent
 /// outage were the same screen, and opening a .png in the editor looked like
 /// infrastructure failure. The path refusals four lines up were already 400 and
-/// already survived — these are the ones that did not.
+/// already survived - these are the ones that did not.
 fn file_status(e: String) -> ApiErr {
     let status = if e.starts_with("File not found")
         || e == "Source does not exist"
@@ -186,14 +186,14 @@ async fn delete_entry(
     Ok(Json(serde_json::json!({ "success": true })))
 }
 
-/// GET /files/{domain}/download?path= — Download a file as raw bytes.
+/// GET /files/{domain}/download?path= - Download a file as raw bytes.
 ///
 /// Streamed, not read into memory whole: a site's own webroot routinely holds
 /// files well past the file manager's 2MB text-editor cap (DB dumps, logs,
 /// media) with no per-site disk quota (see `resolve_safe_path`'s own callers),
 /// and this handler is reachable by the site's own non-admin owner. The
-/// agent — the one process per box mediating deploys/backups/terminal/Docker
-/// for every tenant — runs under a 512MB `MemoryMax` cgroup
+/// agent - the one process per box mediating deploys/backups/terminal/Docker
+/// for every tenant - runs under a 512MB `MemoryMax` cgroup
 /// (`dockpanel-agent.service`); `tokio::fs::read`-ing an arbitrarily large
 /// file into a `Vec<u8>` before sending a single response byte let an
 /// ordinary tenant OOM-kill it with one request.

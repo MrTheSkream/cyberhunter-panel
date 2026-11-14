@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression pins for the s367 ship — the panel stops reporting outcomes it cannot support.
+# Regression pins for the s367 ship - the panel stops reporting outcomes it cannot support.
 #
 # Five defects with one shape: the product told the operator something that was not
 # true, and in four of the five the lie was the reassuring direction.
@@ -7,17 +7,17 @@
 #   * Deleting an account that had ever scheduled a maintenance window raised a
 #     foreign-key violation inside the delete transaction and surfaced as an
 #     incident id. The account could never be removed through the panel again, and
-#     nothing in the product could clear the blocking row — the only handler that
+#     nothing in the product could clear the blocking row - the only handler that
 #     deletes one is scoped to its own owner.
 #   * Clearing a Slack, Discord or PagerDuty destination was impossible. The client
 #     substituted a null for an empty box and the handler COALESCEs a null onto the
 #     stored value, so the old destination survived and the save answered green.
 #   * "All containers are up to date" was rendered whenever the update count was
-#     zero — including a run in which every registry check had failed, because a
+#     zero - including a run in which every registry check had failed, because a
 #     check that never got an answer scores the same as an image that is current.
 #   * The update door emitted the pull step as running and never resolved it on
 #     failure, so a live spinner sat under a red failure header for ever.
-#   * The deploy door filed every failure under the step that pulls the image —
+#   * The deploy door filed every failure under the step that pulls the image -
 #     the defect the update door was repaired for one release earlier.
 #
 # And one that is not a lie but is the same ship: five container teardowns removed
@@ -31,7 +31,7 @@ cd "$(dirname "$0")/.." || exit 1
 
 PASS=0; FAIL=0
 ok()  { printf '\033[32m✓\033[0m %s\n' "$1"; PASS=$((PASS+1)); }
-bad() { printf '\033[31m✗\033[0m %s — %s\n' "$1" "$2"; FAIL=$((FAIL+1)); }
+bad() { printf '\033[31m✗\033[0m %s - %s\n' "$1" "$2"; FAIL=$((FAIL+1)); }
 eq()  { [ "$2" = "$3" ] && ok "$1" || bad "$1" "expected '$3', got '$2'"; }
 
 # ugrep's --ignore-files shim honours .gitignore, so every count below uses the
@@ -55,8 +55,8 @@ done
 for pair in "$API:2000" "$APPS:1500" "$SETTINGS:2500"; do
   f=${pair%:*}; min=${pair##*:}
   n=$($G -c '' "$f")
-  [ "$n" -gt "$min" ] && ok "A0 subject extracted — $f is $n lines" \
-    || bad "A0 subject extracted" "$f is only $n lines — arms over it examined nothing"
+  [ "$n" -gt "$min" ] && ok "A0 subject extracted - $f is $n lines" \
+    || bad "A0 subject extracted" "$f is only $n lines - arms over it examined nothing"
 done
 
 echo "── A. Every owner link to an account declares what happens when it is deleted ─"
@@ -67,7 +67,7 @@ echo "── A. Every owner link to an account declares what happens when it is 
 # should do. A table added next year is covered without touching this file.
 #
 # The awkward part is that a declaration made without a delete action can be
-# repaired by a later ALTER — that is exactly what the release before this one did
+# repaired by a later ALTER - that is exactly what the release before this one did
 # for one column, and what this release does for two more. So a flat "no bare
 # declaration anywhere" arm would go RED on a correct tree. The arm therefore
 # models last-writer-wins: a bare declaration is a violation only if nothing later
@@ -87,12 +87,12 @@ for fn in sorted(os.listdir(d)):
         continue
     src = strip(open(os.path.join(d, fn)).read())
 
-    # Form 1 — inline on a column definition: `<col> UUID ... REFERENCES <parent>(id) ...`
+    # Form 1 - inline on a column definition: `<col> UUID ... REFERENCES <parent>(id) ...`
     # The statement ends at the next comma or the closing paren of CREATE TABLE.
     #
     # The parent table is a WILDCARD, and that widening is the point. This arm was
     # written naming `users`, so the release that added it could not see the two
-    # remaining bare links in the schema — they pointed at `servers`, and an account
+    # remaining bare links in the schema - they pointed at `servers`, and an account
     # that could not be deleted got a guard while a server that could not be deleted
     # did not. A census that names one parent measures one parent.
     #
@@ -113,7 +113,7 @@ for fn in sorted(os.listdir(d)):
         else:
             repaired.add((tbl, col))
 
-    # Form 2 — an ALTER that adds the constraint explicitly.
+    # Form 2 - an ALTER that adds the constraint explicitly.
     for m in re.finditer(
             r'ALTER\s+TABLE\s+(\w+)\s+ADD\s+CONSTRAINT\s+\w+\s+FOREIGN\s+KEY\s*\(\s*(\w+)\s*\)\s*'
             r'REFERENCES\s+(\w+)\s*\(\s*id\s*\)([^;]*)', src, re.I):
@@ -143,7 +143,7 @@ if [ -n "${FK_TOTAL:-}" ] && [ "$FK_TOTAL" -ge 90 ]; then
   ok "A1-control the migration scan found $FK_TOTAL foreign keys, $FK_REPAIR carrying a delete action"
 else
   bad "A1-control the migration scan found $FK_TOTAL foreign keys, $FK_REPAIR carrying a delete action" \
-      "fewer than 90 — the scan is broken, so A1 below measured nothing"
+      "fewer than 90 - the scan is broken, so A1 below measured nothing"
 fi
 
 if [ "${FK_VIOL:-1}" = "0" ]; then
@@ -164,7 +164,7 @@ eq "A2 the maintenance-window owner link is dropped and re-added" \
    "$($G -c '^ALTER TABLE maintenance_windows$' "$MIGDIR/20260816000000_user_fk_delete_actions.sql")" "2"
 
 # A3: and the repair is the one that removes the row rather than one that cannot
-# apply — both columns are NOT NULL, so the alternative would fail at migration time.
+# apply - both columns are NOT NULL, so the alternative would fail at migration time.
 eq "A3 the repair removes the dependent rows" \
    "$($G -c 'FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE' \
       "$MIGDIR/20260816000000_user_fk_delete_actions.sql")" "1"
@@ -185,7 +185,7 @@ eq "B1-control the save payload block carries all three destinations" \
 # If either end changes, the fix above becomes a delivery failure instead.
 # Counted rather than predicted: the service carries two sender paths and every
 # destination in both is guarded, which is 7 URL guards and 2 key guards. Scoped to
-# the whole sender service deliberately — it is the region the claim is about, and
+# the whole sender service deliberately - it is the region the claim is about, and
 # a guard removed from either path is what would make the clear above unsafe.
 eq "B2 every URL destination is guarded on non-empty before delivery" \
    "$($G -c 'if !url.is_empty() {' "$NOTIFY")" "7"
@@ -196,7 +196,7 @@ eq "B3 the URL validators skip an empty destination rather than rejecting it" \
 
 echo "── C. The update-check summary cannot claim success over a failed check ─"
 
-# C1: ABSENCE arm — the success sentence must no longer be reachable from the
+# C1: ABSENCE arm - the success sentence must no longer be reachable from the
 # update count alone. Keyed on the ternary that produced it.
 eq "C1 the summary does not decide success on the update count alone" \
    "$($G -c 'type: result.updates_available > 0 ? "warning" : "success"' "$APPS")" "0"
@@ -231,7 +231,7 @@ eq "D2 the deploy failure is not reported as a pull failure" \
 eq "D2-control the deploy success path still emits the pull step" \
    "$($G -c 'emit("pull", "Pulling Docker image", "done", None)' "$API")" "1"
 
-# D3: and it emits something in its place — an error with no step at all would
+# D3: and it emits something in its place - an error with no step at all would
 # satisfy D2 while leaving the operator with nothing.
 eq "D3 the deploy failure names a step that asserts no phase" \
    "$($G -c 'emit("deploy", "Deploying app", "error"' "$API")" "1"
@@ -282,7 +282,7 @@ if [ -n "${VOL_TOTAL:-}" ] && [ "$VOL_TOTAL" -ge 20 ]; then
   ok "E1-control the teardown scan found $VOL_TOTAL container removals"
 else
   bad "E1-control the teardown scan found $VOL_TOTAL container removals" \
-      "fewer than 20 — the scan is broken, so E1 below measured nothing"
+      "fewer than 20 - the scan is broken, so E1 below measured nothing"
 fi
 
 if [ "${VOL_MISS:-1}" = "0" ]; then
@@ -303,7 +303,7 @@ eq "E3 the file-read probe takes its anonymous volumes with them" \
 # ── §F the migration wizard reports what it actually stored (s369) ──────────
 #
 # `INSERT INTO databases` in the import loop omitted `site_id`, which is NOT NULL
-# with no default — so the statement could never succeed — and discarded its own
+# with no default - so the statement could never succeed - and discarded its own
 # result, so the loop carried on and announced "Imported" over a row that was
 # never written. The operator was left with a running database container the
 # panel could not list, reach or delete, holding a password that existed nowhere
@@ -324,11 +324,11 @@ eq "F2 the import's insert is checked rather than discarded" \
    "$(/usr/bin/sed -n '/Insert the DB record/,/Create database container via agent/p' panel/backend/src/routes/migration.rs | $G -c 'fetch_optional')" "1"
 # The insert now runs BEFORE the agent call (s444: reordered so the port's own
 # unique index adjudicates a racing pick before either side reaches the agent,
-# rather than after — see F7/F8 below), which flips WHICH side of a failure
+# rather than after - see F7/F8 below), which flips WHICH side of a failure
 # needs cleanup. A DB-insert conflict can no longer orphan a container, because
 # no container has been created yet at that point. What can now happen is the
 # reverse: the row lands (claiming the port and name) and THEN the agent call
-# fails — so the row, not a container, is what has to be taken back down.
+# fails - so the row, not a container, is what has to be taken back down.
 eq "F3 a database whose container creation fails has its row taken back down" \
    "$(/usr/bin/sed -n '/agent.post("\/databases", Some(create_body))/,/^            };/p' panel/backend/src/routes/migration.rs | $G -c 'DELETE FROM databases WHERE id = \$1')" "1"
 # The site a database belongs to is resolved BEFORE the container is created, or
@@ -342,8 +342,8 @@ else
 fi
 
 # The wizard must not offer a location the agent structurally cannot read. The
-# unit runs `PrivateTmp=yes`, so an archive copied to the host's /tmp — the
-# obvious place, and the one this guard used to name — is invisible to it, and
+# unit runs `PrivateTmp=yes`, so an archive copied to the host's /tmp - the
+# obvious place, and the one this guard used to name - is invisible to it, and
 # the very next line answered "File not found" for a file plainly on disk.
 # Driven at s369: the identical archive fails from /tmp and analyzes from
 # /var/backups/.
@@ -354,7 +354,7 @@ eq "F5b …and it is still guarded to /var/backups (control: the check exists)" 
 eq "F5c the agent unit really does have a private /tmp, which is why" \
    "$($G -c '^PrivateTmp=yes' panel/agent/dockpanel-agent.service 2>/dev/null || $G -rc 'PrivateTmp=yes' panel/agent/src/ scripts/ 2>/dev/null | awk -F: '{s+=$2} END{print (s>0)?1:0}')" "1"
 # "Container running" is not "database usable": mariadb:11 refuses the app user
-# while it initialises, so a fixed sleep produced `Access denied` — a
+# while it initialises, so a fixed sleep produced `Access denied` - a
 # credentials message for a timing problem.
 eq "F6 the engine wait is a poll, not a fixed sleep" \
    "$(/usr/bin/sed -n '/Waiting for {db_name} engine/,/Import SQL dump via agent/p' panel/backend/src/routes/migration.rs | $G -c 'ENGINE_READY_TIMEOUT_SECS')" "2"
@@ -374,7 +374,7 @@ eq "F6d …and the credentials the container was created with" \
 # All three recreate doors started the new container unconditionally, so
 # pressing Update on something deliberately stopped brought it back up. The
 # fourth start is inside `blue_green_update`, which is the branch taken for any
-# app with a domain — the normal case — so guarding only the three visible
+# app with a domain - the normal case - so guarding only the three visible
 # stop/start sites would have missed the majority of installs.
 #
 # CLASS arm: it enumerates every start_container in the recreate file rather
@@ -399,7 +399,7 @@ eq "G4 the guard reads status, not the running flag" \
 # ── §H a refusal has to come from a layer that can answer 4xx (s369, v2.122.1) ──
 #
 # The agent's custom_nginx validator runs inside the template RENDER, and
-# `agent_error` hands an agent sentence through only on 4xx — a render failure is
+# `agent_error` hands an agent sentence through only on 4xx - a render failure is
 # a 500, so it reaches the operator as `Operation failed. Reference: <uuid>`.
 # Driven on a fresh box: the new duplicate-directive refusal came back 502 with a
 # reference, exactly like the nginx error it replaced. The reason now also lives

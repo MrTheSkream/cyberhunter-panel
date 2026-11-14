@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# notification-secrets-encryption-pin-e2e.sh — s430
+# notification-secrets-encryption-pin-e2e.sh - s430
 #
 # Regression pins for closing the "cleartext credential hole" a s251-era audit
 # flagged and nobody fixed for ~180 sessions: `alert_rules.notify_pagerduty_key`/
@@ -8,15 +8,15 @@
 # `secrets_crypto` reference anywhere in the files that wrote or read them.
 #
 #   §A  alerts.rs::upsert_rules ENCRYPTS all four notify_* fields (via
-#       encrypt_credential, the credential-shaped derivation — NOT the vault's
+#       encrypt_credential, the credential-shaped derivation - NOT the vault's
 #       encrypt/decrypt) before they ever reach SQL, on plaintext already
 #       validated by the SSRF check above it.
 #   §B  alerts.rs::get_rules DECRYPTS the same four fields (via
 #       decrypt_credential_or_legacy, the migration-safe fallback) before
-#       serializing the response — the same-account caller reading their own
+#       serializing the response - the same-account caller reading their own
 #       settings back is the expected case that function exists for.
-#   §C  notifications.rs::get_user_channels and uptime.rs::send_alerts — both
-#       take only a PgPool (no AppState/jwt_secret) — decrypt via
+#   §C  notifications.rs::get_user_channels and uptime.rs::send_alerts - both
+#       take only a PgPool (no AppState/jwt_secret) - decrypt via
 #       decrypt_credential_from_env, matching that function's own documented
 #       use case.
 #   §D  monitors.rs's create/update ENCRYPT alert_slack_url/alert_discord_url;
@@ -25,7 +25,7 @@
 #       alert_rules" fallback decrypts BEFORE the SSRF check runs on it.
 #   §E  credential_reencrypt.rs's self-enforcing registry carries all 6 new
 #       subjects in SIMPLE_SUBJECTS and pairs each writer module in
-#       COVERED_MODULES — `every_credential_writer_is_covered` and
+#       COVERED_MODULES - `every_credential_writer_is_covered` and
 #       `subject_tokens_match_the_sweep` (both in that file's own test module)
 #       assert this mechanically; §E here just pins the specific entries so a
 #       regression names which one went missing, not just "a Rust test failed".

@@ -4,13 +4,13 @@
 ⛔ WHY THIS EXISTS. The defect it guards is a control that is PRESENT in the file
 and UNREACHABLE in a state: every SSL control lived in the `else` branch, so once
 SSL was on the page offered nothing. Any arm that greps the whole file for the
-upload form is therefore GREEN AT HEAD WITH THE DEFECT FULLY RESTORED — the
+upload form is therefore GREEN AT HEAD WITH THE DEFECT FULLY RESTORED - the
 caller exists, it is simply in the wrong branch. Scoping to the branch is the
 only thing that makes such an arm mean anything ([[feedback_pin_arm_scope]]).
 
 Usage:  ssl-enabled-branch.py <file> {true|false}
 
-Emits the branch with comments removed — `//` line comments AND `{/* … */}` JSX
+Emits the branch with comments removed - `//` line comments AND `{/* … */}` JSX
 blocks, which the calling suite's `subj()` does NOT strip. That matters here more
 than usual: the true branch carries a long JSX comment that names the very
 controls the arms assert, so an unstripped subject would satisfy them from prose
@@ -48,7 +48,7 @@ def main() -> int:
         return 2
 
     # Walk parens from the opener so the split point is the ternary's OWN `) : (`
-    # and not one belonging to a nested ternary — of which this file has five.
+    # and not one belonging to a nested ternary - of which this file has five.
     i = start + len(OPEN) - 1  # sits on the '(' of the opener
     depth = 0
     split = end = -1

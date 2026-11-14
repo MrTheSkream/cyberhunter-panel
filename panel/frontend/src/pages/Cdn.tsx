@@ -273,7 +273,7 @@ export default function Cdn() {
         </div>
       )}
 
-      {/* Confirm delete — portalled via ConfirmDialog (issue #120) so the prompt
+      {/* Confirm delete - portalled via ConfirmDialog (issue #120) so the prompt
           cannot render off-screen from the trigger that armed it. */}
       {pendingDelete && selectedZone && (
         <ConfirmDialog
@@ -553,11 +553,11 @@ export default function Cdn() {
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="block text-sm font-medium text-dark-100 mb-1">Origin URL</label>
-                      <p className="text-sm text-dark-200 font-mono">{selectedZone.origin_url || "—"}</p>
+                      <p className="text-sm text-dark-200 font-mono">{selectedZone.origin_url || "-"}</p>
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-dark-100 mb-1">CDN Hostname</label>
-                      <p className="text-sm text-dark-200 font-mono">{selectedZone.cdn_hostname || "—"}</p>
+                      <p className="text-sm text-dark-200 font-mono">{selectedZone.cdn_hostname || "-"}</p>
                     </div>
                   </div>
                   <button
@@ -570,7 +570,7 @@ export default function Cdn() {
                 </div>
               </div>
 
-              {/* Pull Zones — discovery list from the provider, not editable here */}
+              {/* Pull Zones - discovery list from the provider, not editable here */}
               <div className="bg-dark-800 rounded-lg border border-dark-500 overflow-hidden">
                 <div className="px-5 py-4 border-b border-dark-600">
                   <h2 className="text-xs font-medium text-dark-300 uppercase font-mono tracking-widest">Pull Zones</h2>
@@ -592,7 +592,7 @@ export default function Cdn() {
                           <div className="min-w-0">
                             <p className="text-sm text-dark-50 font-medium truncate">{pz.name || `Zone ${pz.id ?? i}`}</p>
                             <p className="text-xs text-dark-300 font-mono truncate">
-                              {pz.origin_url || (pz.hostnames && pz.hostnames.join(", ")) || "—"}
+                              {pz.origin_url || (pz.hostnames && pz.hostnames.join(", ")) || "-"}
                             </p>
                           </div>
                           <div className="flex items-center gap-2 shrink-0">
@@ -629,7 +629,7 @@ export default function Cdn() {
                     </div>
                     <div>
                       <dt className="text-dark-300">Zone ID</dt>
-                      <dd className="text-dark-50 font-mono">{selectedZone.pull_zone_id || "—"}</dd>
+                      <dd className="text-dark-50 font-mono">{selectedZone.pull_zone_id || "-"}</dd>
                     </div>
                     <div>
                       <dt className="text-dark-300">Added</dt>

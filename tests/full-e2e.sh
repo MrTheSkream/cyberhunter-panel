@@ -1,5 +1,5 @@
 #!/bin/bash
-# DockPanel Full E2E Test Suite
+# CyberHunter - Panel Full E2E Test Suite
 # Tests all major features end-to-end against the live API
 set -euo pipefail
 
@@ -33,7 +33,7 @@ test_contains() {
 }
 
 echo "═══════════════════════════════════════════════"
-echo "  DockPanel Full E2E Test Suite"
+echo "  CyberHunter - Panel Full E2E Test Suite"
 echo "═══════════════════════════════════════════════"
 
 # Auth
@@ -50,7 +50,7 @@ test_api GET /api/auth/setup-status "Setup status"
 test_api GET /api/auth/2fa/status "2FA status"
 test_api GET /api/auth/sessions "List sessions"
 test_contains GET /api/auth/me "User has admin role" '"role":"admin"'
-# Registration: test via direct curl (special case — body needed)
+# Registration: test via direct curl (special case - body needed)
 REG_RESP=$(curl -s -X POST "$API/api/auth/register" -H "$AUTH" -H "Content-Type: application/json" -d '{"email":"test@test.com","password":"testtest123"}' 2>/dev/null)
 echo "$REG_RESP" | grep -c "disabled\|Disabled\|forbidden\|lockdown" >/dev/null && green "Registration blocked" || red "Registration NOT blocked: $REG_RESP"
 
@@ -219,7 +219,7 @@ echo "── Filesystem ──"
 [ -d /var/backups/dockpanel ] && green "DB backup directory exists" || red "DB backup directory missing"
 # The append-only assertion that used to live here demanded the attribute on the audit
 # DIRECTORY. No shipped code has ever set it, so it could only pass on a box where a
-# human ran chattr by hand — and it did pass, for months, on exactly one such box while
+# human ran chattr by hand - and it did pass, for months, on exactly one such box while
 # the feature it claimed to test did not exist anywhere. It also asserted the wrong
 # thing: on a directory the attribute leaves the files inside rewritable in place, and
 # it blocks the panel's own audit retention sweep. The honest check is that the log is
@@ -231,14 +231,14 @@ if [ -s "$AUDIT_TODAY" ]; then
 elif ls /var/lib/dockpanel/audit/audit-*.log >/dev/null 2>&1; then
   green "Audit file log present (no events yet today)"
 else
-  red "Audit file log missing — no audit-*.log in /var/lib/dockpanel/audit/"
+  red "Audit file log missing - no audit-*.log in /var/lib/dockpanel/audit/"
 fi
 if lsattr -d /var/lib/dockpanel/audit/ 2>/dev/null | cut -d' ' -f1 | grep -c "a" >/dev/null; then
   # Deliberately NOT green()/red(): it is neither a pass nor a failure, it is an
   # operator choice with a consequence they should know about. Using a counting
   # helper here would also move this suite's assertion total, which docs/testing.md
   # publishes and docs-claims-pin-e2e.sh re-derives.
-  echo -e "\e[33m  ! Audit DIRECTORY carries the append-only attribute — this does not protect the log contents and blocks the 365-day retention sweep; see docs/guides/security-hardening.md\e[0m"
+  echo -e "\e[33m  ! Audit DIRECTORY carries the append-only attribute - this does not protect the log contents and blocks the 365-day retention sweep; see docs/guides/security-hardening.md\e[0m"
 fi
 
 echo ""
@@ -247,13 +247,13 @@ TIER2_SCRIPT="$(dirname "$0")/tier2-certpin-e2e.sh"
 if [ -x "$TIER2_SCRIPT" ]; then
     if bash "$TIER2_SCRIPT" > /tmp/tier2_output 2>&1; then
         TIER2_LINE=$(grep -oP '\d+ passed, \d+ failed(?:, \d+ skipped)?' /tmp/tier2_output | tail -1)
-        green "Tier 2 cert pin e2e — ${TIER2_LINE:-passed}"
+        green "Tier 2 cert pin e2e - ${TIER2_LINE:-passed}"
     else
         red "Tier 2 cert pin e2e (see /tmp/tier2_output)"
         tail -20 /tmp/tier2_output
     fi
 else
-    skip "Tier 2 cert pin e2e — $TIER2_SCRIPT not executable"
+    skip "Tier 2 cert pin e2e - $TIER2_SCRIPT not executable"
 fi
 
 echo ""
@@ -262,13 +262,13 @@ CHAIN_SCRIPT="$(dirname "$0")/chain-report-e2e.sh"
 if [ -x "$CHAIN_SCRIPT" ]; then
     if bash "$CHAIN_SCRIPT" > /tmp/chain_report_output 2>&1; then
         CHAIN_LINE=$(grep -oP '\d+ passed, \d+ failed(?:, \d+ skipped)?' /tmp/chain_report_output | tail -1)
-        green "Chain-of-trust report e2e — ${CHAIN_LINE:-passed}"
+        green "Chain-of-trust report e2e - ${CHAIN_LINE:-passed}"
     else
         red "Chain-of-trust report e2e (see /tmp/chain_report_output)"
         tail -20 /tmp/chain_report_output
     fi
 else
-    skip "Chain-of-trust report e2e — $CHAIN_SCRIPT not executable"
+    skip "Chain-of-trust report e2e - $CHAIN_SCRIPT not executable"
 fi
 
 echo ""

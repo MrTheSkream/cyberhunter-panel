@@ -52,14 +52,14 @@ async fn install_status() -> Result<Json<serde_json::Value>, ApiErr> {
     let pdns_installed = is_installed("pdns-server").await;
     let pdns_running = is_active("pdns").await;
 
-    // Keep these version lists in lock-step with php.rs ALLOWED_VERSIONS — both
+    // Keep these version lists in lock-step with php.rs ALLOWED_VERSIONS - both
     // installer paths (setup.sh, php.rs, this file) install `php{ver}-fpm`
     // directly (never the `php-fpm` metapackage), so a missing version here
     // reports an installed+running PHP as absent on the Services page.
     let php_installed = is_installed("php-fpm").await || is_installed("php8.5-fpm").await || is_installed("php8.4-fpm").await || is_installed("php8.3-fpm").await || is_installed("php8.2-fpm").await || is_installed("php8.1-fpm").await;
     // Debian names the unit per version (`php8.3-fpm`); the RHEL family has a
     // single `php-fpm`. Checking only the versioned names reported an active
-    // PHP as stopped on every RPM box (s265) — the same shape as the dpkg
+    // PHP as stopped on every RPM box (s265) - the same shape as the dpkg
     // problem one line above, in the service manager instead of the package
     // manager.
     let php_running = is_active("php8.5-fpm").await || is_active("php8.4-fpm").await || is_active("php8.3-fpm").await || is_active("php8.2-fpm").await || is_active("php8.1-fpm").await
@@ -118,7 +118,7 @@ async fn install_php() -> Result<Json<serde_json::Value>, ApiErr> {
 
     // Version selection is the one part that genuinely differs by family.
     // apt picks a version out of the archive; dnf resolves `php-fpm` to the
-    // NON-modular base package unless a module stream is enabled first — which
+    // NON-modular base package unless a module stream is enabled first - which
     // on Rocky 9 means PHP 8.0, older than every stream the box offers and
     // end-of-life since 2023, installed silently under a green status (s266).
     let streams = pkg::php_streams().await;
@@ -164,7 +164,7 @@ async fn install_php() -> Result<Json<serde_json::Value>, ApiErr> {
         tracing::info!("PHP extensions with no candidate here, skipped: {}", skipped.join(" "));
     }
 
-    // The UNIT name is a separate translation from the PACKAGE name — on the
+    // The UNIT name is a separate translation from the PACKAGE name - on the
     // RHEL family the package set is unversioned and so is the unit, so
     // enabling `php8.3-fpm` there would enable nothing at all.
     let unit = pkg::service_name(&format!("php{version}-fpm")).await;
@@ -189,7 +189,7 @@ async fn install_certbot() -> Result<Json<serde_json::Value>, ApiErr> {
     // The snap-then-pip ladder below is a Debian/Ubuntu strategy for getting a
     // 4.x certbot with ARI support; snap is not the idiomatic route here, and
     // the whole ladder was unreachable anyway because the guard refused before
-    // any of it ran — this refusal was over-broad, since its only apt call is
+    // any of it ran - this refusal was over-broad, since its only apt call is
     // `python3-venv` inside the *fallback*.
     if pkg::manager().await == pkg::PkgMgr::Rpm {
         pkg::install(&["certbot", "python3-certbot-nginx"]).await.map_err(|e| {
@@ -223,7 +223,7 @@ async fn install_certbot() -> Result<Json<serde_json::Value>, ApiErr> {
         .map(|o| o.status.success())
         .unwrap_or(false);
 
-    // Install nginx plugin separately (non-fatal if it fails — certbot still works)
+    // Install nginx plugin separately (non-fatal if it fails - certbot still works)
     if snap_ok {
         let _ = tokio::time::timeout(
             Duration::from_secs(120),
@@ -279,13 +279,13 @@ async fn install_certbot() -> Result<Json<serde_json::Value>, ApiErr> {
 
 // ── UFW installer ───────────────────────────────────────────────────────
 
-/// Install UFW — on Debian/Ubuntu only, **deliberately**.
+/// Install UFW - on Debian/Ubuntu only, **deliberately**.
 ///
 /// This is the one installer s266 did NOT give a `dnf` path, and the reason is
 /// the s265 outage: the RHEL family boots with **firewalld** enforcing, and
 /// installing UFW beside it produces two rule sets where the one nobody
 /// configured is the one the kernel consults. That is how a box ended up with
-/// 80/443 "open" in ufw, unreachable in practice, and no certificate — because
+/// 80/443 "open" in ufw, unreachable in practice, and no certificate - because
 /// Let's Encrypt could not fetch the ACME challenge either.
 ///
 /// UFW *is* installable from EPEL, so "the package exists" is true and beside
@@ -311,7 +311,7 @@ async fn install_ufw() -> Result<Json<serde_json::Value>, ApiErr> {
     let _ = tokio::time::timeout(Duration::from_secs(120), safe_command("ufw").args(["default", "allow", "outgoing"]).output()).await;
 
     // Open essential ports. Routed through the firewall service rather than
-    // `ufw` directly so the result is a fact we can report instead of assume —
+    // `ufw` directly so the result is a fact we can report instead of assume -
     // `open_mail_ports()` used to discard every result and log success anyway.
     let failed = crate::services::firewall::allow_tcp_ports(
         &["22", "80", "443", "587", "993"],
@@ -329,7 +329,7 @@ async fn install_ufw() -> Result<Json<serde_json::Value>, ApiErr> {
     }
 
     tracing::info!("UFW installed and enabled with default rules");
-    Ok(ok("UFW installed — SSH, HTTP, HTTPS, SMTP, IMAPS ports opened"))
+    Ok(ok("UFW installed - SSH, HTTP, HTTPS, SMTP, IMAPS ports opened"))
 }
 
 // ── Fail2Ban installer ──────────────────────────────────────────────────
@@ -390,7 +390,7 @@ enabled = true
 /// keeps pdns listening on addresses added after install.
 async fn pdns_local_addresses() -> Option<String> {
     // apt's postinst starts pdns with the stock config, so pdns may be holding
-    // :53 itself by now. Ignore its own sockets — only a *foreign* listener
+    // :53 itself by now. Ignore its own sockets - only a *foreign* listener
     // means the wildcard bind is unavailable.
     let listeners = safe_command("ss").args(["-tulnpH", "sport", "=", ":53"]).output().await
         .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
@@ -487,26 +487,26 @@ async fn pdns_failure_detail() -> String {
 /// Write `/etc/powerdns/pdns.conf` through the unsandboxed escape hatch.
 ///
 /// `/etc/powerdns` is in the agent unit's `ReadWritePaths`, and systemd creates
-/// it at unit start — but `apt-get purge pdns-server` (see the uninstaller)
+/// it at unit start - but `apt-get purge pdns-server` (see the uninstaller)
 /// deletes the directory, which detaches that bind mount for the remaining life
 /// of the agent process. A direct `tokio::fs::write` then fails EROFS on every
 /// reinstall until the agent restarts. Staging through `/var/lib/dockpanel` (a
 /// live ReadWritePaths entry) and moving the file into place with `install`
-/// sidesteps the detached mount entirely — and keeps the embedded API key off
+/// sidesteps the detached mount entirely - and keeps the embedded API key off
 /// both the process argv and a world-readable config.
 async fn write_pdns_conf(contents: &str) -> Result<(), ApiErr> {
     const STAGED: &str = "/var/lib/dockpanel/pdns.conf.staged";
 
     // The staged copy carries the generated API key (and, on the pgsql path, the
     // database password), so create it 0600 rather than letting the umask decide
-    // — and remove it on every exit path, not just the happy one.
+    // - and remove it on every exit path, not just the happy one.
     let staged_result = stage_and_install_pdns_conf(STAGED, contents).await;
     let _ = tokio::fs::remove_file(STAGED).await;
     staged_result
 }
 
 async fn stage_and_install_pdns_conf(staged: &str, contents: &str) -> Result<(), ApiErr> {
-    // `mode` comes from tokio's own OpenOptions on unix — no std trait import needed.
+    // `mode` comes from tokio's own OpenOptions on unix - no std trait import needed.
     let mut f = tokio::fs::OpenOptions::new()
         .write(true)
         .create(true)
@@ -558,9 +558,9 @@ async fn install_powerdns(body: axum::body::Bytes) -> Result<Json<serde_json::Va
     tracing::info!("Installing PowerDNS (backend={backend_name})...");
 
     // 1. Install packages (backend-specific). Both backend package names differ
-    // on the RHEL family — Debian names them after the library version
+    // on the RHEL family - Debian names them after the library version
     // (`pdns-backend-sqlite3`), the RHEL family after the database
-    // (`pdns-backend-sqlite`) — and neither was translated before s266, so this
+    // (`pdns-backend-sqlite`) - and neither was translated before s266, so this
     // installer would have failed on its very first argument.
     let pkgs: &[&str] = if use_sqlite {
         &["pdns-server", "pdns-backend-sqlite3", "sqlite3"]
@@ -582,12 +582,12 @@ async fn install_powerdns(body: axum::body::Bytes) -> Result<Json<serde_json::Va
     if use_sqlite {
         // /var/lib/powerdns is NOT in the agent's ReadWritePaths, so create the DB
         // and load the schema via the unsandboxed escape hatch (same mechanism the
-        // package transaction uses) — otherwise ProtectSystem=strict EROFS's the write.
+        // package transaction uses) - otherwise ProtectSystem=strict EROFS's the write.
         //
         // The schema's PATH is distro-specific and the old code hardcoded Debian's:
         // `pdns-backend-sqlite3` ships it under its own doc directory, while the RHEL
         // family puts it in `/usr/share/doc/pdns/` (verified s266). Both branches here
-        // were `[ -f ]`-guarded, so a miss did not fail — it **skipped**, leaving an
+        // were `[ -f ]`-guarded, so a miss did not fail - it **skipped**, leaving an
         // empty database, a PowerDNS that starts fine and a DNS server that answers
         // nothing, under an installer reporting success. Searching the candidates and
         // then FAILING when none matched is the difference between a bug that reports
@@ -662,7 +662,7 @@ async fn install_powerdns(body: axum::body::Bytes) -> Result<Json<serde_json::Va
 
     // 4. Build the backend-specific config
     let mut pdns_conf = if use_sqlite {
-        format!(r#"# DockPanel PowerDNS configuration (SQLite backend)
+        format!(r#"# CyberHunter - Panel PowerDNS configuration (SQLite backend)
 launch=gsqlite3
 gsqlite3-database=/var/lib/powerdns/pdns.sqlite3
 
@@ -679,8 +679,8 @@ default-soa-content=ns1.@ hostmaster.@ 0 10800 3600 604800 3600
 "#)
     } else {
         // Use the same DB password as the panel's postgres connection (never
-        // hardcode). The agent unit carries no EnvironmentFile — it is started
-        // with `Environment=RUST_LOG=info` and nothing else — so PANEL_DB_PASSWORD
+        // hardcode). The agent unit carries no EnvironmentFile - it is started
+        // with `Environment=RUST_LOG=info` and nothing else - so PANEL_DB_PASSWORD
         // and DATABASE_URL are never set here and the old env-var lookup always
         // fell through to a freshly generated random password. That password
         // matches no role, so pdns failed authentication on every start and the
@@ -688,11 +688,11 @@ default-soa-content=ns1.@ hostmaster.@ 0 10800 3600 604800 3600
         // credential from the API's env file instead.
         let pdns_db_password = panel_db_password().await.ok_or_else(|| err(
             StatusCode::INTERNAL_SERVER_ERROR,
-            "Could not read the panel database password from /etc/dockpanel/api.env — \
+            "Could not read the panel database password from /etc/dockpanel/api.env - \
              install PowerDNS with the SQLite backend instead, or repair DATABASE_URL",
         ))?;
 
-        format!(r#"# DockPanel PowerDNS configuration
+        format!(r#"# CyberHunter - Panel PowerDNS configuration
 launch=gpgsql
 gpgsql-host=127.0.0.1
 gpgsql-port=5450
@@ -715,7 +715,7 @@ default-soa-content=ns1.@ hostmaster.@ 0 10800 3600 604800 3600
 
     // 5. Pin the listening addresses when something already owns port 53
     if let Some(addrs) = pdns_local_addresses().await {
-        tracing::info!("Port 53 already in use — binding PowerDNS to {addrs}");
+        tracing::info!("Port 53 already in use - binding PowerDNS to {addrs}");
         pdns_conf.push_str(&format!(
             "\n# Port 53 was already claimed at install time (systemd-resolved stub\n\
              # listener on 127.0.0.53/127.0.0.54 on Ubuntu), so bind explicitly.\n\
@@ -727,7 +727,7 @@ default-soa-content=ns1.@ hostmaster.@ 0 10800 3600 604800 3600
     write_pdns_conf(&pdns_conf).await?;
 
     // 7. Enable and start. `enable` stays best-effort, but a pdns that never
-    //    comes up must not be reported as a successful install — that silence
+    //    comes up must not be reported as a successful install - that silence
     //    is what let the port-53 conflict ship unnoticed.
     let _ = tokio::time::timeout(Duration::from_secs(120), safe_command("systemctl").args(["reset-failed", "pdns"]).output()).await;
     let _ = tokio::time::timeout(Duration::from_secs(120), safe_command("systemctl").args(["enable", "pdns"]).output()).await;
@@ -874,7 +874,7 @@ async fn uninstall_php() -> Result<Json<serde_json::Value>, ApiErr> {
     let _ = tokio::time::timeout(Duration::from_secs(120), safe_command("systemctl").args(["disable", &unit]).output()).await;
 
     // Purge every PHP package. The glob is family-specific and deliberately
-    // NOT routed through `pkg::remove` — that translates package NAMES, and a
+    // NOT routed through `pkg::remove` - that translates package NAMES, and a
     // glob is not a name; passing `php8.3-*` through the map would produce
     // something that matches nothing. Debian's packages are versioned, the
     // RHEL family's are not, so the two patterns differ in shape as well as
@@ -916,7 +916,7 @@ async fn uninstall_certbot() -> Result<Json<serde_json::Value>, ApiErr> {
     }
     tracing::info!("Uninstalling Certbot...");
 
-    // Stop every renewal timer certbot might have arrived with — the apt/pip
+    // Stop every renewal timer certbot might have arrived with - the apt/pip
     // one, the snap one, and EPEL's `certbot-renew.timer`. Which one exists
     // depends on how it was installed, so all are tried and none is required.
     for t in ["certbot.timer", "snap.certbot.renew.timer", "certbot-renew.timer"] {
@@ -956,7 +956,7 @@ async fn uninstall_certbot() -> Result<Json<serde_json::Value>, ApiErr> {
 
 /// Remove UFW.
 ///
-/// Unlike [`install_ufw`], this is allowed on every family — and on the RHEL
+/// Unlike [`install_ufw`], this is allowed on every family - and on the RHEL
 /// family it is actively useful, because it is the cleanup for boxes that a
 /// pre-v2.38.0 `setup.sh` left with ufw installed beside firewalld. Refusing to
 /// remove a package we should never have installed would strand exactly the
@@ -1015,8 +1015,8 @@ async fn uninstall_powerdns() -> Result<Json<serde_json::Value>, ApiErr> {
     }
     tracing::info!("Uninstalling PowerDNS...");
 
-    // Stop and disable pdns. The unit is literally `pdns` on BOTH families —
-    // Debian's PACKAGE is `pdns-server` while its UNIT is already `pdns` — so
+    // Stop and disable pdns. The unit is literally `pdns` on BOTH families -
+    // Debian's PACKAGE is `pdns-server` while its UNIT is already `pdns` - so
     // this deliberately does NOT go through `service_name`, which would hand
     // back `pdns-server` on Debian and stop a unit that has never existed
     // there. It is the sharpest example of why the package map and the unit
@@ -1031,7 +1031,7 @@ async fn uninstall_powerdns() -> Result<Json<serde_json::Value>, ApiErr> {
             err(StatusCode::INTERNAL_SERVER_ERROR, &format!("PowerDNS uninstall failed: {e}"))
         })?;
 
-    // Remove config file (but keep the pdns database — user may want DNS records)
+    // Remove config file (but keep the pdns database - user may want DNS records)
     let _ = tokio::fs::remove_file("/etc/powerdns/pdns.conf").await;
 
     tracing::info!("PowerDNS uninstalled (database preserved)");
@@ -1088,7 +1088,7 @@ async fn uninstall_nodejs() -> Result<Json<serde_json::Value>, ApiErr> {
 async fn uninstall_composer() -> Result<Json<serde_json::Value>, ApiErr> {
     tracing::info!("Uninstalling Composer...");
 
-    // Composer is just a binary — remove it. Wrapped in systemd-run because
+    // Composer is just a binary - remove it. Wrapped in systemd-run because
     // /usr/local/bin is under /usr, which the agent's ProtectSystem=strict
     // sandbox makes read-only.
     let output = tokio::time::timeout(
@@ -1109,7 +1109,7 @@ async fn uninstall_composer() -> Result<Json<serde_json::Value>, ApiErr> {
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
-/// Package presence, on dpkg and rpm boxes alike — see `services::pkg`.
+/// Package presence, on dpkg and rpm boxes alike - see `services::pkg`.
 /// This used to shell out to `dpkg` directly, which answered `false` for
 /// every package on the entire RHEL family (s265).
 async fn is_installed(package: &str) -> bool {
@@ -1132,7 +1132,7 @@ async fn is_active(service: &str) -> bool {
 ///
 /// Servers added through `install-agent.sh` get it at install time. A box that
 /// was already running when that landed never did, and `update.sh` upgrades
-/// binaries without installing packages — so before this route the only way to
+/// binaries without installing packages - so before this route the only way to
 /// fix such a server was to tell its operator to run a package manager by hand,
 /// which is exactly what issue #93 was left open until we stopped doing.
 async fn install_sshpass() -> Result<Json<serde_json::Value>, ApiErr> {
@@ -1144,7 +1144,7 @@ async fn install_sshpass() -> Result<Json<serde_json::Value>, ApiErr> {
     tracing::info!("Installing sshpass...");
 
     // An already-running server is precisely the box whose package index is
-    // months stale — that is the population this route exists for.
+    // months stale - that is the population this route exists for.
     pkg::refresh_index().await;
     pkg::install(&["sshpass"]).await.map_err(|e| {
         err(StatusCode::INTERNAL_SERVER_ERROR, &format!("sshpass install failed: {e}"))
@@ -1215,7 +1215,7 @@ async fn install_waf() -> Result<Json<serde_json::Value>, ApiErr> {
 
     // 1. Install the library and the nginx connector. Debian splits them and
     // needs both names; the RHEL family ships one `nginx-mod-modsecurity` that
-    // pulls the library in, so both Debian spellings collapse onto it — which
+    // pulls the library in, so both Debian spellings collapse onto it - which
     // is why passing both here is correct on either family rather than a
     // duplicate. (Only one of the two was translated before s266.)
     pkg::refresh_index().await;
@@ -1255,13 +1255,13 @@ async fn install_waf() -> Result<Json<serde_json::Value>, ApiErr> {
                 tracing::info!("OWASP CRS v4.25.0 downloaded");
             }
             _ => {
-                tracing::warn!("OWASP CRS download failed — WAF will work without rules");
+                tracing::warn!("OWASP CRS download failed - WAF will work without rules");
             }
         }
     }
 
     // 4. Write base ModSecurity config
-    let modsec_conf = r#"# ModSecurity base config (managed by DockPanel)
+    let modsec_conf = r#"# ModSecurity base config (managed by CyberHunter - Panel)
 SecRuleEngine DetectionOnly
 SecRequestBodyAccess On
 SecRequestBodyLimit 13107200
@@ -1286,14 +1286,14 @@ SecStatusEngine Off
     // 5. Write unicode mapping (required by ModSecurity)
     //
     // `modsecurity.conf` above declares `SecUnicodeMapFile unicode.mapping
-    // 20127`, and ModSecurity refuses to load a mapping file it cannot parse —
+    // 20127`, and ModSecurity refuses to load a mapping file it cannot parse -
     // so an ABSENT or EMPTY file here does not fail the install, it fails
     // `nginx -t` later, the first time a site actually turns the WAF on. That
     // is what issue #92 hit on Debian 13, where `libmodsecurity3t64` ships no
     // `unicode.mapping` anywhere on the filesystem (verified: `find / -name
     // unicode.mapping` on a clean debian:13 after installing the package
     // returns nothing) and the old code's copy source
-    // `/usr/share/modsecurity-crs/unicode.mapping` therefore never existed —
+    // `/usr/share/modsecurity-crs/unicode.mapping` therefore never existed -
     // leaving the `write("")` fallback to create a zero-byte file that is
     // guaranteed to break the very nginx config this installer is for.
     //
@@ -1333,7 +1333,7 @@ SecStatusEngine Off
         Ok(_) => {
             return Err(err(StatusCode::INTERNAL_SERVER_ERROR,
                 "unicode.mapping is present but does not define code page 20127, \
-                 which modsecurity.conf requires — the WAF would fail nginx -t \
+                 which modsecurity.conf requires - the WAF would fail nginx -t \
                  the first time a site enabled it"));
         }
         Err(e) => {
@@ -1354,7 +1354,7 @@ SecStatusEngine Off
         .unwrap_or(false);
 
     if !nginx_ok {
-        tracing::warn!("nginx -t failed after WAF install — module may need manual load_module directive");
+        tracing::warn!("nginx -t failed after WAF install - module may need manual load_module directive");
     }
 
     tracing::info!("WAF installed (ModSecurity3 + OWASP CRS)");
@@ -1420,9 +1420,9 @@ async fn install_cloudflared() -> Result<Json<serde_json::Value>, ApiErr> {
     }
     tracing::info!("Installing cloudflared...");
 
-    // The codename lookup that used to live here — and hard-errored with
+    // The codename lookup that used to live here - and hard-errored with
     // "Cannot detect OS codename" on every RHEL release, none of which carries
-    // VERSION_CODENAME — now sits inside `pkg::add_repo`, on the apt branch
+    // VERSION_CODENAME - now sits inside `pkg::add_repo`, on the apt branch
     // only. Cloudflare publishes a codename-keyed apt repo and a single flat
     // rpm repo, so on the RPM side the codename is not defaulted or guessed:
     // it is not part of the question. `add_repo` also removes a half-written
@@ -1474,7 +1474,7 @@ async fn uninstall_cloudflared() -> Result<Json<serde_json::Value>, ApiErr> {
     Ok(ok("cloudflared uninstalled"))
 }
 
-/// POST /services/cloudflared/configure — Configure tunnel with token and ingress rules.
+/// POST /services/cloudflared/configure - Configure tunnel with token and ingress rules.
 async fn configure_cloudflared(
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
@@ -1555,7 +1555,7 @@ async fn configure_cloudflared(
     })))
 }
 
-/// GET /services/cloudflared/status — Get tunnel connection status.
+/// GET /services/cloudflared/status - Get tunnel connection status.
 async fn cloudflared_status() -> Result<Json<serde_json::Value>, ApiErr> {
     let installed = which("cloudflared").await;
     let running = is_active("cloudflared").await;

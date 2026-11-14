@@ -3,7 +3,7 @@
 // Direct peer of `image_scanner`: iterates every site on every online fleet
 // member, detects which are WordPress, and rescans any whose newest finding
 // is older than the configured interval. Before this, `wordpress::vuln_scan`
-// only ran when an operator opened a site's toolkit and clicked Scan — a
+// only ran when an operator opened a site's toolkit and clicked Scan - a
 // critically-vulnerable plugin stayed invisible indefinitely otherwise,
 // unlike Docker image scanning (its `spawn_supervised`'d sibling), which has
 // carried a schedule and a `fire_alert`/`resolve_alert` lifecycle since
@@ -71,7 +71,7 @@ async fn sweep_once(pool: &PgPool, member: &FleetMember) -> Result<(), String> {
     .map_err(|e| format!("list sites: {e}"))?;
 
     for (site_id, domain, user_id) in sites {
-        // Detect WordPress the same way `wordpress::all_wp_sites` does — a
+        // Detect WordPress the same way `wordpress::all_wp_sites` does - a
         // quick, timeout-bounded probe, not an assumption from the site's
         // runtime field (sites are provisioned as generic PHP, WordPress is
         // installed on top).
@@ -103,7 +103,7 @@ async fn sweep_once(pool: &PgPool, member: &FleetMember) -> Result<(), String> {
             tracing::warn!("WordPress vuln scan failed for {domain} on {}: {e:?}", member.name);
         }
 
-        // Yield between scans so the agent isn't slammed — mirrors
+        // Yield between scans so the agent isn't slammed - mirrors
         // `image_scanner`'s own pacing.
         tokio::time::sleep(Duration::from_secs(5)).await;
     }

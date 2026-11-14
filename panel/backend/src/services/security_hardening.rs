@@ -1,4 +1,4 @@
-//! Security Hardening Service — post-incident enhancements.
+//! Security Hardening Service - post-incident enhancements.
 //!
 //! Provides:
 //! - Geo-IP lookup for login/register alerting (Feature 1)
@@ -166,7 +166,7 @@ fn write_to_audit_file(
 ///
 /// Events detected in-process pass `occurred_at: None` and are stamped now. Events
 /// that were queued on disk before the panel could read them pass the time they
-/// actually happened — see [`record_suspicious_event_at`].
+/// actually happened - see [`record_suspicious_event_at`].
 pub async fn record_suspicious_event(
     pool: &PgPool,
     event_type: &str,
@@ -272,7 +272,7 @@ pub async fn activate_lockdown(pool: &PgPool, triggered_by: &str, reason: &str) 
     .execute(pool)
     .await;
 
-    tracing::error!("🔒 LOCKDOWN ACTIVATED: {triggered_by} — {reason}");
+    tracing::error!("🔒 LOCKDOWN ACTIVATED: {triggered_by} - {reason}");
 }
 
 /// Deactivate lockdown mode (admin only).
@@ -365,8 +365,8 @@ pub async fn alert_suspicious_ip(
 
     // The panel notification goes through `notify_panel` like every other one.
     // It used to be a hand-written INSERT here, and the two things it left out
-    // were the two that matter: the `link` column, so this — the single largest
-    // class of notification on a live panel — was the one class that could never
+    // were the two that matter: the `link` column, so this - the single largest
+    // class of notification on a live panel - was the one class that could never
     // become clickable; and the `NOTIF_TX` broadcast, so it was also the one
     // class that never arrived without a page reload. Neither omission was
     // visible from this file, because a raw INSERT into a table with defaults
@@ -387,7 +387,7 @@ pub async fn alert_suspicious_ip(
 pub async fn alert_lockdown(pool: &PgPool, reason: &str, triggered_by: &str) {
     let subject = "🔒 EMERGENCY: System Lockdown Activated";
     let message = format!(
-        "DockPanel has entered lockdown mode.\n\
+        "CyberHunter - Panel has entered lockdown mode.\n\
          Triggered by: {triggered_by}\n\
          Reason: {reason}\n\
          All terminals disabled. Registration blocked.\n\
@@ -412,7 +412,7 @@ pub async fn alert_lockdown(pool: &PgPool, reason: &str, triggered_by: &str) {
 
     // …and to the panel itself. The loop above is the whole of the old delivery,
     // and `get_user_channels` returns `None` for a user with no `alert_rules`
-    // row — which is every user until somebody opens Settings and saves a
+    // row - which is every user until somebody opens Settings and saves a
     // destination. So on a stock install the single most disruptive thing this
     // panel can do to itself, locking every non-admin out for 24 hours,
     // announced itself to nobody. The event reached `security_audit_log`, which

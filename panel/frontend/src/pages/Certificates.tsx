@@ -25,7 +25,7 @@ interface Certificate {
 }
 
 // Exported so the registry section below the site table paints the SAME badge
-// for the same status word — one vocabulary, one map, checked against the
+// for the same status word - one vocabulary, one map, checked against the
 // backend ladder by a pin.
 export const STATUS_STYLES: Record<string, { bg: string; text: string; label: string }> = {
   expired: { bg: "bg-danger-500/15", text: "text-danger-400", label: "Expired" },
@@ -33,7 +33,7 @@ export const STATUS_STYLES: Record<string, { bg: string; text: string; label: st
   warning: { bg: "bg-warn-500/15", text: "text-warn-400", label: "Warning" },
   // Not a rung of the clock like the four around it. It says the machinery that
   // is supposed to replace this certificate is failing right now, which the days
-  // column beside it cannot express at any value — a certificate with 300 days
+  // column beside it cannot express at any value - a certificate with 300 days
   // left and a failing renewal read "OK" until the last month of its life.
   renewal_failed: { bg: "bg-danger-500/15", text: "text-danger-400", label: "Renewal failed" },
   ok: { bg: "bg-rust-500/15", text: "text-rust-400", label: "OK" },
@@ -44,7 +44,7 @@ export const STATUS_STYLES: Record<string, { bg: string; text: string; label: st
 };
 
 export default function Certificates() {
-  // The LIST is open on purpose — it is `AuthUser` and filtered to the caller's
+  // The LIST is open on purpose - it is `AuthUser` and filtered to the caller's
   // own sites, so a site owner seeing their own certificates here is the
   // intended behaviour and must not be gated. Renewing and deleting are not:
   // both are administrator-only, so an owner was shown a row whose only two
@@ -98,7 +98,7 @@ export default function Certificates() {
     setMessage({ text: "", type: "" });
     try {
       // A stack has no `sites` row, so the site-shaped route could never address
-      // one — which is why this page used to say it could do nothing at all.
+      // one - which is why this page used to say it could do nothing at all.
       await api.post(
         cert.stack_id != null
           ? `/stacks/${cert.stack_id}/renew-ssl`
@@ -151,8 +151,8 @@ export default function Certificates() {
       <div className="flex items-center justify-between gap-4 mb-4">
         <p className="text-sm text-dark-200 font-mono">
           {/* An unread list is not an empty one. On failure `certs` is still
-              `[]`, so this line used to answer "No SSL certificates found" —
-              the page's most reassuring sentence — directly beside the error
+              `[]`, so this line used to answer "No SSL certificates found" -
+              the page's most reassuring sentence - directly beside the error
               banner saying the request had failed. */}
           {error
             ? "Certificate list unavailable"
@@ -232,9 +232,9 @@ export default function Certificates() {
                     </td>
                     <td className="px-4 py-3 font-mono">
                       <span className={cert.days_left === null ? "text-dark-300" : cert.days_left <= 7 ? "text-danger-400 font-bold" : cert.days_left <= 30 ? "text-warn-400" : "text-dark-100"}>
-                        {cert.days_left === null ? "—" : cert.days_left < 0 ? `${Math.abs(cert.days_left)}d overdue` : `${cert.days_left}d`}
+                        {cert.days_left === null ? "-" : cert.days_left < 0 ? `${Math.abs(cert.days_left)}d overdue` : `${cert.days_left}d`}
                       </span>
-                      {/* The CA's own suggested renewal window (RFC 9773 ARI) — a
+                      {/* The CA's own suggested renewal window (RFC 9773 ARI) - a
                           date the auto-healer already fetches, stores and acts on,
                           just never showed. Distinct from "days left": ARI often
                           opens weeks before expiry, so an operator watching only
@@ -243,7 +243,7 @@ export default function Certificates() {
                       {cert.renewal_at && (
                         <div
                           className="text-[10px] text-dark-300 font-mono mt-0.5"
-                          title="The Certificate Authority's suggested renewal window (ACME Renewal Information). DockPanel's auto-healer renews automatically once this window opens — this is not a deadline you need to act on."
+                          title="The Certificate Authority's suggested renewal window (ACME Renewal Information). CyberHunter - Panel's auto-healer renews automatically once this window opens - this is not a deadline you need to act on."
                         >
                           CA suggests renewal {new Date(cert.renewal_at) <= new Date() ? "now" : `~${new Date(cert.renewal_at).toLocaleDateString()}`}
                         </div>
@@ -274,7 +274,7 @@ export default function Certificates() {
                     <td className="px-4 py-3 text-right">
                       {cert.managed === false ? (
                         // Neither a site nor an ACME stack stands behind this file,
-                        // so nothing on this page can renew or remove it — and
+                        // so nothing on this page can renew or remove it - and
                         // rendering a control anyway is the defect this page exists
                         // to remove: one that cannot do what it says.
                         // ⚠ The old spelling of this branch tested `site_id === null`,
@@ -284,7 +284,7 @@ export default function Certificates() {
                         // ship adds. `managed` is the handler's own answer.
                         <span
                           className="text-xs text-dark-300"
-                          title="This certificate belongs to no site and no Let's Encrypt stack on this server, so DockPanel cannot renew or remove it from here."
+                          title="This certificate belongs to no site and no Let's Encrypt stack on this server, so CyberHunter - Panel cannot renew or remove it from here."
                         >
                           Not managed here
                         </span>
@@ -295,7 +295,7 @@ export default function Certificates() {
                         // silent.
                         <span
                           className="text-xs text-dark-300"
-                          title="This server's agent could not be reached, so this row is what DockPanel last recorded. Renewing needs the agent."
+                          title="This server's agent could not be reached, so this row is what CyberHunter - Panel last recorded. Renewing needs the agent."
                         >
                           Agent unreachable
                         </span>
@@ -364,7 +364,7 @@ export default function Certificates() {
 
       {/* The registry is a host-wide, admin-only resource: registering writes a
           key pair to the server's disk and deleting can break a live vhost, so
-          the whole section is gated the way Renew and Delete above are — not
+          the whole section is gated the way Renew and Delete above are - not
           just its buttons. The site list above stays open on purpose. */}
       {isAdmin && <RegisteredCertificates />}
     </div>

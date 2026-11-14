@@ -29,14 +29,14 @@ export interface ServerIp {
 export function serverIpOptionLabel(ip: ServerIp): string {
   let s = ip.ip;
   if (ip.public_ip) s += ` (public ${ip.public_ip})`;
-  if (ip.label) s += ` — ${ip.label}`;
+  if (ip.label) s += ` - ${ip.label}`;
   if (ip.is_primary) s += " [primary]";
   return s;
 }
 
 /**
  * Loads the active server's declared IPs. `/api/server-ips` is an admin route,
- * so nothing is fetched unless `enabled` (pass the admin test) — a non-admin
+ * so nothing is fetched unless `enabled` (pass the admin test) - a non-admin
  * would only collect a 403.
  */
 export function useServerIps(enabled: boolean) {

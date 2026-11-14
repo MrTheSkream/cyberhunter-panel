@@ -4,7 +4,7 @@
 //! Docker API so the same sandboxing the panel applies to template apps
 //! (`no-new-privileges`, `cap_drop: ALL`, a confined bind prefix) applies here
 //! too. What that hand-rolled path has to reproduce deliberately is everything
-//! `docker compose` would have done for free — and until v2.54.0 it reproduced
+//! `docker compose` would have done for free - and until v2.54.0 it reproduced
 //! almost none of it:
 //!
 //! * **A network.** Services were created with no `networking_config` at all, so
@@ -12,7 +12,7 @@
 //!   exist. `postgresql://app:pw@database:5432` could not resolve, and every
 //!   multi-service package the panel ships died on boot. A stack now gets its
 //!   own bridge and each service is attached under its compose service key as a
-//!   network alias — the name its siblings actually write in their config.
+//!   network alias - the name its siblings actually write in their config.
 //! * **A namespace.** Container and volume names came straight off the service
 //!   key, so the `db` service of three different packages all wanted
 //!   `dockpanel-compose-db` and the second package to be deployed failed on a
@@ -41,8 +41,8 @@ use tokio_stream::StreamExt;
 /// Parsed docker-compose service definition.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComposeService {
-    /// The compose service key (`services:` map key). This — not the container
-    /// name — is what sibling services resolve, so it is registered as a
+    /// The compose service key (`services:` map key). This - not the container
+    /// name - is what sibling services resolve, so it is registered as a
     /// network alias and must survive parsing intact.
     pub key: String,
     /// The Docker container name. Scoped by stack so two packages that both
@@ -57,7 +57,7 @@ pub struct ComposeService {
     pub aliases: Vec<String>,
     /// `command:` override, in exec form. `None` keeps the image's own CMD.
     pub command: Option<Vec<String>>,
-    /// Service keys this one declares a dependency on — used for start order.
+    /// Service keys this one declares a dependency on - used for start order.
     pub depends_on: Vec<String>,
     /// Author-supplied labels. `dockpanel.*` keys are stripped during parsing:
     /// the panel's own labels decide what is managed and which stack a
@@ -66,7 +66,7 @@ pub struct ComposeService {
     /// label block reaches Docker.
     pub labels: HashMap<String, String>,
     /// Whether the compose file declared `user:`, `healthcheck:` or
-    /// `entrypoint:` for this service — this deployer has no field for any
+    /// `entrypoint:` for this service - this deployer has no field for any
     /// of the three, so they are read here ONLY to say so; `deploy_service`
     /// silently ignores them same as before. `compose_validate` is the
     /// reader: a stack that says "valid" while quietly dropping a directive
@@ -99,7 +99,7 @@ pub struct ServiceDeployResult {
     pub error: Option<String>,
 }
 
-/// Raw docker-compose YAML structure (partial — covers common fields).
+/// Raw docker-compose YAML structure (partial - covers common fields).
 ///
 /// `BTreeMap`, not `HashMap`: iteration order over a `HashMap` is randomised
 /// per process, so the same YAML deployed twice used to start its services in a
@@ -121,7 +121,7 @@ struct ServiceDef {
     command: Option<CommandDef>,
     depends_on: Option<DependsOnDef>,
     labels: Option<LabelsDef>,
-    // Dangerous fields — parsed so we can explicitly reject them
+    // Dangerous fields - parsed so we can explicitly reject them
     privileged: Option<bool>,
     network_mode: Option<String>,
     pid: Option<String>,
@@ -130,7 +130,7 @@ struct ServiceDef {
     devices: Option<Vec<String>>,
     security_opt: Option<Vec<String>>,
     // Read-only-to-warn: this deployer has no field for any of these three,
-    // so `deploy_service` never sees them — they exist here purely so
+    // so `deploy_service` never sees them - they exist here purely so
     // `compose_validate` can tell the author their compose file's directive
     // will be silently dropped, rather than saying "valid" over it.
     user: Option<serde_yaml_ng::Value>,
@@ -160,7 +160,7 @@ enum CommandDef {
 }
 
 /// `depends_on:` accepts a plain list or the long form with conditions. Only
-/// the keys matter here — the conditions describe health gates this deployer
+/// the keys matter here - the conditions describe health gates this deployer
 /// does not implement, and claiming otherwise would be worse than ignoring them.
 #[derive(Deserialize)]
 #[serde(untagged)]
@@ -248,7 +248,7 @@ pub fn parse_compose(yaml: &str, stack_id: Option<&str>) -> Result<Vec<ComposeSe
         if def.devices.is_some() {
             return Err(format!("Service '{name}': device mounts are not allowed"));
         }
-        // `security_opt` was parsed into ServiceDef but never read here — the
+        // `security_opt` was parsed into ServiceDef but never read here - the
         // comment above claimed every dangerous field was "parsed so we can
         // explicitly reject them," which was true for every field but this
         // one. The backend's own `validate_compose_yaml` (routes/mod.rs)
@@ -256,7 +256,7 @@ pub fn parse_compose(yaml: &str, stack_id: Option<&str>) -> Result<Vec<ComposeSe
         // but the agent must not rely on that alone: it is a second machine
         // reachable over its own HTTP API, and a gap in either layer should
         // not depend on the other layer having no gap of its own. Same rule,
-        // same wording, as the backend's check — `unconfined` disables
+        // same wording, as the backend's check - `unconfined` disables
         // seccomp/AppArmor confinement entirely; `no-new-privileges:true`
         // (what this deployer sets by default, below) is unaffected.
         // [[project_dockpanel_tech_debt_p185]] carry I.
@@ -421,7 +421,7 @@ fn split_shell_command(cmd: &str) -> Vec<String> {
 /// Stable topological order over `depends_on`, so a database is created before
 /// the service that connects to it.
 ///
-/// Cycles and dangling references are not errors here — compose files in the
+/// Cycles and dangling references are not errors here - compose files in the
 /// wild carry both, and refusing to deploy over one would be a worse outcome
 /// than starting in declaration order. Anything unresolved is appended in the
 /// order it was declared.
@@ -470,7 +470,7 @@ fn parse_ports(ports_val: &Option<Vec<serde_yaml_ng::Value>>) -> Vec<PortMapping
     let mut result = Vec::new();
 
     for port in ports {
-        // Long form — `- target: 80` / `published: 8080` / `protocol: tcp`.
+        // Long form - `- target: 80` / `published: 8080` / `protocol: tcp`.
         // This is what `docker compose config` emits, so a file that has been
         // through any compose tooling arrives in this shape; discarding it left
         // the service with no published port and no explanation.
@@ -699,7 +699,7 @@ impl From<String> for DeployFailure {
 ///
 /// Compose namespaces volumes by project; this used to pass the bare name
 /// through, so two stacks built from the same package silently shared one
-/// database volume — and since each deploy mints a fresh password, the second
+/// database volume - and since each deploy mints a fresh password, the second
 /// stack was handed credentials the existing cluster did not have.
 ///
 /// A volume that already exists under the bare name is left alone. Renaming it
@@ -711,7 +711,7 @@ async fn scoped_volume(docker: &Docker, scope: &str, vol: &str) -> String {
         return scoped;
     }
     if docker.inspect_volume(vol).await.is_ok() {
-        tracing::info!("Reusing existing volume '{vol}' for this stack (not renaming — the data is in it)");
+        tracing::info!("Reusing existing volume '{vol}' for this stack (not renaming - the data is in it)");
         return vol.to_string();
     }
     scoped
@@ -771,7 +771,7 @@ async fn deploy_service(
         exposed_ports.insert(container_port, HashMap::new());
     }
 
-    // Volume binds — validate that host paths are under the allowed prefix
+    // Volume binds - validate that host paths are under the allowed prefix
     // and block mounting the Docker socket.
     let mut binds: Vec<String> = Vec::new();
     const ALLOWED_BIND_PREFIX: &str = "/var/lib/dockpanel/compose/";
@@ -784,7 +784,7 @@ async fn deploy_service(
             // Passing it through as a bind is not possible and silently
             // dropping it loses the persistence the author asked for, so say so.
             tracing::warn!(
-                "Service {}: volume '{}' has no host side — anonymous volumes are not supported, \
+                "Service {}: volume '{}' has no host side - anonymous volumes are not supported, \
                  declare a named volume (e.g. 'data:{}') to persist it",
                 svc.key,
                 vol,
@@ -795,7 +795,7 @@ async fn deploy_service(
         // Extract host path (everything before the first ':')
         let host_path = vol.split(':').next().unwrap_or("");
 
-        // Named volumes (no leading / or .) — scope them to this stack.
+        // Named volumes (no leading / or .) - scope them to this stack.
         if !host_path.starts_with('/') && !host_path.starts_with('.') {
             let rest = &vol[host_path.len()..];
             let scoped = scoped_volume(docker, &scope, host_path).await;
@@ -1231,7 +1231,7 @@ services:
     }
 
     /// `security_opt` was parsed into `ServiceDef` but the rejection loop
-    /// never read it — every OTHER dangerous field above it in the same
+    /// never read it - every OTHER dangerous field above it in the same
     /// struct was checked, this one silently was not. Positive control
     /// alongside it: `no-new-privileges:true` (what this deployer sets by
     /// default for every service it creates) must stay allowed, or the fix
@@ -1248,7 +1248,7 @@ services:
 "#;
         assert!(
             parse_compose(unconfined, None).is_err(),
-            "seccomp:unconfined must be rejected — it disables the syscall filter entirely"
+            "seccomp:unconfined must be rejected - it disables the syscall filter entirely"
         );
 
         let apparmor_unconfined = r#"
@@ -1260,7 +1260,7 @@ services:
 "#;
         assert!(
             parse_compose(apparmor_unconfined, None).is_err(),
-            "apparmor:unconfined must be rejected — it disables AppArmor confinement entirely"
+            "apparmor:unconfined must be rejected - it disables AppArmor confinement entirely"
         );
 
         let hardened = r#"
@@ -1276,7 +1276,7 @@ services:
         );
     }
 
-    /// This deployer has no field for `user:`/`healthcheck:`/`entrypoint:` —
+    /// This deployer has no field for `user:`/`healthcheck:`/`entrypoint:` -
     /// `compose_validate` reads these three flags to warn the author instead
     /// of silently dropping their directive while saying "valid".
     /// [[project_dockpanel_tech_debt_p185]] carry I.

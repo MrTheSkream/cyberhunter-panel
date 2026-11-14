@@ -3,7 +3,7 @@
 # Regression pin for the provisioning-log keyspace that anyone could read.
 #
 # `state.provision_logs` is ONE process-wide map shared by nine unrelated
-# features — service installs, mail installs, system updates, site provisioning,
+# features - service installs, mail installs, system updates, site provisioning,
 # backups, restores, container deploys, git deploys, migration imports. It is a
 # single flat keyspace: nothing distinguishes a site id from a deploy id, so any
 # endpoint that looks a caller-supplied uuid up in it reaches every other
@@ -11,7 +11,7 @@
 #
 # Five endpoints did that five different ways, and the divergence is the defect:
 #
-#   A  system::install_log took `AdminUser(_claims)` — the claims DISCARDED —
+#   A  system::install_log took `AdminUser(_claims)` - the claims DISCARDED -
 #      and did a bare lookup. Despite its path it is the panel's GENERAL progress
 #      stream: the UI points backup, restore, site-deploy, mail-install and
 #      system-update ids at it, so it could not authorize by feature and
@@ -21,11 +21,11 @@
 #      the id was absent, on the stated grounds that "the NOT_FOUND below handles
 #      missing deploys". It does not: absent-from-owners and absent-from-logs are
 #      different questions. Only 3 of 16 creation sites ever recorded an owner, so
-#      absent was the COMMON case — and this route needs only `AuthUser`.
+#      absent was the COMMON case - and this route needs only `AuthUser`.
 #
 #   C  That stream deliberately carries a credential. sites.rs emits the
 #      generated CMS admin password in cleartext on its "credentials" step,
-#      justified by a comment claiming "the provisioning stream is owner-scoped" —
+#      justified by a comment claiming "the provisioning stream is owner-scoped" -
 #      true of the endpoint its author was looking at, false of the siblings.
 #
 #   MEASURED on a throwaway box running the released v2.49.0 (s291): three
@@ -34,11 +34,11 @@
 #   containing the same cleartext WordPress admin password.
 #
 #   D  The two readers that DID check both exempted `role == "admin"`, while
-#      /api/sites is user_id-scoped — so admin was never a licence to read
+#      /api/sites is user_id-scoped - so admin was never a licence to read
 #      another tenant's log, and the exemption reopened A by another door.
 #
 #   E  A refused stream rendered as SUCCESS. ProvisionLog.tsx turned any error
-#      with no steps yet into done + onComplete — a green check over an empty log.
+#      with no steps yet into done + onComplete - a green check over an empty log.
 #
 # The fix is structural: ownership is carried by the KEY. `register_provision_log`
 # creates a log and its owner under one lock scope; `open_provision_log` is the
@@ -48,7 +48,7 @@
 #
 # The first version of this suite was reviewed and found to be spelling-bound,
 # and the review MEASURED the evasions rather than asserting them. It hunted
-# `logs.insert(` and `logs.get(&` — incidental local-variable names — across a
+# `logs.insert(` and `logs.get(&` - incidental local-variable names - across a
 # hardcoded list of 8 files. A new ownerless writer spelled
 # `state.provision_logs.lock()…insert(…)`, or a new unchecked reader whose guard
 # was called `guard` instead of `logs`, or ANY provisioning stream added to one
@@ -84,7 +84,7 @@ done
 
 # Strip comments from the SUBJECT FILES before matching.
 #
-# Not this suite's own header — that text is never searched. It is the sources
+# Not this suite's own header - that text is never searched. It is the sources
 # that are the trap, and on this change an unusually loaded one: the fix's own
 # comments spell `register_provision_log` and `open_provision_log` in prose, and
 # the negative arms forbid literals a commented-out copy of the old block would
@@ -97,7 +97,7 @@ done
 # comments are the idiomatic way to disable a multi-line Rust call and a normal
 # TSX comment form, so they are stripped too.
 # A `/*` inside a string literal (a Dockerfile glob, a regex) is DATA, not a
-# comment opener — the naive form deleted 485 lines of git_build.rs and 118 of
+# comment opener - the naive form deleted 485 lines of git_build.rs and 118 of
 # agent/routes/nginx.rs, and a truncated subject makes an ABSENCE arm pass on
 # code the stripper merely removed. Likewise `//` only opens a comment at the
 # start of a line: stripping it anywhere ate the `//` of every `https://` URL.
@@ -109,7 +109,7 @@ strip() {
   ' "$1"
 }
 
-# Every route file, comments stripped. ALL of them — the previous version read 8
+# Every route file, comments stripped. ALL of them - the previous version read 8
 # of 63, so five plausible future homes for a provisioning stream (stacks.rs,
 # staging.rs, wordpress.rs, databases.rs, backup_orchestrator.rs) were unscanned.
 ROUTE_FILES=$(ls "$ROUTES"/*.rs)
@@ -131,13 +131,13 @@ fnbody() { awk "/pub async fn $2\(/,/^}/" <<< "$1"; }
 
 # Every awk range extraction anchors on an incidental spelling. If one stops
 # matching, the variable is EMPTY and every arm reading it goes red blaming the
-# code — indistinguishable from the regression.
-readable() { [ -n "$2" ] || bad "could not extract $1 — the arms reading it mean nothing"; }
+# code - indistinguishable from the regression.
+readable() { [ -n "$2" ] || bad "could not extract $1 - the arms reading it mean nothing"; }
 
 if [ "$NROUTES" -ge 50 ]; then
   ok "scanning all $NROUTES route files"
 else
-  bad "only $NROUTES route files found — the scan lost its subjects"
+  bad "only $NROUTES route files found - the scan lost its subjects"
 fi
 
 echo
@@ -145,8 +145,8 @@ echo "§1 the map cannot be touched except through the two helpers"
 
 # THE structural arm. You cannot reach the map without naming it, so enumerate
 # every occurrence and allow exactly two forms: an argument to a helper, and the
-# Arc clone the spawned emit closures capture. Anything else — notably
-# `state.provision_logs.lock()` — is direct access, whatever the local is called.
+# Arc clone the spawned emit closures capture. Anything else - notably
+# `state.provision_logs.lock()` - is direct access, whatever the local is called.
 forms=$(grep -ohE "state\.provision_logs[.a-zA-Z_()]*" <<< "$SRC_ROUTES" | sort -u)
 illegal=$(grep -vE "^state\.provision_logs(\.clone\(\))?$" <<< "$forms" || true)
 if [ -z "$illegal" ]; then
@@ -171,7 +171,7 @@ echo "§2 no route can serve the map's contents to a client"
 # that may. Two legitimate exceptions exist, neither of which ever touches
 # provision_logs: the notifications SSE (state.notif_tx) and, since s466, the
 # panel-wide graceful-shutdown signal (state.shutdown_tx, broadcast::Sender<()>)
-# that ws_metrics.rs and notifications.rs subscribe to directly — it carries no
+# that ws_metrics.rs and notifications.rs subscribe to directly - it carries no
 # payload and is ownerless by construction (every subscriber gets the identical
 # "shutting down" signal), so there is no ownership question for it to bypass.
 subs=$(grep -ohE "[a-zA-Z_.]*\.subscribe\(\)" <<< "$SRC_ROUTES" | sort -u)
@@ -185,14 +185,14 @@ fi
 if has "$SRC_HELPERS" '.subscribe()'; then
   ok "the helper is where subscription happens"
 else
-  bad "open_provision_log no longer subscribes — the readers cannot be going through it"
+  bad "open_provision_log no longer subscribes - the readers cannot be going through it"
 fi
 
 echo
 echo "§3 every creation site records an owner"
 
 # Exact counts, not ">= 1". The previous version accepted one registration per
-# file, so git_deploys could lose 3 of its 4 and stay green — which is how the
+# file, so git_deploys could lose 3 of its 4 and stay green - which is how the
 # pre-change ratio (3 of 16) could be re-established one site at a time. Adding a
 # provisioning log to a feature is expected to change the number here.
 census="backups:2 deploy:1 sites:1 migration:1 git_deploys:4 mail:2 system:4 docker_apps:2"
@@ -204,7 +204,7 @@ for e in $census; do
   if [ "$got" -eq "$want" ]; then
     ok "$f.rs registers $got of $want"
   else
-    bad "$f.rs registers $got owners, expected $want — a creation site lost its owner, or a new one needs adding here"
+    bad "$f.rs registers $got owners, expected $want - a creation site lost its owner, or a new one needs adding here"
   fi
 done
 if [ "$total" -eq 17 ]; then
@@ -231,12 +231,12 @@ done
 
 # Narrow claim, deliberately. This says only that no reader carries the
 # `claims.role != "admin"` COMPARISON that let both broken readers skip the
-# ownership test. `require_admin(&claims.role)` NARROWS a route and is fine —
+# ownership test. `require_admin(&claims.role)` NARROWS a route and is fine -
 # migration::progress does exactly that and must keep it. Three of these five
 # were already green before the fix (sites and migration never had the
 # exemption; install_log's defect was a different shape, covered below), so
 # treat this as a guard against reintroduction, not as evidence any of them is
-# correct — §4's first loop is what establishes that.
+# correct - §4's first loop is what establishes that.
 for pair in $READERS; do
   file=${pair%%:*}; fn=${pair##*:}
   body=$(fnbody "$(strip "$ROUTES/$file.rs")" "$fn")
@@ -252,14 +252,14 @@ SYS_LOG=$(fnbody "$(strip "$ROUTES/system.rs")" 'install_log')
 readable "system::install_log" "$SYS_LOG"
 if [ -n "$SYS_LOG" ]; then
   if has "$SYS_LOG" 'AdminUser'; then
-    bad "install_log is gated by role again — it must be owner-gated, per key"
+    bad "install_log is gated by role again - it must be owner-gated, per key"
   else
     ok "install_log no longer answers on the strength of the admin role alone"
   fi
   if has "$SYS_LOG" 'AuthUser(claims)'; then
     ok "install_log binds the caller it has to compare against"
   else
-    bad "install_log discards its claims — there is nothing to check ownership against"
+    bad "install_log discards its claims - there is nothing to check ownership against"
   fi
 fi
 
@@ -275,21 +275,21 @@ echo "§5 the door itself fails closed"
 if has "$SRC_HELPERS" 'owners.get(&id).copied() == Some(caller)'; then
   ok "the owner comparison treats absence as a mismatch"
 else
-  bad "the owner comparison changed shape — check that a missing owner cannot pass"
+  bad "the owner comparison changed shape - check that a missing owner cannot pass"
 fi
 
 # Scoped to the reader's own body. Against the whole file this matched a `None
-# =>` arm in the unrelated IP-allowlist parser — a red that named the wrong code
+# =>` arm in the unrelated IP-allowlist parser - a red that named the wrong code
 # and would have been "fixed" by weakening the arm.
 OPEN_FN=$(awk '/pub fn open_provision_log\(/,/^}/' <<< "$SRC_HELPERS")
 readable "open_provision_log body" "$OPEN_FN"
 # Guarded, not merely reported. With no such function the extraction is empty and
-# every idiom arm below "passes" against nothing — five confident greens sitting
+# every idiom arm below "passes" against nothing - five confident greens sitting
 # next to the one red that actually knows. Skip them instead.
 if [ -n "$OPEN_FN" ]; then
   for idiom in 'map_or(true' 'map_or_else' 'unwrap_or(true' 'is_none_or' 'None =>'; do
     if has "$OPEN_FN" "$idiom"; then
-      bad "open_provision_log contains '$idiom' — absence may now mean permission"
+      bad "open_provision_log contains '$idiom' - absence may now mean permission"
     else
       ok "no '$idiom' fall-through in open_provision_log"
     fi
@@ -298,7 +298,7 @@ fi
 
 # The header delegates the door's behaviour to these unit tests, so the arm has
 # to prove they RUN. Grepping the function name alone left `#[test]` deletable
-# in silence — the review measured the suite dropping from 6 tests to 5 with
+# in silence - the review measured the suite dropping from 6 tests to 5 with
 # this arm still green.
 for t in an_ownerless_log_is_refused_not_served a_stranger_cannot_read_someone_elses_log; do
   if grep -Pzoq "#\[test\]\s*\n\s*fn $t\(" "$HELPERS"; then
@@ -312,7 +312,7 @@ echo
 echo "§6 the owner map stays bounded"
 
 if hasE "$SRC_MAIN" 'if map\.len\(\) *< *before'; then
-  bad "owner pruning is conditional on a TTL eviction again — features self-remove in 30-60s, so that tick almost never fires and the map grows for the life of the process"
+  bad "owner pruning is conditional on a TTL eviction again - features self-remove in 30-60s, so that tick almost never fires and the map grows for the life of the process"
 else
   ok "owner pruning is not gated on the TTL sweep having evicted something"
 fi
@@ -320,14 +320,14 @@ fi
 if has "$SRC_MAIN" 'owners.retain(|id, _| map.contains_key(id))'; then
   ok "owners are pruned against live logs"
 else
-  bad "nothing prunes the owner map — it now gains an entry per provisioning job"
+  bad "nothing prunes the owner map - it now gains an entry per provisioning job"
 fi
 
 # The pruner is the one component that must survive; every other accessor of
 # these maps recovers from poisoning with into_inner(). An `if let Ok` here
 # would let a single panic disable pruning permanently while writers carried on.
 if hasE "$SRC_MAIN" 'if let Ok\(mut map\) = provision\.lock\(\)'; then
-  bad "the cleanup task gives up on a poisoned lock — writers recover, so only the pruner would stop"
+  bad "the cleanup task gives up on a poisoned lock - writers recover, so only the pruner would stop"
 else
   ok "the cleanup task recovers from a poisoned lock like everything else"
 fi
@@ -338,13 +338,13 @@ echo "§7 a refused stream is not drawn as a completed one"
 if has "$SRC_TSX" 'setSevered(true)'; then
   ok "a stream that ends before reporting anything is marked, not assumed complete"
 else
-  bad "an empty stream is silently treated as success — every arm above becomes invisible in the UI"
+  bad "an empty stream is silently treated as success - every arm above becomes invisible in the UI"
 fi
 
 if hasE "$SRC_TSX" 'isComplete *=.*!severed'; then
   ok "the severed case is excluded from the success state"
 else
-  bad "severed is not excluded from isComplete — the green check comes back"
+  bad "severed is not excluded from isComplete - the green check comes back"
 fi
 
 # Without the delay the component unmounts before its own message paints: every
@@ -362,7 +362,7 @@ if [ -n "$ONERR" ]; then
   if has "$ONERR" 'setTimeout(() => onComplete' && [ "$mentions" -eq 1 ]; then
     ok "the severed path defers onComplete, so its message can render first"
   else
-    bad "onComplete fires synchronously on a severed stream ($mentions mention(s)) — the warning never reaches the screen"
+    bad "onComplete fires synchronously on a severed stream ($mentions mention(s)) - the warning never reaches the screen"
   fi
 fi
 
@@ -371,7 +371,7 @@ fi
 if hasE "$SRC_TSX" 'setSevered\(false\)'; then
   ok "state is reset per stream, so a retry is not judged by the last attempt"
 else
-  bad "severed is never cleared — one refused stream pins the component to 'Progress unavailable' forever"
+  bad "severed is never cleared - one refused stream pins the component to 'Progress unavailable' forever"
 fi
 
 echo

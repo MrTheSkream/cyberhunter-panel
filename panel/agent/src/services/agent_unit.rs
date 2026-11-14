@@ -1,4 +1,4 @@
-//! The agent's own systemd unit — one source, reconciled at startup.
+//! The agent's own systemd unit - one source, reconciled at startup.
 //!
 //! # Why this module exists
 //!
@@ -6,9 +6,9 @@
 //! deploy it by copying that exact file, and both derive their pre-`mkdir` list
 //! from its `ReadWritePaths=` line rather than mirroring it (s269). A third
 //! installer did not: `install-agent.sh` hand-wrote its own unit into a
-//! heredoc, and that copy — the one every fleet member in existence is running —
-//! set systemd's four headline protection switches — new-privileges, system,
-//! home and private-tmp — to off, declared no writable path list whatsoever, and
+//! heredoc, and that copy - the one every fleet member in existence is running -
+//! set systemd's four headline protection switches - new-privileges, system,
+//! home and private-tmp - to off, declared no writable path list whatsoever, and
 //! omitted eight further hardening directives the real unit sets, under a
 //! comment reading "Create systemd service (matching local agent hardening)".
 //! It matched nothing. Every remote box the panel manages ran the agent with no
@@ -23,15 +23,15 @@
 //! `install-agent.sh` runs exactly once, at install time, and is served *by the
 //! panel* out of the frontend root. Changing it changes what a **new** fleet
 //! member gets and nothing else, and `agent-self-update.sh` swaps only the
-//! binary — it has never touched the unit. So a corrected installer would have
+//! binary - it has never touched the unit. So a corrected installer would have
 //! reached no box that already exists, which is precisely the shape that kept
 //! the Roundcube fix from arriving for seven sessions.
 //!
 //! The delivery mechanism that *does* already reach every box is the binary
 //! itself, on a six-hourly self-update. So the unit rides the binary:
-//! [`AGENT_UNIT`] is `include_str!`'d from the same file the installers copy —
+//! [`AGENT_UNIT`] is `include_str!`'d from the same file the installers copy -
 //! the discipline `agent-self-update.sh` states in its own header, "compiled
-//! into dockpanel-agent so it cannot drift from the binary that invokes it" —
+//! into dockpanel-agent so it cannot drift from the binary that invokes it" -
 //! and [`heal_agent_unit`] reconciles the on-disk unit against it at startup.
 //!
 //! # Why this cannot brick the fleet
@@ -44,7 +44,7 @@
 //!    entry that does not exist fails the namespace mount and the unit does not
 //!    start at all (`/etc/apt` did exactly this to every RPM-family box, s264).
 //!    `/etc/nginx` is unprefixed and an agent-only box has no nginx, so the
-//!    list is derived and created before the unit is swapped — never mirrored.
+//!    list is derived and created before the unit is swapped - never mirrored.
 //! 2. **PID1 is asked whether it accepted the file.** After `daemon-reload`,
 //!    `systemctl show -p LoadError` reports what systemd actually thinks of the
 //!    unit rather than what we hope; a non-empty `LoadError` restores the
@@ -59,7 +59,7 @@ use std::path::Path;
 /// The canonical unit, compiled in from the file the installers deploy.
 ///
 /// **The single source of this unit's contents.** Nothing else may spell it
-/// out — `install-agent.sh` doing so for eighteen releases is the whole reason
+/// out - `install-agent.sh` doing so for eighteen releases is the whole reason
 /// this module exists.
 pub const AGENT_UNIT: &str = include_str!("../../dockpanel-agent.service");
 
@@ -82,7 +82,7 @@ pub fn read_write_paths(unit: &str) -> Vec<&str> {
 
 /// Bring the on-disk unit up to the compiled-in one.
 ///
-/// Runs at agent startup, so an ordinary binary update is all it takes — which
+/// Runs at agent startup, so an ordinary binary update is all it takes - which
 /// is the point: this is the only path that reaches a box installed by an older
 /// `install-agent.sh`. No-op when the bytes already match, which is every panel
 /// box (`setup.sh` copies the same file) and every fleet member from the second
@@ -101,13 +101,13 @@ pub async fn heal_agent_unit() {
         return;
     }
 
-    // Guard 1 — the namespace mount. Must happen BEFORE the unit is swapped:
+    // Guard 1 - the namespace mount. Must happen BEFORE the unit is swapped:
     // an unprefixed entry that is missing at start makes the agent unstartable,
     // and by then there is no agent left to fix it.
     for dir in read_write_paths(AGENT_UNIT) {
         if !Path::new(dir).exists() {
             if let Err(e) = std::fs::create_dir_all(dir) {
-                tracing::warn!("agent unit heal: could not create {dir}: {e} — not swapping the unit");
+                tracing::warn!("agent unit heal: could not create {dir}: {e} - not swapping the unit");
                 return;
             }
         }
@@ -119,7 +119,7 @@ pub async fn heal_agent_unit() {
     }
     let _ = safe_command("systemctl").arg("daemon-reload").output().await;
 
-    // Guard 2 — ask PID1 what it made of the file, rather than assuming the
+    // Guard 2 - ask PID1 what it made of the file, rather than assuming the
     // write succeeded means the unit is loadable.
     let load_error = safe_command("systemctl")
         .args(["show", "dockpanel-agent", "-p", "LoadError", "--value"])
@@ -131,14 +131,14 @@ pub async fn heal_agent_unit() {
 
     if !load_error.is_empty() {
         tracing::error!(
-            "agent unit heal: systemd rejected the new unit ({load_error}) — restoring the previous one"
+            "agent unit heal: systemd rejected the new unit ({load_error}) - restoring the previous one"
         );
         let _ = std::fs::write(UNIT_PATH, &current);
         let _ = safe_command("systemctl").arg("daemon-reload").output().await;
         return;
     }
 
-    // Guard 3 — deliberately no restart. See the module header.
+    // Guard 3 - deliberately no restart. See the module header.
     tracing::info!(
         "Healed {UNIT_PATH} to the compiled-in unit (sandbox + ReadWritePaths); \
          it takes effect at the next agent restart"
@@ -167,7 +167,7 @@ mod tests {
         ] {
             assert!(
                 AGENT_UNIT.contains(directive),
-                "the compiled-in unit lost {directive} — install-agent.sh's unit \
+                "the compiled-in unit lost {directive} - install-agent.sh's unit \
                  disabled exactly these, and this module exists to stop that shipping again"
             );
         }

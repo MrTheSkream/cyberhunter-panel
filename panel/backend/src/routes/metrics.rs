@@ -21,7 +21,7 @@ pub struct MetricPoint {
     pub recorded_at: chrono::DateTime<chrono::Utc>,
 }
 
-/// GET /api/servers/{id}/metrics — Get performance metrics history.
+/// GET /api/servers/{id}/metrics - Get performance metrics history.
 pub async fn server_metrics(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,

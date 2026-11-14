@@ -65,7 +65,7 @@ export default function Migration() {
   // The admin redirect used to sit above these hooks. That was survivable while
   // every hook was a `useState`, but this page now runs effects on mount, and a
   // conditional return before them makes the hook count differ between the
-  // render where `user` is still loading and the one after it — React's
+  // render where `user` is still loading and the one after it - React's
   // "rendered more hooks than during the previous render". The guard moved
   // below the hooks; the redirect is unchanged.
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
@@ -80,13 +80,13 @@ export default function Migration() {
   const [selectedDbs, setSelectedDbs] = useState<Set<string>>(new Set());
   // Which site each selected database belongs to, keyed by database name. A
   // database row cannot exist without a site, and a control-panel archive does
-  // not record the pairing — so it is the operator's to state. Left empty when
+  // not record the pairing - so it is the operator's to state. Left empty when
   // there is exactly one site to choose, because then there is nothing to ask.
   const [dbSites, setDbSites] = useState<Record<string, string>>({});
   const [progress, setProgress] = useState<ProgressStep[]>([]);
   const [importing, setImporting] = useState(false);
   const [analyzingId, setAnalyzingId] = useState<string | null>(null);
-  // When the run began, not when this tab started watching it — a resumed
+  // When the run began, not when this tab started watching it - a resumed
   // analysis has to show the age of the work, not the age of the page.
   const [startedAt, setStartedAt] = useState(0);
   const [elapsed, setElapsed] = useState(0);
@@ -94,7 +94,7 @@ export default function Migration() {
   const eventSourceRef = useRef<EventSource | null>(null);
   // The mount fetch below and the Analyze button both want to own `analyzingId`.
   // A fast click beats the fetch, and the resume would then quietly replace the
-  // run the operator just started with an older one — same page, same spinner,
+  // run the operator just started with an older one - same page, same spinner,
   // wrong migration. A ref, not state: the resume's callback closed over its
   // render and would never see a state update made after it began.
   const startedHere = useRef(false);
@@ -119,11 +119,11 @@ export default function Migration() {
     setStep(2);
   };
 
-  // Step 1: Analyze — accepted, then polled.
+  // Step 1: Analyze - accepted, then polled.
   //
   // This used to hold one request open for the whole analysis, which is minutes
   // for any real cPanel account. Every gateway in front of the panel gives up
-  // sooner than that, so the browser was shown a timeout — issue #91's `Request
+  // sooner than that, so the browser was shown a timeout - issue #91's `Request
   // failed (524)`, which is this file's own fallback message rendering a
   // Cloudflare error page that carried no JSON to read. The work always
   // continued on the server; nothing was ever able to come back and say so.
@@ -156,7 +156,7 @@ export default function Migration() {
 
   // Poll the record until it stops saying `analyzing`. The verdict lives in the
   // row rather than in this component, so a refused poll is a network blip and
-  // not an answer — keep asking. The run is bounded on the agent side, so this
+  // not an answer - keep asking. The run is bounded on the agent side, so this
   // always terminates.
   useEffect(() => {
     if (!analyzingId) return;
@@ -171,11 +171,11 @@ export default function Migration() {
         const rec = await api.get<MigrationRecord>(`/migration/${analyzingId}`);
         if (!stopped && rec.status !== "analyzing") settleAnalysis(rec);
       } catch (e) {
-        // A transient failure is not an answer — the row outlives this tab, so
+        // A transient failure is not an answer - the row outlives this tab, so
         // keep asking. A 404 or a 403 is: the record is gone, or is not ours, and
         // no amount of asking changes that. Without this the spinner turned
         // forever over a run that no longer existed, which is a different way of
-        // telling the operator nothing — and the shape #91 was reported for.
+        // telling the operator nothing - and the shape #91 was reported for.
         if (e instanceof ApiError && (e.status === 403 || e.status === 404)) {
           setAnalyzingId(null);
           setAnalyzing(false);
@@ -206,7 +206,7 @@ export default function Migration() {
         const recent = await api.get<MigrationRecord[]>("/migration");
         // Scoped to the server the operator is looking at. The list is per-user
         // and not per-server, so on a fleet this would otherwise adopt a run on
-        // a different machine and present it as this one's — with a path from
+        // a different machine and present it as this one's - with a path from
         // that server's filesystem in the field.
         const activeServer = localStorage.getItem("dp-active-server");
         const live = recent.find(
@@ -230,7 +230,7 @@ export default function Migration() {
   }, [isAdmin]);
 
   // The sites this run will create, which are the only ones a database imported
-  // alongside them can be attached to — plus whatever the operator has already.
+  // alongside them can be attached to - plus whatever the operator has already.
   const selectedSiteDomains = migration?.inventory
     ? migration.inventory.sites.filter((s) => selectedSites.has(s.domain)).map((s) => s.domain)
     : [];
@@ -303,7 +303,7 @@ export default function Migration() {
     return () => { eventSourceRef.current?.close(); };
   }, []);
 
-  // Every hook above this line, without exception — see the note at the top.
+  // Every hook above this line, without exception - see the note at the top.
   if (!isAdmin) return <Navigate to="/" replace />;
 
   const inv = migration?.inventory;
@@ -313,12 +313,12 @@ export default function Migration() {
       <div>
         <h1 className="text-2xl font-bold text-dark-50 font-mono">Migration Wizard</h1>
         {/* "and email" used to be here. It was never true: there is no mail import
-            route and no mail import function — the request body carries only `sites`
+            route and no mail import function - the request body carries only `sites`
             and `databases`. cPanel archives are PARSED for mail accounts so the
             wizard can list them, and Plesk and HestiaCP do not even do that. The
             screen already said so 160 lines below, under the inventory. A header
             that promises what its own body retracts is worse than silence. #107. */}
-        <p className="text-sm text-dark-300 mt-1">Import sites and databases from cPanel, Plesk, or HestiaCP — mail accounts are listed for reference, not moved</p>
+        <p className="text-sm text-dark-300 mt-1">Import sites and databases from cPanel, Plesk, or HestiaCP - mail accounts are listed for reference, not moved</p>
       </div>
 
       {/* Step indicator */}
@@ -327,7 +327,7 @@ export default function Migration() {
           <div key={s} className={`flex items-center gap-1 ${step >= s ? "text-rust-400" : "text-dark-400"}`}>
             <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${step >= s ? "bg-rust-500 text-dark-950" : "bg-dark-700 text-dark-400"}`}>{s}</div>
             <span className="hidden sm:inline">{["Source", "Review", "Import", "Done"][s - 1]}</span>
-            {s < 4 && <span className="text-dark-600 mx-1">&mdash;</span>}
+            {s < 4 && <span className="text-dark-600 mx-1">-</span>}
           </div>
         ))}
       </div>
@@ -400,7 +400,7 @@ export default function Migration() {
                   className="w-full px-3 py-2 bg-dark-900 border border-dark-600 rounded-lg text-dark-50 text-sm focus:border-rust-500 focus:outline-none font-mono"
                 />
                 <p className="text-xs text-dark-400 mt-1">
-                  The server downloads the archive itself — no SFTP step needed. HTTP(S) only, and
+                  The server downloads the archive itself - no SFTP step needed. HTTP(S) only, and
                   the URL must not resolve to an internal or private address.
                 </p>
               </>
@@ -429,7 +429,7 @@ export default function Migration() {
                   <span className="font-mono text-dark-200">{fmtElapsed(elapsed)}</span>
                 </p>
                 <p className="text-xs text-dark-400 mt-1">
-                  A full cPanel account takes minutes. This runs on the server, not in this tab —
+                  A full cPanel account takes minutes. This runs on the server, not in this tab -
                   you can leave the page and come back, and closing the browser will not stop it.
                 </p>
               </div>
@@ -504,7 +504,7 @@ export default function Migration() {
                       <span className="text-sm text-dark-50 font-mono">{d.name}</span>
                       <span className="text-xs text-dark-400 ml-2">{d.engine} &middot; {fmtSize(d.size_bytes)}</span>
                     </div>
-                    {/* A database belongs to a site — the archive does not say
+                    {/* A database belongs to a site - the archive does not say
                         which, so this is the only place the answer can come
                         from. Shown only when there is a choice to make. */}
                     {selectedDbs.has(d.name) && selectedSiteDomains.length > 1 && (
@@ -527,7 +527,7 @@ export default function Migration() {
               {selectedDbs.size > 0 && selectedSiteDomains.length === 0 && (
                 <p className="text-xs text-warn-400 mt-3">
                   A database has to belong to a site. Select at least one site above, or import the
-                  site first and run this again — otherwise these databases will be refused.
+                  site first and run this again - otherwise these databases will be refused.
                 </p>
               )}
               {selectedSiteDomains.length === 1 && selectedDbs.size > 0 && (
@@ -633,7 +633,7 @@ export default function Migration() {
 
           <div className="flex gap-3">
             {/* `Link`, not `<a href>`: an anchor to an in-app route reloads the
-                whole SPA — it discards the router, refetches the bundle and
+                whole SPA - it discards the router, refetches the bundle and
                 throws away the migration result the operator is looking at. */}
             <Link to="/sites" className="px-4 py-2 bg-rust-500 text-dark-950 rounded-lg text-sm font-bold hover:bg-rust-400 transition-colors">
               View Sites

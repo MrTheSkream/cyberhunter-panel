@@ -1,23 +1,23 @@
 //! The one place a domain is claimed.
 //!
 //! Before this module there were eleven paths that could cause a vhost to be
-//! written — sites create/rename/clone/alias, staging, migration import, git
+//! written - sites create/rename/clone/alias, staging, migration import, git
 //! deploy create/update, git preview, and Docker app deploy in both nginx and
-//! Traefik mode — and each carried its own subset of the guards. `sites.rs` even
+//! Traefik mode - and each carried its own subset of the guards. `sites.rs` even
 //! had a shared helper whose doc comment said it existed "so the guard set
 //! create() enforces cannot drift"; two of the eleven called it.
 //!
 //! What the drift cost, measured against v2.51.0:
 //!
 //! * A Docker app's domain lives only in the `dockpanel.app.domain` container
-//!   label, so **no** SQL guard could ever see it — creating or renaming a site
+//!   label, so **no** SQL guard could ever see it - creating or renaming a site
 //!   onto a domain an app owned passed every check, and the agent then replaced
 //!   the app's vhost.
 //! * `docker_apps::deploy` checked nothing at all: not the reserved control-plane
 //!   domain, not `sites`, not `git_deploys`.
 //! * `git_deploys::update` dropped both conflict queries its own `create`
 //!   performs, under a comment claiming parity with it.
-//! * `staging::create` — the tenant-reachable one — consulted only `sites`.
+//! * `staging::create` - the tenant-reachable one - consulted only `sites`.
 //! * Domain comparison was case-sensitive while the reserved check was not, so
 //!   `EXAMPLE.com` walked past a row holding `example.com`.
 //!
@@ -48,7 +48,7 @@ use crate::routes::{is_reserved_domain_for, is_valid_domain};
 /// never needs to be excluded from its own claim.
 #[derive(Debug, Clone, Copy, Default)]
 pub enum Holder {
-    /// A brand-new claim — nothing may hold this domain.
+    /// A brand-new claim - nothing may hold this domain.
     #[default]
     New,
     /// The `sites` row with this id may hold it.
@@ -61,7 +61,7 @@ pub enum Holder {
     Stack(Uuid),
 }
 
-/// What already holds a domain. Carried so the error can name it — "in use" with
+/// What already holds a domain. Carried so the error can name it - "in use" with
 /// no owner is the sentence that made these collisions hard to diagnose.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Occupant {
@@ -70,7 +70,7 @@ pub enum Occupant {
     DockerApp,
     Stack,
     /// A `mail_domains` row. Unlike every variant above this one holds no vhost,
-    /// so it is not a nginx collision — it is an AUTHORISATION collision, and it
+    /// so it is not a nginx collision - it is an AUTHORISATION collision, and it
     /// is tolerated for an administrator. See [`may_claim_mail_held`].
     MailDomain,
 }
@@ -82,11 +82,11 @@ impl Occupant {
             Occupant::GitDeploy => "Domain already in use by a git deployment",
             Occupant::DockerApp => {
                 "Domain already in use by a Docker app. Rename or remove the app \
-                 first — deploying over it would replace its nginx configuration."
+                 first - deploying over it would replace its nginx configuration."
             }
             Occupant::MailDomain => {
                 "Domain already in use by a mail domain. Ask an administrator to \
-                 create the site and transfer it to you — claiming a name whose \
+                 create the site and transfer it to you - claiming a name whose \
                  mailboxes already exist would hand you those mailboxes."
             }
             Occupant::Stack => {
@@ -101,7 +101,7 @@ impl Occupant {
 ///
 /// Deliberately a `const` rather than a literal at each comparison: the value
 /// also lives in a database CHECK constraint and in the user editor, and a role
-/// string that means "deny" is the worst possible thing to typo — a misspelling
+/// string that means "deny" is the worst possible thing to typo - a misspelling
 /// does not fail, it silently grants.
 pub const CLIENT_ROLE: &str = "client";
 
@@ -115,7 +115,7 @@ pub const CLIENT_ROLE: &str = "client";
 ///
 /// Putting it HERE rather than at each creating handler is the whole design.
 /// This module exists because eleven domain-introducing paths each carried their
-/// own subset of guards and drifted apart — the header above lists what that
+/// own subset of guards and drifted apart - the header above lists what that
 /// cost. Four role checks bolted onto the four `INSERT INTO sites` sites would
 /// have rebuilt exactly that: `git_deploys`, `docker_apps` and `stacks` all
 /// materialise a served vhost without ever inserting into `sites`, so a client
@@ -133,7 +133,7 @@ pub fn may_claim_new(role: &str, holder: Holder) -> bool {
 ///
 /// **Why it exists.** Mail is scoped by matching `mail_domains.domain` against
 /// the domain of a site the caller owns (GitHub #106). That makes `sites.domain`
-/// an authorisation key — and `sites.domain` is WRITABLE by the account being
+/// an authorisation key - and `sites.domain` is WRITABLE by the account being
 /// authorised. Without this, a non-administrator could point a site they already
 /// own at a domain whose mailboxes exist, and the match would then hand them
 /// every mailbox and alias on it, including the power to replace each password
@@ -143,7 +143,7 @@ pub fn may_claim_new(role: &str, holder: Holder) -> bool {
 /// it refuses only the introduction of a brand-new name. This one cannot: a
 /// plain `user` may create sites freely, so leaving them out would close the
 /// rename door and leave the create door beside it open. Every non-admin role is
-/// refused, which is also why the message points at the transfer flow — an
+/// refused, which is also why the message points at the transfer flow - an
 /// administrator creating the site and handing it over is the documented way to
 /// give somebody a domain whose mail already exists, and it stays open.
 ///
@@ -169,12 +169,12 @@ pub fn normalise(domain: &str) -> String {
 /// Assert that `domain` may be claimed anywhere in the fleet, and return the
 /// normalised form to store.
 ///
-/// Order matters: format, then reserved, then ownership — a malformed domain
+/// Order matters: format, then reserved, then ownership - a malformed domain
 /// should be reported as malformed rather than as available.
 ///
 /// **Fleet-wide, on every leg.** It takes the registry rather than one agent
 /// because the Docker-app leg used to ask only the caller's host while the three
-/// SQL legs were fleet-wide — and an app's domain is invisible to SQL, so that
+/// SQL legs were fleet-wide - and an app's domain is invisible to SQL, so that
 /// leg was the only thing that could ever catch it.
 ///
 /// **Reachability:** an online member that will not answer is logged by name and
@@ -215,7 +215,7 @@ pub async fn ensure_claimable(
     if let Some(occupant) = find_occupant(db, agents, &domain, holder).await? {
         // A mail domain is the one occupant an administrator may claim over,
         // because a site and its mailboxes SHARING a name is the arrangement the
-        // mail entitlement is built on (#106) — refusing it outright would break
+        // mail entitlement is built on (#106) - refusing it outright would break
         // the ordinary "set the mail up first, add the website after" order.
         //
         // Reported by `find_occupant` LAST, deliberately, so this tolerance can
@@ -296,10 +296,10 @@ pub async fn find_occupant(
 
     // The leg that could not exist before: Docker apps are not rows. The agent
     // reads `dockpanel.app.domain` off each managed container and already returns
-    // it from `GET /apps` — a single `docker.list_containers`, on the 20-permit
+    // it from `GET /apps` - a single `docker.list_containers`, on the 20-permit
     // quick lane, not the long one. The panel simply never asked.
     //
-    // ⚠ It asked exactly ONE host until v2.80.0 — the caller's — while all three
+    // ⚠ It asked exactly ONE host until v2.80.0 - the caller's - while all three
     // SQL legs above are deliberately fleet-wide, and the comment justifying that
     // ("the agent handle is already scoped to this server") described the code
     // accurately while missing that scoping was the defect. A domain held by an
@@ -310,7 +310,7 @@ pub async fn find_occupant(
     // A member we cannot reach is reported and skipped rather than treated as a
     // refusal. Failing closed would make one offline box block every domain
     // claim in the fleet, and the collision it would prevent needs the SAME host
-    // to be both the unreachable one and the claim's target — in which case the
+    // to be both the unreachable one and the claim's target - in which case the
     // vhost write that follows fails on its own. Failing open silently is what
     // produced this bug, so it does not fail open silently.
     for member in agents.online_fleet().await {
@@ -318,7 +318,7 @@ pub async fn find_occupant(
             Ok(v) => v,
             Err(e) => {
                 tracing::warn!(
-                    "Domain availability: could not ask {} about Docker-app domains ({e}) — \
+                    "Domain availability: could not ask {} about Docker-app domains ({e}) - \
                      '{domain}' is being treated as free there",
                     member.name
                 );
@@ -338,7 +338,7 @@ pub async fn find_occupant(
     }
 
     // Mail domains hold a name without holding a vhost, and this function never
-    // asked about them — so a domain could be held by `mail_domains` and claimed
+    // asked about them - so a domain could be held by `mail_domains` and claimed
     // by a site at the same time, which is precisely the two-owners state the
     // module exists to prevent. It went unnoticed because the collision has no
     // nginx symptom: a mail-only domain has no vhost to overwrite.
@@ -349,7 +349,7 @@ pub async fn find_occupant(
     // a holder that must always refuse. Returning it last makes that structural:
     // every vhost holder has already had its say.
     //
-    // Fleet-wide like the three legs above, and `lower()` for the same reason —
+    // Fleet-wide like the three legs above, and `lower()` for the same reason -
     // `mail::create_domain` lowercases before storing, but the comparison must
     // not depend on a convention enforced somewhere else.
     let mail: Option<(Uuid,)> =
@@ -391,7 +391,7 @@ mod tests {
         assert_ne!(normalise("example.com"), normalise("example.net"));
     }
 
-    // ── the client gate — s312 / GitHub #51 ─────────────────────────────
+    // ── the client gate - s312 / GitHub #51 ─────────────────────────────
 
     #[test]
     fn a_client_may_not_bring_a_new_domain_into_service() {
@@ -417,7 +417,7 @@ mod tests {
         for role in ["admin", "reseller", "user", "suspended", ""] {
             assert!(
                 may_claim_new(role, Holder::New),
-                "role {role:?} must still be able to claim a new domain here — \
+                "role {role:?} must still be able to claim a new domain here - \
                  whether it may act at all is decided by its own handler's guard"
             );
         }
@@ -432,14 +432,14 @@ mod tests {
         for near in ["Client", "CLIENT", "clients", "client ", " client"] {
             assert!(
                 may_claim_new(near, Holder::New),
-                "{near:?} is not the role value — if this ever becomes a client, \
+                "{near:?} is not the role value - if this ever becomes a client, \
                  the value has drifted from the migration and the editor"
             );
         }
         assert_eq!(CLIENT_ROLE, "client");
     }
 
-    // ── the mail gate — s347 / GitHub #106 ──────────────────────────────
+    // ── the mail gate - s347 / GitHub #106 ──────────────────────────────
 
     #[test]
     fn only_an_administrator_may_claim_a_domain_a_mail_domain_holds() {
@@ -447,7 +447,7 @@ mod tests {
         for role in ["client", "user", "reseller", "suspended", ""] {
             assert!(
                 !may_claim_mail_held(role),
-                "role {role:?} must not claim a name whose mailboxes exist — the \
+                "role {role:?} must not claim a name whose mailboxes exist - the \
                  mail entitlement matches on the site's domain, so allowing it \
                  would let the account mint its own access to those mailboxes"
             );
@@ -492,7 +492,7 @@ mod tests {
     #[test]
     fn every_occupant_names_what_holds_the_domain() {
         // "In use" with no owner is the sentence that made these collisions hard
-        // to diagnose — the reason `Occupant` is carried at all.
+        // to diagnose - the reason `Occupant` is carried at all.
         for occupant in [
             Occupant::Site,
             Occupant::GitDeploy,

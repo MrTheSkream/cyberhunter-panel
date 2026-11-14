@@ -23,14 +23,14 @@ struct SettingRow {
 /// while its comment claimed it used "the same whitelist as update()".
 ///
 /// A key belongs here when an operator is meant to change it. Every entry must
-/// also have a control in the panel — `tests/settings-controls-pin-e2e.sh` §9
+/// also have a control in the panel - `tests/settings-controls-pin-e2e.sh` §9
 /// fails when one does not, and §1 fails when a key here is read by nothing.
 ///
 /// The §9 half of that sentence was untrue from s276 until v2.48.0: the suite
 /// computed the frontend's key list into a variable and never read it, so this
-/// comment described a check that did not exist while fourteen keys — the OAuth
+/// comment described a check that did not exist while fourteen keys - the OAuth
 /// client credentials, the notification templates, the Stripe price IDs and
-/// hide_branding — were settable only by hand-crafting a PUT.
+/// hide_branding - were settable only by hand-crafting a PUT.
 pub const ALLOWED_KEYS: &[&str] = &[
     "panel_name", "smtp_host", "smtp_port", "smtp_username", "smtp_password",
     "smtp_from", "smtp_from_name", "smtp_encryption",
@@ -63,7 +63,7 @@ pub const ALLOWED_KEYS: &[&str] = &[
     // The same class again, found in the v2.110.0 door census: the panel's own
     // public URL, read by services/notifications.rs to build the "Open runbook"
     // link every alert carries. It was read from this table, absent from this
-    // list, and absent from the settings page — so the lookup fell through to a
+    // list, and absent from the settings page - so the lookup fell through to a
     // BASE_URL env var and then to the empty string, and the payload builder
     // answers an empty base by omitting the link rather than by failing. Every
     // alert therefore shipped without its runbook link, on every install that
@@ -82,40 +82,40 @@ pub const ALLOWED_KEYS: &[&str] = &[
     // Read by services/ai_diagnosis.rs.
     "ai_diagnosis_enabled", "ai_diagnosis_provider", "ai_diagnosis_model", "ai_diagnosis_api_key",
     // MCP server (dockpanel-mcp, panel/mcp). Unlike ai_diagnosis_enabled, nothing
-    // in the backend or the MCP crate reads these yet — the MCP server's actual
+    // in the backend or the MCP crate reads these yet - the MCP server's actual
     // on/off state is the systemd unit and its bind address is /etc/dockpanel/
     // mcp.env's own LISTEN_ADDR, both set by hand on the host, outside this
     // table entirely. These two keys are a record an operator fills in so the
-    // Settings page can show accurate status instead of nothing — not a live
+    // Settings page can show accurate status instead of nothing - not a live
     // switch. Settings.tsx's McpServerSettings card says so explicitly.
     "mcp_server_enabled", "mcp_bind_mode",
 ];
 
 /// Settings keys masked in the GET response and encrypted at rest, alongside
 /// every key ending `_client_secret`. Used to be declared separately, once
-/// inside `update` and once inside `import_config` — the two happened to
+/// inside `update` and once inside `import_config` - the two happened to
 /// still match, but nothing tied them together, the exact severed-pair shape
 /// `services::credential_reencrypt`'s own header warns about. `pub(crate)` so
 /// that module can also assert its `SENSITIVE_SETTINGS_SQL` predicate covers
 /// every key here, rather than hand-duplicating this list a third time.
 // AI diagnosis's BYO API key joins the encrypted-at-rest set alongside
-// smtp_password/pdns_api_key — `credential_reencrypt`'s own
+// smtp_password/pdns_api_key - `credential_reencrypt`'s own
 // `sensitive_settings_sql_covers_settings_keys` test fails to compile a
 // passing case until `SENSITIVE_SETTINGS_SQL` there names it too.
 pub(crate) const SENSITIVE_KEYS: &[&str] = &["smtp_password", "pdns_api_key", "ai_diagnosis_api_key"];
 
 /// Whether a settings key should be masked in the GET response / encrypted at
-/// rest — `SENSITIVE_KEYS` plus every `_client_secret` key. Previously
+/// rest - `SENSITIVE_KEYS` plus every `_client_secret` key. Previously
 /// `list()` hand-duplicated this as five hardcoded key-name comparisons, a
 /// second copy of the same list `update`'s encryption check already
-/// maintained via this predicate — so a key added to `SENSITIVE_KEYS` alone
+/// maintained via this predicate - so a key added to `SENSITIVE_KEYS` alone
 /// (as `ai_diagnosis_api_key` was) would encrypt correctly on write but come
 /// back as raw ciphertext, not `********`, on read.
 fn is_sensitive_key(key: &str) -> bool {
     SENSITIVE_KEYS.contains(&key) || key.ends_with("_client_secret")
 }
 
-/// GET /api/settings — Returns all settings as a key/value map (admin only).
+/// GET /api/settings - Returns all settings as a key/value map (admin only).
 pub async fn list(
     State(state): State<AppState>,
     AdminUser(_claims): AdminUser,
@@ -140,15 +140,15 @@ pub async fn list(
     Ok(Json(map))
 }
 
-/// PUT /api/settings — Upsert settings from key/value map (admin only).
+/// PUT /api/settings - Upsert settings from key/value map (admin only).
 ///
-/// No `ServerScope`. Every key in `ALLOWED_KEYS` is panel-global — there is one
-/// `settings` table and no per-server variant of any row in it — so the caller's
+/// No `ServerScope`. Every key in `ALLOWED_KEYS` is panel-global - there is one
+/// `settings` table and no per-server variant of any row in it - so the caller's
 /// `X-Server-Id` header never had a bearing on what this handler writes. It did
 /// have two effects, both wrong. It decided which single host received the SMTP
 /// configuration below, including the decrypted password; and because
 /// `ServerScope` resolves the agent eagerly and fails the request when it can't,
-/// saving ANY setting — a panel rename, a security toggle — returned 502 whenever
+/// saving ANY setting - a panel rename, a security toggle - returned 502 whenever
 /// the member selected in the server picker happened to be down.
 pub async fn update(
     State(state): State<AppState>,
@@ -205,7 +205,7 @@ pub async fn update(
 
     // Validate the retention windows: each must be a positive integer day-count,
     // else `run_retention_cleanup`'s `key LIKE 'retention_%'` reader would silently
-    // fall back to its default on a bad value — reject it here instead so the
+    // fall back to its default on a bad value - reject it here instead so the
     // operator finds out immediately.
     for key in [
         "retention_activity_days", "retention_system_log_days", "retention_alert_days",
@@ -235,7 +235,7 @@ pub async fn update(
     let mut tx = state.db.begin().await
         .map_err(|e| internal_error("update settings", e))?;
 
-    // Sensitive keys that are masked in the GET response — skip if value is the mask sentinel.
+    // Sensitive keys that are masked in the GET response - skip if value is the mask sentinel.
     // `is_sensitive_key` is the module-level predicate above, not a local copy.
     for (key, value) in &body {
         // Don't overwrite real secrets with the mask placeholder
@@ -301,7 +301,7 @@ pub async fn update(
                 "username": map.get("smtp_username").cloned().unwrap_or_default(),
                 "password": smtp_password,
                 "from": map.get("smtp_from").cloned().unwrap_or_default(),
-                "from_name": map.get("smtp_from_name").cloned().unwrap_or_else(|| "DockPanel".to_string()),
+                "from_name": map.get("smtp_from_name").cloned().unwrap_or_else(|| "CyberHunter - Panel".to_string()),
                 "encryption": map.get("smtp_encryption").cloned().unwrap_or_else(|| "starttls".to_string()),
             });
 
@@ -362,7 +362,7 @@ impl SmtpPush {
             parts.push(format!("never reached {}", listed(&self.not_asked)));
         }
         Some(format!(
-            "SMTP settings saved, but they reached only {} of {} servers — {}. \
+            "SMTP settings saved, but they reached only {} of {} servers - {}. \
              Mail sent from the others will keep using whatever they were last given; \
              save SMTP again once they are back online.",
             self.configured.len(),
@@ -390,7 +390,7 @@ impl SmtpPush {
 /// the single agent `ServerScope` resolved from the caller's `X-Server-Id`
 /// header, which produced both halves of the same defect: the DECRYPTED password
 /// landed on whichever box the browser happened to have in its picker, and every
-/// other member was never configured at all — so mail from those hosts failed for
+/// other member was never configured at all - so mail from those hosts failed for
 /// ever, reported by nothing but a `tracing::warn!`. Same shape as
 /// `mail::sync_mail_config`, which syncs Postfix maps to one header-chosen host.
 ///
@@ -398,7 +398,7 @@ impl SmtpPush {
 /// re-pushes on check-in or on server registration, so a member that is offline
 /// at save time stays unconfigured until an operator saves SMTP again. That is
 /// precisely why a host that could not be asked comes back as a named result
-/// instead of being skipped quietly — the report is the only reconciliation there
+/// instead of being skipped quietly - the report is the only reconciliation there
 /// is.
 async fn push_smtp_to_fleet(state: &AppState, agent_body: serde_json::Value) -> SmtpPush {
     let fleet = state.agents.online_fleet().await;
@@ -427,7 +427,7 @@ async fn push_smtp_to_fleet(state: &AppState, agent_body: serde_json::Value) -> 
     // it skips the rest rather than substituting, which is right for a background
     // loop and not enough here. An operator pressing Save is entitled to know that
     // a registered server was left out, so the ones it skipped are counted by
-    // difference — no second predicate to drift away from the first.
+    // difference - no second predicate to drift away from the first.
     let asked: Vec<uuid::Uuid> = fleet.iter().map(|m| m.id).collect();
     push.not_asked = sqlx::query_as(
         "SELECT name, status FROM servers WHERE NOT (id = ANY($1)) ORDER BY name",
@@ -440,7 +440,7 @@ async fn push_smtp_to_fleet(state: &AppState, agent_body: serde_json::Value) -> 
     push
 }
 
-/// POST /api/settings/smtp/test — Send a test email (admin only).
+/// POST /api/settings/smtp/test - Send a test email (admin only).
 ///
 /// Deliberately single-host, unlike the save above, and that is a difference in
 /// the QUESTION rather than an inconsistency. Saving is a fleet-wide change and
@@ -472,10 +472,10 @@ pub async fn test_email(
 
     let map: HashMap<String, String> = rows.into_iter().map(|r| (r.key, r.value)).collect();
     let from = map.get("smtp_from").cloned().unwrap_or_default();
-    let from_name = map.get("smtp_from_name").cloned().unwrap_or_else(|| "DockPanel".to_string());
+    let from_name = map.get("smtp_from_name").cloned().unwrap_or_else(|| "CyberHunter - Panel".to_string());
 
     if from.is_empty() {
-        return Err(err(StatusCode::BAD_REQUEST, "SMTP not configured — save SMTP settings first"));
+        return Err(err(StatusCode::BAD_REQUEST, "SMTP not configured - save SMTP settings first"));
     }
 
     let agent_body = serde_json::json!({
@@ -518,7 +518,7 @@ pub async fn test_email(
     })))
 }
 
-/// POST /api/settings/test-webhook — Test Slack/Discord webhook
+/// POST /api/settings/test-webhook - Test Slack/Discord webhook
 pub async fn test_webhook(
     State(_state): State<AppState>,
     AdminUser(_claims): AdminUser,
@@ -535,16 +535,16 @@ pub async fn test_webhook(
     // addresses (admin-triggered, but defense-in-depth + parity with the send path).
     //
     // Pinned to the address this check approves, via a fresh client built for
-    // THIS request — a shared client's own resolver would otherwise look
+    // THIS request - a shared client's own resolver would otherwise look
     // `url`'s host up a second, independent time for the real connection,
     // reopening the validate/connect gap the check above exists to close.
     let (host, port) = crate::helpers::url_authority(url)
         .map_err(|e| err(StatusCode::BAD_REQUEST, &format!("Invalid webhook URL: {e}")))?;
 
     let payload = if service == "slack" {
-        serde_json::json!({ "text": "DockPanel test notification — your Slack webhook is working!" })
+        serde_json::json!({ "text": "CyberHunter - Panel test notification - your Slack webhook is working!" })
     } else {
-        serde_json::json!({ "content": "DockPanel test notification — your Discord webhook is working!" })
+        serde_json::json!({ "content": "CyberHunter - Panel test notification - your Discord webhook is working!" })
     };
 
     let client = crate::helpers::pinned_client(
@@ -568,7 +568,7 @@ pub async fn test_webhook(
     Ok(Json(serde_json::json!({ "ok": true, "message": format!("{} test sent", service) })))
 }
 
-/// GET /api/branding — Public branding configuration (for login page + authenticated users).
+/// GET /api/branding - Public branding configuration (for login page + authenticated users).
 /// Returns reseller branding if user belongs to one, otherwise global settings.
 pub async fn branding(
     State(state): State<AppState>,
@@ -584,7 +584,7 @@ pub async fn branding(
 
     let map: HashMap<String, String> = rows.into_iter().collect();
 
-    let global_name = map.get("panel_name").cloned().unwrap_or_else(|| "DockPanel".into());
+    let global_name = map.get("panel_name").cloned().unwrap_or_else(|| "CyberHunter - Panel".into());
     let global_logo = map.get("logo_url").cloned().unwrap_or_default();
     let global_accent = map.get("accent_color").cloned().unwrap_or_default();
     let global_hide = map.get("hide_branding").map(|v| v == "true").unwrap_or(false);
@@ -604,7 +604,7 @@ pub async fn branding(
         });
 
     if let Some(token) = token {
-        // Try to decode JWT — ignore errors (unauthenticated users just get global branding)
+        // Try to decode JWT - ignore errors (unauthenticated users just get global branding)
         let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::HS256);
         validation.validate_exp = true;
         validation.leeway = 0;
@@ -681,7 +681,7 @@ pub async fn branding(
     })))
 }
 
-/// GET /api/settings/export — Export all panel settings, alert rules, monitors,
+/// GET /api/settings/export - Export all panel settings, alert rules, monitors,
 /// backup schedules, and backup policies as JSON (Gap #71).
 pub async fn export_config(
     State(state): State<AppState>,
@@ -741,7 +741,7 @@ pub async fn export_config(
         })
     }).collect();
 
-    // Gap #71: Export monitors (name, url, type, interval, keyword — no secrets)
+    // Gap #71: Export monitors (name, url, type, interval, keyword - no secrets)
     let monitor_rows = sqlx::query(
         "SELECT name, url, monitor_type, check_interval, keyword \
          FROM monitors WHERE user_id = $1 ORDER BY name"
@@ -815,7 +815,7 @@ pub async fn export_config(
     })))
 }
 
-/// POST /api/settings/import — Import panel settings from JSON.
+/// POST /api/settings/import - Import panel settings from JSON.
 pub async fn import_config(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -825,7 +825,7 @@ pub async fn import_config(
     let settings_obj = body.get("settings").and_then(|s| s.as_object())
         .ok_or_else(|| err(StatusCode::BAD_REQUEST, "Invalid format: missing 'settings' object"))?;
 
-    // Filter imported settings through the same whitelist as update() — literally
+    // Filter imported settings through the same whitelist as update() - literally
     // the same list now, not a second copy that drifts away from it.
     let allowed_keys = ALLOWED_KEYS;
 
@@ -879,7 +879,7 @@ pub async fn import_config(
             let alert_offline = rule.get("alert_offline").and_then(|v| v.as_bool()).unwrap_or(true);
             // ⚠ `true`, matching the schema. `alerting_system.sql` declares all
             // three `NOT NULL DEFAULT TRUE`, and the four fields above already
-            // default the way the schema does — these three defaulted FALSE, so a
+            // default the way the schema does - these three defaulted FALSE, so a
             // config written by an older version, hand-edited, or produced by
             // anything but this build's own export silently switched off backup,
             // SSL-expiry and service-health alerting on import. Nothing said so:
@@ -896,7 +896,7 @@ pub async fn import_config(
             // pages about. Kept verbatim it would suppress nothing while reading
             // back as though it worked, so drop the dead tokens and count them.
             // The live edit path rejects instead; here the convention this
-            // handler already states for monitors applies — salvage the row
+            // handler already states for monitors applies - salvage the row
             // rather than fail the whole restore over one stale token.
             let muted_raw = rule.get("muted_types").and_then(|v| v.as_str()).unwrap_or("");
             let dead = crate::services::notifications::unknown_suppressible_types(muted_raw);
@@ -978,7 +978,7 @@ pub async fn import_config(
 
             if !name.is_empty() && !url.is_empty() {
                 // SSRF: validate the URL for any monitor type that will be HTTP-fetched by
-                // the uptime dispatcher (anything except tcp/ping/heartbeat — see
+                // the uptime dispatcher (anything except tcp/ping/heartbeat - see
                 // uptime.rs check dispatcher's default arm), parity with the create path
                 // which the import loop otherwise bypasses. Skip an offending row rather
                 // than failing the whole import. (check_http also re-validates at run time.)
@@ -1097,19 +1097,19 @@ pub async fn import_config(
     })))
 }
 
-/// GET /api/settings/health — System health check (admin only).
+/// GET /api/settings/health - System health check (admin only).
 /// The agent release in which the terminal-recording toggle began to be honoured.
 /// Before it, the agent opened a `.cast` for every session unconditionally and the
 /// panel had no way to tell it otherwise.
 const RECORDING_GATE_MIN_AGENT: &str = "2.46.0";
 
-/// GET /api/settings/recording-coverage — which registered servers will actually
+/// GET /api/settings/recording-coverage - which registered servers will actually
 /// obey the terminal session-recording toggle.
 ///
 /// The toggle is one row in `settings`, but it is enforced by each server's agent:
 /// the decision rides as a signed claim in the terminal ticket, and an agent older
 /// than 2.46.0 does not read that claim and keeps recording. So switching recording
-/// off is a fleet-wide *claim* that is false for any member still behind — and the
+/// off is a fleet-wide *claim* that is false for any member still behind - and the
 /// panel already knows, because every check-in writes `servers.agent_version`.
 ///
 /// Reporting "disabled" while a member still records is the same defect class the
@@ -1128,7 +1128,7 @@ pub async fn recording_coverage(
     .map_err(|e| internal_error("recording coverage", e))?;
 
     // `servers.agent_version` is written by the check-in a REMOTE agent makes. The
-    // local agent never checks in — it is reached over a unix socket — so its row
+    // local agent never checks in - it is reached over a unix socket - so its row
     // is permanently NULL. Reporting that as "unknown, assume lagging" would put a
     // warning on every single-server install, which is most of them, and a warning
     // that is always on is one operators learn to scroll past. So ask it: /health
@@ -1206,18 +1206,18 @@ pub async fn health(
     })))
 }
 
-/// POST /api/settings/credentials/reencrypt — rewrite every stored credential
+/// POST /api/settings/credentials/reencrypt - rewrite every stored credential
 /// under the current primary encryption key.
 ///
 /// The operator-facing half of the `SECRETS_ENCRYPTION_KEY` story. Since
 /// v2.112.0 the decrypt chain tries every derivation a value could have been
-/// written under, so changing that variable is survivable — but until the rows
+/// written under, so changing that variable is survivable - but until the rows
 /// are rewritten the install is leaning on a fallback arm and the old
 /// derivation can never be retired. This endpoint does the rewriting.
 ///
 /// Idempotent and safe to re-run: a row already under the primary key is
 /// counted and skipped, and a row no candidate key can open is reported as
-/// `unreadable` and **left exactly as it is** — overwriting the only copy of a
+/// `unreadable` and **left exactly as it is** - overwriting the only copy of a
 /// ciphertext we cannot read would turn a recoverable state into a permanent
 /// one, which is the failure this whole change exists to prevent.
 pub async fn reencrypt_credentials(
@@ -1269,7 +1269,7 @@ pub async fn reencrypt_credentials(
 
     if unreadable > 0 {
         tracing::error!(
-            "credential re-encryption finished with {unreadable} unreadable value(s) — those rows \
+            "credential re-encryption finished with {unreadable} unreadable value(s) - those rows \
              were left untouched. They were encrypted with a key this process cannot derive; \
              restoring the previous {} is the way back.",
             crate::services::secrets_crypto::ENCRYPTION_KEY_ENV
@@ -1280,7 +1280,7 @@ pub async fn reencrypt_credentials(
         // guard correctly skipped it rather than clobbering the newer value.
         // Re-running the sweep re-keys it once nothing races it.
         tracing::warn!(
-            "credential re-encryption skipped {raced} row(s) that changed concurrently — \
+            "credential re-encryption skipped {raced} row(s) that changed concurrently - \
              run it again to pick them up"
         );
     }

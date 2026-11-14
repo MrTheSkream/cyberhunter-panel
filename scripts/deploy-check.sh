@@ -1,5 +1,5 @@
 #!/bin/bash
-# DockPanel post-deploy health check
+# CyberHunter - Panel post-deploy health check
 # Run after deploying new binaries to verify no runtime errors
 set -euo pipefail
 
@@ -43,7 +43,7 @@ HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3080/api/set
 if [ "$HTTP_CODE" = "200" ]; then
   echo -e "${GREEN}200 OK${NC}"
 elif [ "$HTTP_CODE" = "401" ]; then
-  echo -e "${GREEN}401 (auth required — API is responding)${NC}"
+  echo -e "${GREEN}401 (auth required - API is responding)${NC}"
 else
   echo -e "${RED}HTTP $HTTP_CODE${NC}"
   exit 1

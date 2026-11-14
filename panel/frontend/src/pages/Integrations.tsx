@@ -37,7 +37,7 @@ function WhmcsContent() {
   const [apiIdent, setApiIdent] = useState("");
   const [apiSecret, setApiSecret] = useState("");
   // The three flags the webhook actually reads. They were stored and returned by
-  // the API but had no control, so the only way to change one was a raw request —
+  // the API but had no control, so the only way to change one was a raw request -
   // and since this form omitted them, the next save from this page put them back.
   const [autoProvision, setAutoProvision] = useState(true);
   const [autoSuspend, setAutoSuspend] = useState(true);
@@ -197,7 +197,7 @@ function MigrationsContent() {
     <div className="space-y-4">
       <div className="bg-dark-800 rounded-lg border border-dark-500 p-5">
         <h3 className="text-xs font-medium text-dark-300 uppercase font-mono tracking-widest mb-3">App Migrations</h3>
-        <p className="text-sm text-dark-200 mb-4">Not implemented. WHMCS can record a migration request here, but nothing processes it — a row stays at 0% for ever, and there is no control anywhere that starts one. Move a container between servers by redeploying it on the target.</p>
+        <p className="text-sm text-dark-200 mb-4">Not implemented. WHMCS can record a migration request here, but nothing processes it - a row stays at 0% for ever, and there is no control anywhere that starts one. Move a container between servers by redeploying it on the target.</p>
         {loading ? (
           <div className="animate-pulse space-y-2">
             <div className="h-8 bg-dark-700 rounded" />

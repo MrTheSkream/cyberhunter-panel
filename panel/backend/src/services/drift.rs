@@ -1,24 +1,24 @@
 //! Phase 4 W5: fleet configuration-drift detection.
 //!
 //! A read-only report answering "is my fleet's operational posture
-//! consistent?". DockPanel is a single hub DB + thin agents, so every
+//! consistent?". CyberHunter - Panel is a single hub DB + thin agents, so every
 //! server's declared config already lives centrally keyed by `server_id`
 //! (`20260319000000_multi_server.sql`). Drift is therefore a LOCAL
-//! cross-`server_id` diff — no remote agent pull, offline-tolerant, and
+//! cross-`server_id` diff - no remote agent pull, offline-tolerant, and
 //! computed on demand (brief §7 "lean lazy": operator-triggered, no
 //! background scan).
 //!
 //! v1 is REPORT-ONLY. Reconcile/push (source-of-truth → apply to others) is
-//! deferred to W5.2 — it is net-new cross-server mutation with no existing
+//! deferred to W5.2 - it is net-new cross-server mutation with no existing
 //! transport, and the brief keeps that surface explicit (§W5 "report, not an
 //! enforcement loop"; §4 "operability ≠ automation"). Desired-vs-actual drift
 //! against the agent's live `GET /iac/export` is deferred to W5.3.
 //!
 //! Four entities in v1, each compared in its most meaningful form:
-//!   - `alert_rules`     — SINGLETON: one row per server, whole-row posture diff (flagship).
-//!   - `sites`           — COLLECTION: per-domain inventory asymmetry + per-site config diff.
-//!   - `crons`           — COLLECTION: per (domain, command) job parity.
-//!   - `backup_coverage` — SUMMARY: per-server derived coverage (sites total / backed-up / destinations).
+//!   - `alert_rules`     - SINGLETON: one row per server, whole-row posture diff (flagship).
+//!   - `sites`           - COLLECTION: per-domain inventory asymmetry + per-site config diff.
+//!   - `crons`           - COLLECTION: per (domain, command) job parity.
+//!   - `backup_coverage` - SUMMARY: per-server derived coverage (sites total / backed-up / destinations).
 //!
 //! The comparators (`compare_config`, `diff_singleton`, `diff_collection`)
 //! are pure and unit-tested with in-memory rows; the fetchers project each
@@ -34,7 +34,7 @@ use uuid::Uuid;
 
 const NULL: Value = Value::Null;
 
-/// Secret-ish columns compared by presence only — the report never surfaces
+/// Secret-ish columns compared by presence only - the report never surfaces
 /// the value, only "set" vs "unset", so a rotated secret doesn't read as drift
 /// and a leaked value never reaches the UI.
 const ALERT_SENSITIVE: &[&str] = &["notify_slack_url", "notify_discord_url"];
@@ -272,7 +272,7 @@ pub fn diff_collection(
 
 /// A server's backup posture is in sync when every one of its sites has an
 /// enabled backup schedule and at least one destination exists (or it has no
-/// sites at all — nothing to protect).
+/// sites at all - nothing to protect).
 pub fn coverage_in_sync(m: &CoverageMetrics) -> bool {
     m.total_sites == 0 || (m.unprotected == 0 && m.destinations > 0)
 }
@@ -312,11 +312,11 @@ async fn fetch_alert_rules(
     // NULL server_id (the user's default rule) is excluded by `= ANY`.
     //
     // ⚠ CORRECTNESS (s432 review): `alert_rules` enforces only
-    // `UNIQUE(user_id, server_id)`, not `UNIQUE(server_id)` — a caller other
+    // `UNIQUE(user_id, server_id)`, not `UNIQUE(server_id)` - a caller other
     // than the server's owner can create a stray second row for the same
     // server_id (`routes/alerts.rs::update_server_rules` takes `server_id`
     // straight from the URL path under plain `AuthUser`, with no ownership
-    // check — a real, separate gap, still open). Before this session's fix,
+    // check - a real, separate gap, still open). Before this session's fix,
     // this fetcher's own `user_id = $1` filter accidentally guaranteed at
     // most one row per server_id (the caller's own); collapsing unfiltered
     // rows into a `HashMap<Uuid, Value>` keyed by server_id would silently
@@ -422,7 +422,7 @@ fn group_by_server(rows: Vec<(Uuid, String, Value)>) -> HashMap<Uuid, Vec<(Strin
 /// the servers rendered under each entity.
 ///
 /// ⚠ SECURITY (s432): the five fetchers below used to take a `user_id` and
-/// scope every query to that caller's own registered servers — the same
+/// scope every query to that caller's own registered servers - the same
 /// admin-scoping bug `servers::list`/`dashboard::fleet_overview` already fix.
 /// This function has exactly one caller, `routes/drift.rs::report`, which is
 /// `AdminUser`-gated, so there is no narrower case to preserve: every id in
@@ -456,7 +456,7 @@ pub async fn build_report(
     let mut drifted: HashSet<Uuid> = HashSet::new();
     let mut entities: Vec<EntityDrift> = Vec::new();
 
-    // 1. alert_rules — SINGLETON
+    // 1. alert_rules - SINGLETON
     {
         let ref_row = alert_rules.get(&reference_id);
         let mut servers = Vec::new();
@@ -480,7 +480,7 @@ pub async fn build_report(
         });
     }
 
-    // 2. sites — COLLECTION
+    // 2. sites - COLLECTION
     entities.push(build_collection_entity(
         "sites",
         "Sites (inventory + per-site config)",
@@ -492,7 +492,7 @@ pub async fn build_report(
         &mut drifted,
     ));
 
-    // 3. crons — COLLECTION
+    // 3. crons - COLLECTION
     entities.push(build_collection_entity(
         "crons",
         "Cron jobs",
@@ -504,7 +504,7 @@ pub async fn build_report(
         &mut drifted,
     ));
 
-    // 4. backup_coverage — SUMMARY
+    // 4. backup_coverage - SUMMARY
     {
         let ref_cov = coverage.get(&reference_id).copied();
         let mut servers = Vec::new();
@@ -536,7 +536,7 @@ pub async fn build_report(
     }
 
     let note = if targets.is_empty() {
-        Some("Only one server is available — register fleet members to detect drift.".into())
+        Some("Only one server is available - register fleet members to detect drift.".into())
     } else {
         None
     };
@@ -642,7 +642,7 @@ mod tests {
 
     #[test]
     fn sensitive_field_differing_values_are_not_drift() {
-        // Two different webhook URLs are both "set" — rotating a secret must
+        // Two different webhook URLs are both "set" - rotating a secret must
         // not read as drift, and the value must never surface.
         let a = json!({"notify_slack_url": "https://hooks.slack.com/AAA"});
         let b = json!({"notify_slack_url": "https://hooks.slack.com/BBB"});

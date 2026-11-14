@@ -10,7 +10,7 @@
 //       static_configs:
 //         - targets: ['panel.example.com']
 //
-// When disabled, /api/metrics returns 404 — the endpoint is not
+// When disabled, /api/metrics returns 404 - the endpoint is not
 // advertised. When enabled but the token is wrong or missing, returns
 // 401. Constant-time comparison of the SHA-256 hashed token.
 
@@ -36,7 +36,7 @@ pub struct ScrapeQuery {
     pub token: Option<String>,
 }
 
-/// GET /api/metrics — Prometheus scrape endpoint.
+/// GET /api/metrics - Prometheus scrape endpoint.
 ///
 /// No JWT required; gated by scrape token. Returns 404 when disabled so
 /// a panel with metrics off doesn't advertise a scrape surface at all.
@@ -95,7 +95,7 @@ pub struct PromSettings {
     pub token_prefix: Option<String>,
 }
 
-/// GET /api/prometheus/settings — Admin view: is it on, does a token exist,
+/// GET /api/prometheus/settings - Admin view: is it on, does a token exist,
 /// and what's its display prefix.
 pub async fn get_settings(
     State(state): State<AppState>,
@@ -127,7 +127,7 @@ pub struct UpdateSettingsReq {
     pub rotate_token: bool,
 }
 
-/// POST /api/prometheus/settings — enable/disable and/or rotate the scrape
+/// POST /api/prometheus/settings - enable/disable and/or rotate the scrape
 /// token. On first-enable with no existing token, auto-generates one so the
 /// admin doesn't have to flip two switches.
 pub async fn update_settings(
@@ -176,7 +176,7 @@ pub async fn update_settings(
         "ok": true,
         "token": new_token,
         "message": if new_token.is_some() {
-            "Save this token — it won't be shown again."
+            "Save this token - it won't be shown again."
         } else {
             "Settings saved."
         },
@@ -186,7 +186,7 @@ pub async fn update_settings(
 // ── Helpers ─────────────────────────────────────────────────────────────
 
 fn generate_token() -> String {
-    // 256 bits of entropy via two UUIDs. "dpms_" = DockPanel Metrics Scrape.
+    // 256 bits of entropy via two UUIDs. "dpms_" = CyberHunter - Panel Metrics Scrape.
     format!(
         "dpms_{}{}",
         Uuid::new_v4().simple(),
@@ -235,7 +235,7 @@ mod tests {
         let t = generate_token();
         assert!(t.starts_with("dpms_"));
         assert_eq!(&t[..14].len(), &14);
-        // The next 9 chars (indices 5..14) must be hex — that's the prefix
+        // The next 9 chars (indices 5..14) must be hex - that's the prefix
         // stored for display in the UI.
         assert!(t[5..14].chars().all(|c| c.is_ascii_hexdigit()));
     }

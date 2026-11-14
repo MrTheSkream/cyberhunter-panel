@@ -45,8 +45,8 @@ async fn firewall_status() -> Result<Json<security::FirewallStatus>, ApiErr> {
 /// Status for a firewall-service error: a refusal the caller can act on, or a
 /// fault only an incident id should describe.
 ///
-/// Both handlers used to sort these with their own substring test — `"Invalid"`
-/// in one, `"must be"` in the other — and each test only ever recognised the
+/// Both handlers used to sort these with their own substring test - `"Invalid"`
+/// in one, `"must be"` in the other - and each test only ever recognised the
 /// refusal its author had in mind. The package sentence matched neither, so on
 /// every RHEL-family box (where the rules on screen come from firewalld and ufw
 /// is never installed) both buttons answered 5xx, and the panel replaced the
@@ -95,7 +95,7 @@ async fn fail2ban_status() -> Result<Json<security::Fail2banStatus>, ApiErr> {
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))
 }
 
-/// POST /security/scan — Run a full security scan.
+/// POST /security/scan - Run a full security scan.
 async fn run_scan() -> Json<security_scanner::ScanResult> {
     Json(security_scanner::run_full_scan().await)
 }
@@ -105,28 +105,28 @@ struct SshPortRequest {
     port: u16,
 }
 
-/// POST /security/ssh/disable-password — Disable SSH password auth.
+/// POST /security/ssh/disable-password - Disable SSH password auth.
 async fn ssh_disable_password() -> Result<Json<serde_json::Value>, ApiErr> {
     security::disable_ssh_password_auth().await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
     Ok(Json(serde_json::json!({ "success": true })))
 }
 
-/// POST /security/ssh/enable-password — Enable SSH password auth.
+/// POST /security/ssh/enable-password - Enable SSH password auth.
 async fn ssh_enable_password() -> Result<Json<serde_json::Value>, ApiErr> {
     security::enable_ssh_password_auth().await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
     Ok(Json(serde_json::json!({ "success": true })))
 }
 
-/// POST /security/ssh/disable-root — Disable root SSH login.
+/// POST /security/ssh/disable-root - Disable root SSH login.
 async fn ssh_disable_root() -> Result<Json<serde_json::Value>, ApiErr> {
     security::disable_ssh_root_login().await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
     Ok(Json(serde_json::json!({ "success": true })))
 }
 
-/// POST /security/ssh/change-port — Change SSH port.
+/// POST /security/ssh/change-port - Change SSH port.
 async fn ssh_change_port(Json(body): Json<SshPortRequest>) -> Result<Json<serde_json::Value>, ApiErr> {
     security::change_ssh_port(body.port).await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
@@ -166,14 +166,14 @@ struct FixRequest {
     target: String,
 }
 
-/// POST /security/fix — Apply a recommended security fix.
+/// POST /security/fix - Apply a recommended security fix.
 async fn apply_fix(Json(body): Json<FixRequest>) -> Result<Json<serde_json::Value>, ApiErr> {
     let result = security::apply_fix(&body.fix_type, &body.target).await
         .map_err(security_status)?;
     Ok(Json(serde_json::json!({ "success": true, "message": result })))
 }
 
-/// GET /security/login-audit — Recent SSH login attempts from auth.log.
+/// GET /security/login-audit - Recent SSH login attempts from auth.log.
 async fn login_audit() -> Result<Json<serde_json::Value>, ApiErr> {
     let entries = security::get_login_audit()
         .await
@@ -181,24 +181,24 @@ async fn login_audit() -> Result<Json<serde_json::Value>, ApiErr> {
     Ok(Json(serde_json::json!({ "entries": entries })))
 }
 
-/// POST /security/panel-jail/setup — Create DockPanel Fail2Ban jail.
+/// POST /security/panel-jail/setup - Create CyberHunter - Panel Fail2Ban jail.
 async fn setup_panel_jail() -> Result<Json<serde_json::Value>, ApiErr> {
     security::setup_panel_jail().await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
     Ok(Json(serde_json::json!({ "success": true })))
 }
 
-/// GET /security/panel-jail/status — Check if panel jail exists.
+/// GET /security/panel-jail/status - Check if panel jail exists.
 async fn panel_jail_status() -> Json<serde_json::Value> {
     let active = security::panel_jail_status().await;
     Json(serde_json::json!({ "active": active }))
 }
 
-/// POST /security/kill-terminals — Kill all active terminal sessions (Feature 11: Panic).
+/// POST /security/kill-terminals - Kill all active terminal sessions (Feature 11: Panic).
 async fn kill_terminals() -> Json<serde_json::Value> {
     // Kill the shells this agent actually started, from the registry, rather
     // than guessing at them by user and command name. `pkill -u www-data` alone
-    // never reached a SERVER terminal, which runs as root on purpose — so the
+    // never reached a SERVER terminal, which runs as root on purpose - so the
     // one shell an intruder is most likely to be holding was the one the panic
     // button could not touch. Server terminals are counted separately because
     // "we killed the root shell" is the fact an operator needs during an
@@ -247,7 +247,7 @@ async fn kill_terminals() -> Json<serde_json::Value> {
     }))
 }
 
-/// GET /security/forensic-snapshot — Capture system state for forensics (Feature 10).
+/// GET /security/forensic-snapshot - Capture system state for forensics (Feature 10).
 async fn forensic_snapshot() -> Result<Json<serde_json::Value>, ApiErr> {
     use crate::safe_cmd::safe_command;
 
@@ -327,13 +327,13 @@ async fn forensic_snapshot() -> Result<Json<serde_json::Value>, ApiErr> {
     })))
 }
 
-/// POST /security/db-backup — Backup DockPanel's own PostgreSQL database (Feature 2).
+/// POST /security/db-backup - Backup CyberHunter - Panel's own PostgreSQL database (Feature 2).
 async fn db_backup() -> Result<Json<serde_json::Value>, ApiErr> {
     use crate::safe_cmd::safe_command;
 
     let backup_dir = "/var/backups/dockpanel";
     let _ = std::fs::create_dir_all(backup_dir);
-    // This dump is the panel's entire database — users, sessions, api_keys and
+    // This dump is the panel's entire database - users, sessions, api_keys and
     // `servers.agent_token` in cleartext. It must not be readable by anything
     // but root; `create_dir_all` leaves 0755 behind.
     let _ = std::fs::set_permissions(backup_dir, std::fs::Permissions::from_mode(0o700));
@@ -342,7 +342,7 @@ async fn db_backup() -> Result<Json<serde_json::Value>, ApiErr> {
     let filename = format!("{backup_dir}/dockpanel-db-{ts}.sql.gz");
 
     // pg_dump via Docker exec, capture output, then compress with gzip subprocess
-    // No shell interpolation — all args passed directly
+    // No shell interpolation - all args passed directly
     let dump_output = safe_command("docker")
         .args(["exec", "dockpanel-postgres", "pg_dump", "-U", "dockpanel", "dockpanel"])
         .output()
@@ -377,7 +377,7 @@ async fn db_backup() -> Result<Json<serde_json::Value>, ApiErr> {
     }
 
     // Created 0600 BEFORE a byte is written. `tokio::fs::write` would create it
-    // 0666 & ~umask = 0644 and there would be a window — however short — in
+    // 0666 & ~umask = 0644 and there would be a window - however short - in
     // which a full panel database dump sat world-readable on a box that also
     // serves other people's PHP.
     {
@@ -407,7 +407,7 @@ async fn db_backup() -> Result<Json<serde_json::Value>, ApiErr> {
     }
 
     let size = std::fs::metadata(&filename).map(|m| m.len()).unwrap_or(0);
-    tracing::info!("DockPanel DB backup created: {filename} ({size} bytes)");
+    tracing::info!("CyberHunter - Panel DB backup created: {filename} ({size} bytes)");
 
     Ok(Json(serde_json::json!({
         "filename": filename,
@@ -419,7 +419,7 @@ async fn db_backup() -> Result<Json<serde_json::Value>, ApiErr> {
 // REMOVED: the one-shot security-hardening initialiser that used to sit here.
 //
 // It had no caller anywhere in the repository, and every directory it created is
-// already created on demand by the code that needs it — the audit directory by the
+// already created on demand by the code that needs it - the audit directory by the
 // panel's audit writer and by the terminal handler below, the recordings directory
 // by that same handler, the forensics directory by the snapshot route above (its
 // create_dir_all makes the parents), and the backup directory by this binary's own
@@ -428,7 +428,7 @@ async fn db_backup() -> Result<Json<serde_json::Value>, ApiErr> {
 // The only thing it did that nothing else does was set the append-only attribute on
 // the audit DIRECTORY, and measurement showed that is the wrong placement and an
 // actively harmful one. On a directory the attribute denies unlink and rename but
-// still permits opening a file inside with O_TRUNC — so the logs stayed rewritable in
+// still permits opening a file inside with O_TRUNC - so the logs stayed rewritable in
 // place, which is the exact tampering the guide claimed was prevented, while the
 // panel's 365-day audit retention sweep would have been silently denied forever
 // (unlink is refused even for root, and that sweep discarded its result until this
@@ -437,24 +437,24 @@ async fn db_backup() -> Result<Json<serde_json::Value>, ApiErr> {
 //
 // ⚠ NEXT AUTHOR: a regression arm greps the shipped agent source for that route's
 // path and requires zero hits, so do not write the literal here even to explain the
-// removal — describing it, as above, is deliberate. See lesson #340.
+// removal - describing it, as above, is deliberate. See lesson #340.
 
-/// Where a canary can actually be planted on a DockPanel host.
+/// Where a canary can actually be planted on a CyberHunter - Panel host.
 ///
-/// The four this endpoint used to advertise — `/etc`, `/root`, `/home`,
-/// `/var/www` — were never a set this process could write. The unit runs under
+/// The four this endpoint used to advertise - `/etc`, `/root`, `/home`,
+/// `/var/www` - were never a set this process could write. The unit runs under
 /// `ProtectSystem=strict` with an explicit `ReadWritePaths=`, so every write
 /// outside that list fails `EROFS`, and `ProtectHome=yes` replaces `/root` and
 /// `/home` with an empty read-only mount on top of that. Measured under the
 /// shipped unit rather than inferred from it: `/etc`, `/root` and `/home` all
 /// refuse a `touch`; only `/var/www` accepts one. So three of the four writes
-/// could never have succeeded — and the endpoint reported success anyway,
+/// could never have succeeded - and the endpoint reported success anyway,
 /// because each one was an `if …is_ok()` with no `else` and the response
 /// listed only what worked.
 ///
 /// These four are inside `ReadWritePaths` (so the agent can plant them) and
 /// outside `ProtectHome=` (so the API process can still `stat` them on its own
-/// two-minute tick — a file this agent can write but that process cannot see is
+/// two-minute tick - a file this agent can write but that process cannot see is
 /// not a tripwire, it is a decoration). Three of them are also where this
 /// product keeps its own secrets: the agent token, the panel database dumps and
 /// the runtime state. That is where someone looking for credentials goes first,
@@ -475,7 +475,7 @@ pub const CANARY_PLANT_PATHS: [(&str, &str); 4] = [
     ("/var/www/.dockpanel-canary", "Web root canary"),
 ];
 
-/// POST /security/canary/setup — Create canary files in sensitive directories (Feature 12).
+/// POST /security/canary/setup - Create canary files in sensitive directories (Feature 12).
 ///
 /// Answers per path. A refusal is reported, never swallowed: "armed 4 of 4" and
 /// "armed 1 of 4 and said nothing about the other three" have to be
@@ -487,14 +487,14 @@ async fn canary_setup() -> Result<Json<serde_json::Value>, ApiErr> {
 
     for (path, desc) in &CANARY_PLANT_PATHS {
         let content = format!(
-            "DOCKPANEL CANARY FILE — DO NOT TOUCH\n\
+            "CYBERHUNTER - PANEL CANARY FILE - DO NOT TOUCH\n\
              Created: {}\n\
              Purpose: Intrusion detection tripwire\n\
              If you are reading this, security has been alerted.\n",
             chrono::Utc::now().to_rfc3339()
         );
 
-        // The parent is inside ReadWritePaths but need not exist yet —
+        // The parent is inside ReadWritePaths but need not exist yet -
         // /var/backups/dockpanel is created by the database-backup task, which an
         // operator may never have run.
         if let Some(parent) = std::path::Path::new(path).parent() {
@@ -507,8 +507,8 @@ async fn canary_setup() -> Result<Json<serde_json::Value>, ApiErr> {
 
         match std::fs::write(path, &content) {
             Ok(()) => {
-                // Readable by all — an intruder must be able to read it, that is
-                // the whole mechanism — but not writable by anyone.
+                // Readable by all - an intruder must be able to read it, that is
+                // the whole mechanism - but not writable by anyone.
                 let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o444));
                 created.push(serde_json::json!({ "path": path, "description": desc }));
                 tracing::info!("Canary file created: {path}");

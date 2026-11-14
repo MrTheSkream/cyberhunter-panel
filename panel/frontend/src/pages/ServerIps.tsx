@@ -341,7 +341,7 @@ export default function ServerIps() {
                       </p>
                     )}
                   </td>
-                  <td className="px-4 py-3 font-mono text-dark-200">{ip.interface || "—"}</td>
+                  <td className="px-4 py-3 font-mono text-dark-200">{ip.interface || "-"}</td>
                   <td className="px-4 py-3">
                     {ip.ptr ? (
                       <span className="font-mono text-dark-100">{ip.ptr}</span>
@@ -375,9 +375,9 @@ export default function ServerIps() {
       <div className="bg-dark-800 rounded-lg border border-dark-500 p-5">
         <h3 className="text-xs font-medium text-dark-300 uppercase font-mono tracking-widest mb-3">How It Works</h3>
         <div className="space-y-2 text-sm text-dark-200">
-          <p><strong className="text-dark-100">Origin</strong> — <em>Panel</em>: the panel put this IP on the network interface and can remove it. <em>System</em>: the IP was configured outside the panel (provider, cloud-init, another tool); it can be used, but the panel never removes it from the server.</p>
-          <p><strong className="text-dark-100">Sites</strong> — each site listens on one IP (the primary IP by default). Change it on the site page.</p>
-          <p><strong className="text-dark-100">Mail</strong> — a mail domain sends from the IP of the website with the same name, unless a sending IP is forced in Mail → domain → Settings. The HELO name is the IP's PTR, so every sending IP needs a reverse DNS that points back to it.</p>
+          <p><strong className="text-dark-100">Origin</strong> - <em>Panel</em>: the panel put this IP on the network interface and can remove it. <em>System</em>: the IP was configured outside the panel (provider, cloud-init, another tool); it can be used, but the panel never removes it from the server.</p>
+          <p><strong className="text-dark-100">Sites</strong> - each site listens on one IP (the primary IP by default). Change it on the site page.</p>
+          <p><strong className="text-dark-100">Mail</strong> - a mail domain sends from the IP of the website with the same name, unless a sending IP is forced in Mail → domain → Settings. The HELO name is the IP's PTR, so every sending IP needs a reverse DNS that points back to it.</p>
           <p className="text-xs text-dark-400">IPv6 stays shared by all sites. Docker apps and the panel itself always use the primary IP.</p>
         </div>
       </div>

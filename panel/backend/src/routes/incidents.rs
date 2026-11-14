@@ -87,7 +87,7 @@ const CLOSED_STATUSES: &[&str] = &["resolved", "postmortem"];
 
 // ── Incident CRUD ───────────────────────────────────────────────────────────
 
-/// GET /api/incidents — List incidents.
+/// GET /api/incidents - List incidents.
 pub async fn list(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -113,12 +113,12 @@ pub async fn list(
     Ok(Json(incidents))
 }
 
-/// GET /api/incidents/summary — How many incidents are open, and in what state.
+/// GET /api/incidents/summary - How many incidents are open, and in what state.
 ///
 /// The sidebar badge used to derive this itself by fetching `?status=investigating`
 /// and taking the array length. That asked a narrower question than the panel's
 /// own: `investigating` is one of THREE open statuses, and the first thing the
-/// incident screen offers is to move a new incident to `identified` — at which
+/// incident screen offers is to move a new incident to `identified` - at which
 /// point it left the badge while the dashboard went on counting it. A count that
 /// disagrees with the page underneath it is worse than no count, so there is now
 /// one place that answers it.
@@ -148,7 +148,7 @@ pub async fn summary(
     Ok(Json(serde_json::json!({ "open": open, "by_status": by_status })))
 }
 
-/// POST /api/incidents — Create an incident.
+/// POST /api/incidents - Create an incident.
 pub async fn create(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -222,7 +222,7 @@ pub async fn create(
     Ok((StatusCode::CREATED, Json(incident)))
 }
 
-/// GET /api/incidents/{id} — Get incident with updates.
+/// GET /api/incidents/{id} - Get incident with updates.
 pub async fn get_one(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -257,7 +257,7 @@ pub async fn get_one(
     })))
 }
 
-/// PUT /api/incidents/{id} — Update an incident (status change, add update).
+/// PUT /api/incidents/{id} - Update an incident (status change, add update).
 pub async fn update(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -293,7 +293,7 @@ pub async fn update(
     // Reopening had to clear it and did not. The stamp survived the transition
     // back to a live status, so the public status page rendered "Resolved <n>
     // ago" (PublicStatusPage.tsx) for an incident whose own status said
-    // `investigating` — the page contradicted itself, and the more prominent
+    // `investigating` - the page contradicted itself, and the more prominent
     // half was the reassuring one.
     //
     // `postmortem` follows a resolution rather than undoing it, so it keeps the
@@ -393,7 +393,7 @@ pub async fn update(
     Ok(Json(incident))
 }
 
-/// DELETE /api/incidents/{id} — Delete an incident.
+/// DELETE /api/incidents/{id} - Delete an incident.
 pub async fn remove(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -411,7 +411,7 @@ pub async fn remove(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// POST /api/incidents/{id}/updates — Post an incident update.
+/// POST /api/incidents/{id}/updates - Post an incident update.
 pub async fn post_update(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -501,7 +501,7 @@ pub async fn post_update(
     Ok((StatusCode::CREATED, Json(update)))
 }
 
-/// GET /api/incidents/{id}/updates — List incident updates.
+/// GET /api/incidents/{id}/updates - List incident updates.
 pub async fn list_updates(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -553,7 +553,7 @@ pub struct UpdateConfigRequest {
     pub enabled: Option<bool>,
 }
 
-/// GET /api/status-page/config — Get status page config.
+/// GET /api/status-page/config - Get status page config.
 pub async fn get_config(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -582,7 +582,7 @@ pub async fn get_config(
     }
 }
 
-/// PUT /api/status-page/config — Update status page config.
+/// PUT /api/status-page/config - Update status page config.
 pub async fn update_config(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -592,7 +592,7 @@ pub async fn update_config(
     // clause can only absorb a primary-key collision, and the primary key
     // defaults to gen_random_uuid(), so the guard was inert and every PUT
     // inserted another row. The UPDATE below then matched N rows and
-    // `fetch_one` returned an arbitrary one — an operator could untick
+    // `fetch_one` returned an arbitrary one - an operator could untick
     // "Enabled", get a 200 and a form showing false, and still be publishing.
     let _ = sqlx::query(
         "INSERT INTO status_page_config (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING"
@@ -656,7 +656,7 @@ pub struct CreateComponentRequest {
     pub monitor_ids: Option<Vec<Uuid>>,
 }
 
-/// GET /api/status-page/components — List components.
+/// GET /api/status-page/components - List components.
 pub async fn list_components(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -691,7 +691,7 @@ pub async fn list_components(
     Ok(Json(result))
 }
 
-/// POST /api/status-page/components — Create component.
+/// POST /api/status-page/components - Create component.
 pub async fn create_component(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -727,7 +727,7 @@ pub async fn create_component(
     Ok((StatusCode::CREATED, Json(comp)))
 }
 
-/// DELETE /api/status-page/components/{id} — Delete component.
+/// DELETE /api/status-page/components/{id} - Delete component.
 pub async fn delete_component(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -752,7 +752,7 @@ pub struct SubscribeRequest {
     pub email: String,
 }
 
-/// POST /api/status-page/subscribe — Subscribe to updates (public, no auth).
+/// POST /api/status-page/subscribe - Subscribe to updates (public, no auth).
 pub async fn subscribe(
     State(state): State<AppState>,
     Json(req): Json<SubscribeRequest>,
@@ -766,7 +766,7 @@ pub async fn subscribe(
         return Err(err(StatusCode::BAD_REQUEST, "Invalid email address"));
     }
 
-    // s427: which tenant's page this visitor is actually looking at — see
+    // s427: which tenant's page this visitor is actually looking at - see
     // `resolve_current_status_page_owner`'s own doc comment for the tie-break
     // and the no-config fallback. `None` here means the install has no users
     // at all, which cannot happen on a reachable running panel.
@@ -791,10 +791,10 @@ pub async fn subscribe(
     Ok(Json(serde_json::json!({ "ok": true, "message": "Subscribed to status updates" })))
 }
 
-/// DELETE (or POST) /api/status-page/unsubscribe — Unsubscribe (public).
+/// DELETE (or POST) /api/status-page/unsubscribe - Unsubscribe (public).
 ///
 /// Registered for both methods. This comment said DELETE while the router
-/// accepted POST only, and the published guide followed the comment — so the
+/// accepted POST only, and the published guide followed the comment - so the
 /// documented call 405'd and the working call was written down nowhere.
 pub async fn unsubscribe(
     State(state): State<AppState>,
@@ -802,7 +802,7 @@ pub async fn unsubscribe(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     crate::services::public_status::require_enabled(&state.db).await?;
 
-    // s427: scoped to the page the visitor is actually looking at — `IS NOT
+    // s427: scoped to the page the visitor is actually looking at - `IS NOT
     // DISTINCT FROM` rather than `=` so this still matches a legacy row whose
     // owner could not be resolved (both sides NULL), instead of `NULL = NULL`
     // silently matching nothing. Without this scoping, unsubscribing from one
@@ -819,10 +819,10 @@ pub async fn unsubscribe(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// GET /api/status-page/subscribers — List subscribers (admin).
+/// GET /api/status-page/subscribers - List subscribers (admin).
 ///
 /// s427: scoped to the calling admin's own `owner_id`, matching every sibling
-/// status-page admin endpoint (`get_config`, `list_components`, ...) — before
+/// status-page admin endpoint (`get_config`, `list_components`, ...) - before
 /// this, any admin on the install could read every OTHER tenant's subscriber
 /// email list, not just their own.
 pub async fn list_subscribers(
@@ -846,7 +846,7 @@ pub async fn list_subscribers(
 
 // ── Enhanced Public Status Page ─────────────────────────────────────────────
 
-/// GET /api/status-page/public — Enhanced public status page (no auth).
+/// GET /api/status-page/public - Enhanced public status page (no auth).
 pub async fn public_status_page(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
@@ -861,7 +861,7 @@ pub async fn public_status_page(
     // LIMIT 1 would let two reads of the same table disagree.
     //
     // ⚠ SECURITY (s418): every query below this point MUST be scoped to
-    // `owner_id` — the tenant whose config row won this ORDER BY. This handler
+    // `owner_id` - the tenant whose config row won this ORDER BY. This handler
     // is unauthenticated; on any multi-tenant/reseller install, an unscoped
     // read here serves one tenant's components/incidents to every anonymous
     // visitor of every OTHER tenant's status page. Confirmed live-reachable on
@@ -882,7 +882,7 @@ pub async fn public_status_page(
         return Err(err(StatusCode::NOT_FOUND, "Status page is disabled"));
     }
 
-    // Get components with their monitor statuses — scoped to the config's owner.
+    // Get components with their monitor statuses - scoped to the config's owner.
     let mut component_list = Vec::new();
     if let Some(uid) = owner_id {
         let components: Vec<(Uuid, String, Option<String>, i32, Option<String>, Option<String>)> = sqlx::query_as(
@@ -935,7 +935,7 @@ pub async fn public_status_page(
         "degraded"
     };
 
-    // Active + recent incidents — scoped to the config's owner.
+    // Active + recent incidents - scoped to the config's owner.
     let mut incident_list = Vec::new();
     if let Some(uid) = owner_id {
         let incidents: Vec<ManagedIncident> = sqlx::query_as(
@@ -960,7 +960,7 @@ pub async fn public_status_page(
             // carries `author_email`, and this endpoint answers with no login. The
             // four fields below are exactly what `PublicStatusPage.tsx` declares.
             // `#[serde(skip_serializing)]` on the field is the smaller edit and the
-            // wrong one — three authenticated handlers return the same struct and
+            // wrong one - three authenticated handlers return the same struct and
             // the incidents guide publishes attribution as behaviour.
             let public_updates: Vec<serde_json::Value> = updates
                 .iter()
@@ -986,7 +986,7 @@ pub async fn public_status_page(
         }
     }
 
-    // Also include legacy monitor-based incidents (auto-detected downtime) — scoped to the config's owner.
+    // Also include legacy monitor-based incidents (auto-detected downtime) - scoped to the config's owner.
     let auto_incidents: Vec<(Uuid, String, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>, Option<String>)> = match owner_id {
         Some(uid) => sqlx::query_as(
             "SELECT i.id, m.name, i.started_at, i.resolved_at, i.cause \
@@ -1026,7 +1026,7 @@ pub async fn public_status_page(
 ///
 /// Hands off to the shared status-notice worker. This used to walk an unbounded
 /// subscriber list serially over SMTP while awaited INSIDE the HTTP handler, so
-/// one incident update blocked the operator's request — holding a DB pool slot —
+/// one incident update blocked the operator's request - holding a DB pool slot -
 /// until every subscriber had been mailed or the proxy gave up. The public
 /// subscribe endpoint is unauthenticated and unthrottled, so that list is
 /// attacker-grown. See `services::status_notices` for the ordering and
@@ -1034,7 +1034,7 @@ pub async fn public_status_page(
 fn notify_subscribers(title: &str, status: &str, message: &str, owner_id: Uuid) {
     crate::services::status_notices::enqueue(
         title,
-        format!("[Status Update] {title} — {status}"),
+        format!("[Status Update] {title} - {status}"),
         format!("{title}\nStatus: {status}\n\n{message}"),
         owner_id,
     );

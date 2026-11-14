@@ -1,9 +1,9 @@
-//! Phase 4 W1.2.d: Drill scheduler — runs every 60s, evaluates per-policy
+//! Phase 4 W1.2.d: Drill scheduler - runs every 60s, evaluates per-policy
 //! drill cron schedules, dispatches end-to-end drills against the latest
 //! db + volume backup tied to each due policy.
 //!
 //! Site backups don't carry `policy_id`, so they're not covered by this
-//! scheduler — `backup_verifier::run` (every 6h) handles passive site
+//! scheduler - `backup_verifier::run` (every 6h) handles passive site
 //! verification instead. If site policy_id ever lands, this loop should
 //! pick up sites with no other change.
 
@@ -20,15 +20,15 @@ struct DuePolicy {
     drill_schedule: String,
     last_drill_at: Option<chrono::DateTime<chrono::Utc>>,
     /// Fallback host when a backup row carries no server of its own. Nullable, and
-    /// NULL is the only value the UI can produce — the policy form has no server
-    /// picker — so it is resolved to the local server explicitly rather than being
+    /// NULL is the only value the UI can produce - the policy form has no server
+    /// picker - so it is resolved to the local server explicitly rather than being
     /// allowed to mean "whichever box happens to run the scheduler".
     server_id: Option<Uuid>,
 }
 
 /// The policy query is fleet-wide, so this takes the REGISTRY: a drill restores a
 /// backup on the server that owns it. A drill that runs on the wrong host certifies
-/// disaster recovery for a machine it never touched — and because the Drills tab has
+/// disaster recovery for a machine it never touched - and because the Drills tab has
 /// no server column and nothing alerts on drill outcomes, that certification is the
 /// only artifact anyone sees. It also feeds the chain-of-trust compliance report.
 pub async fn run(
@@ -69,7 +69,7 @@ async fn tick(db: &PgPool, agents: &AgentRegistry) -> Result<(), String> {
         if !cron_matches_now(&policy.drill_schedule, &now) {
             continue;
         }
-        // 90s debounce — same window as backup_policy_executor.
+        // 90s debounce - same window as backup_policy_executor.
         if let Some(last) = policy.last_drill_at {
             if (now - last).num_seconds() < 90 {
                 continue;
@@ -81,7 +81,7 @@ async fn tick(db: &PgPool, agents: &AgentRegistry) -> Result<(), String> {
         // Stamp last_drill_at only once a drill actually enqueues. Stamping unconditionally
         // BEFORE dispatch made a policy whose server has been unreachable for weeks (or
         // that keeps losing the concurrency guard to a sibling policy) read as "freshly
-        // drilled" every time its cron fired — the one case a DR-verification timestamp
+        // drilled" every time its cron fired - the one case a DR-verification timestamp
         // most needs to flag was the case it hid, and no row survived in `backup_drills`
         // for those early-return paths either, so there was no artifact to catch it by.
         // The double-fire this used to guard against is already prevented by
@@ -99,12 +99,12 @@ async fn tick(db: &PgPool, agents: &AgentRegistry) -> Result<(), String> {
 
 /// Dispatch this policy's db + volume drills together.
 ///
-/// The guard is consulted ONCE, here, for both legs — and that ordering is
+/// The guard is consulted ONCE, here, for both legs - and that ordering is
 /// load-bearing rather than tidiness. It used to be consulted inside each leg, which
 /// was harmless only because `server_id` was always NULL and the guard returned
 /// "nothing running" for NULL. Populating `server_id` (the whole point of this change)
 /// ARMS the guard, and the db leg inserts its own `running` row before the volume leg
-/// looks — so the volume leg would find the db drill it had just triggered, log
+/// looks - so the volume leg would find the db drill it had just triggered, log
 /// "another drill running on same server", and return. Volume drills would never run
 /// again, once per week, silently. Checking once per policy keeps the cap the comment
 /// always claimed (one policy's drills in flight per server) without a leg starving
@@ -132,7 +132,7 @@ async fn dispatch_policy_drills(db: &PgPool, agents: &AgentRegistry, policy: &Du
     // Which host owns this policy's drills. A backup row's own `server_id` wins; the
     // policy's is the fallback; and when both are absent the LOCAL server is named
     // explicitly. Naming it is what makes the concurrency guard and the audit row work
-    // at all — `for_server_or_local` would reach the same agent while leaving the row
+    // at all - `for_server_or_local` would reach the same agent while leaving the row
     // NULL, preserving both bugs.
     let server_id = match db_row.as_ref().and_then(|r| r.1)
         .or_else(|| vol_row.as_ref().and_then(|r| r.1))
@@ -144,7 +144,7 @@ async fn dispatch_policy_drills(db: &PgPool, agents: &AgentRegistry, policy: &Du
             None => {
                 tracing::warn!(
                     "Policy {} has no server and the local server id is not yet known \
-                     (setup incomplete) — skipping drills this tick.", policy.id
+                     (setup incomplete) - skipping drills this tick.", policy.id
                 );
                 return false;
             }
@@ -155,7 +155,7 @@ async fn dispatch_policy_drills(db: &PgPool, agents: &AgentRegistry, policy: &Du
         Ok(a) => a,
         Err(e) => {
             tracing::warn!(
-                "Skipping drills for policy {} — server {server_id} is unreachable ({e}). \
+                "Skipping drills for policy {} - server {server_id} is unreachable ({e}). \
                  Not drilling on a different host: a drill that runs elsewhere certifies \
                  disaster recovery for a machine it never tested.", policy.id
             );
@@ -165,7 +165,7 @@ async fn dispatch_policy_drills(db: &PgPool, agents: &AgentRegistry, policy: &Du
 
     if has_running_drill_for_server(db, server_id).await {
         tracing::info!(
-            "Skipping drills for policy {} — another drill is already running on server {server_id}",
+            "Skipping drills for policy {} - another drill is already running on server {server_id}",
             policy.id
         );
         return false;
@@ -251,7 +251,7 @@ async fn enqueue_drill(
     let agent_path = agent_path.to_string();
     tokio::spawn(async move {
         // Plain `post` caps the WHOLE round trip at 60s, but the agent-side restore this
-        // triggers is budgeted 220-360s depending on backup type — any drill against a
+        // triggers is budgeted 220-360s depending on backup type - any drill against a
         // non-trivial backup was killed by this client-side cap and reported `status =
         // 'failed'` with a timeout message, a false DR-failure signal on a healthy backup.
         let result = agent

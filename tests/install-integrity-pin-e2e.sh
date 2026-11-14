@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Regression pins for s336 — the guards that decide WHAT WE INSTALL and WHAT WE
+# Regression pins for s336 - the guards that decide WHAT WE INSTALL and WHAT WE
 # PUSH, and the two ways they were quietly not guarding.
 #
 # THE SHAPE. Both defects this suite pins are the same shape, and it is a shape
 # worth naming because it hides so well:
 #
 #   S1  A GUARD APPLIED TO ONE OF SEVERAL. deploy-demo.sh fetched three binaries
-#       and ran the static-linkage check on one of them — and the one it skipped
+#       and ran the static-linkage check on one of them - and the one it skipped
 #       was the AGENT, the exact binary that put a stale glibc build on the demo
 #       at s271, which the comment above the guard cites as the reason the guard
 #       exists. Three lines of a loop above it, three installs below it, one
@@ -22,7 +22,7 @@
 #
 # The same two shapes were live in the credential gate. scripts/hooks/pre-commit
 # narrowed the staged list to eleven source extensions and exited 0 with a GREEN
-# "No scannable files staged" when the list came back empty — with the
+# "No scannable files staged" when the list came back empty - with the
 # .env/.pem/.key filename check, which never needed that list, sitting BELOW the
 # exit. scripts/hooks/pre-push had the identical inversion plus two more: its
 # new-branch arm ran `git diff <sha>`, which compares that commit with the
@@ -37,7 +37,7 @@
 #   S3  A PIN SATISFIED BY PROSE. Every structural arm below greps a script, and
 #       a grep over raw source cannot tell a live line from a disabled one. Four
 #       of these arms were measured surviving a mutation that removed the guard
-#       and left its own name behind in the comment explaining the removal — one
+#       and left its own name behind in the comment explaining the removal - one
 #       of them survived a TRAILING comment on an otherwise defective line, the
 #       weakest prose there is. The fix is the stripper set copied verbatim from
 #       tests/sandbox-paths-pin-e2e.sh and placed ABOVE every call site, plus a
@@ -46,9 +46,9 @@
 #
 #       The stripper for shell is FULL-LINE ONLY, deliberately, and one pin pays
 #       for that: a trailing comment on a live line still reaches the grep. That
-#       pin is therefore written as a conjunction — the construct we want must
+#       pin is therefore written as a conjunction - the construct we want must
 #       be present in code AND the construct we replaced it with must be absent
-#       from code — so the disabling edit trips it on the absence side, where no
+#       from code - so the disabling edit trips it on the absence side, where no
 #       comment can help.
 #
 #       Every subject here is executable shell. There is no markdown or JSON
@@ -58,7 +58,7 @@
 #
 # Sections 4 and 5 EXECUTE the guards rather than reading them, because a
 # structural arm cannot tell a guard that works from a guard that merely looks
-# right — and §4's subject is a function whose whole defect was in its exit
+# right - and §4's subject is a function whose whole defect was in its exit
 # statuses. §4 stubs readelf, so it is hermetic: no real binaries, no network,
 # and it runs the same on any box and in any container. §5 builds throwaway git
 # repositories under mktemp and never touches this one. §7 only ever mutates
@@ -77,7 +77,7 @@ bad() { FAIL=$((FAIL+1)); printf '  \033[0;31m✗\033[0m %s\n' "$1"; }
 # ── the comment strippers, ABOVE every arm that needs them (s337) ────────────
 #
 # A check placed below the thing it must run before inherits that position as a
-# defect even when the check itself is perfect — the s336 lesson, and the reason
+# defect even when the check itself is perfect - the s336 lesson, and the reason
 # these functions are the first thing in the file rather than the middle.
 #
 # The comment marker is chosen by EXTENSION, never guessed. Getting it wrong is
@@ -106,7 +106,7 @@ code_lines() {
     # over it passed on code the stripper had merely removed.
     #
     # A trailing `//` is stripped, but only when the text before it has BALANCED
-    # double quotes — otherwise `let u = "https://host"` would lose its tail.
+    # double quotes - otherwise `let u = "https://host"` would lose its tail.
     # Backslash escapes are skipped so `\"` does not flip the parity.
     awk '
       /^[[:space:]]*\/\*/ &&  /\*\/[[:space:]]*$/ { print ""; next }
@@ -139,7 +139,7 @@ code_lines() {
 # into twice. Under `set -o pipefail`, `code_lines f | grep -q PATTERN` reports
 # FAILURE on a successful match: grep -q exits at the first hit, the producer
 # upstream dies of SIGPIPE (141), and pipefail takes the pipeline's status from
-# it. The effect is silent and selective — a file whose match is near the top gets
+# it. The effect is silent and selective - a file whose match is near the top gets
 # dropped while one whose match is near the bottom survives, because the producer
 # had already finished. `grep -c` consumes all of its input, so there is no early
 # exit and no signal. (s336 #365 is the same operator lying in the other
@@ -207,7 +207,7 @@ unresolvable_range_fails_closed() {
 # pg_hba trusts the local socket, so a probe over the socket accepts any
 # password at all, including the wrong one the probe exists to catch. That makes
 # a readiness poll over that same socket a defect, because the image runs a
-# SOCKET-ONLY temporary server for the whole of initdb — so the poll clears
+# SOCKET-ONLY temporary server for the whole of initdb - so the poll clears
 # while nothing is listening on TCP, the probe's connection is refused, and the
 # installer cannot tell a refused connection from a rejected password. It then
 # either reconciles a perfectly healthy database or aborts the install telling a
@@ -215,7 +215,7 @@ unresolvable_range_fails_closed() {
 #
 # ⚠ SCOPED TO THE LOOP, and that scoping is the whole arm. A whole-file test is
 # satisfied by the psql -h a few lines below it, and the gate's own trailing
-# escape hatch is hostless BY DESIGN — it is what keeps a container with no
+# escape hatch is hostless BY DESIGN - it is what keeps a container with no
 # bridge address installable. Only the polling loop is the subject.
 #
 # Measured at s390 before the fix: EIGHT consecutive clean runs on the defective
@@ -225,7 +225,7 @@ unresolvable_range_fails_closed() {
 pg_gate_body() {   # the bash -c argument of the readiness gate, code only
   code_lines "$1" | sed -n '/run "Waiting for PostgreSQL to accept connections" bash -c/,/"; then$/p'
 }
-pg_gate_loop() {   # the polling loop only — truncated at `done`, one-line form or not
+pg_gate_loop() {   # the polling loop only - truncated at `done`, one-line form or not
   pg_gate_body "$1" | awk '
     /for i in/ { inloop = 1 }
     inloop {
@@ -280,18 +280,18 @@ if [ -n "$ASSETS_DECL" ]; then
   if [ "$N" -eq 3 ]; then
     ok "the ASSETS array holds all three published binaries"
   else
-    bad "the ASSETS array holds $N binaries, expected 3 — an asset was added or dropped without the checks following"
+    bad "the ASSETS array holds $N binaries, expected 3 - an asset was added or dropped without the checks following"
   fi
 else
-  bad "deploy-demo.sh has no ASSETS array — each check names its own subject and can fall behind the download loop"
+  bad "deploy-demo.sh has no ASSETS array - each check names its own subject and can fall behind the download loop"
 fi
 
 # The load-bearing arm: no ACTION line may spell an asset name. The declaration
 # and the destination map may; readelf, file, install and curl may not.
-# NEGATIVE ARM — §7 plants the real single-asset action line and requires a fire.
+# NEGATIVE ARM - §7 plants the real single-asset action line and requires a fire.
 STRAY=$(stray_single_asset_lines "$DEMO")
 if [ -z "$STRAY" ]; then
-  ok "no readelf/file/install/curl line names a single asset — they all iterate the list"
+  ok "no readelf/file/install/curl line names a single asset - they all iterate the list"
 else
   bad "an action line still names one asset literally: $(snippet "$STRAY")"
 fi
@@ -299,8 +299,8 @@ fi
 for what in 'download' 'checksum' 'linkage' 'swap'; do
   case "$what" in
     # Repinned s354: the download moved behind dp_fetch when the retry loop
-    # reached this script. The property is unchanged — the step must still
-    # iterate the shared list — so the arm follows the code rather than freezing
+    # reached this script. The property is unchanged - the step must still
+    # iterate the shared list - so the arm follows the code rather than freezing
     # the old call text. S9 below is its pair: it asserts the helper this now
     # names actually exists here and that nothing fetches around it.
     download) NEED='dp_fetch "$BASE/$a" "$TMP/$a"' ;;
@@ -311,7 +311,7 @@ for what in 'download' 'checksum' 'linkage' 'swap'; do
   if step_iterates "$DEMO" "$NEED"; then
     ok "the $what step iterates the shared asset list"
   else
-    bad "the $what step does not iterate the shared asset list — it can fall behind the others"
+    bad "the $what step does not iterate the shared asset list - it can fall behind the others"
   fi
 done
 
@@ -320,10 +320,10 @@ echo "── 4. the linkage guard, EXECUTED against a stubbed readelf ──"
 # extracted is a FAIL, not an error: at v2.93.0 there is no function, only an
 # inline branch, and that is exactly the state this arm exists to report.
 # Stripping runs BEFORE the slice, so the range still opens and closes on the
-# same lines it always did — code_lines blanks, it does not renumber.
+# same lines it always did - code_lines blanks, it does not renumber.
 GUARD_SRC=$(guard_source "$DEMO")
 if [ -z "$GUARD_SRC" ]; then
-  bad "deploy-demo.sh has no require_static_musl function to exercise — the linkage check is inline and unverifiable"
+  bad "deploy-demo.sh has no require_static_musl function to exercise - the linkage check is inline and unverifiable"
   bad "  (skipping the five behavioural cases: dynamic, static, readelf-error, readelf-absent, zero-byte)"
 else
   ok "the linkage guard is a function, so it can be exercised rather than read"
@@ -363,13 +363,13 @@ fi
 echo "── 5. the credential gate, EXECUTED on throwaway repositories ──"
 # The patterns live in the hooks in a self-non-matching form, so the hooks can
 # scan themselves. Read one back out of the CODE and un-bracket it to build the
-# fixtures — never spell an infrastructure address in this file. The hook COPIES
+# fixtures - never spell an infrastructure address in this file. The hook COPIES
 # below are deliberately RAW: they are executed, so they must be the real
 # program, not a stripped rendering of it.
 BLOCKED_IP=$(code_lines "$PRECOMMIT" | grep -oE '95\[\.\][0-9]+\[\.\][0-9]+\[\.\][0-9]+' | head -1 | tr -d '[]')
 BLOCKED_TOKEN="$(code_lines "$PRECOMMIT" | grep -oE 'github_pat\[_\]' | head -1 | tr -d '[]')11EXAMPLE"
 if [ -z "$BLOCKED_IP" ]; then
-  bad "could not read a blocked address out of $PRECOMMIT in bracket form — the self-non-matching idiom is gone, so the hooks can no longer scan themselves"
+  bad "could not read a blocked address out of $PRECOMMIT in bracket form - the self-non-matching idiom is gone, so the hooks can no longer scan themselves"
 else
   ok "the hooks' patterns are in the self-non-matching bracket form"
 
@@ -399,26 +399,26 @@ else
   stage leak.pem "$BLOCKED_TOKEN"
   [ "$(hook_says_blocked precommit)" = BLOCK ] \
     && ok "pre-commit blocks a .pem that arrives with no source file beside it" \
-    || bad "pre-commit lets a lone .pem through — the filename check is below the early exit again"
+    || bad "pre-commit lets a lone .pem through - the filename check is below the early exit again"
 
   stage leak.conf "proxy_pass http://$BLOCKED_IP;"
   [ "$(hook_says_blocked precommit)" = BLOCK ] \
     && ok "pre-commit blocks an nginx .conf carrying a real origin address" \
-    || bad "pre-commit does not scan .conf files — the extension allowlist is back"
+    || bad "pre-commit does not scan .conf files - the extension allowlist is back"
 
   # MUST-NOT-FIRE. Without this the section above is satisfied by a hook that
   # blocks everything, which is not a working gate, it is a broken one.
   ( cd "$H_TMP/r" && rm -f leak.* && cp "$REPO/$PRECOMMIT" ./pc.copy && cp "$REPO/$PREPUSH" ./pp.copy && git add -A ) >/dev/null 2>&1
   [ "$(hook_says_blocked precommit)" = PASS ] \
     && ok "pre-commit does NOT block the hooks' own text (they can still be edited)" \
-    || bad "pre-commit blocks its own source — the patterns match themselves and no hook change can be committed"
+    || bad "pre-commit blocks its own source - the patterns match themselves and no hook change can be committed"
 
   ( cd "$H_TMP/r" && rm -f pc.copy pp.copy && printf 'fn main(){}\n' > ok.rs && git add -A ) >/dev/null 2>&1
   [ "$(hook_says_blocked precommit)" = PASS ] \
     && ok "pre-commit does NOT block an ordinary clean source file" \
-    || bad "pre-commit blocks a clean .rs — the gate is crying wolf and will be switched off"
+    || bad "pre-commit blocks a clean .rs - the gate is crying wolf and will be switched off"
 
-  # A commit that REMOVES a secret must never be blocked — otherwise the one
+  # A commit that REMOVES a secret must never be blocked - otherwise the one
   # change this hook refuses to allow is the change that cleans the repository.
   # MODIFY rather than delete: --diff-filter=ACMR already drops whole-file
   # deletions, so deleting the file would prove nothing about the line scan.
@@ -428,11 +428,11 @@ else
       && printf 'keep me\n' > carrier.txt && git add -A ) >/dev/null 2>&1
   [ "$(hook_says_blocked precommit)" = PASS ] \
     && ok "pre-commit does NOT block a commit that REMOVES a line holding a secret" \
-    || bad "pre-commit blocks the removal of a secret — the scan is reading deleted lines"
+    || bad "pre-commit blocks the removal of a secret - the scan is reading deleted lines"
 
-  # The hostname arm is deliberately NON-BLOCKING — these names appear in docs
+  # The hostname arm is deliberately NON-BLOCKING - these names appear in docs
   # and examples legitimately. But the scan used to close with an unconditional
-  # "Clean — no infrastructure leaks detected.", so a run that had just printed a
+  # "Clean - no infrastructure leaks detected.", so a run that had just printed a
   # hostname hit still signed off as clean, and the green line is the one an
   # operator reads. Derive the hostname from the hook's own bracket form; never
   # spell an internal address in this file.
@@ -445,27 +445,27 @@ else
     stage leak.conf "server_name $BLOCKED_HOST;"
     S=$(hook_summary)
     if printf '%s' "$S" | grep -cE 'WARNING: Internal hostname' >/dev/null \
-       && ! printf '%s' "$S" | grep -cE 'Clean — no infrastructure leaks' >/dev/null; then
+       && ! printf '%s' "$S" | grep -cE 'Clean - no infrastructure leaks' >/dev/null; then
       ok "pre-commit warns on an internal hostname WITHOUT then calling the scan clean"
     else
-      bad "pre-commit's summary contradicts its own warning — it printed a hostname hit and still signed off as clean"
+      bad "pre-commit's summary contradicts its own warning - it printed a hostname hit and still signed off as clean"
     fi
   fi
 
   # MUST-NOT-FIRE for the arm above: a genuinely clean scan must still say so, or
   # the check is satisfied by a hook that never claims cleanliness at all.
   ( cd "$H_TMP/r" && rm -f leak.* carrier.txt && printf 'fn main(){}\n' > fine.rs && git add -A ) >/dev/null 2>&1
-  if printf '%s' "$(hook_summary)" | grep -cE 'Clean — no infrastructure leaks' >/dev/null; then
+  if printf '%s' "$(hook_summary)" | grep -cE 'Clean - no infrastructure leaks' >/dev/null; then
     ok "pre-commit still reports a genuinely clean scan as clean"
   else
-    bad "pre-commit no longer says anything positive on a clean scan — the verdict has been lost, not corrected"
+    bad "pre-commit no longer says anything positive on a clean scan - the verdict has been lost, not corrected"
   fi
 
   ( cd "$H_TMP/r" && rm -f ok.rs fine.rs && printf '%s\n' "$BLOCKED_TOKEN" > leak.pem \
       && git add -A && git commit -qm "lone pem" --no-verify ) >/dev/null 2>&1
   [ "$(hook_says_blocked prepush)" = BLOCK ] \
     && ok "pre-push blocks a commit whose only file is a .pem" \
-    || bad "pre-push lets a lone .pem through — the pathspec disarms the filename check again"
+    || bad "pre-push lets a lone .pem through - the pathspec disarms the filename check again"
 
   rm -rf "$H_TMP"
 fi
@@ -473,18 +473,18 @@ fi
 echo "── 6. the new-branch arm asks for commits, not for a working-tree diff ──"
 # This is the one pin that has to read source: the behaviour it pins is an
 # ABSENCE, and the absence is of a construct rather than of an output. It is a
-# CONJUNCTION for a measured reason — the disabling edit that beat it left the
+# CONJUNCTION for a measured reason - the disabling edit that beat it left the
 # wanted symbol behind in a TRAILING comment, which the shell stripper does not
 # remove, so the arm has to also refuse the construct that replaced it.
 if newbranch_asks_for_commits "$PREPUSH"; then
   ok "the new-branch arm asks git for the commits being pushed"
 else
-  bad "the new-branch arm does not ask git for the commits being pushed — either the log-of-patches call is gone from CODE, or a diff against a bare local sha is back, and that compares the commit with the working tree and is empty on a clean one"
+  bad "the new-branch arm does not ask git for the commits being pushed - either the log-of-patches call is gone from CODE, or a diff against a bare local sha is back, and that compares the commit with the working tree and is empty on a clean one"
 fi
 if unresolvable_range_fails_closed "$PREPUSH"; then
   ok "a range git cannot resolve fails closed instead of reading as a clean push"
 else
-  bad "the pushed range's exit status is still discarded — an unresolvable range is indistinguishable from a clean push"
+  bad "the pushed range's exit status is still discarded - an unresolvable range is indistinguishable from a clean push"
 fi
 
 echo "── 6b. the readiness gate polls the transport the password probe uses ──"
@@ -493,12 +493,12 @@ echo "── 6b. the readiness gate polls the transport the password probe uses 
 if [ -n "$(pg_gate_body scripts/setup.sh)" ] && [ "$(pg_gate_probes scripts/setup.sh)" -ge 1 ]; then
   ok "the readiness gate is where this arm expects it, with a probe inside its loop"
 else
-  bad "the readiness-gate extractor found no loop with a probe in it — setup.sh was restructured and THIS ARM IS NOW VACUOUS, which is not the same as the gate being correct"
+  bad "the readiness-gate extractor found no loop with a probe in it - setup.sh was restructured and THIS ARM IS NOW VACUOUS, which is not the same as the gate being correct"
 fi
 if gate_polls_tcp scripts/setup.sh; then
   ok "every readiness probe inside the gate's loop names a host, so it cannot clear on the socket-only server the image runs during initdb"
 else
-  bad "the gate's loop polls without naming a host: it answers over the container's own socket and clears while nothing is listening on TCP, so the password probe below is refused at the transport layer and the installer reports a password mismatch on a healthy database — or aborts telling the operator to destroy their volume"
+  bad "the gate's loop polls without naming a host: it answers over the container's own socket and clears while nothing is listening on TCP, so the password probe below is refused at the transport layer and the installer reports a password mismatch on a healthy database - or aborts telling the operator to destroy their volume"
 fi
 
 echo "── 7. the pins are mutation-tested against broken copies, on every run ──"
@@ -507,7 +507,7 @@ echo "── 7. the pins are mutation-tested against broken copies, on every run
 # defect in place, and a stripper that eats code turns a NEGATIVE arm silently
 # green on broken code. Neither shows up by reading. So every structural pin
 # above is re-run here against a copy that has been deliberately broken, and the
-# copy always keeps the subject's BASENAME — the stripper picks its language
+# copy always keeps the subject's BASENAME - the stripper picks its language
 # from the filename, and a copy called something else is read as the wrong one.
 M_TMP=$(mktemp -d)
 
@@ -515,13 +515,13 @@ scratch() { # scratch <repo-relative subject> → private copy, SAME BASENAME
   local d; d=$(mktemp -d "$M_TMP/plant.XXXXXX")
   cp "$REPO/$1" "$d/$(basename "$1")" && printf '%s' "$d/$(basename "$1")"
 }
-comment_out_matching() { # <file> <ere> — prefix every matching line with the file's own marker
+comment_out_matching() { # <file> <ere> - prefix every matching line with the file's own marker
   local f="$1" re="$2" m; m=$(comment_marker_for "$f")
   awk -v re="$re" -v m="$m" '{ if ($0 ~ re) print m " " $0; else print }' "$f" > "$f.mut" && mv "$f.mut" "$f"
 }
 append_code()  { printf '%s\n' "$2" >> "$1"; }
 append_prose() { local m; m=$(comment_marker_for "$1"); printf '%s %s\n' "$m" "$2" >> "$1"; }
-mutation_landed() { # <repo original> <mutated copy> — height held, content moved
+mutation_landed() { # <repo original> <mutated copy> - height held, content moved
   [ "$(wc -l < "$1")" -eq "$(wc -l < "$2")" ] && ! cmp -s "$1" "$2"
 }
 
@@ -529,11 +529,11 @@ mutation_arm() { # <label> <repo-relative subject> <ere> <predicate>
   local label="$1" subject="$2" re="$3" pred="$4" copy
   copy=$(scratch "$subject")
   if ! "$pred" "$copy"; then
-    bad "$label — the pin was already unsatisfied on an untouched copy, so the mutation proves nothing"
+    bad "$label - the pin was already unsatisfied on an untouched copy, so the mutation proves nothing"
   elif ! { comment_out_matching "$copy" "$re"; mutation_landed "$REPO/$subject" "$copy"; }; then
-    bad "$label — the mutation did not land: nothing matched, or the file changed height"
+    bad "$label - the mutation did not land: nothing matched, or the file changed height"
   elif "$pred" "$copy"; then
-    bad "$label — the pin is still satisfied with that code commented out: prose is holding it up"
+    bad "$label - the pin is still satisfied with that code commented out: prose is holding it up"
   else
     ok "$label"
   fi
@@ -562,7 +562,7 @@ mutation_arm "mutation: §6b notices the gate's whole probe line being commented
   scripts/setup.sh 'pg_isready -h' gate_polls_tcp
 
 # §6b's OTHER mutation, and the one that matters. This fix does not get undone by
-# someone commenting out a line — it gets undone by the host flag being edited
+# someone commenting out a line - it gets undone by the host flag being edited
 # away, which leaves a live line no stripper can help with and reads, in a diff,
 # like a simplification. A comment-out mutation cannot see that edit at all.
 PGREV=$(scratch scripts/setup.sh)
@@ -570,22 +570,22 @@ sed -i 's/pg_isready -h [^ ]* -U dockpanel/pg_isready -U dockpanel/' "$PGREV"
 if ! gate_polls_tcp "$REPO/scripts/setup.sh"; then
   bad "mutation: §6b was already unsatisfied on the untouched file, so the mutation proves nothing"
 elif ! mutation_landed "$REPO/scripts/setup.sh" "$PGREV"; then
-  bad "mutation: §6b's hostless revert did not land — the probe's spelling changed and this mutation is now a no-op that scores green"
+  bad "mutation: §6b's hostless revert did not land - the probe's spelling changed and this mutation is now a no-op that scores green"
 elif gate_polls_tcp "$PGREV"; then
-  bad "mutation: §6b is STILL satisfied with the host flag edited out of the loop — the arm cannot see the exact regression it exists for"
+  bad "mutation: §6b is STILL satisfied with the host flag edited out of the loop - the arm cannot see the exact regression it exists for"
 else
   ok "mutation: §6b notices the host flag being edited out of the gate's polling loop"
 fi
 
 # The mechanism itself, stated once: after that same mutation the wanted symbol
 # is STILL THERE in the raw bytes and gone only from the code stream. This is the
-# whole s338 defect in one assertion — every arm above used to read the raw bytes.
+# whole s338 defect in one assertion - every arm above used to read the raw bytes.
 MECH=$(scratch "$IAGENT")
 comment_out_matching "$MECH" 'sha256sum'
 if [ "$(grep -c 'sha256sum' "$MECH")" -gt 0 ] && [ "$(code_count "$MECH" 'sha256sum')" -eq 0 ]; then
   ok "the disabling edit leaves the searched symbol in the file's raw bytes and removes it only from the code stream"
 else
-  bad "the raw/code split does not hold on a commented-out subject — the stripper is either doing nothing or deleting the line"
+  bad "the raw/code split does not hold on a commented-out subject - the stripper is either doing nothing or deleting the line"
 fi
 
 # ── negative controls. Three arms above are match-⇒-bad, and for those the
@@ -597,11 +597,11 @@ DEFECT_WRITE="curl -fsSL -o $BIN_DIR/dockpanel-api \"\$URL\""
 NEG=$(scratch scripts/setup.sh); append_code "$NEG" "$DEFECT_WRITE"
 [ -n "$(live_bin_writes "$NEG")" ] \
   && ok "negative control: a real download onto the live executable path IS reported" \
-  || bad "negative control: a real download onto the live executable path was NOT reported — §2 has gone blind and every install path reads clean"
+  || bad "negative control: a real download onto the live executable path was NOT reported - §2 has gone blind and every install path reads clean"
 NEG=$(scratch scripts/setup.sh); append_prose "$NEG" "$DEFECT_WRITE"
 [ -z "$(live_bin_writes "$NEG")" ] \
   && ok "negative control: the same line written as prose is NOT reported" \
-  || bad "negative control: §2 fires on a comment — a false alarm that trains the next reader to ignore it"
+  || bad "negative control: §2 fires on a comment - a false alarm that trains the next reader to ignore it"
 
 A1=$(first_asset "$DEMO")
 if [ -z "$A1" ]; then
@@ -612,11 +612,11 @@ else
   NEG=$(scratch "$DEMO"); append_code "$NEG" "$DEFECT_STRAY"
   [ -n "$(stray_single_asset_lines "$NEG")" ] \
     && ok "negative control: a real action line naming one asset IS reported" \
-    || bad "negative control: a real action line naming one asset was NOT reported — §3 has gone blind and the s271 shape can come back"
+    || bad "negative control: a real action line naming one asset was NOT reported - §3 has gone blind and the s271 shape can come back"
   NEG=$(scratch "$DEMO"); append_prose "$NEG" "$DEFECT_STRAY"
   [ -z "$(stray_single_asset_lines "$NEG")" ] \
     && ok "negative control: the same action line written as prose is NOT reported" \
-    || bad "negative control: §3 fires on a comment — a false alarm that trains the next reader to ignore it"
+    || bad "negative control: §3 fires on a comment - a false alarm that trains the next reader to ignore it"
 fi
 
 DEFECT_DIFF='PATCH=$(git diff --no-color "$LOCAL_SHA" 2>/dev/null); RC=$?'
@@ -624,13 +624,13 @@ NEG=$(scratch "$PREPUSH"); append_code "$NEG" "$DEFECT_DIFF"
 if [ -n "$(worktree_diff_on_bare_sha "$NEG")" ] && ! p_newbranch "$NEG"; then
   ok "negative control: a real diff against a bare local sha IS reported"
 else
-  bad "negative control: a real diff against a bare local sha was NOT reported — §6 has gone blind and a new branch is pushed unscanned"
+  bad "negative control: a real diff against a bare local sha was NOT reported - §6 has gone blind and a new branch is pushed unscanned"
 fi
 NEG=$(scratch "$PREPUSH"); append_prose "$NEG" "$DEFECT_DIFF"
 if [ -z "$(worktree_diff_on_bare_sha "$NEG")" ] && p_newbranch "$NEG"; then
   ok "negative control: the same diff written as prose is NOT reported"
 else
-  bad "negative control: §6 fires on a comment — a false alarm that trains the next reader to ignore it"
+  bad "negative control: §6 fires on a comment - a false alarm that trains the next reader to ignore it"
 fi
 
 # ── the stripper's own contract, because everything above rests on it ──
@@ -646,7 +646,7 @@ for f in $SUBJECTS; do
 done
 [ -z "$HEIGHT_BAD" ] \
   && ok "the stripper blanks and never deletes: every subject keeps its height and every surviving line keeps its index" \
-  || bad "the stripper renumbers or rewrites $HEIGHT_BAD — every line number and every slice boundary above is now measuring something else"
+  || bad "the stripper renumbers or rewrites $HEIGHT_BAD - every line number and every slice boundary above is now measuring something else"
 
 FIX="$M_TMP/fixture.sh"
 printf '%s\n' 'X=$(sed "s/#//" f)' '   # a whole-line comment' 'Y=${VAR#pre}' > "$FIX"
@@ -656,7 +656,7 @@ if [ "$(printf '%s\n' "$FIXOUT" | sed -n 1p)" = 'X=$(sed "s/#//" f)' ] \
    && [ "$(printf '%s\n' "$FIXOUT" | sed -n 3p)" = 'Y=${VAR#pre}' ]; then
   ok "the shell stripper blanks a whole-line comment and leaves a hash inside live code alone"
 else
-  bad "the shell stripper is truncating live code at a hash — parameter expansions and quoted literals are being eaten, which is the direction that turns a negative arm silently green"
+  bad "the shell stripper is truncating live code at a hash - parameter expansions and quoted literals are being eaten, which is the direction that turns a negative arm silently green"
 fi
 
 MARKER_BAD=""
@@ -665,7 +665,7 @@ for f in $SUBJECTS; do
   [ "$(comment_marker_for "$C")" = "$(comment_marker_for "$f")" ] || { MARKER_BAD="$f"; break; }
 done
 [ -z "$MARKER_BAD" ] \
-  && ok "a scratch copy is read in the same language as its subject — the basename, and so the extension, is preserved" \
+  && ok "a scratch copy is read in the same language as its subject - the basename, and so the extension, is preserved" \
   || bad "a scratch copy of $MARKER_BAD is read in a different language than the subject, so every mutation above was applied with the wrong comment marker"
 
 rm -rf "$M_TMP"
@@ -673,9 +673,9 @@ rm -rf "$M_TMP"
 # ── S9. THE SAME OPERATION IN EVERY PROGRAM THAT PERFORMS IT ────────────────
 # This suite's founding shape (S1) is a guard applied to one of several. s354
 # found the same shape in the fix for it: s353 gave the INSTALLER a shell retry
-# loop for the one failure `curl --retry` does not cover — a connection dropped
+# loop for the one failure `curl --retry` does not cover - a connection dropped
 # mid-transfer, exit 56, which had aborted three real installs against the
-# release CDN — and gave it to the installer only. Three other programs download
+# release CDN - and gave it to the installer only. Three other programs download
 # the same assets from the same host and were all still bare, and one bare call
 # was left eleven lines below the new function inside setup.sh itself.
 #
@@ -687,19 +687,19 @@ rm -rf "$M_TMP"
 RELEASE_CONSUMERS="scripts/setup.sh scripts/update.sh scripts/agent-self-update.sh scripts/deploy-demo.sh"
 for consumer in $RELEASE_CONSUMERS; do
   if [ ! -f "$consumer" ]; then
-    bad "S9 $consumer is missing — refusing to report a clean sweep"
+    bad "S9 $consumer is missing - refusing to report a clean sweep"
     continue
   fi
   if grep -qE '^dp_fetch\(\) \{' "$consumer"; then
     ok "S9 $consumer fetches release assets through a retrying dp_fetch"
   else
-    bad "S9 $consumer has no dp_fetch — its release downloads cannot survive a mid-transfer drop (exit 56)"
+    bad "S9 $consumer has no dp_fetch - its release downloads cannot survive a mid-transfer drop (exit 56)"
   fi
   BARE=$(code_lines "$consumer" | grep -E 'curl' | grep -cE '\$\{?BASE(_URL)?\}?/' || true)
   if [ "$BARE" -eq 0 ]; then
     ok "S9 $consumer has no bare curl fetching a release asset"
   else
-    bad "S9 $consumer has $BARE bare curl download(s) of a release asset — they bypass dp_fetch's retry"
+    bad "S9 $consumer has $BARE bare curl download(s) of a release asset - they bypass dp_fetch's retry"
   fi
 done
 

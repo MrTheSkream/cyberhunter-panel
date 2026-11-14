@@ -7,9 +7,9 @@
 //! before.
 //!
 //! Split in two halves on purpose:
-//! - pure: [`validate_php_pool`] and [`render_php_pool`] — everything that
+//! - pure: [`validate_php_pool`] and [`render_php_pool`] - everything that
 //!   decides what lands in the file, tested below without a box;
-//! - effectful: [`apply_php_pool`] — backup, atomic write, `php-fpm<ver> -t`,
+//! - effectful: [`apply_php_pool`] - backup, atomic write, `php-fpm<ver> -t`,
 //!   restore on failure, directories, reload.
 
 use crate::safe_cmd::safe_command;
@@ -46,7 +46,7 @@ const FORBIDDEN_KEYS: &[&str] = &[
     "include_path",
 ];
 
-/// `SiteConfig.php_pool` — see the contract §A1 for the wire example.
+/// `SiteConfig.php_pool` - see the contract §A1 for the wire example.
 /// `values` keys rendered as `php_admin_value[...]` (locked against the site's
 /// own `ini_set` / `set_time_limit` / `.user.ini`), like the legacy pool did.
 const ADMIN_VALUE_KEYS: &[&str] = &[
@@ -79,7 +79,7 @@ pub struct PhpPool {
     pub extra: Vec<(String, String)>,
 }
 
-/// Pool name for a domain — dots become underscores (same rule everywhere).
+/// Pool name for a domain - dots become underscores (same rule everywhere).
 pub fn pool_name(domain: &str) -> String {
     domain.replace('.', "_")
 }
@@ -298,7 +298,7 @@ pub fn restore_file(path: &str, previous: Option<&str>) -> bool {
     }
 }
 
-/// `chown -h user:group path` — best-effort, logged. `-h` (lchown): if the
+/// `chown -h user:group path` - best-effort, logged. `-h` (lchown): if the
 /// path was swapped for a symlink after our checks, only the link changes
 /// owner, never what it points at.
 async fn chown_nofollow(path: &str, user: &str, group: &str) {
@@ -321,7 +321,7 @@ enum Expect {
 
 /// Pure verdict on an `lstat` result (`None` = the path does not exist).
 /// `Ok(true)`: exists and is the expected kind; `Ok(false)`: absent;
-/// `Err`: a symlink or the wrong kind — refused, never followed (the site
+/// `Err`: a symlink or the wrong kind - refused, never followed (the site
 /// user controls `/var/www/<domain>` and could plant a link to `/etc/shadow`).
 fn check_kind(path: &str, file_type: Option<std::fs::FileType>, expect: Expect) -> Result<bool, String> {
     let Some(ft) = file_type else { return Ok(false) };
@@ -353,7 +353,7 @@ fn open_nofollow(path: &str, opts: &mut std::fs::OpenOptions, extra: i32) -> std
 
 /// Per-pool error log. PHP opens it from the WORKER (the pool user), so a
 /// root-owned directory alone means nothing is ever written: pre-create the
-/// file (never truncated) and hand it to the pool user on every apply — the
+/// file (never truncated) and hand it to the pool user on every apply - the
 /// owner changes when SFTP is enabled/disabled. `Err` only for a symlink or
 /// non-regular file; plain I/O trouble is logged and skipped as before.
 async fn prepare_error_log(log: &str, user: &str, group: &str) -> Result<(), String> {
@@ -442,7 +442,7 @@ impl PoolRollback {
 /// Write, test and load the pool for `domain`.
 ///
 /// `Ok(None)`: no Debian `pool.d` tree for this version (RHEL family, or the
-/// version is not installed) — skipped, exactly like the legacy writer.
+/// version is not installed) - skipped, exactly like the legacy writer.
 /// `Ok(Some(rollback))`: pool written, `-t` passed, directories prepared, FPM
 /// reloaded; `rollback` undoes the pool write if the caller's next steps fail.
 /// `Err(msg)`: invalid pool, a symlinked/odd tmp dir or error log, or a `-t`
@@ -508,7 +508,7 @@ pub async fn apply_php_pool(
 
     std::fs::remove_file(&backup).ok();
 
-    // -t passed: a reload failure is not fatal here — the caller waits for the
+    // -t passed: a reload failure is not fatal here - the caller waits for the
     // per-site socket and stays on the shared pool if it never appears.
     if let Err(e) = fpm_systemctl(php_version, "reload").await {
         tracing::warn!("{e} (pool for {domain} applies on next restart)");

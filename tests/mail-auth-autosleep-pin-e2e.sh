@@ -6,7 +6,7 @@
 #
 #   A. MAIL AUTHENTICATION. The Dovecot passwd-file was written 0600 root:root.
 #      Dovecot's auth worker drops to the `dovecot` user, so it could not open
-#      the file at all and EVERY mailbox login failed — while the panel reported
+#      the file at all and EVERY mailbox login failed - while the panel reported
 #      the account created successfully. Proven on a real box: with the shipped
 #      permissions an IMAP login returns "Temporary authentication failure";
 #      with 0640 root:dovecot the same login succeeds.
@@ -18,7 +18,7 @@
 #      ever, because the sleeper is a step of the auto-healer, which is OFF by
 #      default and configured on a different page. Storing the setting is fine;
 #      reporting plain success while the loop that honours it is off is not.
-#   D. A SITE BACKUP IS FILES ONLY, and the guide said otherwise — twice, plus a
+#   D. A SITE BACKUP IS FILES ONLY, and the guide said otherwise - twice, plus a
 #      sample restore transcript with a "Restoring database..." step no code has
 #      ever performed. Restoring a WordPress site returns its files and none of
 #      its content. Confirmed by restoring one: the file marker came back, the
@@ -104,13 +104,13 @@ has  "the tooltip no longer promises idleness it cannot measure" \
 echo
 echo "D. A backup never overstates what it contains"
 # s259 found `create_backup` was `tar czf … -C <site_root> .` and nothing else,
-# while the panel's own `databases` table knew the site had one — so restoring a
+# while the panel's own `databases` table knew the site had one - so restoring a
 # WordPress site returned its files and none of its content (the file marker came
 # back, the deleted post did not), and the guide claimed the opposite.
 #
 # s260 CHANGED THE UNDERLYING FACT: site backups now carry a dump of each of the
 # site's databases, proven on a fresh box by the same drill (post came back).
-# What survives both eras is the invariant this section really pins — the docs
+# What survives both eras is the invariant this section really pins - the docs
 # and the UI state what an archive actually holds, never more. The mechanics of
 # the new path are pinned in tests/site-backup-databases-pin-e2e.sh.
 has  "the Backups page still distinguishes an archive with no database" \
@@ -122,7 +122,7 @@ has  "…and the empty state describes what a backup now protects" \
 # The guide was the worst offender: it stated the database WAS included when it
 # was not, twice, and printed a sample restore transcript with a "Restoring
 # database..." step that no code performed. Those exact fabrications must stay
-# gone even now that the capability is real — the transcript has to match what
+# gone even now that the capability is real - the transcript has to match what
 # the CLI prints, and the CLI still cannot restore databases.
 hasnt "the guide no longer claims the database is in the tarball" \
      'includes the site files, database' "$BACKUPS_DOC"

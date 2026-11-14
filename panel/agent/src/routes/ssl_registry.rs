@@ -1,7 +1,7 @@
 //! The named certificate registry (#104).
 //!
 //! A certificate the operator supplies is registered ONCE under an alias and
-//! referenced by that alias from every stack that claims a domain under it —
+//! referenced by that alias from every stack that claims a domain under it -
 //! never by filesystem path, and never as a per-domain upload that has to be
 //! repeated for every name a wildcard covers. The PEM pair lives only here, on
 //! the agent's disk, in its own root beside the per-domain tree; the panel
@@ -39,7 +39,7 @@ struct RegisterRequest {
     /// two operators registering the same name do not silently race.
     #[serde(default)]
     replace: bool,
-    /// Domains the new pair must still cover — on a replace, every domain a
+    /// Domains the new pair must still cover - on a replace, every domain a
     /// stack already claims through this alias. A replacement that drops one
     /// of them would take that site's TLS down at the next reload, so it is
     /// refused up front with the domain named.
@@ -56,8 +56,8 @@ struct CoversRequest {
 /// is staged in beside it. Staged under a dot-name inside the same root so the
 /// final `rename` is within one filesystem and therefore atomic; suffixed with
 /// a fresh nonce PER REQUEST, because every request in this one process shares
-/// a pid, and two operators replacing the same alias at once must not stage —
-/// or park the incumbent — in one directory.
+/// a pid, and two operators replacing the same alias at once must not stage -
+/// or park the incumbent - in one directory.
 fn alias_dirs(alias: &str, tag: &str) -> (String, String) {
     (
         format!("{}/{alias}", ssl::SSL_REGISTRY_DIR),
@@ -97,7 +97,7 @@ async fn sweep_leftovers(alias: &str) {
     }
 }
 
-/// POST /ssl/registry — Register a certificate under an alias.
+/// POST /ssl/registry - Register a certificate under an alias.
 async fn register(
     Json(body): Json<RegisterRequest>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), Refusal> {
@@ -106,7 +106,7 @@ async fn register(
         return Err(refuse(
             StatusCode::BAD_REQUEST,
             "the alias must be 1 to 64 lowercase letters, digits or hyphens, starting and ending \
-             with a letter or digit — a DNS label shape, like wildcard-2026",
+             with a letter or digit - a DNS label shape, like wildcard-2026",
         ));
     }
     if body.certificate.trim().is_empty() || body.private_key.trim().is_empty() {
@@ -118,7 +118,7 @@ async fn register(
     if !body.private_key.contains("BEGIN") {
         return Err(refuse(
             StatusCode::BAD_REQUEST,
-            "the private key is not PEM — it should start with a BEGIN line",
+            "the private key is not PEM - it should start with a BEGIN line",
         ));
     }
 
@@ -197,7 +197,7 @@ async fn register(
 
     // A replaced pair that a live vhost already names has to reach nginx, or
     // the site keeps serving the old certificate from memory until something
-    // unrelated reloads it — and if the new pair is one nginx refuses, that
+    // unrelated reloads it - and if the new pair is one nginx refuses, that
     // unrelated reload is where the outage would surface. Test now, and put
     // the previous pair back if the answer is no.
     if previous_kept && ownership::registry_cert_in_use(alias) {
@@ -218,7 +218,7 @@ async fn register(
                     if restored {
                         " (the previous certificate was put back)"
                     } else {
-                        " (and the previous certificate could NOT be put back — check the registry directory)"
+                        " (and the previous certificate could NOT be put back - check the registry directory)"
                     }
                 ),
             ));
@@ -268,7 +268,7 @@ async fn stage_pair(tmp_dir: &str, certificate: &str, private_key: &str) -> Resu
     ssl::write_key_file(&format!("{tmp_dir}/privkey.pem"), private_key).await
 }
 
-/// POST /ssl/registry/{alias}/covers — Does the registered certificate name
+/// POST /ssl/registry/{alias}/covers - Does the registered certificate name
 /// this domain? Binding point 3 of #104: asked by the panel at claim time,
 /// before any row is written, and again by the deploy path itself.
 async fn covers(
@@ -302,7 +302,7 @@ async fn covers(
     Ok(Json(serde_json::json!({ "ok": true, "dns_names": names })))
 }
 
-/// DELETE /ssl/registry/{alias} — Remove a registered certificate, unless a
+/// DELETE /ssl/registry/{alias} - Remove a registered certificate, unless a
 /// vhost still names it.
 async fn remove(Path(alias): Path<String>) -> Result<Json<serde_json::Value>, Refusal> {
     if !ssl::is_valid_cert_alias(&alias) {
@@ -372,7 +372,7 @@ pub fn router() -> Router<AppState> {
 mod tests {
     /// The registry shares the `/ssl` prefix with the per-domain router, whose
     /// `{domain}` segment sits where `registry` does. axum refuses an ambiguous
-    /// pair at merge time — by panicking in `main`, which no test reaches. So
+    /// pair at merge time - by panicking in `main`, which no test reaches. So
     /// the merge is performed here, where a conflict fails a test instead of
     /// the daemon's start-up.
     #[test]

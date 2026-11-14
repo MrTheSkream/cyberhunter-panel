@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# client-surface-gating-pin-e2e.sh — s351
+# client-surface-gating-pin-e2e.sh - s351
 #
 # Pins the six client-visible surfaces whose controls asked for something the
 # server would refuse, and the census idiom that hid two of them.
@@ -8,7 +8,7 @@
 # mount requests were administrator-only and every `.catch` swallowed the 403
 # into an empty state, so a site owner was shown "Mail Server Not Installed" for
 # a mail server running fine. The fix was correct and the sweep that followed it
-# was not — it enumerated administrator-gated handlers by grepping `AdminUser(`,
+# was not - it enumerated administrator-gated handlers by grepping `AdminUser(`,
 # and TWO route modules never wrote that spelling. They bound the extractor
 # without destructuring it, so a paren-anchored search returned zero on both, and
 # both were left out of every count. Those two modules are exactly the ones
@@ -16,9 +16,9 @@
 #
 # s437 UPDATE: those same two modules (on_call.rs, escalation_policies.rs) were
 # exactly the ones grepped-verified to hold ALL FIVE remaining occurrences each
-# of the undestructured spelling in `panel/backend/src/routes/` — the entire
+# of the undestructured spelling in `panel/backend/src/routes/` - the entire
 # population. Adding tenant scoping to both required `claims.sub` in every
-# handler, which meant destructuring the extractor everywhere it was bound —
+# handler, which meant destructuring the extractor everywhere it was bound -
 # so the undestructured spelling is now retired from the codebase, not merely
 # from these two files. §A below was rewritten to reflect that: A1/A2 no
 # longer demonstrate the blind spot (there is nothing left to be blind to) and
@@ -77,7 +77,7 @@ done
 
 # Strip comments before measuring. Load-bearing here: every subject is commented
 # with the reason for its gate, and those comments NAME the tokens the arms grep
-# for — `isAdmin`, `AdminUser`, `require_admin`, `selectable`. Grepping raw
+# for - `isAdmin`, `AdminUser`, `require_admin`, `selectable`. Grepping raw
 # source would match the sentence explaining the check instead of the check
 # ([[feedback_source_pin_prose_trap]]). JSX `{/* ... */}` is handled first and
 # non-greedily because five of the eight subjects are .tsx.
@@ -113,7 +113,7 @@ echo "§0  the stripper actually stripped (a blinded stripper makes every arm be
 # reason. Three subjects, three comment styles: JSX braces, // in .tsx, // in .rs.
 # The token must sit entirely on ONE line: these greps are line-based, so a
 # phrase that wraps can never match and the arm is green against every input
-# (lesson #409 — caught here by M19, which found this arm was vacuous).
+# (lesson #409 - caught here by M19, which found this arm was vacuous).
 if has "$ALERTS_S" 'their endpoints are administrator-only'; then
   bad "0.1 Alerts.tsx: comments survived the strip"
 else
@@ -140,18 +140,18 @@ ALERTS_STRIP_L=$(wc -l <<< "$ALERTS_S")
 if [ "$ALERTS_STRIP_L" -gt $((ALERTS_RAW_L / 2)) ]; then
   ok  "0.4 the strip removed comments, not the file ($ALERTS_RAW_L → $ALERTS_STRIP_L lines)"
 else
-  bad "0.4 the strip took more than half of Alerts.tsx ($ALERTS_RAW_L → $ALERTS_STRIP_L) — subjects are truncated, absence arms are worthless"
+  bad "0.4 the strip took more than half of Alerts.tsx ($ALERTS_RAW_L → $ALERTS_STRIP_L) - subjects are truncated, absence arms are worthless"
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 echo
-echo "§A  the census idiom — the mechanism that hid two of these surfaces for two sessions"
+echo "§A  the census idiom - the mechanism that hid two of these surfaces for two sessions"
 
 # Two route modules used to bind the admin extractor WITHOUT destructuring it.
 # A search anchored on the open paren returned zero on both, which is why a
 # sweep that used one reported them as carrying no administrator-gated
 # handler at all. s437's tenant-scoping fix needed `claims.sub` in every
-# handler of both files, which meant destructuring the extractor everywhere —
+# handler of both files, which meant destructuring the extractor everywhere -
 # grep-verified (s437) that these two files held the ENTIRE population of the
 # undestructured spelling in $ROUTES, so it is now retired codebase-wide, not
 # just from these two files. A1 now pins that retirement directly instead of
@@ -160,18 +160,18 @@ UNNAMED_FILES=$(grep -rlE '^\s*_[a-z_]+: AdminUser,' "$ROUTES" | sort)
 UNNAMED_COUNT=$(grep -rhE '^\s*_[a-z_]+: AdminUser,' "$ROUTES" | wc -l)
 
 if [ "$UNNAMED_COUNT" -eq 0 ]; then
-  ok  "A1 the undestructured spelling is retired codebase-wide (s437) — on_call.rs/escalation_policies.rs were its entire population"
+  ok  "A1 the undestructured spelling is retired codebase-wide (s437) - on_call.rs/escalation_policies.rs were its entire population"
 else
-  bad "A1 the undestructured spelling has reappeared ($UNNAMED_COUNT handler(s) in: $UNNAMED_FILES) — re-verify it stays invisible to a paren-anchored 'AdminUser(' census before trusting one again"
+  bad "A1 the undestructured spelling has reappeared ($UNNAMED_COUNT handler(s) in: $UNNAMED_FILES) - re-verify it stays invisible to a paren-anchored 'AdminUser(' census before trusting one again"
 fi
 
 # The historical control (A2) no longer has a subject to check blindness
-# against now that A1 is 0 — a loop over an empty $UNNAMED_FILES would just
+# against now that A1 is 0 - a loop over an empty $UNNAMED_FILES would just
 # print a hollow "ok" either way. If A1 ever goes non-zero again, restore the
 # blindness check that used to live here (git log this file) before trusting
 # any `AdminUser(`-anchored census again.
 
-# THE ARM WORTH THE MOST — and it must not be enumerated the way the sweep that
+# THE ARM WORTH THE MOST - and it must not be enumerated the way the sweep that
 # missed these two modules was. Detection is spelling-INDEPENDENT (any signature
 # naming the extractor type at all); classification is enumerated. So a fourth
 # idiom is DETECTED even though it is not RECOGNISED, which is exactly the case
@@ -190,37 +190,37 @@ UNCLASSIFIED=$(awk '
 ' $(find "$ROUTES" -name '*.rs') 2>/dev/null | tr '\n' ' ' | sed 's/ $//')
 
 if [ -z "$UNCLASSIFIED" ]; then
-  ok  "A3 every signature naming the admin extractor uses one of the two enumerated spellings — a census covering both covers all of them"
+  ok  "A3 every signature naming the admin extractor uses one of the two enumerated spellings - a census covering both covers all of them"
 else
-  bad "A3 a THIRD way to bind the admin extractor appeared in: $UNCLASSIFIED — every existing sweep is now blind to it, exactly as they were to the undestructured form"
+  bad "A3 a THIRD way to bind the admin extractor appeared in: $UNCLASSIFIED - every existing sweep is now blind to it, exactly as they were to the undestructured form"
 fi
 
 # A3 is only worth anything if it is looking at signatures at all.
 SIG_COUNT=$(grep -c 'AdminUser' <<< "$SIGS")
 if [ "$SIG_COUNT" -gt 50 ]; then
-  ok  "A3b the signature scan sees $SIG_COUNT admin-extractor mentions — A3's silence means classified, not unexamined"
+  ok  "A3b the signature scan sees $SIG_COUNT admin-extractor mentions - A3's silence means classified, not unexamined"
 else
-  bad "A3b the signature scan found only $SIG_COUNT admin-extractor mentions — the extraction broke and A3 passed on an empty set"
+  bad "A3b the signature scan found only $SIG_COUNT admin-extractor mentions - the extraction broke and A3 passed on an empty set"
 fi
 
 # The two modules behind the Alerts tabs must still be admin-gated. If one is
 # ever relaxed, §B's gating becomes wrong rather than merely redundant.
 for m in on_call escalation_policies; do
   if grep -qE '(AdminUser|require_admin)' "$ROUTES/$m.rs"; then
-    ok  "A4 $m.rs is administrator-gated — the tab that fronts it must stay gated too"
+    ok  "A4 $m.rs is administrator-gated - the tab that fronts it must stay gated too"
   else
-    bad "A4 $m.rs is no longer administrator-gated — §B hides a tab a client is now allowed to use"
+    bad "A4 $m.rs is no longer administrator-gated - §B hides a tab a client is now allowed to use"
   fi
 done
 
 # ─────────────────────────────────────────────────────────────────────────────
 echo
-echo "§B  Alerts — the three administrator tabs, gated at the trigger AND at the mount"
+echo "§B  Alerts - the three administrator tabs, gated at the trigger AND at the mount"
 
 if has "$ALERTS_S" 'useAuth'; then
   ok  "B1 Alerts.tsx reads the caller's role at all (it had no role import whatsoever)"
 else
-  bad "B1 Alerts.tsx has no role awareness — every tab is offered to every caller"
+  bad "B1 Alerts.tsx has no role awareness - every tab is offered to every caller"
 fi
 
 # Triggers. Three buttons, each behind the flag.
@@ -228,23 +228,23 @@ TRIGGERS=$(occurrences "$ALERTS_S" 'isAdmin && \(')
 if [ "$TRIGGERS" -ge 3 ]; then
   ok  "B2 all three administrator tab triggers are behind the role flag ($TRIGGERS guarded blocks)"
 else
-  bad "B2 only $TRIGGERS guarded trigger blocks — a tab a client cannot use is still being offered"
+  bad "B2 only $TRIGGERS guarded trigger blocks - a tab a client cannot use is still being offered"
 fi
 
 # Mounts. Separate from the triggers ON PURPOSE: a presence test on the buttons
 # cannot see a body that still mounts (lesson #423, and #430's whole point).
 for t in runbooks 'on-call' policies; do
   if has "$ALERTS_S" "tab === \"$t\" && isAdmin"; then
-    ok  "B3 the $t body will not mount without the role — hiding the trigger is not refusing the request"
+    ok  "B3 the $t body will not mount without the role - hiding the trigger is not refusing the request"
   else
-    bad "B3 the $t body mounts on tab state alone — any future way to set the tab re-opens the refused calls"
+    bad "B3 the $t body mounts on tab state alone - any future way to set the tab re-opens the refused calls"
   fi
 done
 
 # The runbook read inside the WORKING tab. Administrator-only, and its rejection
 # caches as `null`, which this component renders exactly like "none written".
 if has "$ALERTS_S" 'isAdmin && runbookCache'; then
-  ok  "B4 the per-alert runbook read is gated — a 403 cached as null is indistinguishable from an absent runbook"
+  ok  "B4 the per-alert runbook read is gated - a 403 cached as null is indistinguishable from an absent runbook"
 else
   bad "B4 the runbook read fires for any caller; its refusal renders as 'no runbook exists'"
 fi
@@ -252,25 +252,25 @@ fi
 # The NEGATIVE control: the Alerts tab itself is user-scoped and must stay open.
 # Over-gating here would take a client's own alerts away.
 if hasnt "$ALERTS_S" 'tab === "alerts" && isAdmin'; then
-  ok  "B5 the Alerts tab itself is NOT gated — its endpoints are user-scoped and the owner is entitled to them"
+  ok  "B5 the Alerts tab itself is NOT gated - its endpoints are user-scoped and the owner is entitled to them"
 else
-  bad "B5 the Alerts tab was gated too — that removes a client's own alerts, which is a worse defect than the one being fixed"
+  bad "B5 the Alerts tab was gated too - that removes a client's own alerts, which is a worse defect than the one being fixed"
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 echo
-echo "§C  Certificates — actions gated, list deliberately not"
+echo "§C  Certificates - actions gated, list deliberately not"
 
 if has "$CERTS_S" 'useAuth'; then
   ok  "C1 Certificates.tsx reads the caller's role"
 else
-  bad "C1 Certificates.tsx has no role awareness — Renew and Delete are offered to callers who will be refused"
+  bad "C1 Certificates.tsx has no role awareness - Renew and Delete are offered to callers who will be refused"
 fi
 
 if has "$CERTS_S" '\{isAdmin && <th'; then
   ok  "C2 the Actions column header is gated (an empty column is a control that half-rendered)"
 else
-  bad "C2 the Actions header renders for everyone — a headed column with no cells"
+  bad "C2 the Actions header renders for everyone - a headed column with no cells"
 fi
 
 if has "$CERTS_S" '\{isAdmin && \(' ; then
@@ -283,9 +283,9 @@ fi
 # AuthUser on purpose and its handler says so; gating it would hand a client
 # "No SSL certificates found" for certificates they own.
 if hasnt "$CERTS_S" 'isAdmin.*monitors/certificates|monitors/certificates.*isAdmin'; then
-  ok  "C4 the certificate LIST is not gated — the read is intentionally open and must stay open"
+  ok  "C4 the certificate LIST is not gated - the read is intentionally open and must stay open"
 else
-  bad "C4 the certificate list was gated — a site owner can no longer see their own certificates"
+  bad "C4 the certificate list was gated - a site owner can no longer see their own certificates"
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -295,19 +295,19 @@ echo "§D  the per-site backup picker asks the route that will answer it"
 if has "$BACKUPS_S" 'backup-destinations/selectable'; then
   ok  "D1 the picker reads the caller-scoped destination route"
 else
-  bad "D1 the picker no longer reads the caller-scoped route — an administrator-only list cannot fill a site owner's dropdown"
+  bad "D1 the picker no longer reads the caller-scoped route - an administrator-only list cannot fill a site owner's dropdown"
 fi
 
 if hasnt "$BACKUPS_S" 'api\.get<BackupDestination\[\]>\("/backup-destinations"\)'; then
   ok  "D2 the picker does NOT read the administrator list route"
 else
-  bad "D2 the picker reads the administrator list route again — it returns 403 for exactly the callers this page serves"
+  bad "D2 the picker reads the administrator list route again - it returns 403 for exactly the callers this page serves"
 fi
 
 if has "$BACKUPS_S" 'destinationsFailed'; then
   ok  "D3 a failed destination load is remembered, so it can be told apart from an empty one"
 else
-  bad "D3 a failed load is indistinguishable from 'no destinations exist' — the defect nobody can report (#435)"
+  bad "D3 a failed load is indistinguishable from 'no destinations exist' - the defect nobody can report (#435)"
 fi
 
 if has "$BACKUPS_S" 'isAdmin \?' && has "$BACKUPS_S" 'backup-orchestrator\?tab=destinations'; then
@@ -318,12 +318,12 @@ fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 echo
-echo "§E  the severed pair — the reader and the writer share one predicate"
+echo "§E  the severed pair - the reader and the writer share one predicate"
 
 if has "$DESTS_S" 'pub const DESTINATION_CALLER_PREDICATE'; then
   ok  "E1 the predicate is declared once"
 else
-  bad "E1 the shared predicate is gone — reader and writer are free to drift again"
+  bad "E1 the shared predicate is gone - reader and writer are free to drift again"
 fi
 
 # Both sides must INTERPOLATE it rather than spell the rule out. Two copies of a
@@ -331,13 +331,13 @@ fi
 if has "$DESTS_S" 'WHERE \{DESTINATION_CALLER_PREDICATE\}'; then
   ok  "E2 the READER interpolates the shared predicate"
 else
-  bad "E2 the reader carries its own copy of the rule — the set a caller is offered can drift from the set the writer accepts"
+  bad "E2 the reader carries its own copy of the rule - the set a caller is offered can drift from the set the writer accepts"
 fi
 
 if has "$SCHED_S" 'DESTINATION_CALLER_PREDICATE'; then
   ok  "E3 the WRITER interpolates the shared predicate"
 else
-  bad "E3 the writer carries its own copy of the rule — same drift, other direction"
+  bad "E3 the writer carries its own copy of the rule - same drift, other direction"
 fi
 
 # The reader must be reachable by the callers the writer admits. If it is ever
@@ -347,7 +347,7 @@ SEL_SIG=$(sed -n '/pub async fn selectable/,/^) ->/p' <<< "$DESTS_S")
 if has "$SEL_SIG" 'AuthUser'; then
   ok  "E4 the reader is open to every authenticated caller, as the writer already is"
 else
-  bad "E4 the reader is no longer AuthUser — the writer still admits site owners to a choice they cannot see"
+  bad "E4 the reader is no longer AuthUser - the writer still admits site owners to a choice they cannot see"
 fi
 
 # And it must not be able to leak the credentials. The lean struct has no
@@ -357,22 +357,22 @@ SEL_STRUCT=$(sed -n '/pub struct SelectableDestination/,/^}/p' <<< "$DESTS_S")
 if [ -n "$SEL_STRUCT" ] && hasnt "$SEL_STRUCT" 'config'; then
   ok  "E5 the caller-facing struct has no credentials field to forget to mask"
 else
-  bad "E5 the caller-facing struct carries config — bucket credentials are one serialization away from every site owner"
+  bad "E5 the caller-facing struct carries config - bucket credentials are one serialization away from every site owner"
 fi
 
 if grep -qE '"/api/backup-destinations/selectable"' "$MODRS"; then
   ok  "E6 the caller-scoped route is registered"
 else
-  bad "E6 the caller-scoped route is not registered — the picker calls an endpoint that 404s"
+  bad "E6 the caller-scoped route is not registered - the picker calls an endpoint that 404s"
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 echo
-echo "§F  Terminal — the share control is gated, the clipboard one is not"
+echo "§F  Terminal - the share control is gated, the clipboard one is not"
 
 # Anchored on the SHARE control specifically. A bare search for a guarded button
 # passes on the SSH Info button further down the same file, which was already
-# gated — so the arm would have reported the share button safe while it was open
+# gated - so the arm would have reported the share button safe while it was open
 # (lesson #436: a mutation that survives is a claim about the arm first, and M15
 # is what exposed this).
 SHARE_GUARDED=$(awk '
@@ -385,21 +385,21 @@ if [ "$SHARE_GUARDED" = "GUARDED" ]; then
 elif [ "$SHARE_GUARDED" = "OPEN" ]; then
   bad "F1 the share control is offered to callers whose request calls require_admin"
 else
-  bad "F1 could not locate the share control at all — the arm is measuring nothing, not passing"
+  bad "F1 could not locate the share control at all - the arm is measuring nothing, not passing"
 fi
 
 SHARE_BODY=$(sed -n '/pub async fn share_output/,/^}/p' "$ROUTES/terminal.rs")
 if has "$SHARE_BODY" 'require_admin'; then
   ok  "F2 the share endpoint is still administrator-only, so F1's gate is still correct"
 else
-  bad "F2 the share endpoint was opened up — F1 now hides a control the caller is allowed to use"
+  bad "F2 the share endpoint was opened up - F1 now hides a control the caller is allowed to use"
 fi
 
 # NEGATIVE control: Copy Output never leaves the browser and must stay open.
 if hasnt "$TERMINAL_S" 'isAdmin && <button[^>]*Copy Output'; then
-  ok  "F3 Copy Output is NOT gated — it makes no request and belongs to whoever opened the shell"
+  ok  "F3 Copy Output is NOT gated - it makes no request and belongs to whoever opened the shell"
 else
-  bad "F3 Copy Output was gated — that removes a local, request-free capability for no reason"
+  bad "F3 Copy Output was gated - that removes a local, request-free capability for no reason"
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -409,7 +409,7 @@ echo "§G  Dashboard recommendations resolve through the nav registry"
 if has "$DASH_S" 'isNavVisible\(navFlagsFor\('; then
   ok  "G1 the recommendation link is resolved through the same registry the sidebar uses"
 else
-  bad "G1 the recommendation link is taken straight from the action map — three of its six routes are administrator-only"
+  bad "G1 the recommendation link is taken straight from the action map - three of its six routes are administrator-only"
 fi
 
 # The message must survive even when the link does not: a client whose own site
@@ -417,7 +417,7 @@ fi
 if has "$DASH_S" 'route \? \(' || has "$DASH_S" 'return route \?'; then
   ok  "G2 a row with no reachable route still renders its message"
 else
-  bad "G2 gating the route also dropped the recommendation — the client is no longer told about their own stale backup"
+  bad "G2 gating the route also dropped the recommendation - the client is no longer told about their own stale backup"
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -439,7 +439,7 @@ for p in Security Users ContainerPolicies; do
   elif [ "$GUARD_LINE" -lt "$EFFECT_LINE" ]; then
     ok  "H1 $p.tsx refuses at line $GUARD_LINE, before its first effect at $EFFECT_LINE"
   else
-    bad "H1 $p.tsx guards at line $GUARD_LINE but registers an effect at $EFFECT_LINE — the requests fire and 403 before the redirect lands"
+    bad "H1 $p.tsx guards at line $GUARD_LINE but registers an effect at $EFFECT_LINE - the requests fire and 403 before the redirect lands"
   fi
 done
 

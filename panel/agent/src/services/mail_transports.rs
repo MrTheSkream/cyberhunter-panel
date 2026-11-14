@@ -1,4 +1,4 @@
-//! Per-domain outgoing IP for Postfix — pure text generation.
+//! Per-domain outgoing IP for Postfix - pure text generation.
 //!
 //! One `smtp` transport per send IP, named `dp-ip-a-b-c-d`, declared in a
 //! managed block of `master.cf` with `smtp_bind_address` (and the PTR as
@@ -72,7 +72,7 @@ pub fn render_master_block(transports: &Transports) -> String {
 ///
 /// Every existing occurrence is removed and the new block is appended at the
 /// end of the file. Idempotent: applying the same block twice yields the same
-/// text. A begin marker with no end removes through end of file — only our
+/// text. A begin marker with no end removes through end of file - only our
 /// own generated lines can follow it, and leaving half a block would make
 /// Postfix read it as part of the previous service.
 pub fn replace_block(text: &str, begin: &str, end: &str, block: &str) -> String {
@@ -116,7 +116,7 @@ pub fn replace_block(text: &str, begin: &str, end: &str, block: &str) -> String 
     out
 }
 
-/// Names of the transports currently declared in the master.cf block — what
+/// Names of the transports currently declared in the master.cf block - what
 /// the rate-limit route regenerates main.cf from, since it has no domain list.
 pub fn transports_in_block(master_cf: &str) -> Vec<String> {
     let prefix = begin_prefix(MASTER_BEGIN);
@@ -181,7 +181,7 @@ pub fn parse_master_block(master_cf: &str) -> Transports {
 }
 
 /// Comment line, inside the main.cf managed block, recording the
-/// `smtp_helo_name` value the panel set — so that a later sync without
+/// `smtp_helo_name` value the panel set - so that a later sync without
 /// `primary_helo` removes *our* value and never an admin's own.
 const HELO_RECORD: &str = "# managed smtp_helo_name = ";
 
@@ -225,7 +225,7 @@ pub fn main_cf_value(main_cf: &str, key: &str) -> Option<String> {
 
 /// The managed main.cf block: each transport's copy of the global
 /// `smtp_destination_rate_delay` / `smtp_extra_recipient_limit`. Empty (block
-/// removed) when there is no transport or no global value to copy — absent
+/// removed) when there is no transport or no global value to copy - absent
 /// globals mean the defaults, which are the same for every transport.
 pub fn render_main_block(names: &[String], main_cf: &str, helo_record: Option<&str>) -> String {
     let delay = main_cf_value(main_cf, "smtp_destination_rate_delay");
@@ -259,7 +259,7 @@ pub fn main_cf_with_limits(main_cf: &str, master_cf: &str) -> String {
     main_cf_with_block(main_cf, master_cf, recorded_helo(main_cf).as_deref())
 }
 
-/// Same, with an explicit HELO record (`None` drops it) — what the sync uses.
+/// Same, with an explicit HELO record (`None` drops it) - what the sync uses.
 pub fn main_cf_with_block(main_cf: &str, master_cf: &str, helo_record: Option<&str>) -> String {
     let names = transports_in_block(master_cf);
     let block = render_main_block(&names, main_cf, helo_record);
@@ -335,7 +335,7 @@ mod tests {
         assert_eq!(removed, MASTER);
         assert!(transports_in_block(&removed).is_empty());
         // Removing from a file that never had a block changes nothing, byte
-        // for byte — even odd endings (relay_remove writes no final newline).
+        // for byte - even odd endings (relay_remove writes no final newline).
         assert_eq!(replace_block(MASTER, MASTER_BEGIN, MASTER_END, ""), MASTER);
         assert_eq!(replace_block("a\nb", MASTER_BEGIN, MASTER_END, ""), "a\nb");
         assert_eq!(replace_block("a\n\n", MASTER_BEGIN, MASTER_END, ""), "a\n\n");

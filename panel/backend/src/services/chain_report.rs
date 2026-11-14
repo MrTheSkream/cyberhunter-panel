@@ -3,7 +3,7 @@
 //
 // Phase 4 W1.3 shipped site-only in v2.8.1. v2.8.2 extends to db + volume
 // (the route handlers + builder are in routes/backup_orchestrator.rs) and
-// adds SHA-256 pinning of the typst tarball — TLS + github.com is no longer
+// adds SHA-256 pinning of the typst tarball - TLS + github.com is no longer
 // the sole trust anchor.
 
 use std::path::{Path, PathBuf};
@@ -38,7 +38,7 @@ pub async fn ensure_typst_installed() -> Result<PathBuf, String> {
     }
 
     let _guard = INSTALL_LOCK.lock().await;
-    // Re-check after acquiring lock — another caller may have installed.
+    // Re-check after acquiring lock - another caller may have installed.
     if bin.exists() {
         return Ok(bin);
     }
@@ -66,7 +66,7 @@ pub async fn ensure_typst_installed() -> Result<PathBuf, String> {
     // Two-phase install: download to tempfile → verify sha256 → extract.
     // Adds ~30MB temp + a second pass over the bytes; runs once per host.
     // Refusing to extract a tarball whose checksum doesn't match the pin is
-    // the whole point — never let `tar` see unverified bytes.
+    // the whole point - never let `tar` see unverified bytes.
     let cmd = format!(
         "set -euo pipefail; \
          tmp=$(mktemp '{TYPST_DIR}/typst-download.XXXXXX.tar.xz'); \
@@ -112,7 +112,7 @@ pub async fn ensure_typst_installed() -> Result<PathBuf, String> {
 pub async fn render_chain_report_pdf(data: &serde_json::Value) -> Result<Vec<u8>, String> {
     let typst_bin = ensure_typst_installed().await?;
 
-    // Use a per-render tempdir to avoid contention. /tmp is fine — files are
+    // Use a per-render tempdir to avoid contention. /tmp is fine - files are
     // small (JSON < 100KB, PDF < 1MB) and cleaned at the end of this fn.
     let id = uuid::Uuid::new_v4();
     let dir = PathBuf::from(format!("/tmp/dockpanel-chainreport-{id}"));

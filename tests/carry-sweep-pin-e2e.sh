@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression pins for the s387 carry sweep — five defects the code documented
+# Regression pins for the s387 carry sweep - five defects the code documented
 # about itself, and a sixth found while closing the fifth.
 #
 # ⛔ EVERY ARM READS A COMMENT-STRIPPED SUBJECT. s386's suite printed 43/43 green
@@ -11,11 +11,11 @@
 #
 #   * A CERTIFICATE ORDER THAT FAILED VALIDATION ANSWERED WITH A REFERENCE NUMBER.
 #     The agent reports a lost ACME order as a 500 and the panel hides every agent
-#     5xx behind an incident id — correctly, since the same route answers 500 for
+#     5xx behind an incident id - correctly, since the same route answers 500 for
 #     an unreadable ACME account. So the commonest SSL failure of all (the domain
 #     does not point here yet) cost two minutes of spinner and said nothing, while
 #     the agent had already named the cause. §A pins the positive identification
-#     and — the arm that matters — pins that the account fault is NOT taken with
+#     and - the arm that matters - pins that the account fault is NOT taken with
 #     it. §B pins that BOTH doors use it: provisioning fires more often than
 #     renewal and the register named only renewal.
 #   * A REMOTE LONG OPERATION TOOK THE QUICK SEMAPHORE, so on a fleet the limit
@@ -26,7 +26,7 @@
 #     cut-off and can explain it; queueing outside that budget handed the cut-off
 #     back to the server, which answers a bodyless 504. §D.
 #   * AN UPLOADED CERTIFICATE INHERITED THE RETIRED ONE'S ACME PROFILE. §F.
-#   * DELETING A DATABASE LEFT ITS DUMPS FOR EVER — and the fix's obvious guard was
+#   * DELETING A DATABASE LEFT ITS DUMPS FOR EVER - and the fix's obvious guard was
 #     WRONG: the generic route validator demands an alphanumeric first character
 #     while a database name may begin with an underscore, so a purge built on it
 #     would skip exactly the directories nobody can otherwise reach. §G pins the
@@ -40,7 +40,7 @@ cd "$(dirname "$0")/.." || exit 1
 
 PASS=0; FAIL=0
 ok()  { printf '\033[32m✓\033[0m %s\n' "$1"; PASS=$((PASS+1)); }
-bad() { printf '\033[31m✗\033[0m %s — %s\n' "$1" "$2"; FAIL=$((FAIL+1)); }
+bad() { printf '\033[31m✗\033[0m %s - %s\n' "$1" "$2"; FAIL=$((FAIL+1)); }
 eq()  { [ "$2" = "$3" ] && ok "$1" || bad "$1" "expected '$3', got '$2'"; }
 has() { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "missing: $3" ;; esac; }
 hasnt(){ case "$2" in *"$3"*) bad "$1" "present but must not be: $3" ;; *) ok "$1" ;; esac; }
@@ -104,7 +104,7 @@ F_DNSREAD=$(fnbody "$ERR" "pub fn dns_provider_failure(" | subjin)
 has "A2 it is bounded to 5xx" "$F_ACMEREAD" "if!(500..600).contains(code){returnNone;}"
 has "A2b and so is the provider reader beside it" "$F_DNSREAD" "if!(500..600).contains(code){returnNone;}"
 # ⭐ THE ARM THAT MATTERS. Widening to any 5xx would reclassify an unreadable ACME
-# account — a fault the operator cannot act on — as their problem to fix. The
+# account - a fault the operator cannot act on - as their problem to fix. The
 # label and the legacy wording are the only two admissible proofs.
 has "A3 the label is one proof" "$F_ERR" 'v.get("code")'
 has "A4 the legacy wording is the other" "$F_ERR" "msg.starts_with(RENEWAL_FAILURE_PREFIX)"
@@ -117,15 +117,15 @@ eq "A6 the panel declares the label once" "$(occ "$F_ERR" "constACME_ORDER_FAILE
 eq "A7 the agent labels in exactly one place" "$(occ "$F_ASSLR" "$LABEL")" 1
 eq "A8 all THREE doors go through that one classifier" "$(occ "$F_ASSLR" "ca_or_internal(e)")" 3
 # ⛔ POSITIVE IDENTIFICATION, and the direction is the whole safety of it. The
-# marker is applied where the CA spoke; everything unmarked — including an arm
-# added later — stays an internal fault and keeps its incident id. Inverting this
+# marker is applied where the CA spoke; everything unmarked - including an arm
+# added later - stays an internal fault and keeps its incident id. Inverting this
 # default would hand every future error to the operator as though the CA said it.
 F_CLASSIFIER=$(fnbody "$ASSLR" "fn ca_or_internal(" | subjin)
-[ "$(printf '%s' "$F_CLASSIFIER" | wc -c)" -ge 200 ] || { bad "SETUP" "ca_or_internal body not found — every hasnt below would pass vacuously"; exit 1; }
+[ "$(printf '%s' "$F_CLASSIFIER" | wc -c)" -ge 200 ] || { bad "SETUP" "ca_or_internal body not found - every hasnt below would pass vacuously"; exit 1; }
 has "A9a the classifier keys on the CA marker" "$F_CLASSIFIER" "ifletSome(reason)=e.strip_prefix(ssl::CA_DECLINED)"
 has "A9c and on the provider marker, separately" "$F_CLASSIFIER" "ifletSome(reason)=e.strip_prefix(ssl::DNS_PROVIDER_DECLINED)"
 # ⛔ THE PAIRING, not the presence. Counting each label once each is satisfied by
-# a SWAP — both literals still appear exactly once while the CA marker emits the
+# a SWAP - both literals still appear exactly once while the CA marker emits the
 # provider's code and vice-versa, which would make the panel tell an operator
 # Let'"'"'s Encrypt declined when their API token is what refused. Neither the
 # cross-tree counts nor the panel'"'"'s own unit tests can see that: the tests use
@@ -135,17 +135,17 @@ has "A9d the CA marker emits the CA code" "$F_CLASSIFIER" \
 has "A9e the provider marker emits the provider code" "$F_CLASSIFIER" \
     'e.strip_prefix(ssl::DNS_PROVIDER_DECLINED){return(StatusCode::INTERNAL_SERVER_ERROR,Json(serde_json::json!({"error":reason,"code":"dns_provider_failed"}))'
 # ⛔ THE FALL-THROUGH. Neither marker matched, so no code is attached and the panel
-# keeps its incident id. Inverting this default — labelling by absence — is the one
+# keeps its incident id. Inverting this default - labelling by absence - is the one
 # change that would hand every future arm to the operator as though the CA spoke.
 eq "A9b and an unmarked error carries no label" "$(occ "$F_CLASSIFIER" 'json!({"error":e})')" 1
 hasnt "A9b2 the fall-through attaches no code of any kind" "$F_CLASSIFIER" 'json!({"error":e,"code"' 
-# The marker is the OTHER severed pair — declared in the service, consumed in the
+# The marker is the OTHER severed pair - declared in the service, consumed in the
 # route, and worth counting because the count is what a silent unmarking moves.
 eq "A10 the marker is declared once" "$(occ "$F_ASSL" 'pubconstCA_DECLINED:&str="[ca]";')" 1
 eq "A11 and marks the seventeen arms where the CA actually spoke" "$(occ "$F_ASSL" '{CA_DECLINED}')" 17
 # ⛔ THE SECOND SEVERED PAIR, added when the DNS-01 door joined. Cloudflare
 # refusing to publish `_acme-challenge` is the operator's to fix and earns a
-# sentence, but it is NOT something the CA said — attributing it to the CA would
+# sentence, but it is NOT something the CA said - attributing it to the CA would
 # name the wrong party in a message written to be trusted. Counted on both sides
 # for the same reason as the first: a silent unmarking is what the count moves.
 eq "A6b the panel declares the provider label once" "$(occ "$F_ERR" 'constDNS_PROVIDER_FAILED_CODE:&str="dns_provider_failed";')" 1
@@ -157,7 +157,7 @@ eq "A11b and marks the six arms where the provider refused" "$(occ "$F_ASSL" '{D
 # ⛔ THE PAIRING IN THE SERVICE. A11/A11b count the two markers, and a COUNT cannot
 # see a swap: mark one CA arm `[dns]` and one Cloudflare arm `[ca]` and both totals
 # are unchanged, while the panel then tells an operator Let's Encrypt declined when
-# their API token is what refused — the precise outcome the three-party split exists
+# their API token is what refused - the precise outcome the three-party split exists
 # to prevent. Pin representative arms of each class to their own marker, and forbid
 # the crossed forms outright.
 has "A11c a CA arm carries the CA marker" "$F_ASSL" '{CA_DECLINED}TheCAdidnotvalidatetheDNS-01challenge:'
@@ -172,26 +172,26 @@ eq "B2 both doors call it" "$(occ "$F_BSSL" "acme_failure_or(&site.domain,")" 2
 has "B3 provisioning is one of them" "$F_BSSL" 'acme_failure_or(&site.domain,"SSLprovisioning",e))?;'
 # ⚠ No trailing `;` since v2.145.0: the renewal call moved inside a `match` arm
 # that branches on which challenge issued the certificate, so the expression ends
-# the arm rather than a statement. The property — the renewal door propagates
-# through the shared translator, not a bare passthrough — is unchanged.
+# the arm rather than a statement. The property - the renewal door propagates
+# through the shared translator, not a bare passthrough - is unchanged.
 has "B4 renewal is the other" "$F_BSSL" 'acme_failure_or(&site.domain,"SSLrenewal",e))?'
 has "B5 it answers 422, not a passthrough" "$F_BSSL" \
     'returnerr(StatusCode::UNPROCESSABLE_ENTITY,&format!("Acertificatefor{domain}couldnotbeissued:'
 # All four 422s must survive: s386's foreign-issuer refusal, s387's declined
-# order, and the DNS-01 door's two — a provider refusal and a declined order,
+# order, and the DNS-01 door's two - a provider refusal and a declined order,
 # which are different sentences because they are different parties.
-# FIVE since v2.145.0 — the DNS-01 renewal that cannot reach its Cloudflare zone
+# FIVE since v2.145.0 - the DNS-01 renewal that cannot reach its Cloudflare zone
 # refuses rather than silently re-ordering over HTTP-01.
 # ⚠ `ssl-controls` F10b pins this SAME literal in this SAME file. Both move together.
 eq "B5b and every refusal that earns a 422 keeps one" "$(occ "$F_BSSL" "StatusCode::UNPROCESSABLE_ENTITY,")" 5
 # ⛔ #662. The compatibility path puts this sentence in front of a local agent
-# fault too, so it must name no cause — and must never say "try again", which on
+# fault too, so it must name no cause - and must never say "try again", which on
 # a rate-limited order is the one instruction that makes it worse.
 hasnt "B5c the sentence asserts no cause" "$F_BSSL" "LetsEncryptcouldnotissue"
 hasnt "B5d and never tells the operator to retry" "$F_BSSL" "thentryagain"
 F_HTTP01MSG=$(fnbody "$BSSL" "fn acme_failure_or(" | subjin)
 F_DNS01MSG=$(fnbody "$BSSL" "fn dns01_failure_or(" | subjin)
-[ "$(printf '%s' "$F_DNS01MSG" | wc -c)" -ge 400 ] || { bad "SETUP" "dns01_failure_or body not found — B9f would pass vacuously"; exit 1; }
+[ "$(printf '%s' "$F_DNS01MSG" | wc -c)" -ge 400 ] || { bad "SETUP" "dns01_failure_or body not found - B9f would pass vacuously"; exit 1; }
 has  "B5e the hint is conditional" "$F_HTTP01MSG" "Ifthatisavalidationfailure,"
 # Anything not positively identified must still reach the old path untouched.
 has "B6 everything else still goes to the generic mapper" "$F_BSSL" "agent_error(context,e)"
@@ -204,20 +204,20 @@ has "B8 and the third door is wired to it" "$F_BSSL" "dns01_failure_or(provision
 has "B9a the provider hint names the token scope" "$F_DNS01MSG" "ascopedtokenneedstheDNS:Editpermission."
 has "B9b the CA hint names the challenge record" "$F_DNS01MSG" "the_acme-challengeTXTrecordfor{subject}"
 # ⛔ THE ZONE, NOT THE ORDERED NAME. The zone lookup exists to match a site against
-# its PARENT zone, so on the ordinary subdomain site these differ — and telling an
+# its PARENT zone, so on the ordinary subdomain site these differ - and telling an
 # operator to look in the `blog.example.com` zone sends them after something that is
 # not in their Cloudflare account. Both hints must spell the resolved zone.
 eq "B9d both hints name the resolved zone" "$(occ "$F_DNS01MSG" 'inthe{zone}zone')" 1
 eq "B9e and the provider hint too" "$(occ "$F_DNS01MSG" 'forthe{zone}zone')" 1
 hasnt "B9f and neither names the ordered name as a zone" "$F_DNS01MSG" "the{ordered}zone"
-# ⛔ #663 — BOTH hints, which is what this arm's name has always claimed. The CA
+# ⛔ #663 - BOTH hints, which is what this arm's name has always claimed. The CA
 # branch fires on a rate limit too, where publishing a TXT record fixes nothing, so
 # an unconditional imperative there is the exact defect #663 was written about.
 has "B9c the provider hint is conditional" "$F_DNS01MSG" "IfCloudflarerejectedthechange,"
 has "B9c2 and so is the CA hint beside it" "$F_DNS01MSG" "Ifthatisavalidationfailure,"
 # ⚠ NOT a text count. This file's own tests assert the ABSENCE of the port-80
 # sentence, so their assertions carry the literal and a count would be satisfied
-# by the very test meant to prove it — the source-pin prose trap. The behaviour is
+# by the very test meant to prove it - the source-pin prose trap. The behaviour is
 # proved at RUNTIME; what a pin can honestly assert is that the proof still exists.
 has "B10 and a runtime test proves it never repeats the port-80 advice" "$F_BSSL" \
     "fna_provider_refusal_names_the_token_and_never_port_80()"
@@ -258,19 +258,19 @@ has "F1 upload clears the profile" "$F_SITES" "ssl_profile=NULL,"
 # being true, so it must NOT join them.
 hasnt "F2 and does not preserve it" "$F_SITES" "ssl_profile=COALESCE("
 
-echo "── §G  the dump directory goes when nothing owns it — and not before"
+echo "── §G  the dump directory goes when nothing owns it - and not before"
 eq "G1 the purge primitive exists" "$(occ "$F_ADBS" "pubasyncfnpurge_dir(db_name:&str)")" 1
 has "G2 it validates its name first" "$F_ADBS" "if!is_db_dir_name(db_name){"
 # ⭐ THE ARM THE WRONG GUARD WOULD HAVE FAILED. A database name may begin with an
 # underscore; the generic route validator demands an alphanumeric first character.
-# A purge built on it skips precisely the directories nobody can otherwise reach —
+# A purge built on it skips precisely the directories nobody can otherwise reach -
 # and skipping is indistinguishable from finding nothing to do.
 # ⛔ SUPERSET, NEVER NARROWER. The purge owning its charset is only safe if no
 # name loses a door by the swap, and the length cap is exactly where that nearly
 # went wrong: 63 here against 64 on the shared validator would have silently taken
 # every door from a 64-character imported database. Pinned as the whole predicate,
 # so a cap edit cannot pass as a formatting change.
-has "G3 the predicate is exactly this — no first-char rule, no dot, capped at 64" "$F_ADBS" \
+has "G3 the predicate is exactly this - no first-char rule, no dot, capped at 64" "$F_ADBS" \
     "pubfnis_db_dir_name(name:&str)->bool{!name.is_empty()&&name.len()<=64&&name.chars().all(|c|c.is_ascii_alphanumeric()||c=='_'||c=='-')}"
 # The shared validator's own cap, so the two cannot drift apart unnoticed.
 has "G3b and the shared validator still caps at the same place" "$F_AMOD" "name.len()<=64"
@@ -281,7 +281,7 @@ eq "G5 and it is declared once" "$(occ "$F_ADBS" "pubfnis_db_dir_name(")" 1
 has "G6 the directory removal is the empty-only one" "$F_ADBS" "tokio::fs::remove_dir(&dir)"
 hasnt "G7 nothing here removes a tree" "$F_ADBS" "remove_dir_all"
 # ⛔ THE PROMISE THIS FILE MAKES OUT LOUD. The import door's predicate is an
-# EXTENSION test — it asks whether a file can be READ as a dump, which is exactly
+# EXTENSION test - it asks whether a file can be READ as a dump, which is exactly
 # what an operator's hand-placed `dump.sql.gz` is built to satisfy. Deleting on
 # that basis would take the staged import the product's own screen tells them to
 # put here. The purge must ask the narrower question: did this module MINT it.
@@ -310,7 +310,7 @@ eq "G15 every dump-directory door shares one predicate" \
 echo "── §H  the two fixes that rode along, and the control/reader pair"
 # ⛔ The AGENT is the authority on a database name and demands an alphanumeric first
 # character; the panel accepted `_mydata`, forwarded it, and handed back the agent's
-# raw refusal. Pin the rule on BOTH surfaces — a fix on one is the divergence again.
+# raw refusal. Pin the rule on BOTH surfaces - a fix on one is the divergence again.
 has "H1 the panel enforces the first-character rule" "$F_DBR" \
     ".next().is_some_and(|c|c.is_ascii_alphanumeric())"
 has "H2 and the form states it rather than discovering it" "$F_DBTSX" \
@@ -321,14 +321,14 @@ has "H3 the length cap stays at the PostgreSQL identifier limit" "$F_DBR" "body.
 
 # ⛔ DERIVED, NOT LISTED. Every id offered as a checkbox must have a render guard
 # that reads it. Three did not: two controlled nothing at all, and the certificate
-# countdown was governed by the UNRELATED "Active Issues" switch — so turning off
+# countdown was governed by the UNRELATED "Active Issues" switch - so turning off
 # Active Issues silently took the SSL panel with it. An arm hard-coding today's
 # fourteen ids could not see a fifteenth arrive inert.
 WIDGET_IDS=$(awk '/Dashboard Widgets/{f=1} f&&/\{ id: "/{print} f&&/\].filter\(w =>/{exit}' "$DASH" \
              | sed -n 's/.*{ id: "\([a-z_]*\)".*/\1/p')
 WN=$(printf '%s\n' "$WIDGET_IDS" | grep -c .)
 if [ "$WN" -lt 10 ]; then
-  bad "H4 dashboard widget registry" "enumerated only $WN ids — implausible, so H5 would prove nothing"
+  bad "H4 dashboard widget registry" "enumerated only $WN ids - implausible, so H5 would prove nothing"
 else
   ok "H4 enumerated $WN dashboard widget ids from the registry itself"
   INERT=""
@@ -339,14 +339,14 @@ else
                   || bad "H5 every widget checkbox has a render guard that reads it" "inert:$INERT"
 fi
 # The SSL countdown must not go back to riding the Active Issues switch.
-# ⚠ COUNTED, not merely present. s442 replaced the original shape — the same
+# ⚠ COUNTED, not merely present. s442 replaced the original shape - the same
 # `isVisible("ssl_countdown")&&...` literal duplicated at an outer whole-row
-# gate and an inner per-panel gate — with a single `showSsl` computed once and
+# gate and an inner per-panel gate - with a single `showSsl` computed once and
 # consumed at three independent points (whole-row gate, solo-width detection,
 # and the panel's own render gate), so the two copies can no longer drift from
 # each other by construction. `eq` on BOTH the definition (still derived from
 # ssl_countdown alone, never from "issues") and the total consumer count is
-# what makes any one deletion go red — a `has` here is satisfied by whichever
+# what makes any one deletion go red - a `has` here is satisfied by whichever
 # consumer survives while the others vanish.
 eq "H6a the certificate countdown's switch is derived from ssl_countdown alone" \
    "$(occ "$F_DASH" 'constshowSsl=isVisible("ssl_countdown")&&intel.ssl_countdowns.length>0')" 1
@@ -354,12 +354,12 @@ eq "H6b that switch is read at all three of its gates (whole-row, solo-width, re
    "$(occ "$F_DASH" 'showSsl')" 4
 
 echo "── §J  the only UNATTENDED renewal carries the site's certificate profile"
-# `security_scanner::auto_fix_safe_findings` is reached with no opt-in at all —
+# `security_scanner::auto_fix_safe_findings` is reached with no opt-in at all -
 # auto-healing is seeded OFF, so this weekly loop is what the product does by
 # default on a stock install. Both hand-driven renewal paths attach the site's
 # chosen certificate profile; this one selected six columns and never asked for
 # it, so the CA quietly issued its DEFAULT and a site the operator had moved off
-# the default came back on it — permanently, unattended, and with the column
+# the default came back on it - permanently, unattended, and with the column
 # still naming the retired choice, which the cooldown and margin helpers go on
 # reading. Nothing anywhere reports the downgrade.
 #
@@ -372,7 +372,7 @@ SCAN=panel/backend/src/services/security_scanner.rs
 [ -f "$SCAN" ] || { bad "SETUP" "$SCAN missing"; exit 1; }
 F_SCANFN=$(fnbody "$SCAN" 'async fn auto_fix_safe_findings(' | subjin)
 n=$(printf '%s' "$F_SCANFN" | wc -c)
-[ "$n" -ge 3000 ] || { bad "SETUP" "the scanner's auto-fix body stripped to $n chars, expected >= 3000 — the fnbody anchor has moved and §J is measuring nothing"; exit 1; }
+[ "$n" -ge 3000 ] || { bad "SETUP" "the scanner's auto-fix body stripped to $n chars, expected >= 3000 - the fnbody anchor has moved and §J is measuring nothing"; exit 1; }
 has "J1 the unattended renewal asks the database for the site's profile" \
     "$F_SCANFN" "s.ssl_profile"
 has "J2 and sends it with the order, like both hand-driven paths do" \

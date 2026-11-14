@@ -58,7 +58,7 @@ struct TeamWithOwner {
     owner_email: String,
 }
 
-/// GET /api/teams — List user's teams (owned + member of).
+/// GET /api/teams - List user's teams (owned + member of).
 pub async fn list(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -118,7 +118,7 @@ pub async fn list(
     Ok(Json(result))
 }
 
-/// POST /api/teams — Create a new team.
+/// POST /api/teams - Create a new team.
 pub async fn create(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -173,7 +173,7 @@ pub async fn create(
     Ok((StatusCode::CREATED, Json(team)))
 }
 
-/// DELETE /api/teams/{id} — Delete a team (owner only).
+/// DELETE /api/teams/{id} - Delete a team (owner only).
 pub async fn remove(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -212,7 +212,7 @@ pub async fn remove(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// POST /api/teams/{id}/invite — Invite a user to a team (owner/admin only).
+/// POST /api/teams/{id}/invite - Invite a user to a team (owner/admin only).
 pub async fn invite(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -227,7 +227,7 @@ pub async fn invite(
 
     // Bound invite volume per team. Each invite sends an email to an arbitrary,
     // caller-supplied recipient, so an uncapped invite endpoint is an SMTP spam /
-    // phishing amplifier — cap both the burst rate and the total team size.
+    // phishing amplifier - cap both the burst rate and the total team size.
     let recent_invites: (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM team_invites WHERE team_id = $1 AND created_at > NOW() - INTERVAL '1 hour'",
     )
@@ -305,7 +305,7 @@ pub async fn invite(
     let _ = email::send_email(
         &state.db,
         &email_addr,
-        &format!("Invitation to join {} on DockPanel", team_name.0),
+        &format!("Invitation to join {} on CyberHunter - Panel", team_name.0),
         &format!(
             "<h2>You've been invited!</h2>\
              <p>{} has invited you to join <strong>{}</strong> as a <strong>{role}</strong>.</p>\
@@ -319,7 +319,7 @@ pub async fn invite(
     Ok(Json(serde_json::json!({ "ok": true, "message": "Invitation sent" })))
 }
 
-/// POST /api/teams/accept — Accept a team invitation.
+/// POST /api/teams/accept - Accept a team invitation.
 pub async fn accept_invite(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -339,7 +339,7 @@ pub async fn accept_invite(
     let (invite_id, team_id, invited_email, role) = invite
         .ok_or_else(|| err(StatusCode::BAD_REQUEST, "Invalid or expired invitation"))?;
 
-    // Bind the invite to its intended recipient — otherwise anyone holding the token
+    // Bind the invite to its intended recipient - otherwise anyone holding the token
     // (e.g. a forwarded invite email) could redeem it and join as the invited role.
     if !invited_email.eq_ignore_ascii_case(&claims.email) {
         return Err(err(StatusCode::FORBIDDEN, "This invitation was issued to a different email address"));
@@ -383,7 +383,7 @@ pub async fn accept_invite(
     Ok(Json(serde_json::json!({ "ok": true, "team": team_name.0 })))
 }
 
-/// PUT /api/teams/{id}/members/{member_id} — Update member role.
+/// PUT /api/teams/{id}/members/{member_id} - Update member role.
 pub async fn update_member(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -424,7 +424,7 @@ pub async fn update_member(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// DELETE /api/teams/{id}/members/{member_id} — Remove a team member.
+/// DELETE /api/teams/{id}/members/{member_id} - Remove a team member.
 pub async fn remove_member(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,

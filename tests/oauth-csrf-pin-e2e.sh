@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
-# oauth-csrf-pin-e2e.sh — s418 / v2.171.0
+# oauth-csrf-pin-e2e.sh - s418 / v2.171.0
 #
 # Pins two findings from the s418 identity/access-control audit fan-out (finder
 # + adversarial skeptic, both UPHELD independently against source and, for §A,
-# a live production reachability check — see project_dockpanel_lessons_p154):
+# a live production reachability check - see project_dockpanel_lessons_p154):
 #
 #   §A  /authorize's `state` token is bound to the ISSUING BROWSER, not just
 #       proven a member of the server-side map. Before this fix, `state`'s only
-#       property was "some /authorize call produced it" — nothing tied the
+#       property was "some /authorize call produced it" - nothing tied the
 #       browser presenting it at /callback to the browser that received it.
 #       Login-CSRF: an attacker starts their own OAuth flow, captures the
 #       provider's redirect back to this panel (a real code+state pair for the
 #       ATTACKER's own account) without letting their own browser follow it,
 #       and hands that exact callback URL to a victim. The old code validated
-#       `state` purely against `oauth_states` — which the attacker's `state`
-#       legitimately is a member of — and would have logged the victim's
+#       `state` purely against `oauth_states` - which the attacker's `state`
+#       legitimately is a member of - and would have logged the victim's
 #       browser into the ATTACKER's account.
 #
 #   §B  An OAuth provider's `email_verified: false` (or equivalent) cannot walk
@@ -27,7 +27,7 @@
 #
 # Pure source analysis: no box, no network, no build.
 #
-# NO PIPES INTO `grep -q` — under `set -o pipefail` grep -q closes the pipe on
+# NO PIPES INTO `grep -q` - under `set -o pipefail` grep -q closes the pipe on
 # its first match and the arm goes red on correct code, non-deterministically.
 # Every arm feeds grep a here-string.
 
@@ -42,7 +42,7 @@ OAUTH=panel/backend/src/routes/oauth.rs
 
 [ -f "$OAUTH" ] || bad "MISSING SUBJECT FILE: $OAUTH"
 
-# Comments out, CODE INTACT — copied verbatim from status-page-gate-pin-e2e.sh's
+# Comments out, CODE INTACT - copied verbatim from status-page-gate-pin-e2e.sh's
 # proven stripper (lesson #136): a naive multi-line strip deletes real code
 # whenever `/*` occurs inside a string literal, and a truncated subject makes an
 # ABSENCE arm pass on code the stripper merely removed.
@@ -81,7 +81,7 @@ fnsig() {
   ' <<< "$1"
 }
 
-# Byte offset of the first match of a pattern inside a string — used to assert
+# Byte offset of the first match of a pattern inside a string - used to assert
 # ORDER between two anchors in a function body, not just their co-presence. An
 # arm that only checks "both strings appear somewhere" cannot tell "the gate
 # runs before the lookup" from "the gate is dead code after it".
@@ -138,7 +138,7 @@ if S=$(subj "$OAUTH"); then
 
     # Order matters: the cookie check must be reachable on every path through
     # the handler, not stapled on after the point where a session could already
-    # have been minted. Anchor against the final JWT-issuing line — the cookie
+    # have been minted. Anchor against the final JWT-issuing line - the cookie
     # check must run BEFORE it exists at all in program order.
     o_check=$(first_offset "$CALLBODY" 'csrf_cookie\.as_deref')
     o_issue=$(first_offset "$CALLBODY" 'let token = jsonwebtoken::encode')
@@ -148,7 +148,7 @@ if S=$(subj "$OAUTH"); then
       bad "A6 the browser-binding check runs before a session can be issued, not after"
     fi
   else
-    bad "A0 function subjects resolved — extraction is broken, A1-A6 would be vacuous"
+    bad "A0 function subjects resolved - extraction is broken, A1-A6 would be vacuous"
     bad "A1 authorize() takes the request headers"; bad "A2 oauth_csrf cookie set"
     bad "A3 Set-Cookie header present"; bad "A4 callback() reads the cookie"
     bad "A5 callback() rejects on mismatch"; bad "A6 check runs before session issuance"
@@ -162,7 +162,7 @@ if S=$(subj "$OAUTH"); then
 
   if [ "${#CALLBODY}" -ge 800 ]; then
     # NOT a bare 'email_verified' substring check: the users table has its own
-    # unrelated email_verified COLUMN, named in this same function's INSERT —
+    # unrelated email_verified COLUMN, named in this same function's INSERT -
     # a bare-word arm here is vacuous (matches even pre-fix code, verified by
     # mutation test). Require the specific call shape that reads it off the
     # PROVIDER's response.
@@ -173,7 +173,7 @@ if S=$(subj "$OAUTH"); then
     fi
 
     if grep -qE '\.and_then\(\|v\| v\.as_bool\(\)\)\.unwrap_or\(true\)' <<< "$CALLBODY"; then
-      ok "B2 an ABSENT field is treated as verified (GitLab/GitHub-profile paths never send it — this must not become a new rejection)"
+      ok "B2 an ABSENT field is treated as verified (GitLab/GitHub-profile paths never send it - this must not become a new rejection)"
     else
       bad "B2 an absent email_verified field defaults to allow, not deny"
     fi
@@ -197,7 +197,7 @@ if S=$(subj "$OAUTH"); then
       bad "B4 the verification gate runs before the user lookup"
     fi
   else
-    bad "B1 callback() subject resolved (${#CALLBODY}c) — B1-B4 would be vacuous"
+    bad "B1 callback() subject resolved (${#CALLBODY}c) - B1-B4 would be vacuous"
     bad "B2 absent field defaults to allow"; bad "B3 explicit false is rejected"
     bad "B4 gate runs before user lookup"
   fi
@@ -206,7 +206,7 @@ fi
 echo "== §C  a matching provider NAME does not bypass a mismatched provider account id =="
 #
 # s473 / p209 deferred item 5, re-verified then closed: oauth_id was captured
-# on link/create and never consulted on a returning login — only the provider
+# on link/create and never consulted on a returning login - only the provider
 # NAME was checked. oauth_id is the provider's own permanent account id and is
 # only ever written alongside oauth_provider (never separately), so this gap
 # meant an email changing hands AT THE PROVIDER (a departed employee's mailbox
@@ -226,7 +226,7 @@ if S=$(subj "$OAUTH"); then
     fi
 
     # Order matters: the oauth_id check must sit INSIDE the "provider name
-    # already matches" arm — textually AFTER the provider-name-mismatch reject,
+    # already matches" arm - textually AFTER the provider-name-mismatch reject,
     # never before it (which would misfire on a genuinely different provider).
     o_provider_mismatch=$(first_offset "$CALLBODY" 'oauth_provider\.as_deref\(\) *!= *Some\(provider_name\.as_str\(\)\)')
     o_id_mismatch=$(first_offset "$CALLBODY" 'oauth_id\.as_deref\(\) *!= *Some\(oauth_id\.as_str\(\)\)')
@@ -247,7 +247,7 @@ if S=$(subj "$OAUTH"); then
     fi
 
     # The whole fix depends on oauth_provider never being written without
-    # oauth_id in the SAME statement — split them and a legitimate returning
+    # oauth_id in the SAME statement - split them and a legitimate returning
     # user starts failing C1's own check. Pin both writers.
     if grep -qE 'UPDATE users SET oauth_provider = \$1, oauth_id = \$2' <<< "$CALLBODY"; then
       ok "C4 the auto-link UPDATE still writes oauth_provider and oauth_id together"
@@ -268,7 +268,7 @@ if S=$(subj "$OAUTH"); then
       bad "C6 the oauth_id check runs before a session can be issued, not after"
     fi
   else
-    bad "C1 callback() subject resolved (${#CALLBODY}c) — C1-C6 would be vacuous"
+    bad "C1 callback() subject resolved (${#CALLBODY}c) - C1-C6 would be vacuous"
     bad "C2 order: oauth_id check after provider-name check"
     bad "C3 a third CONFLICT reject exists"; bad "C4 UPDATE writes both columns together"
     bad "C5 INSERT writes both columns together"; bad "C6 check runs before session issuance"

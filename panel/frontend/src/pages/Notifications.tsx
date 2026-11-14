@@ -82,7 +82,7 @@ export default function Notifications() {
 
   // The filters are read inside the SSE handler, which is installed once. A ref
   // keeps that handler looking at the CURRENT filter instead of the one that
-  // was in scope when it was installed — the stale-closure trap.
+  // was in scope when it was installed - the stale-closure trap.
   const filters = useRef({ unreadOnly, category });
   filters.current = { unreadOnly, category };
 
@@ -124,7 +124,7 @@ export default function Notifications() {
 
   // Live arrival. The bell has been on this stream since the notification
   // centre shipped; this page never was, so a notification that arrived while
-  // you were reading the list stayed invisible until you reloaded — on the one
+  // you were reading the list stayed invisible until you reloaded - on the one
   // screen whose entire purpose is to show you what just happened. The server
   // now sends the whole row, so a new one can simply be prepended.
   useEffect(() => {
@@ -134,7 +134,7 @@ export default function Notifications() {
       try {
         incoming = JSON.parse(e.data) as Notification;
       } catch {
-        return; // keepalive text, or a payload from an older API — ignore it
+        return; // keepalive text, or a payload from an older API - ignore it
       }
       if (!incoming?.id) return;
       const { unreadOnly, category } = filters.current;
@@ -168,7 +168,7 @@ export default function Notifications() {
    * Tell the layout its badge is stale.
    *
    * The bell polls `unread-count` every 60s, so marking everything read used to
-   * leave a red "9+" sitting over an empty feed for up to a minute — the panel
+   * leave a red "9+" sitting over an empty feed for up to a minute - the panel
    * disagreeing with itself about something the operator had just done. The
    * window-event bus already exists for exactly this (the theme switcher uses
    * it); this is the second subscriber.
@@ -268,12 +268,12 @@ export default function Notifications() {
               : "All caught up"}
             {summary ? ` · ${summary.total} total` : ""}
           </p>
-          {/* This page is visible to every role, and the link was not — it sent
+          {/* This page is visible to every role, and the link was not - it sent
               a client to `/settings`, which is `adminOnly` in the nav registry
               and answers `GET /api/settings` with a 403. The alert RULES behind
               it are `AuthUser` and per-user (`routes/alerts.rs:267`, `:321`), so
               a client's own alert destinations are real per-user data still
-              parked behind an admin door — that surface has not moved yet, so
+              parked behind an admin door - that surface has not moved yet, so
               the honest thing is to stop promising it rather than to keep
               offering a door that refuses. See the s325 carry. */}
           {user?.role === "admin" && (

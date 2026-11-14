@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# Regression pins for s332 — a control must not report a state it never established,
+# Regression pins for s332 - a control must not report a state it never established,
 # and a lockout must have a way back that does not require the thing that broke.
 #
 #   R1  THE BOOTSTRAP DOOR LEFT ITS OWN ADMINISTRATOR UNVERIFIABLE. `auth::setup`
 #       inserted only (email, password_hash, role), so the first administrator of
 #       every install landed `email_verified = FALSE` with `email_token = NULL`.
 #       `login` refuses an unverified account whenever `smtp_host` is merely
-#       NON-EMPTY, so the gate armed the moment the operator configured mail —
+#       NON-EMPTY, so the gate armed the moment the operator configured mail -
 #       against their own account. Both exits needed that mail: the token door
 #       matches `WHERE email_token = $1` and this user has no token, so the door
 #       does not exist for them, and `reset_password` needs the forgot-password
 #       message. Reported as #100 by an operator who reinstalled to get back in.
-#       `register` (the sibling door) inserted BOTH columns all along — the
+#       `register` (the sibling door) inserted BOTH columns all along - the
 #       ASYMMETRY between two implementations of one step was the bug (#307).
 #
 #   R2  A SECOND IP WHITELIST WROTE A FILE NOTHING READ. `/etc/dockpanel/
@@ -21,14 +21,14 @@
 #       same settings tab and answered "Whitelist saved (N IPs)".
 #
 #   R3  AN INTRUSION DETECTOR REPORTED ARMED WHILE UNARMED. Nothing plants the
-#       canary files — the writer is an agent route with no caller — and the
+#       canary files - the writer is an agent route with no caller - and the
 #       reader took the same silent `continue` for "never created" as for
 #       "cannot read it", so a tripwire with nothing on the wire was
 #       indistinguishable from a quiet one. The toggle renders ON by default.
 #
 # WHY THESE ARMS EXIST IN THIS SHAPE: every arm below was RUN AGAINST v2.89.0 and
 # required to be RED there, with its expected polarity written down BEFORE the run
-# (#335 — a false green hides inside a batch of reds, because attention goes to the
+# (#335 - a false green hides inside a batch of reds, because attention goes to the
 # reds). The two CONTROL arms are the exceptions and are green at both tags on
 # purpose: they assert I removed the INERT allowlist rather than the enforcing one,
 # and that the verification gate itself was not weakened to "fix" the lockout.
@@ -36,7 +36,7 @@
 # Pure source analysis: no box, no network, no build.
 #
 # ─────────────────────────────────────────────────────────────────────────────
-# s338 — WHAT THIS SUITE MEASURED, AND WHAT IT ONLY APPEARED TO
+# s338 - WHAT THIS SUITE MEASURED, AND WHAT IT ONLY APPEARED TO
 #
 # A regression pin greps RAW source, so PROSE satisfies it. Delete the mechanism,
 # leave the explanation behind, and the arm stays green while quoting the comment
@@ -45,7 +45,7 @@
 #
 #   A4  Two files, one AND. Turn the admin route line into a comment and turn the
 #       handler's declaration into a comment: `passed: 25  failed: 0`. The same
-#       two lines BLANKED instead — same deletion, no prose — turned the arm red
+#       two lines BLANKED instead - same deletion, no prose - turned the arm red
 #       at once. Only the comment saved it. Worse, the route half could never go
 #       red at all: it matched on a substring that a DIFFERENT, unrelated and
 #       entirely real route also carries, so half of the AND was decorative.
@@ -54,7 +54,7 @@
 #       the inert one was removed. Comment out all five call sites across three
 #       files and the count still reads 6, because the declaration is the sixth
 #       and five comments are the rest. A control with the five sites BLANKED was
-#       already red before anything was planted — the count is real, and comments
+#       already red before anything was planted - the count is real, and comments
 #       alone were propping it up.
 #
 #   D3  The OAuth approval gate. The body slicer walks brace balance over the raw
@@ -76,7 +76,7 @@
 #
 #   * Stripping makes a check see LESS, and that fails in two opposite ways. For a
 #     POSITIVE arm (match ⇒ ok) an over-strip is loudly red. For a NEGATIVE arm
-#     (match ⇒ bad) an over-strip is SILENTLY GREEN on broken code — the direction
+#     (match ⇒ bad) an over-strip is SILENTLY GREEN on broken code - the direction
 #     that ships. This suite has six negative arms and §H gives each one a control
 #     that writes the real defect into a copy and requires the grep to FIRE.
 # ─────────────────────────────────────────────────────────────────────────────
@@ -126,7 +126,7 @@ code_lines() {
     # over it passed on code the stripper had merely removed.
     #
     # A trailing `//` is stripped, but only when the text before it has BALANCED
-    # double quotes — otherwise `let u = "https://host"` would lose its tail.
+    # double quotes - otherwise `let u = "https://host"` would lose its tail.
     # Backslash escapes are skipped so `\"` does not flip the parity.
     awk '
       /^[[:space:]]*\/\*/ &&  /\*\/[[:space:]]*$/ { print ""; next }
@@ -161,7 +161,7 @@ code_lines() {
 # into once (#334). Under `set -o pipefail`, `code_lines f | grep -q PATTERN`
 # reports FAILURE on a successful match: grep -q exits at the first hit, the
 # producer upstream dies of SIGPIPE (141), and pipefail takes the pipeline's
-# status from it. The effect is silent and selective — a file whose match is near
+# status from it. The effect is silent and selective - a file whose match is near
 # the top gets dropped while one whose match is near the bottom survives. `grep
 # -c` consumes all of its input, so there is no early exit and no signal.
 code_count() { local f="$1"; shift; code_lines "$f" | grep -c "$@" 2>/dev/null || true; }
@@ -172,7 +172,7 @@ code_lineno() { local f="$1"; shift; code_lines "$f" | grep -n "$@" 2>/dev/null 
 
 # The DELIBERATE raw read, and the only one. Three arms below must see prose:
 # A6/E3 measure sentences in a markdown guide, and F11 compares raw against code on a
-# real repository file — a comparison that says nothing if both sides are stripped.
+# real repository file - a comparison that says nothing if both sides are stripped.
 # Naming it means §I's scan reports one auditable place rather than a habit, and means
 # a future arm cannot reach raw source by accident and look like these three.
 raw_count() { local f="$1"; shift; grep -c "$@" "$f" 2>/dev/null || true; }
@@ -187,7 +187,7 @@ FE=panel/frontend/src
 GUIDE=docs/guides/security-hardening.md
 
 for d in "$BE" "$AG" "$FE" panel/backend/migrations docs; do
-  [ -d "$d" ] || { echo "missing dir: $d — refusing to report a clean sweep"; exit 1; }
+  [ -d "$d" ] || { echo "missing dir: $d - refusing to report a clean sweep"; exit 1; }
 done
 
 # Fail at the door rather than through an empty stream. code_lines returns
@@ -198,15 +198,15 @@ for f in "$BE/routes/auth.rs" "$BE/routes/oauth.rs" "$BE/routes/passkeys.rs" \
          "$BE/routes/reseller_dashboard.rs" "$BE/routes/whmcs.rs" \
          "$BE/services/activity.rs" "$BE/services/auto_healer.rs" \
          "$AG/routes/security.rs" "$GUIDE"; do
-  [ -f "$f" ] || { echo "missing file: $f — refusing to report a clean sweep"; exit 1; }
+  [ -f "$f" ] || { echo "missing file: $f - refusing to report a clean sweep"; exit 1; }
 done
 
 # NOTE ON WINDOWS: no arm below uses a fixed `grep -A n`. A fixed forward window is
 # not a block and rots the moment somebody writes a comment above the subject
-# (#333 — my own 14-line explanation silently unhooked an arm at s331). Bodies are
+# (#333 - my own 14-line explanation silently unhooked an arm at s331). Bodies are
 # sliced to the construct's own terminator, and always out of the STRIPPED stream:
 # strip first, slice second. Blanking preserves height and brace balance, so every
-# slice boundary lands exactly where it did before — while a commented-out block
+# slice boundary lands exactly where it did before - while a commented-out block
 # stops being findable inside the slice, which is the whole point.
 
 # Slice a Rust fn body by brace balance, from `fn <name>` to its matching close.
@@ -241,7 +241,7 @@ inserts_in() {
 
 # The audit-retention block, sliced by brace balance from the directory constant.
 # The heading that used to anchor this slice is a comment, and a comment is
-# exactly what this stream no longer contains — so the anchor is the code.
+# exactly what this stream no longer contains - so the anchor is the code.
 retention_window() {
   code_lines "$1" | perl -0777 -ne '
     if (/audit_dir = "\/var\/lib\/dockpanel\/audit"/g) {
@@ -258,13 +258,13 @@ echo "── §A #100: the bootstrap door verifies the administrator it creates 
 
 SETUP_BODY=$(fn_body "$BE/routes/auth.rs" setup)
 if [ -z "$SETUP_BODY" ]; then
-  bad "could not slice auth::setup — the extractor found nothing, so every §A arm below would pass vacuously"
+  bad "could not slice auth::setup - the extractor found nothing, so every §A arm below would pass vacuously"
 else
   # A1. The INSERT must name email_verified. Scoped to the INSERT statement, not to
   # the function: `setup` is long and mentions users elsewhere.
   ins=$(printf '%s' "$SETUP_BODY" | perl -0777 -ne 'print $1 if /(INSERT INTO users.*?RETURNING \*)/s')
   if [ -n "$ins" ] && [ "$(printf '%s' "$ins" | grep -c 'email_verified')" -gt 0 ]; then
-    ok "A1 auth::setup's INSERT names email_verified — the first administrator is not born locked out"
+    ok "A1 auth::setup's INSERT names email_verified - the first administrator is not born locked out"
   else
     bad "A1 auth::setup creates the first administrator without email_verified; one SMTP setting locks them out of their own panel (#100)"
   fi
@@ -274,7 +274,7 @@ else
   if [ -n "$ins" ] && [ "$(printf '%s' "$ins" | grep -ciE "email_verified[^,]*\)[^)]*'admin',\s*TRUE|'admin',\s*TRUE")" -gt 0 ]; then
     ok "A2 the bootstrap administrator is inserted verified (TRUE), not merely with the column present"
   else
-    bad "A2 auth::setup names email_verified but does not insert TRUE — the lockout survives"
+    bad "A2 auth::setup names email_verified but does not insert TRUE - the lockout survives"
   fi
 fi
 
@@ -284,7 +284,7 @@ fi
 # Ask whether ANY migration carries the predicate, rather than picking one and
 # testing it: `head -1` over a name-sorted list chose the 2026-03 saas_auth
 # migration (it mentions both columns) and reported the release missing while it
-# was present — an arm that measured the wrong subject and failed in the
+# was present - an arm that measured the wrong subject and failed in the
 # direction that looks like a real finding.
 # The migration is nine-tenths `--` commentary explaining the predicate, and that
 # commentary spells the predicate. Counted in CODE, so the explanation cannot
@@ -298,7 +298,7 @@ done
 if [ -n "$MIG" ]; then
   ok "A3 a migration releases accounts that are unverified AND tokenless ($(basename "$MIG"))"
 else
-  bad "A3 no migration releases already-installed accounts that can never verify — the fix reaches new installs only (#332)"
+  bad "A3 no migration releases already-installed accounts that can never verify - the fix reaches new installs only (#332)"
 fi
 
 # A4. An administrator must be able to do it on a running panel. `email_verified`
@@ -307,13 +307,13 @@ fi
 # Both halves are counted in CODE, and the route half is anchored on the HANDLER
 # rather than on the path. The old anchor was a path fragment that a different,
 # entirely real and unrelated route in the same file also carries, so that half of
-# the AND could not go red whatever happened to the admin route — the arm was one
+# the AND could not go red whatever happened to the admin route - the arm was one
 # assertion wearing two.
 if [ "$(code_count "$BE/routes/mod.rs" -F -e 'security::verify_user_email')" -gt 0 ] \
    && [ "$(code_count "$BE/routes/security.rs" -E -e 'fn verify_user_email')" -gt 0 ]; then
   ok "A4 an admin-side writer for email_verified exists, routed and implemented"
 else
-  bad "A4 no administrator can mark an address verified — the only exits from the lockout need the mail that is broken"
+  bad "A4 no administrator can mark an address verified - the only exits from the lockout need the mail that is broken"
 fi
 
 # A5. The listing must tell the operator WHICH accounts are beyond self-rescue.
@@ -331,23 +331,23 @@ if [ "$(raw_count "$GUIDE" -F -e 'email_verified')" -gt 0 ] \
    && [ "$(raw_count "$GUIDE" -F -e 'Email not verified')" -gt 0 ]; then
   ok "A6 the guide documents the 'Email not verified' lockout and how to clear it"
 else
-  bad "A6 the email-verification lockout is undocumented — no symptom, no recovery, in the hardening guide"
+  bad "A6 the email-verification lockout is undocumented - no symptom, no recovery, in the hardening guide"
 fi
 
-# A7 — CONTROL, green at BOTH tags. Fixing the lockout must not have removed the
+# A7 - CONTROL, green at BOTH tags. Fixing the lockout must not have removed the
 # gate. If this ever goes red the 'fix' deleted a security check.
 LOGIN=$(fn_body "$BE/routes/auth.rs" login)
 if [ -n "$LOGIN" ] && [ "$(printf '%s' "$LOGIN" | grep -c 'email_verified')" -gt 0 ]; then
-  ok "A7 CONTROL login still refuses an unverified account — the gate was repaired, not removed"
+  ok "A7 CONTROL login still refuses an unverified account - the gate was repaired, not removed"
 else
-  bad "A7 CONTROL login no longer consults email_verified — the lockout was 'fixed' by deleting the check"
+  bad "A7 CONTROL login no longer consults email_verified - the lockout was 'fixed' by deleting the check"
 fi
 
 echo "── §B the inert panel-whitelist chain is gone ──"
 
 # B1/B2 are NEGATIVE arms: a match means the defect is back. A raw grep here would
-# go red on a tombstone comment that is not a reference at all, and — the direction
-# that matters — a stripper that removed too much would report the chain gone while
+# go red on a tombstone comment that is not a reference at all, and - the direction
+# that matters - a stripper that removed too much would report the chain gone while
 # it was still compiled in. §H plants the real thing and requires both to fire.
 #
 # The candidate list comes from a RAW grep and is then confirmed in CODE. That is
@@ -363,7 +363,7 @@ done
 if [ "$chain" -eq 0 ]; then
   ok "B1 no shipped source references the panel-whitelist endpoint chain"
 else
-  bad "B1 $chain shipped source file(s) still reference panel-whitelist — a control that writes a file nothing reads"
+  bad "B1 $chain shipped source file(s) still reference panel-whitelist - a control that writes a file nothing reads"
 fi
 
 CONF_CANDS=$(grep -rl 'panel-whitelist\.conf' panel/ scripts/ --include='*.rs' --include='*.sh' --include='*.tsx' 2>/dev/null \
@@ -375,16 +375,16 @@ done
 if [ "$conf" -eq 0 ]; then
   ok "B2 nothing writes or reads /etc/dockpanel/panel-whitelist.conf"
 else
-  bad "B2 $conf file(s) still touch panel-whitelist.conf — the file no enforcement path ever consumed"
+  bad "B2 $conf file(s) still touch panel-whitelist.conf - the file no enforcement path ever consumed"
 fi
 
-# B3 — CONTROL, green at BOTH tags, and the point of the whole section. There were
+# B3 - CONTROL, green at BOTH tags, and the point of the whole section. There were
 # TWO allowlists; exactly one was inert. This asserts the ENFORCING one still guards
 # every door that mints a session. Red here means the wrong one was deleted.
 #
 # Counted in CODE. Commenting out all five call sites across three files left this
 # reading 6 and green, because the declaration is the sixth reference and five
-# comments made up the rest — the arm was measuring text, not wiring.
+# comments made up the rest - the arm was measuring text, not wiring.
 doors=0
 for f in "$BE"/routes/*.rs; do
   doors=$(( doors + $(code_count "$f" -F -e 'enforce_panel_ip_allowlist') ))
@@ -392,63 +392,63 @@ done
 if [ "$doors" -ge 6 ]; then
   ok "B3 CONTROL the enforcing IP allowlist is still wired at $doors sites (helper + every minting door)"
 else
-  bad "B3 CONTROL the enforcing IP allowlist is referenced only $doors times — the surviving allowlist lost coverage"
+  bad "B3 CONTROL the enforcing IP allowlist is referenced only $doors times - the surviving allowlist lost coverage"
 fi
 
 echo "── §C the canary reports whether it is actually armed ──"
 
 CAN=$(fn_body "$BE/services/auto_healer.rs" security_check_canary_files)
 if [ -z "$CAN" ]; then
-  bad "C0 could not slice security_check_canary_files — §C would pass vacuously"
+  bad "C0 could not slice security_check_canary_files - §C would pass vacuously"
 else
   # C1. Absent and unreadable are different facts. They used to share one silent
   # `continue`, which is how a tripwire under ProtectHome=yes reads as all-clear.
   #
   # s380 moved the three-way decision out of this function into `classify_canary`,
   # so the Settings screen and this sweeper cannot disagree about what a path is.
-  # The arm follows the code — but repointing it there is only half the fix
+  # The arm follows the code - but repointing it there is only half the fix
   # (lesson #555): a helper that draws the distinction perfectly is worth nothing
   # if the sweeper stopped calling it. C1a checks the distinction where it now
   # lives; C1b checks that this function still REACHES it.
   CLASSIFY=$(fn_body "$BE/services/auto_healer.rs" classify_canary)
   if [ -z "$CLASSIFY" ]; then
-    bad "C1a could not slice classify_canary — the three-way canary decision has no measurable home"
+    bad "C1a could not slice classify_canary - the three-way canary decision has no measurable home"
   elif [ "$(printf '%s' "$CLASSIFY" | grep -c 'ErrorKind::NotFound')" -gt 0 ]; then
     ok "C1a the canary classifier distinguishes a canary that was never created from one it cannot read"
   else
-    bad "C1a the canary classifier treats unreadable exactly like absent — a blind spot reported as all-clear"
+    bad "C1a the canary classifier treats unreadable exactly like absent - a blind spot reported as all-clear"
   fi
 
   if [ "$(printf '%s' "$CAN" | grep -c 'classify_canary(')" -gt 0 ]; then
     ok "C1b the two-minute sweeper still routes every path through classify_canary"
   else
-    bad "C1b the sweeper no longer calls classify_canary — it is classifying paths on its own again, and C1a is measuring dead code"
+    bad "C1b the sweeper no longer calls classify_canary - it is classifying paths on its own again, and C1a is measuring dead code"
   fi
 
   # C2. And it must say when nothing at all is being watched. Scoped to the
   # function body, so an unrelated 'NOT ARMED' elsewhere in the file cannot satisfy
-  # it (#335 — C2's ancestor last session matched a token in a different call).
+  # it (#335 - C2's ancestor last session matched a token in a different call).
   if [ "$(printf '%s' "$CAN" | grep -c 'NOT ARMED')" -gt 0 ]; then
     ok "C2 the canary check reports when no canary could be examined at all"
   else
-    bad "C2 canary monitoring can be enabled, watch nothing, and say nothing — silence is its only output"
+    bad "C2 canary monitoring can be enabled, watch nothing, and say nothing - silence is its only output"
   fi
 fi
 
 echo "── §D s333: the OTHER doors that create an account, and the doors that admit one ──"
 
-# WHY §D EXISTS. §A above pinned ONE door — `auth::setup` — because that is the door
+# WHY §D EXISTS. §A above pinned ONE door - `auth::setup` - because that is the door
 # the reporter hit. The enumeration that convinced me the others were fine grepped for
 # the COLUMN NAME, and a name-grep is structurally blind to an INSERT that omits the
 # column: the two doors that were still broken (`users::create` and
 # `reseller_dashboard::create_user`) are exactly the two files that never spell it.
 # §A was green on both of them for a whole release. So D1 asks the question in the
-# only order that can work — find every writer FIRST, then ask each one about the
+# only order that can work - find every writer FIRST, then ask each one about the
 # column (#341: an arm must ask whether EVERY member has the property, never pick a
 # member and test it).
 #
 # The enumeration reads CODE. §D searches for a SQL statement by its text, and prose
-# that merely NARRATES the statement is not a statement — there is a doc comment in
+# that merely NARRATES the statement is not a statement - there is a doc comment in
 # services/activity.rs that spells the statement while describing it, and counting
 # that as a door would fail this suite on a file that has no door in it. §F11 pins
 # that exact file as the live proof the stripper is doing it.
@@ -460,16 +460,16 @@ n_ins=$(printf '%s' "$INSERTS" | grep -c . || true)
 
 # D2 FIRST, because every other arm here is worthless if the enumeration is empty. An
 # arm that enumerates its own subjects must prove the list is real before reporting on
-# it (#143 — two absence arms once printed green having examined zero files).
+# it (#143 - two absence arms once printed green having examined zero files).
 if [ "$n_ins" -ge 5 ]; then
-  ok "D2 the account-writer enumeration found $n_ins INSERT INTO users statements — non-vacuous"
+  ok "D2 the account-writer enumeration found $n_ins INSERT INTO users statements - non-vacuous"
 else
-  bad "D2 only $n_ins INSERT INTO users statements found (expected >= 5) — the extractor is broken and every §D arm below is meaningless"
+  bad "D2 only $n_ins INSERT INTO users statements found (expected >= 5) - the extractor is broken and every §D arm below is meaningless"
 fi
 
 # D1. Each writer must either mark the account verified, or issue it a token so the
 # holder can verify themselves. Neither means an account that cannot sign in once SMTP
-# exists and cannot ever fix that — the #100 predicate, which HEAD's own migration
+# exists and cannot ever fix that - the #100 predicate, which HEAD's own migration
 # defines as `email_verified = FALSE AND email_token IS NULL`.
 #
 # NEGATIVE: green means the offender list is EMPTY. An over-strip that dropped a real
@@ -483,7 +483,7 @@ else
   bad "D1 these doors create accounts that can never verify and can never sign in once SMTP is set: ${offenders:-<enumeration failed>} (#100, in a door nobody reported)"
 fi
 
-# D5 CONTROL — green at both tags. D1 must not be satisfiable by making everything
+# D5 CONTROL - green at both tags. D1 must not be satisfiable by making everything
 # verified: the self-service registration door is SUPPOSED to leave the account
 # unverified, and it earns that by issuing a token. If this ever goes red alongside a
 # green D1, someone "fixed" D1 by deleting the verification ceremony.
@@ -492,13 +492,13 @@ reg_ins=$(printf '%s' "$REG_BODY" | perl -0777 -ne 'print $1 if /(INSERT INTO us
 if [ -n "$reg_ins" ] && [ "$(printf '%s' "$reg_ins" | grep -c 'email_token')" -gt 0 ]; then
   ok "D5 (control) self-service registration still issues a verification token rather than self-approving"
 else
-  bad "D5 (control) the registration door no longer issues an email_token — the verification ceremony was removed, not repaired"
+  bad "D5 (control) the registration door no longer issues an email_token - the verification ceremony was removed, not repaired"
 fi
 
 # D3/D4/D6. THE DOORS THAT ADMIT A SESSION. Three of them exist and they did not agree:
 # the password and passkey doors refuse an unapproved account, the OAuth door did not
 # check at all, so Registration Approval Mode was enforced at two ways in out of three.
-# The same file's own comment claims parity with the other two — for SUSPENSION, which
+# The same file's own comment claims parity with the other two - for SUSPENSION, which
 # it does have. Getting one of two parities right is the tell (#338: when two doors do
 # the same job, diff them; the asymmetry is the bug).
 #
@@ -510,15 +510,15 @@ for door in "routes/auth.rs:login" "routes/passkeys.rs:auth_complete" "routes/oa
   df=${door%%:*}; dn=${door##*:}
   BODY=$(fn_body "$BE/$df" "$dn")
   if [ -z "$BODY" ]; then
-    bad "D3 could not slice $dn out of $df — the gate-parity arms would pass vacuously"
+    bad "D3 could not slice $dn out of $df - the gate-parity arms would pass vacuously"
     continue
   fi
   if [ "$(printf '%s' "$BODY" | grep -c 'COALESCE(approved')" -gt 0 ]; then
     ok "D3 $df::$dn refuses an account pending admin approval"
   else
-    bad "D3 $df::$dn admits a session without checking approval — Registration Approval Mode is bypassable through this door"
+    bad "D3 $df::$dn admits a session without checking approval - Registration Approval Mode is bypassable through this door"
   fi
-  # D6 CONTROL — green at both tags. Proves the extractor really is reading these three
+  # D6 CONTROL - green at both tags. Proves the extractor really is reading these three
   # bodies, and that adding the approval gate did not disturb the suspension gate.
   if [ "$(printf '%s' "$BODY" | grep -c '"suspended"')" -gt 0 ]; then
     ok "D6 (control) $df::$dn still refuses a suspended account"
@@ -543,7 +543,7 @@ echo "── §E s333: the audit log claims only what it enforces ──"
 # append-only attribute on the audit DIRECTORY, which permits rewriting the files in
 # place and denies the panel's own retention sweep. ⚠ The literal is deliberately NOT
 # spelled anywhere in the shipped agent source, including in the tombstone comment
-# there — that is what turned this exact arm red on a correct fix one session ago
+# there - that is what turned this exact arm red on a correct fix one session ago
 # (#340). Build it here instead so the arm and the prohibition live together.
 #
 # NEGATIVE, and counted in CODE: a tombstone comment naming the route is not a mount,
@@ -561,13 +561,13 @@ fi
 #
 # The block used to be sliced on the heading comment above it, which is the one thing
 # a comment-stripped stream cannot contain. It is anchored on the directory constant
-# now — code, and the only code in the function that names this directory.
+# now - code, and the only code in the function that names this directory.
 RET=$(retention_window "$BE/services/auto_healer.rs")
 if [ -n "$RET" ] && [ "$(printf '%s' "$RET" | grep -c 'let _ = std::fs::remove_file')" -eq 0 ] \
    && [ "$(printf '%s' "$RET" | grep -c 'audit_failed')" -gt 0 ]; then
   ok "E2 the audit retention sweep reports a delete it could not perform instead of discarding it"
 else
-  bad "E2 the audit retention sweep discards its delete result — under an append-only directory it fails forever and says nothing"
+  bad "E2 the audit retention sweep discards its delete result - under an append-only directory it fails forever and says nothing"
 fi
 
 # E3. The guide must not promise on-disk tamper-proofing that nothing establishes.
@@ -586,7 +586,7 @@ echo "── §F the strippers strip comments, and nothing else (s338) ──"
 
 # Everything above now depends on code_lines. A stripper that under-strips restores
 # the whole defect silently; one that OVER-strips turns §B, §D1 and §E's negative arms
-# green on broken code. So it gets its own fixtures, and they are hermetic — no
+# green on broken code. So it gets its own fixtures, and they are hermetic - no
 # repository file is involved, because a fixture that shares a subject with the thing
 # it validates cannot tell the two apart.
 FIXDIR=$(mktemp -d)
@@ -633,7 +633,7 @@ fi
 if [ "$(code_count "$FIXDIR/f.sh" -F -e 'TOKENSTR')" -eq 1 ]; then
   ok "F2 shell: a '#' inside a string literal is left alone (no trailing-comment stripping)"
 else
-  bad "F2 shell: the stripper ate a '#' inside a string — a negative arm would now pass on broken code"
+  bad "F2 shell: the stripper ate a '#' inside a string - a negative arm would now pass on broken code"
 fi
 
 if [ "$(code_count "$FIXDIR/f.rs" -F -e 'TOKENWORD')" -eq 1 ]; then
@@ -643,18 +643,18 @@ else
 fi
 
 if [ "$(code_count "$FIXDIR/f.rs" -F -e 'TOKENURL')" -eq 1 ]; then
-  ok "F4 rust: '//' inside a quoted string survives — a URL is not a comment"
+  ok "F4 rust: '//' inside a quoted string survives - a URL is not a comment"
 else
   bad "F4 rust: the stripper cut a line at the '//' of a URL inside a string literal"
 fi
 
 # s294: a `/*` inside a string literal opened a block comment that ran to the next
 # `*/` and deleted 485 lines of git_build.rs. The guard is that a block is recognised
-# only where one is WRITTEN — opening at line start.
+# only where one is WRITTEN - opening at line start.
 if [ "$(code_count "$FIXDIR/f.rs" -F -e 'TOKENAFTER')" -eq 1 ]; then
   ok "F5 rust: a '/*' inside a string literal does not open a block (the s294 guard holds)"
 else
-  bad "F5 rust: a string containing '/*' swallowed the code after it — the s294 stripper defect is back"
+  bad "F5 rust: a string containing '/*' swallowed the code after it - the s294 stripper defect is back"
 fi
 
 if [ "$(code_count "$FIXDIR/f.json" -F -e 'TOKENWORD')" -eq 1 ]; then
@@ -669,7 +669,7 @@ fi
 if [ "$(code_count "$FIXDIR/f.sql" -F -e 'TOKENWORD')" -eq 1 ]; then
   ok "F7 sql: a full-line '--' comment carrying the token is blanked (1 code hit, not 2)"
 else
-  bad "F7 sql: expected exactly 1 code hit for TOKENWORD, got $(code_count "$FIXDIR/f.sql" -F -e 'TOKENWORD') — a migration's own commentary would satisfy A3"
+  bad "F7 sql: expected exactly 1 code hit for TOKENWORD, got $(code_count "$FIXDIR/f.sql" -F -e 'TOKENWORD') - a migration's own commentary would satisfy A3"
 fi
 
 if [ "$(code_count "$FIXDIR/f.sql" -F -e 'TOKENDASH')" -eq 1 ]; then
@@ -682,9 +682,9 @@ fi
 # with the shell comment marker. If the dispatch ever sends markdown to that branch,
 # every heading in the document disappears and both arms start measuring nothing.
 if [ "$(code_count "$FIXDIR/f.md" -F -e 'TOKENWORD')" -eq 2 ]; then
-  ok "F9 markdown: nothing is stripped — a '#' heading is prose, not a comment"
+  ok "F9 markdown: nothing is stripped - a '#' heading is prose, not a comment"
 else
-  bad "F9 markdown: the stripper treated a heading as a comment ($(code_count "$FIXDIR/f.md" -F -e 'TOKENWORD') of 2 hits left) — A6 and E3 would go blind"
+  bad "F9 markdown: the stripper treated a heading as a comment ($(code_count "$FIXDIR/f.md" -F -e 'TOKENWORD') of 2 hits left) - A6 and E3 would go blind"
 fi
 
 # Blanking, not deleting. §I reads a line number out of this stream and the two body
@@ -701,7 +701,7 @@ done
 if [ -z "$LINEDRIFT" ]; then
   ok "F10 blanking preserves the line count of every subject, so line numbers and brace balance stay true"
 else
-  bad "F10 code_lines changed the line count of:$LINEDRIFT — the body slicers and the §I ordering check are measuring the wrong lines"
+  bad "F10 code_lines changed the line count of:$LINEDRIFT - the body slicers and the §I ordering check are measuring the wrong lines"
 fi
 
 # The live proof, in the repository rather than in a fixture. services/activity.rs
@@ -710,9 +710,9 @@ fi
 act_raw=$(raw_count "$BE/services/activity.rs" -F -e 'INSERT INTO users')
 act_code=$(code_count "$BE/services/activity.rs" -F -e 'INSERT INTO users')
 if [ "$act_raw" -gt 0 ] && [ "$act_code" -eq 0 ]; then
-  ok "F11 services/activity.rs spells the enumerated statement $act_raw time(s) in prose and 0 in code — the stripper is doing this on the real tree, not only on fixtures"
+  ok "F11 services/activity.rs spells the enumerated statement $act_raw time(s) in prose and 0 in code - the stripper is doing this on the real tree, not only on fixtures"
 else
-  bad "F11 activity.rs raw=$act_raw code=$act_code — either the prose mention is gone (retire this arm deliberately) or the stripper is not reaching it and §D is counting a comment as a door"
+  bad "F11 activity.rs raw=$act_raw code=$act_code - either the prose mention is gone (retire this arm deliberately) or the stripper is not reaching it and §D is counting a comment as a door"
 fi
 
 echo ""
@@ -761,7 +761,7 @@ PINNED=(
 #
 # The copy KEEPS the original's extension, and that is load-bearing rather than tidy:
 # comment_marker_for dispatches on the extension, so a scratch file called `mutated` is
-# read as shell no matter what it holds — the `//` and `--` subjects would report the
+# read as shell no matter what it holds - the `//` and `--` subjects would report the
 # stripper broken when what was broken was the temp filename.
 comment_out_matches() {
   local src="$1" dst="$2" mode="$3" pat="$4" marker
@@ -798,13 +798,13 @@ for subj in $PIN_SUBJECTS; do
   if [ -z "$dead" ]; then
     ok "G $subj: every pattern this suite pins is present in CODE, not only in prose"
   else
-    bad "G $subj: pinned pattern(s) present only as prose —$dead — the arm reading it is passing on a comment"
+    bad "G $subj: pinned pattern(s) present only as prose -$dead - the arm reading it is passing on a comment"
   fi
 
   if [ -z "$survived" ]; then
     ok "G $subj: commenting out the matching code lines drives every pinned pattern to zero"
   else
-    bad "G $subj: pattern(s) still counted after their code lines were commented out —$survived — the stripper is not reaching this subject"
+    bad "G $subj: pattern(s) still counted after their code lines were commented out -$survived - the stripper is not reaching this subject"
   fi
 done
 
@@ -812,15 +812,15 @@ echo ""
 echo "── §H the six NEGATIVE arms still fire on a real defect (s338) ──"
 
 # Stripping makes a check see LESS, and that is not a symmetric risk. A positive arm
-# that loses its subject goes loudly red at HEAD. A NEGATIVE arm — one where a match
-# means the defect is present — goes SILENTLY GREEN, and a suite reporting 0 failures
+# that loses its subject goes loudly red at HEAD. A NEGATIVE arm - one where a match
+# means the defect is present - goes SILENTLY GREEN, and a suite reporting 0 failures
 # on broken code is the exact failure this whole retrofit exists to prevent.
 #
 # So each negative arm gets the defect written into a throwaway copy, IN CODE, and is
 # required to notice. Each control calls the same predicate function the arm calls, so
 # a control cannot pass down a path the arm does not use.
 
-# H1 — B1. A live reference to the inert chain, in code.
+# H1 - B1. A live reference to the inert chain, in code.
 cat > "$FIXDIR/wl.rs" <<'FIX'
 // a tombstone naming panel-whitelist must NOT count as a reference
 pub async fn save_panel_whitelist() -> Json<Value> {
@@ -831,10 +831,10 @@ FIX
 if [ "$(chain_refs "$FIXDIR/wl.rs")" -gt 0 ]; then
   ok "H1 B1's chain scan still fires when the panel-whitelist endpoint is really in code"
 else
-  bad "H1 B1's chain scan no longer sees a real panel-whitelist reference — the stripper is eating code and B1 is green on a live inert control"
+  bad "H1 B1's chain scan no longer sees a real panel-whitelist reference - the stripper is eating code and B1 is green on a live inert control"
 fi
 
-# H2 — B2. A live writer of the file nothing consumed.
+# H2 - B2. A live writer of the file nothing consumed.
 cat > "$FIXDIR/wlconf.rs" <<'FIX'
 // the tombstone may name panel-whitelist.conf; the writer below is the defect
 std::fs::write("/etc/dockpanel/panel-whitelist.conf", body)?;
@@ -842,24 +842,24 @@ FIX
 if [ "$(conf_refs "$FIXDIR/wlconf.rs")" -gt 0 ]; then
   ok "H2 B2's file scan still fires when panel-whitelist.conf is really written in code"
 else
-  bad "H2 B2's file scan no longer sees a real write of panel-whitelist.conf — B2 is green on a live writer"
+  bad "H2 B2's file scan no longer sees a real write of panel-whitelist.conf - B2 is green on a live writer"
 fi
 
-# H3 — E1. The one-shot initialiser mounted again. The route literal is assembled from
-# the same runtime pieces the arm uses, so it is not spelled in this file either — the
+# H3 - E1. The one-shot initialiser mounted again. The route literal is assembled from
+# the same runtime pieces the arm uses, so it is not spelled in this file either - the
 # prohibition that turned E1 red on a correct fix at s340 applies to the test too.
 cp "$AG/routes/security.rs" "$FIXDIR/agentsec.rs"
 printf '        .route("%s", post(harden_init))\n' "$NEEDLE" >> "$FIXDIR/agentsec.rs"
 if [ "$(code_count "$FIXDIR/agentsec.rs" -F -e "$NEEDLE")" -gt 0 ]; then
   ok "H3 E1's absence arm still fires when the one-shot initialiser is really mounted in code"
 else
-  bad "H3 E1's absence arm no longer sees a real mount of the initialiser — E1 is green on an agent that still mounts it"
+  bad "H3 E1's absence arm no longer sees a real mount of the initialiser - E1 is green on an agent that still mounts it"
 fi
 
-# H4 — E2. The retention sweep with its delete result discarded again, sliced by the
+# H4 - E2. The retention sweep with its delete result discarded again, sliced by the
 # same window function the arm uses.
 cat > "$FIXDIR/ret.rs" <<'FIX'
-// Clean old audit log files (>365 days) — this narration must not be the anchor
+// Clean old audit log files (>365 days) - this narration must not be the anchor
 fn sweep() {
     let audit_dir = "/var/lib/dockpanel/audit";
     if let Ok(entries) = std::fs::read_dir(audit_dir) {
@@ -874,10 +874,10 @@ RET_CTL=$(retention_window "$FIXDIR/ret.rs")
 if [ -n "$RET_CTL" ] && [ "$(printf '%s' "$RET_CTL" | grep -c 'let _ = std::fs::remove_file')" -gt 0 ]; then
   ok "H4 E2's discarded-result detector still fires when the delete result is really thrown away in code"
 else
-  bad "H4 E2's window found no discarded delete in a file that has one (window=${#RET_CTL} chars) — E2 is green on a sweep that fails forever in silence"
+  bad "H4 E2's window found no discarded delete in a file that has one (window=${#RET_CTL} chars) - E2 is green on a sweep that fails forever in silence"
 fi
 
-# H5 — E3. The guide is read RAW by design, so no stripper narrows this one; the
+# H5 - E3. The guide is read RAW by design, so no stripper narrows this one; the
 # control exists anyway, because "no stripper touches it" is a claim about today's
 # dispatch table and F9 is the only thing holding it.
 cp "$GUIDE" "$FIXDIR/guide.md"
@@ -885,10 +885,10 @@ printf '\nThe audit log is kept as append-only files on disk.\n' >> "$FIXDIR/gui
 if [ "$(raw_count "$FIXDIR/guide.md" -F -e 'append-only files on disk')" -gt 0 ]; then
   ok "H5 E3's overclaim detector still fires when the guide really makes the promise"
 else
-  bad "H5 E3's overclaim detector no longer sees the promised sentence — E3 is green on a guide that promises what nothing enforces"
+  bad "H5 E3's overclaim detector no longer sees the promised sentence - E3 is green on a guide that promises what nothing enforces"
 fi
 
-# H6 — D1. A door that creates an account with neither column, run through the same
+# H6 - D1. A door that creates an account with neither column, run through the same
 # extractor and the same offender predicate.
 cat > "$FIXDIR/door.rs" <<'FIX'
 // this door's comment may mention email_verified and email_token freely
@@ -901,7 +901,7 @@ ctl_off=$(inserts_in "$FIXDIR/door.rs" | grep -v 'email_verified' | grep -v 'ema
 if [ -n "$ctl_off" ]; then
   ok "H6 D1's offender predicate still names a door that inserts neither column"
 else
-  bad "H6 D1's offender predicate found nothing in a door that has neither column — the enumeration or the stripper is dropping real writers and D1 is green on a broken door"
+  bad "H6 D1's offender predicate found nothing in a door that has neither column - the enumeration or the stripper is dropping real writers and D1 is green on a broken door"
 fi
 
 echo ""
@@ -917,7 +917,7 @@ SELF=tests/access-recovery-pin-e2e.sh
 # list: those two arms read prose, on purpose, and F9 is what protects them.
 SUBJ_VARS='BE|AG|FE'
 # Assembled from two halves so neither scanning line below spells the marker and
-# counts itself — the same self-matching hazard SUBJ_VARS is assembled to dodge.
+# counts itself - the same self-matching hazard SUBJ_VARS is assembled to dodge.
 ENUM_HEAD='RAW-ENUM'
 ENUM_MARK="$ENUM_HEAD-OK"
 RAW_ARMS=$(code_lines "$SELF" | grep -nE "grep[^|;]*\"\\\$($SUBJ_VARS)[\"/]" | grep -v "$ENUM_MARK" || true)
@@ -929,14 +929,14 @@ fi
 
 # I1 scans for `grep`, so naming the deliberate raw read opened a door beside it: a new
 # arm could reach raw source through raw_count and be invisible to the guard. Ratchet
-# it. Exactly ONE arm may read a source subject raw — F11, which exists to compare raw
+# it. Exactly ONE arm may read a source subject raw - F11, which exists to compare raw
 # against code and is meaningless if both sides are stripped. The GUIDE calls are not
 # counted here: that subject is prose, and F9 is what protects it.
 RAW_ON_SOURCE=$(code_lines "$SELF" | grep -cE "raw_count \"\\\$($SUBJ_VARS)/" || true)
 if [ "$RAW_ON_SOURCE" -eq 1 ]; then
   ok "I3 exactly one arm reads a source subject raw, and it is the one that compares raw against code"
 else
-  bad "I3 $RAW_ON_SOURCE arms read a source subject raw (expected exactly 1) — either F11's comparison was removed or a new arm reached raw source past the I1 scan"
+  bad "I3 $RAW_ON_SOURCE arms read a source subject raw (expected exactly 1) - either F11's comparison was removed or a new arm reached raw source past the I1 scan"
 fi
 
 # The marker above is an escape hatch, so it is ratcheted like every other one here:
@@ -948,7 +948,7 @@ ENUM_OK=$(code_lines "$SELF" | grep -c "$ENUM_MARK" || true)
 if [ "$ENUM_OK" -eq 1 ]; then
   ok "I4 exactly one raw read is marked as a discovery enumeration"
 else
-  bad "I4 $ENUM_OK raw reads are marked as discovery enumerations (expected exactly 1) — the I1 escape hatch has been widened"
+  bad "I4 $ENUM_OK raw reads are marked as discovery enumerations (expected exactly 1) - the I1 escape hatch has been widened"
 fi
 
 # A check placed below the thing it must run before inherits that position as a defect.
@@ -959,7 +959,7 @@ SEC1_LINE=$(code_lineno "$SELF" -F -e '── §A #100')
 if [ -n "$DEF_LINE" ] && [ -n "$SEC1_LINE" ] && [ "$DEF_LINE" -lt "$SEC1_LINE" ]; then
   ok "I2 code_lines is defined (line $DEF_LINE) above the first section (line $SEC1_LINE)"
 else
-  bad "I2 code_lines is no longer defined above §A — the arms above its definition are reading raw source again (def=${DEF_LINE:-none} §A=${SEC1_LINE:-none})"
+  bad "I2 code_lines is no longer defined above §A - the arms above its definition are reading raw source again (def=${DEF_LINE:-none} §A=${SEC1_LINE:-none})"
 fi
 
 echo ""

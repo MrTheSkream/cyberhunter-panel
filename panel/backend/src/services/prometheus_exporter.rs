@@ -24,7 +24,7 @@ pub async fn render(pool: &PgPool) -> String {
 }
 
 fn render_info(out: &mut String) {
-    let _ = writeln!(out, "# HELP dockpanel_info DockPanel build information.");
+    let _ = writeln!(out, "# HELP dockpanel_info CyberHunter - Panel build information.");
     let _ = writeln!(out, "# TYPE dockpanel_info gauge");
     let _ = write!(out, "dockpanel_info{{version=\"");
     push_escaped(out, env!("CARGO_PKG_VERSION"));

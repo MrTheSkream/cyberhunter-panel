@@ -1,25 +1,25 @@
 #!/usr/bin/env bash
-# site-transfer-visibility-pin-e2e.sh — s314 / v2.71.0 (D3 added v2.71.1)
+# site-transfer-visibility-pin-e2e.sh - s314 / v2.71.0 (D3 added v2.71.1)
 #
 # Pins the fix for a handover that was a ONE-WAY DOOR, and for the reason the
 # role it created could not be used at all.
 #
 # v2.69.0 shipped `client` + an admin-only site Transfer. Ownership is a single
 # axis, so `list` and every per-site read are `WHERE user_id = $1` with no role
-# branch — correct, and the whole reason the role needed no other change. But it
+# branch - correct, and the whole reason the role needed no other change. But it
 # meant that the instant an admin handed a site over, the row left their list,
-# the detail page answered 404, and the Transfer control — rendered ONLY on that
-# page — became unreachable. There was no way back through the panel. The guide
+# the detail page answered 404, and the Transfer control - rendered ONLY on that
+# page - became unreachable. There was no way back through the panel. The guide
 # and the handler's own doc comment both promised the opposite. Reported from the
 # field on #51 by the operator who had just used the feature.
 #
 #   §A  the admin all-sites READ exists, is admin-gated, is server-scoped, and is
-#       a narrow PROJECTION — never `Site`, which is FromRow over `SELECT *` and
+#       a narrow PROJECTION - never `Site`, which is FromRow over `SELECT *` and
 #       is bound at three dozen call sites.
 #   §B  and ownership is NOT widened anywhere else. This is the arm that matters
 #       in the long run: the temptation, next time, is to add `OR role='admin'`
 #       to the reads themselves. Subject list COMPUTED, never written here.
-#   §C  the way back is REACHABLE — the all-sites list can transfer, and the
+#   §C  the way back is REACHABLE - the all-sites list can transfer, and the
 #       recipient is PICKED, not typed.
 #   §D  the cross-account server-id leak is closed at both ends.
 #   §E  the two prose surfaces that promised admin visibility no longer do, and
@@ -31,13 +31,13 @@
 # at the previous tag" is trivially true for them and proves little (lesson
 # #222). The load-bearing ones are §B (a NEGATIVE arm, green at both tags, whose
 # job is to go red on a future widening) and §D/§E (red at v2.70.0 on the real
-# defect). §B was MUTATION-TESTED at HEAD instead — see the note above it.
+# defect). §B was MUTATION-TESTED at HEAD instead - see the note above it.
 #
 # ⚠ Every arm whose subject is a STATEMENT reads the file WHOLE (lesson #230):
-# `grep -E` is line-based and this suite's subjects — a Rust fn signature, a SQL
-# string, a JSX attribute — are all routinely written across lines.
+# `grep -E` is line-based and this suite's subjects - a Rust fn signature, a SQL
+# string, a JSX attribute - are all routinely written across lines.
 #
-# NO PIPES INTO `grep -q` — under `set -o pipefail` grep -q closes the pipe on
+# NO PIPES INTO `grep -q` - under `set -o pipefail` grep -q closes the pipe on
 # its first match and the arm goes red on correct code. Every arm uses a
 # here-string.
 
@@ -63,7 +63,7 @@ done
 # Comments out, CODE INTACT. Copied from the FIXED stripper (lesson #136): the
 # naive s{/\*.*?\*/}{}gs deletes real code because `/*` occurs inside string
 # literals, and a truncated subject makes an ABSENCE arm pass on code the
-# stripper merely removed — failure in the reassuring direction.
+# stripper merely removed - failure in the reassuring direction.
 code() {
   perl -0777 -pe '
     s{\{/\*.*?\*/\}}{}gs;
@@ -116,7 +116,7 @@ else
   ok "A1 sites::list_for_admin exists"
 
   # AdminUser, and NOT AuthUser. An AuthUser signature here would hand every
-  # account every site on the box — the exact inversion this route must not be.
+  # account every site on the box - the exact inversion this route must not be.
   if grep -qE 'AdminUser\(' <<< "$A_SIG" && ! grep -qE 'AuthUser\(' <<< "$A_SIG"; then
     ok "A2 list_for_admin is ADMIN-gated (AdminUser, not AuthUser)"
   else
@@ -162,7 +162,7 @@ echo "== §B  site access has ONE definition, and its admin arm is bounded =="
 #
 # §B used to assert that `list`, `get_one` and `remove` each still contained the
 # token `user_id = $`. Its own comment said it existed because "the temptation,
-# next time, is to add OR role='admin' to the reads themselves" — and it could not
+# next time, is to add OR role='admin' to the reads themselves" - and it could not
 # have caught that. Every realistic widening ADDS a disjunct and leaves the token
 # in place. Reproduced: the mutation this suite recorded as proof of non-vacuity
 # (` OR $1 = $1` appended to get_one) left ALL FOUR arms green.
@@ -195,18 +195,18 @@ else
 fi
 
 # B2  NOBODY carries an owner-only site lookup any more. Eight private helpers
-# used to — two `site_domain`, four `get_site_domain`, two `get_site` — and one of
+# used to - two `site_domain`, four `get_site_domain`, two `get_site` - and one of
 # the eight had drifted into being server-scoped while the others were not.
 # CONTROL first: the replacement must be present, or a zero below means the tree
 # moved rather than that the class is closed (lesson #143 / asserting a zero).
 NUSE=$(grep -rc 'SITE_CALLER_PREDICATE\|site_domain_for_caller' panel/backend/src/routes panel/backend/src/helpers.rs 2>/dev/null | awk -F: '{s+=$2} END{print s+0}')
 NOLD=$(grep -rc 'FROM sites WHERE id = \$1 AND user_id = \$2' panel/backend/src/routes 2>/dev/null | awk -F: '{s+=$2} END{print s+0}')
 if [ "$NUSE" -lt 12 ]; then
-  bad "B2 CONTROL failed: only $NUSE references to the shared resolver — the arm below would be vacuous"
+  bad "B2 CONTROL failed: only $NUSE references to the shared resolver - the arm below would be vacuous"
 elif [ "$NOLD" -eq 0 ]; then
   ok "B2 no module carries its own owner-only site lookup ($NUSE share the one predicate)"
 else
-  bad "B2 no module carries its own owner-only site lookup — $NOLD copies came back"
+  bad "B2 no module carries its own owner-only site lookup - $NOLD copies came back"
 fi
 
 # B3  The admin arm is bounded by the MACHINE. Without both tokens the predicate
@@ -227,7 +227,7 @@ else
   bad "B4 the admin arm reads users.role from the database"
 fi
 # FLATTENED (#383). rustfmt breaks a long field-access chain at the `.`, emitting
-# `claims` NEWLINE `    .role`, which a line-oriented pattern reads as absence —
+# `claims` NEWLINE `    .role`, which a line-oriented pattern reads as absence -
 # silently, in the reassuring direction. Flatten $H (the COMMENT-STRIPPED text),
 # never $HRAW: HRAW still carries the `claims.role` doc comment at helpers.rs:129
 # and would pin this arm permanently red on correct code.
@@ -236,7 +236,7 @@ fi
 # a red nobody can act on.
 HFLAT=$(tr '\n' ' ' <<< "$H" | tr -s ' ')
 if grep -qE 'claims *\. *role' <<< "$HFLAT"; then
-  bad "B5 helpers.rs still consults the token's role claim to decide site access — a demoted account keeps its old reach until the session expires"
+  bad "B5 helpers.rs still consults the token's role claim to decide site access - a demoted account keeps its old reach until the session expires"
 else
   ok "B5 helpers.rs decides site access without consulting the token's role claim"
 fi
@@ -250,7 +250,7 @@ if [ -z "$LIST_BODY" ]; then
 elif grep -qE 'user_id = \$1 AND server_id = \$2' <<< "$LIST_BODY"; then
   ok "B6 sites::list is still scoped to the caller AND the server"
 else
-  bad "B6 sites::list is still scoped to the caller AND the server — the admin's own page was widened"
+  bad "B6 sites::list is still scoped to the caller AND the server - the admin's own page was widened"
 fi
 
 echo "== §C  the way back is reachable, and the recipient is picked =="
@@ -292,13 +292,13 @@ AC=$(subj "$AUTHCTX") || bad "AuthContext.tsx stripped to nothing"
 # localStorage and ServerScope refuses every request.
 #
 # ⚠ SCOPED TO fetchServers, and that scoping is the whole arm. The file-wide
-# version of this check was GREEN at v2.70.0 — on the defect — because
+# version of this check was GREEN at v2.70.0 - on the defect - because
 # `setActiveServerId` has always had a removeItem for the manual clear path. It
 # matched the wrong occurrence and tested nothing. Caught by running the suite
 # at the previous tag, which is the only reason it is written this way.
 FETCH=$(perl -0777 -ne 'print $1 if /const fetchServers\s*=\s*useCallback\(async \(\)\s*=>\s*\{(.*?)\n\s*\}, \[\]\);/s' <<< "$SC")
 if [ -z "$FETCH" ]; then
-  bad "D1 ServerContext clears a stored server id its own list cannot back — fetchServers closure not found"
+  bad "D1 ServerContext clears a stored server id its own list cannot back - fetchServers closure not found"
 elif grep -qE 'removeItem\("dp-active-server"\)' <<< "$FETCH"; then
   ok "D1 ServerContext clears a stored server id its own list cannot back"
 else
@@ -310,7 +310,7 @@ fi
 # satisfied by an unrelated removeItem elsewhere in the context.
 LOGOUT=$(perl -0777 -ne 'print $1 if /const logout\s*=\s*\(\)\s*=>\s*\{(.*?)\n\s*\};/s' <<< "$AC")
 if [ -z "$LOGOUT" ]; then
-  bad "D2 AuthContext drops the selected server on logout — logout closure not found"
+  bad "D2 AuthContext drops the selected server on logout - logout closure not found"
 elif grep -qE 'removeItem\("dp-active-server"\)' <<< "$LOGOUT"; then
   ok "D2 AuthContext drops the selected server on logout"
 else
@@ -319,7 +319,7 @@ fi
 
 # And the self-heal must run when the ACCOUNT changes, not only at boot. Signing
 # in is an SPA state change, not a remount, so an effect keyed on mount alone
-# leaves the previous account's selection in place until the 60s poll — long
+# leaves the previous account's selection in place until the 60s poll - long
 # enough for a client's first screen to fail on a fix that had already shipped.
 EFFECT=$(perl -0777 -ne 'print $1 if /useEffect\(\(\)\s*=>\s*\{\s*fetchServers\(\);(.*?)\}, \[([^\]]*)\]\);/s' <<< "$SC")
 DEPS=$(perl -0777 -ne 'print $1 if /fetchServers\(\);.*?\}, \[([^\]]*)\]\);/s' <<< "$SC")
@@ -338,7 +338,7 @@ SDOC=$(perl -0777 -pe 's/\s+/ /g' "$SITES")
 
 # ⚠ These are ABSENCE arms, so they match COMMENTS as readily as code
 # (feedback_source_pin_prose_trap). Neither the guide nor sites.rs may spell the
-# retired sentence, even to say it was retired — both were reworded to describe
+# retired sentence, even to say it was retired - both were reworded to describe
 # it instead.
 if ! grep -qE 'admins see everything' <<< "$G"; then
   ok "E1 the guide no longer promises an admin sees every site"

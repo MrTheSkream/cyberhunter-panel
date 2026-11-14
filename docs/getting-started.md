@@ -1,8 +1,8 @@
 # Getting Started
 
-## What is DockPanel?
+## What is CyberHunter - Panel?
 
-DockPanel is a free, self-hosted, Docker-native server management panel built in Rust. It lets you manage sites, databases, Docker apps, SSL certificates, backups, email, DNS, and security from a single web interface or CLI. It installs in under 60 seconds, the panel services themselves idle at about ~49MB of RAM (about ~109MB total with the bundled PostgreSQL), and it runs on x86_64 and ARM64 servers with no subscriptions or artificial limits.
+CyberHunter - Panel is a free, self-hosted, Docker-native server management panel built in Rust. It lets you manage sites, databases, Docker apps, SSL certificates, backups, email, DNS, and security from a single web interface or CLI. It installs in under 60 seconds, the panel services themselves idle at about ~49MB of RAM (about ~109MB total with the bundled PostgreSQL), and it runs on x86_64 and ARM64 servers with no subscriptions or artificial limits.
 
 ## System Requirements
 
@@ -22,7 +22,7 @@ Docker and Nginx are installed automatically if not already present.
 > Composer, Fail2Ban and PHP extensions were each installed from the panel on Rocky 9.8.
 > Two deliberate exceptions remain: the **mail server** still refuses on RPM (the packages
 > resolve, but its configuration layout has not been driven there yet), and **UFW** refuses
-> on any box already running firewalld — installing it would create a second rule set that
+> on any box already running firewalld - installing it would create a second rule set that
 > nothing consults, so the panel opens ports through firewalld instead. Both say so plainly
 > rather than failing obscurely.
 
@@ -38,7 +38,7 @@ The installer will:
 
 1. Detect your OS and package manager
 2. Install Docker, Nginx, PHP-FPM, Certbot, UFW, and Fail2Ban
-3. Clone the DockPanel repository to `/opt/dockpanel`
+3. Clone the CyberHunter - Panel repository to `/opt/dockpanel`
 4. Build and start the agent, API, and frontend services
 5. Configure Nginx as a reverse proxy on port 8443
 
@@ -72,12 +72,12 @@ newest release, so a pinned install ended up mismatched.
 ## First Login
 
 1. Open your browser and go to `https://YOUR_SERVER_IP:8443`
-2. Your browser warns about the certificate — expected, and safe to continue. Without a
+2. Your browser warns about the certificate - expected, and safe to continue. Without a
    domain there is no way to obtain a trusted certificate, so the installer generates a
    self-signed one rather than serving the account-creation form over plain HTTP
 3. You will see the account creation screen
 4. Enter your email and password to create the admin account
-5. You are signed in to the DockPanel dashboard
+5. You are signed in to the CyberHunter - Panel dashboard
 
 If you installed with `PANEL_DOMAIN=your-domain.com`, the panel is at `https://your-domain.com`
 on the standard HTTPS port with a trusted Let's Encrypt certificate, and none of the above applies.
@@ -86,7 +86,7 @@ on the standard HTTPS port with a trusted Let's Encrypt certificate, and none of
 
 After your first login, here is what to do next:
 
-- [ ] **Create your first site** -- Go to Sites, click New Site, enter a domain, and choose a runtime (static, PHP, Node.js, or Python). DockPanel configures Nginx and provisions SSL automatically.
+- [ ] **Create your first site** -- Go to Sites, click New Site, enter a domain, and choose a runtime (static, PHP, Node.js, or Python). CyberHunter - Panel configures Nginx and provisions SSL automatically.
 - [ ] **Deploy a Docker app** -- Go to Docker Apps, browse 147 one-click templates across 14 categories (AI, CMS, databases, media, monitoring, and more), and deploy one with a single click.
 - [ ] **Enable 2FA** -- Go to Settings and enable TOTP two-factor authentication. Save the 10 recovery codes somewhere safe.
 - [ ] **Set up backups** -- Go to Backups and create a backup schedule. Optionally configure an S3-compatible remote destination.
@@ -94,7 +94,7 @@ After your first login, here is what to do next:
 
 ## DNS Setup
 
-To serve a site from your DockPanel server, point your domain's DNS to the server.
+To serve a site from your CyberHunter - Panel server, point your domain's DNS to the server.
 
 1. Log in to your domain registrar or DNS provider (Cloudflare, Namecheap, Route53, etc.)
 2. Create an **A record** pointing your domain to your server's public IP address:
@@ -116,6 +116,6 @@ TTL: Auto
 ```
 
 4. Wait for DNS propagation (usually 1-5 minutes, up to 48 hours in rare cases)
-5. Create the site in DockPanel with the matching domain -- SSL will be provisioned automatically via Let's Encrypt
+5. Create the site in CyberHunter - Panel with the matching domain -- SSL will be provisioned automatically via Let's Encrypt
 
-DockPanel also has built-in DNS management for Cloudflare and PowerDNS if you want to manage DNS records directly from the panel.
+CyberHunter - Panel also has built-in DNS management for Cloudflare and PowerDNS if you want to manage DNS records directly from the panel.

@@ -17,7 +17,7 @@ pub struct DefaultRunbook {
 }
 
 pub const DEFAULTS: &[DefaultRunbook] = &[
-    // Critical (paging-grade) — 5 entries
+    // Critical (paging-grade) - 5 entries
     DefaultRunbook {
         alert_type: "offline",
         severity: "critical",
@@ -43,7 +43,7 @@ pub const DEFAULTS: &[DefaultRunbook] = &[
         severity: "critical",
         runbook_md: include_str!("../../runbooks/gpu_temperature.md"),
     },
-    // Warning (notify-worthy) — 9 entries
+    // Warning (notify-worthy) - 9 entries
     DefaultRunbook {
         alert_type: "cpu",
         severity: "warning",
@@ -89,7 +89,7 @@ pub const DEFAULTS: &[DefaultRunbook] = &[
         severity: "warning",
         runbook_md: include_str!("../../runbooks/memory_leak.md"),
     },
-    // Info — 1 entry
+    // Info - 1 entry
     DefaultRunbook {
         alert_type: "container_down",
         severity: "info",

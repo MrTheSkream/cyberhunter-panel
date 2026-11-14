@@ -1,17 +1,17 @@
-// The panic button's fleet result — specifically, the hosts it did NOT reach.
+// The panic button's fleet result - specifically, the hosts it did NOT reach.
 //
 // `POST /api/security/panic` fans out across every registered server, so its
 // legacy trio (`agent_reached`, `terminals_killed`, `server_terminals_killed`)
 // are now fleet-wide: the counts are sums, and `agent_reached` is false whenever
-// ANY member was left unswept. That degrades safely — an old client still prints
-// "terminals may still be running" — but a warning that cannot name a machine
+// ANY member was left unswept. That degrades safely - an old client still prints
+// "terminals may still be running" - but a warning that cannot name a machine
 // cannot be acted on. Un-swept means one thing and it is the worst thing here:
 // NOBODY KILLED ANYTHING ON THAT BOX, so a root shell an intruder is holding
 // there is still holding.
 //
 // Rendered as a block rather than a toast because this is an emergency control:
 // SecurityHardening's banner auto-clears after 5s, both banners are one line
-// among many, and the panic revokes the pressing admin's own session — the
+// among many, and the panic revokes the pressing admin's own session - the
 // browser gets one render of the most detailed account of this event that will
 // ever exist outside the audit log.
 
@@ -35,7 +35,7 @@ export interface PanicServerResult {
 }
 
 export interface PanicResult {
-  // Legacy trio — same names and types as before the fan-out, fleet-wide in
+  // Legacy trio - same names and types as before the fan-out, fleet-wide in
   // meaning. `terminals_killed` is null only when not a single host answered.
   agent_reached: boolean;
   terminals_killed: number | null;
@@ -65,7 +65,7 @@ export function unreachableNames(result: PanicResult): string[] {
 /**
  * The un-swept machines, named, with the reason each one was missed.
  *
- * Renders nothing when the whole fleet was swept — the caller's success banner
+ * Renders nothing when the whole fleet was swept - the caller's success banner
  * already says so, and an empty "all clear" panel would train an operator to
  * skip the place where the names appear.
  */
@@ -111,7 +111,7 @@ export default function PanicReport({
           </h2>
           <p className="text-xs text-dark-200 font-mono mt-1">
             {reached} of {total} server{total === 1 ? "" : "s"} swept ·{" "}
-            {unreachable.length} NOT swept — nothing was killed on{" "}
+            {unreachable.length} NOT swept - nothing was killed on{" "}
             {unreachable.length === 1 ? "it" : "them"}.
           </p>
         </div>

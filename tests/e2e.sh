@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 #
-# DockPanel E2E Test Suite
+# CyberHunter - Panel E2E Test Suite
 # Tests every critical path against a fresh install.
 #
 # Usage: bash tests/e2e.sh <host> [port]
 # Example: bash tests/e2e.sh 203.0.113.10 8443
 #
 set -uo pipefail
-# Note: no -e — we handle errors explicitly
+# Note: no -e - we handle errors explicitly
 
 HOST="${1:?Usage: e2e.sh <host> [port]}"
 PORT="${2:-8443}"
@@ -54,7 +54,7 @@ section() {
     echo -e "${CYAN}${BOLD}── $1 ──${NC}"
 }
 
-# HTTP helpers — use Bearer token auth
+# HTTP helpers - use Bearer token auth
 auth_header() {
     if [ -n "$AUTH_TOKEN" ]; then
         echo "Authorization: Bearer $AUTH_TOKEN"
@@ -91,7 +91,7 @@ api_get_status() {
 }
 
 echo ""
-echo -e "${BOLD}DockPanel E2E Test Suite${NC}"
+echo -e "${BOLD}CyberHunter - Panel E2E Test Suite${NC}"
 echo -e "Target: ${BASE}"
 echo -e "Date: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo ""
@@ -124,7 +124,7 @@ ADMIN_EMAIL="admin@e2etest.dev"
 ADMIN_PASS="E2eTestPass1234!"
 
 if [ "$NEEDS_SETUP" = "True" ]; then
-    # Initial setup — create admin account
+    # Initial setup - create admin account
     SETUP_RESP=$(api_post "/auth/setup" "{\"email\":\"${ADMIN_EMAIL}\",\"password\":\"${ADMIN_PASS}\"}")
     if echo "$SETUP_RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); assert 'user' in d or 'id' in d or 'email' in d" 2>/dev/null; then
         ok "Admin setup completed"
@@ -135,7 +135,7 @@ else
     ok "Setup already done (using existing admin)"
 fi
 
-# Login — extract JWT from Set-Cookie header
+# Login - extract JWT from Set-Cookie header
 LOGIN_HEADERS=$(mktemp)
 LOGIN_RESP=$(curl -sf -D "$LOGIN_HEADERS" -X POST "${API}/auth/login" \
     -H "Content-Type: application/json" \
@@ -309,7 +309,7 @@ else
     fail "App templates: only $TPL_COUNT (expected 30+)"
 fi
 
-# Deploy a lightweight app (Redis — small image, fast start)
+# Deploy a lightweight app (Redis - small image, fast start)
 # template_id, name, port are required fields
 DEPLOY_RESP=$(api_post "/apps/deploy" '{"template_id":"redis","name":"e2e-redis","port":6379}')
 DEPLOY_STATUS=$?
@@ -684,7 +684,7 @@ if [ -n "${TEST_USER_ID:-}" ]; then
     else fail "Test user delete failed"; fi
 fi
 
-# Delete site (last — dependencies may reference it)
+# Delete site (last - dependencies may reference it)
 if [ -n "${SITE_ID:-}" ]; then
     DEL=$(api_delete "/sites/${SITE_ID}" 2>/dev/null && echo "ok" || echo "fail")
     if [ "$DEL" != "fail" ]; then ok "Site deleted"

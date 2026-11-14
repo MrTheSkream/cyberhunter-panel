@@ -6,19 +6,19 @@ use crate::services::agent::{AgentRegistry, FleetMember};
 ///
 /// # Why this iterates the fleet
 ///
-/// DockPanel kept its per-host telemetry in two stores that were written by
+/// CyberHunter - Panel kept its per-host telemetry in two stores that were written by
 /// mutually exclusive halves of the fleet, and every consumer was therefore
 /// blind to one half:
 ///
 /// * `servers.{cpu_usage, mem_used_mb, ram_mb, disk_usage_pct, …}` is written
 ///   ONLY by `routes::agent_checkin`, which is reached only by an agent's
-///   phone-home loop — and phone-home starts only when `agent.env` supplies
+///   phone-home loop - and phone-home starts only when `agent.env` supplies
 ///   `DOCKPANEL_CENTRAL_URL`/`_SERVER_TOKEN`/`_SERVER_ID`, a file only
 ///   `install-agent.sh` writes. **The panel's own box has no such file**, so its
 ///   row carried NULL in every one of those columns, for ever, on every install.
 ///   `alert_engine::check_resource_thresholds` is their only reader and guards
 ///   each on an `if let Some(..)`, so the CPU, memory and disk alerts silently
-///   never evaluated for the host the API runs on — which on a single-server
+///   never evaluated for the host the API runs on - which on a single-server
 ///   install is the only host there is. `auto_clean_disk` is triggered by a
 ///   firing `disk` alert, so it had consequently never executed there either.
 ///
@@ -30,7 +30,7 @@ use crate::services::agent::{AgentRegistry, FleetMember};
 ///   and permanently blank CPU/memory/disk columns on the fleet overview.
 ///
 /// So this collector now reads every online server through its OWN agent and is
-/// the single writer of `metrics_history` for all of them — and, for the local
+/// the single writer of `metrics_history` for all of them - and, for the local
 /// row only, also writes the scalar columns a member reports by phoning home.
 /// Members keep getting theirs from the check-in handler; writing them here too
 /// would race that handler for no gain.
@@ -94,7 +94,7 @@ pub async fn run(pool: PgPool, agents: AgentRegistry, mut shutdown_rx: tokio::sy
         }
 
         // Cleanup: delete records older than 7 days. Unscoped by server on
-        // purpose — retention is a property of the table, not of a host.
+        // purpose - retention is a property of the table, not of a host.
         let _ = sqlx::query("DELETE FROM metrics_history WHERE created_at < NOW() - INTERVAL '7 days'")
             .execute(&pool)
             .await;

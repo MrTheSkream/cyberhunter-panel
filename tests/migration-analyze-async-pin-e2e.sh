@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Regression pin for issue #91 — "Migration from cPanel: Request failed (524)".
+# Regression pin for issue #91 - "Migration from cPanel: Request failed (524)".
 #
 # Analysing a control-panel archive was done INLINE in the HTTP request. Walking
 # a real cPanel account is minutes of work, and every gateway between the browser
@@ -16,7 +16,7 @@
 #
 # Four things had to become true, and this pin holds each of them:
 #
-#   1  The route ACCEPTS the job. It inserts the row, spawns, and answers 202 —
+#   1  The route ACCEPTS the job. It inserts the row, spawns, and answers 202 -
 #      so no gateway is holding anything open, and raising a timeout somewhere is
 #      no longer a thing anyone can be tempted to do instead.
 #
@@ -24,12 +24,12 @@
 #      above it. Unpacking had no limit on either side of the socket, so the only
 #      way the operation could end was a gateway hanging up. A caller timeout
 #      below the callee's does not bound anything the callee did not already
-#      bound — it only decides which side describes the outcome, and picks the
+#      bound - it only decides which side describes the outcome, and picks the
 #      one that does not know it.
 #
 #   3  The verdict is DURABLE. It lives in the migrations row, not in the
 #      request, so it survives the tab. What it cannot survive is the process,
-#      because the work runs in a spawned task — hence a boot-time sweep, on the
+#      because the work runs in a spawned task - hence a boot-time sweep, on the
 #      argument that nothing is running at boot, so anything still claiming to be
 #      is stale.
 #
@@ -57,7 +57,7 @@ done
 
 # Strip // line comments from the SUBJECT FILES before matching.
 #
-# Not for this suite's own header — that text is never searched. It is for the
+# Not for this suite's own header - that text is never searched. It is for the
 # comments in the sources below, which explain these fixes at length and name the
 # exact strings the arms look for. The negative arm in §1 forbids returning the
 # agent's error to the caller; a future comment saying "this used to return
@@ -75,7 +75,7 @@ SRC_MAIN=$(strip "$MAIN")
 SRC_TSX=$(strip "$TSX")
 SRC_SETUP=$(sed 's:#.*::' "$SETUP")
 
-# Match against text already in a variable, via a here-string — never a pipeline.
+# Match against text already in a variable, via a here-string - never a pipeline.
 # `strip f | grep -q x` looks equivalent and is not: grep -q closes the pipe on
 # its first match, the upstream sed takes SIGPIPE (141), and under `pipefail` the
 # whole pipeline reports failure. Whether an arm went green then depended on which
@@ -94,19 +94,19 @@ echo "§1 the analysis is accepted, not performed"
 if [ -n "$ANALYZE" ]; then
   ok "the analyze handler is present and readable"
 else
-  bad "could not read the analyze fn body — this pin's other arms mean nothing"
+  bad "could not read the analyze fn body - this pin's other arms mean nothing"
 fi
 
 if has "$ANALYZE" 'StatusCode::ACCEPTED'; then
   ok "analyze answers 202 Accepted"
 else
-  bad "analyze does not answer 202 — the caller is being made to wait for the work"
+  bad "analyze does not answer 202 - the caller is being made to wait for the work"
 fi
 
 if has "$ANALYZE" 'tokio::spawn'; then
   ok "the work is handed to a spawned task"
 else
-  bad "analyze has no tokio::spawn — the agent call is still inline in the request"
+  bad "analyze has no tokio::spawn - the agent call is still inline in the request"
 fi
 
 # Order matters, not mere presence: an agent call ABOVE the spawn is still inline.
@@ -122,7 +122,7 @@ fi
 # by then there is no response left to convert it into. The reason belongs in the
 # row, which is the only place anything reads it from now on.
 if hasE "$ANALYZE" 'return Err\(agent_error'; then
-  bad "analyze still returns the agent error to the caller — that path answered before 202 existed"
+  bad "analyze still returns the agent error to the caller - that path answered before 202 existed"
 else
   ok "an agent failure is recorded rather than returned"
 fi
@@ -130,7 +130,7 @@ fi
 if has "$ANALYZE" "status = 'failed'" && has "$ANALYZE" '"error"'; then
   ok "the failure path writes the reason into the row"
 else
-  bad "nothing writes a failure reason — a failed analysis would poll forever"
+  bad "nothing writes a failure reason - a failed analysis would poll forever"
 fi
 
 if has "$ANALYZE" "status = 'analyzed'" && has "$ANALYZE" 'inventory = \$1'; then
@@ -146,32 +146,32 @@ agent_budget=$(grep -oE 'const EXTRACT_TIMEOUT_SECS: u64 = [0-9]+' <<< "$SRC_SVC
 if [ -n "$agent_budget" ]; then
   ok "the agent declares its own extraction budget (${agent_budget}s)"
 else
-  bad "the agent has no extraction budget — unpacking is unbounded on the side doing the work"
+  bad "the agent has no extraction budget - unpacking is unbounded on the side doing the work"
 fi
 
-# Both extraction attempts — `tar xzf` and the plain-tar retry — must be bounded.
+# Both extraction attempts - `tar xzf` and the plain-tar retry - must be bounded.
 # The fallback is the path a non-gzip archive takes, so leaving it unbounded
 # leaves the case that most needs a limit without one.
 #
 # Counted as `timeout(... .output())` wrappers, NOT as mentions of the constant.
 # A count of mentions reached its threshold with a single attempt bounded,
-# because the error-message text names the constant too — an arm that could not
+# because the error-message text names the constant too - an arm that could not
 # fail, verified by reverting the retry and watching it stay green.
 bounded=$(grep -cE 'tokio::time::timeout\(remaining\(&extract_dir\)\?, extract\((true|false)\)\.output\(\)\)' <<< "$SRC_SVC")
 if [ "$bounded" -eq 2 ]; then
   ok "both extraction attempts run under a timeout"
 else
-  bad "$bounded of 2 extraction attempts are bounded — the other can run forever"
+  bad "$bounded of 2 extraction attempts are bounded - the other can run forever"
 fi
 
 # And they must share ONE deadline. Two fresh budgets make the real worst case
-# double the constant, which puts it back above the panel's budget — so the panel
+# double the constant, which puts it back above the panel's budget - so the panel
 # wins the race again and writes the contentless message this whole design exists
 # to avoid.
 if has "$SRC_SVC" 'let deadline = std::time::Instant::now()'; then
   ok "the two attempts share one deadline, so the constant is the true ceiling"
 else
-  bad "each attempt gets a fresh budget — the real worst case is twice the constant"
+  bad "each attempt gets a fresh budget - the real worst case is twice the constant"
 fi
 
 # A dropped future does not kill a tokio child unless asked. Without this the
@@ -179,18 +179,18 @@ fi
 if has "$SRC_SVC" 'kill_on_drop(true)'; then
   ok "a timed-out extraction is actually killed, not merely abandoned"
 else
-  bad "no kill_on_drop — a timed-out tar keeps running and keeps filling the disk"
+  bad "no kill_on_drop - a timed-out tar keeps running and keeps filling the disk"
 fi
 
 # Scoped to the timeout branches. A file-wide search for the call was satisfied by
 # two cleanups that predate this fix entirely, so it stayed green against the
-# pre-fix tree while every other arm in this section went red — a check that
+# pre-fix tree while every other arm in this section went red - a check that
 # could not tell the fix from its absence.
 timeout_arms=$(awk '/Err\(_\) => \{/,/\}/' <<< "$SRC_SVC" | grep -c 'remove_dir_all(&extract_dir)')
 if [ "$timeout_arms" -ge 2 ]; then
   ok "each timeout branch removes its scratch directory ($timeout_arms of them)"
 else
-  bad "$timeout_arms timeout branch(es) clean up — a stopped extraction leaves its tree in /tmp"
+  bad "$timeout_arms timeout branch(es) clean up - a stopped extraction leaves its tree in /tmp"
 fi
 
 panel_budget=$(grep -oE 'const ANALYZE_AGENT_TIMEOUT_SECS: u64 = [0-9]+' <<< "$SRC_ROUTE" | grep -oE '[0-9]+$')
@@ -212,12 +212,12 @@ echo "§3 the verdict survives the process that produced it"
 if has "$SRC_ROUTE" 'pub async fn finalize_analyzing_on_startup'; then
   ok "a boot-time sweep for in-flight rows exists"
 else
-  bad "nothing closes out rows left mid-run by a restart — they stay 'analyzing' forever"
+  bad "nothing closes out rows left mid-run by a restart - they stay 'analyzing' forever"
 fi
 
 SWEEP=$(awk '/pub async fn finalize_analyzing_on_startup/,/^}/' <<< "$SRC_ROUTE")
 if hasE "$SWEEP" '"analyzing"' && hasE "$SWEEP" '"importing"'; then
-  ok "the sweep covers import as well as analysis — both have always spawned"
+  ok "the sweep covers import as well as analysis - both have always spawned"
 else
   bad "the sweep misses one of the two spawned states"
 fi
@@ -229,7 +229,7 @@ fi
 if [ "$(grep -c 'The panel restarted' <<< "$SWEEP")" -ge 2 ]; then
   ok "each swept status gets its own account of what the restart left behind"
 else
-  bad "one sentence covers both — it cannot be true of an import that mutates as it goes"
+  bad "one sentence covers both - it cannot be true of an import that mutates as it goes"
 fi
 
 if has "$SRC_MAIN" 'finalize_analyzing_on_startup'; then
@@ -256,16 +256,16 @@ fi
 if has "$SRC_TSX" 'clearInterval'; then
   ok "the poll loop is cleared on teardown"
 else
-  bad "the poll loop is never cleared — it outlives the page"
+  bad "the poll loop is never cleared - it outlives the page"
 fi
 
 # A transient failure is not an answer, but a 404 or a 403 is. Treating every
 # error as "try again" turns a record that is gone into a spinner that never
-# stops — the same "told nothing while waiting" this issue was reported for.
+# stops - the same "told nothing while waiting" this issue was reported for.
 if hasE "$SRC_TSX" 'e\.status === 40[34]'; then
   ok "the poll gives up on an answer that will not change"
 else
-  bad "every poll failure is treated as transient — a deleted record spins forever"
+  bad "every poll failure is treated as transient - a deleted record spins forever"
 fi
 
 if hasE "$SRC_TSX" 'result as \{ error\?: string \}'; then
@@ -277,16 +277,16 @@ fi
 # Pinned as the two facts, not as one expression: the page looks for a run still
 # analysing, and it does not adopt one belonging to a different server. The list
 # endpoint is per-user and not per-server, so without the second the wizard would
-# present another machine's run — with that machine's filesystem path in the field.
+# present another machine's run - with that machine's filesystem path in the field.
 # Anchored on CODE, not on the comment above the effect: `strip` has already
 # removed every `//` line by this point, so a comment anchor matches nothing and
-# the extraction comes back empty — which reads as both arms failing.
+# the extraction comes back empty - which reads as both arms failing.
 RESUME=$(awk '/const isAdmin = /,/\}, \[isAdmin\]\)/' <<< "$SRC_TSX")
-[ -n "$RESUME" ] || bad "could not extract the resume effect — the arms below mean nothing"
+[ -n "$RESUME" ] || bad "could not extract the resume effect - the arms below mean nothing"
 if has "$RESUME" 'm.status === "analyzing"'; then
   ok "an analysis already running is picked back up on mount"
 else
-  bad "a reload abandons a running analysis — durable state nothing reads"
+  bad "a reload abandons a running analysis - durable state nothing reads"
 fi
 if has "$RESUME" 'dp-active-server' && has "$RESUME" 'm.server_id'; then
   ok "the resumed run is scoped to the server being looked at"
@@ -298,8 +298,8 @@ fi
 # hook was a useState; this page now runs effects, and a conditional return in
 # front of them makes the hook count differ between renders.
 #
-# The needle has to catch a hook bound to a plain identifier — `const x =
-# useRef(...)` — not just a `const [a, b] =` destructure and a bare `useEffect(`.
+# The needle has to catch a hook bound to a plain identifier - `const x =
+# useRef(...)` - not just a `const [a, b] =` destructure and a bare `useEffect(`.
 # The narrower version matched neither the `useRef` already in this file nor any
 # `useMemo`/`useCallback` a later edit might add, so moving one below the guard
 # left the arm green over exactly the crash it names.
@@ -320,19 +320,19 @@ echo "§5 the gateway numbers this was designed against have not moved"
 # the design above needs re-reading, and a failing arm is how that gets noticed.
 # Compared against a literal, NOT against the agent budget read above. Tying a
 # premise arm to a value the fix introduces makes it fail on the pre-fix tree for
-# a reason that has nothing to do with the premise — which is how a suite starts
+# a reason that has nothing to do with the premise - which is how a suite starts
 # reporting a problem with the code when the problem is with the arm.
 layer=$(grep -oE 'TimeoutLayer::with_status_code\([^)]*Duration::from_secs\([0-9]+\)' <<< "$SRC_MAIN" | grep -oE '[0-9]+\)$' | tr -d ')')
 if [ "${layer:-0}" = "300" ]; then
   ok "the panel's own request ceiling is still 300s, well under any real analysis"
 else
-  bad "the request ceiling reads '${layer:-none}', not 300s — recheck this pin's premise"
+  bad "the request ceiling reads '${layer:-none}', not 300s - recheck this pin's premise"
 fi
 
 if hasE "$SRC_SETUP" 'proxy_read_timeout 300s'; then
   ok "the installer's nginx still cuts /api off at 300s"
 else
-  bad "the installed nginx read timeout changed — recheck this pin's premise"
+  bad "the installed nginx read timeout changed - recheck this pin's premise"
 fi
 
 echo

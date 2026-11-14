@@ -1,9 +1,9 @@
 //! Package facts that hold on both package-manager families.
 //!
-//! DockPanel supports Debian/Ubuntu **and** the RHEL family (Rocky, AlmaLinux,
+//! CyberHunter - Panel supports Debian/Ubuntu **and** the RHEL family (Rocky, AlmaLinux,
 //! CentOS Stream, Fedora), but every package query in the agent used to be
 //! `dpkg`. On an RPM box there is no `dpkg` at all, so those queries did not
-//! merely return the wrong answer — they returned `false` for *everything*,
+//! merely return the wrong answer - they returned `false` for *everything*,
 //! and the Services page reported PHP and Fail2Ban as "not installed" while
 //! both were installed and running (s265).
 //!
@@ -12,7 +12,7 @@
 //! `iac.rs`. This module exists so there is **one** of them: a fifth copy is
 //! how the fourth one got missed.
 //!
-//! Package *names* differ too, so a manager swap alone is not enough —
+//! Package *names* differ too, so a manager swap alone is not enough -
 //! `pdns-server` is `pdns`, `redis-server` is `redis`, and the three Debian
 //! Dovecot packages are one `dovecot`. Callers keep passing the Debian name
 //! (which is what the installers use) and [`is_installed`] translates.
@@ -30,7 +30,7 @@ const INSTALL_TIMEOUT: Duration = Duration::from_secs(300);
 pub enum PkgMgr {
     Dpkg,
     Rpm,
-    /// Neither binary is present. Every query answers `false` — the same
+    /// Neither binary is present. Every query answers `false` - the same
     /// thing the old dpkg-only code did, but now it is a stated outcome
     /// rather than an accident of which distro we happened to be on.
     Unknown,
@@ -103,7 +103,7 @@ pub async fn installer() -> Option<Installer> {
 /// The RPM name for a package the Debian-side code asks about.
 ///
 /// Every entry here was verified against a real `dnf`/`rpm` database on Rocky 9
-/// with EPEL enabled (s265, extended s266) — not inferred from the Debian name.
+/// with EPEL enabled (s265, extended s266) - not inferred from the Debian name.
 /// Anything absent falls through unchanged, which is right for the many
 /// packages that share a name (`postfix`, `fail2ban`, `opendkim`, `certbot`,
 /// `nginx`, `nodejs`).
@@ -112,7 +112,7 @@ fn rpm_name(debian: &str) -> &str {
         "pdns-server" => "pdns",
         // Debian names the backends after the library version; the RHEL family
         // names them after the database. Neither of these was mapped before
-        // s266, so both were passed through verbatim and matched nothing —
+        // s266, so both were passed through verbatim and matched nothing -
         // the PowerDNS installer would have failed on its very first argument.
         "pdns-backend-pgsql" => "pdns-backend-postgresql",
         "pdns-backend-sqlite3" => "pdns-backend-sqlite",
@@ -125,7 +125,7 @@ fn rpm_name(debian: &str) -> &str {
         // the library from the nginx module and needs both; the RHEL family
         // ships one package that pulls the library in as a dependency, so all
         // three Debian spellings collapse onto it. `libnginx-mod-http-modsecurity`
-        // was the half s265's map missed — the installer passes it alongside
+        // was the half s265's map missed - the installer passes it alongside
         // `libmodsecurity3`, so only one of the two names was being translated.
         "libmodsecurity3" | "libmodsecurity3t64" | "libnginx-mod-http-modsecurity" => {
             "nginx-mod-modsecurity"
@@ -143,13 +143,13 @@ fn rpm_name(debian: &str) -> &str {
 ///
 /// Two of the extension names genuinely differ, and both were verified by
 /// loading them (s266) rather than by reading a package list:
-///   * `mysql` is `mysqlnd` — the name the Debian list uses matches no RPM, so
+///   * `mysql` is `mysqlnd` - the name the Debian list uses matches no RPM, so
 ///     without this line a PHP install on RHEL would come up with **no MySQL
 ///     driver at all**, silently, since the extension loop tolerates absences.
 ///   * `zip` lives in `php-pecl-zip`, outside the main set.
 ///
 /// `curl`, `sqlite3` and `json` map to `php-<name>` packages that do not exist
-/// — deliberately, because `php-common` already provides all three. The
+/// - deliberately, because `php-common` already provides all three. The
 /// candidate probe in [`install_available`] skips them, which is the correct
 /// outcome rather than a missed translation.
 fn php_rpm_name(debian: &str) -> &str {
@@ -184,8 +184,8 @@ fn php_rpm_name(debian: &str) -> &str {
 ///
 /// **Without this the panel would install PHP 8.0.** Rocky 9's AppStream offers
 /// streams 8.1, 8.2 and 8.3, but a bare `dnf install php-fpm` resolves to the
-/// non-modular base package — PHP **8.0.30**, older than every stream on offer
-/// and end-of-life since November 2023 — while `is_installed` reports PHP
+/// non-modular base package - PHP **8.0.30**, older than every stream on offer
+/// and end-of-life since November 2023 - while `is_installed` reports PHP
 /// present and the Services page shows it running. Measured on a real box
 /// (s266): with the stream enabled the same command gives 8.3.31.
 ///
@@ -215,7 +215,7 @@ pub async fn enable_php_stream(version: &str) -> Result<(), String> {
 /// is only one.
 ///
 /// Needed because [`is_installed`] deliberately collapses every `php{v}-fpm`
-/// onto the single `php-fpm` package — correct for "is PHP present?", and a
+/// onto the single `php-fpm` package - correct for "is PHP present?", and a
 /// lie for "which versions are present?". Without this, the PHP page on a RHEL
 /// box reports **all five** offered versions as installed (they all map to the
 /// one package) while showing none of them running (the running-check and the
@@ -250,7 +250,7 @@ pub async fn installed_php_version() -> Option<String> {
 ///
 /// Debian ships one socket per version at a fixed, predictable path. The RHEL
 /// family ships exactly one unversioned socket for whichever stream is
-/// active — see [`installed_php_version`] for why RHEL can only ever have one
+/// active - see [`installed_php_version`] for why RHEL can only ever have one
 /// live version at a time. Callers that build a nginx vhost or answer a
 /// status check used to assume the Debian path unconditionally, which made
 /// PHP sites unreachable on the RHEL family even though PHP-FPM was
@@ -332,7 +332,7 @@ pub async fn is_installed(package: &str) -> bool {
 /// package names alone was not enough.** A package name and a unit name are
 /// different strings that happen to coincide on Debian, so code that
 /// translated one and not the other would install `redis` correctly and then
-/// `systemctl enable redis-server` — a unit that does not exist on the RHEL
+/// `systemctl enable redis-server` - a unit that does not exist on the RHEL
 /// family. Verified against the units actually shipped on Rocky 9 (s266):
 /// `redis.service`, `php-fpm.service` and `pdns.service` exist;
 /// `redis-server.service`, `php{v}-fpm.service` and `pdns-server.service` do not.
@@ -349,7 +349,7 @@ fn rpm_service_name(debian_unit: &str) -> &str {
     match debian_unit {
         "redis-server" => "redis",
         // NOTE: `pdns-server` is deliberately absent. It is a PACKAGE name, and
-        // Debian's unit for that package is already `pdns` — the same as the
+        // Debian's unit for that package is already `pdns` - the same as the
         // RHEL family's. Adding it here would invite a caller to pass a package
         // name where a unit name belongs and get `pdns-server` back on Debian,
         // stopping a unit that has never existed there. Callers pass the
@@ -379,7 +379,7 @@ pub async fn available(package: &str) -> bool {
     match installer().await {
         Some(Installer::AptGet) => {
             // `apt-cache show` exits 0 for an obsolete-but-stanza'd package, so
-            // the Candidate line is the only trustworthy signal — and the
+            // the Candidate line is the only trustworthy signal - and the
             // unsandboxed helper forces LC_ALL=C.UTF-8, without which apt
             // translates the label and this parse silently matches nothing.
             run_ok("apt-cache", &["policy", package], |out| {
@@ -471,7 +471,7 @@ async fn transact(action: Action, packages: &[&str]) -> Result<(), String> {
     }
 
     let rpm = manager().await == PkgMgr::Rpm;
-    // Translation can COLLAPSE several Debian names onto one RPM package — the
+    // Translation can COLLAPSE several Debian names onto one RPM package - the
     // three Dovecot protocol packages become one `dovecot`, and all three
     // ModSecurity spellings become one `nginx-mod-modsecurity`. Both managers
     // tolerate a repeated name, but emitting `dovecot dovecot dovecot` makes
@@ -488,8 +488,8 @@ async fn transact(action: Action, packages: &[&str]) -> Result<(), String> {
     match (&action, inst.is_apt()) {
         (Action::Install, true) => {
             // --force-confnew: take the maintainer's config when one conflicts.
-            // dnf has no equivalent knob — it writes .rpmnew alongside and keeps
-            // yours — so this policy is deliberately NOT emulated on the RPM
+            // dnf has no equivalent knob - it writes .rpmnew alongside and keeps
+            // yours - so this policy is deliberately NOT emulated on the RPM
             // side rather than approximated into something that silently
             // differs. Stated here because a reader comparing the two branches
             // will otherwise assume the omission is an oversight.
@@ -569,7 +569,7 @@ pub async fn refresh_index() {
 ///
 ///     Failed to start transient service unit: Connection reset by peer
 ///
-/// The hatch no longer passes descriptors at all — see
+/// The hatch no longer passes descriptors at all - see
 /// `safe_cmd::UnsandboxedCommand` for the mechanism and the evidence. Verified
 /// on Rocky 9.8: Redis, Composer, Fail2Ban and a PHP extension all installed
 /// through the panel on the same box that refused them one binary earlier.
@@ -595,7 +595,7 @@ async fn escape_hatch_works() -> bool {
 ///
 /// Deliberately reports the limitation rather than letting each installer
 /// surface `Connection reset by peer`. #90b's rule: write down the sentence the
-/// operator will read, then make sure the check covers that — "the panel cannot
+/// operator will read, then make sure the check covers that - "the panel cannot
 /// install packages on this system" is the fact; the D-Bus error is a symptom
 /// they cannot act on.
 pub async fn privileged_ops_reason(what: &str) -> Option<String> {
@@ -605,7 +605,7 @@ pub async fn privileged_ops_reason(what: &str) -> Option<String> {
     Some(format!(
         "{what} cannot run on this system: the agent is unable to launch privileged helper \
          processes (systemd refused the transient unit it uses to step outside its sandbox). \
-         This is unexpected — please report it with the output of \
+         This is unexpected - please report it with the output of \
          `systemd-run --wait --collect -- /bin/true` run as root. In the meantime, install the \
          package with your system package manager and the panel will detect it."
     ))
@@ -614,9 +614,9 @@ pub async fn privileged_ops_reason(what: &str) -> Option<String> {
 /// Kept for installers that genuinely remain Debian-only after s266, and for
 /// the case that has nothing to install with at all.
 ///
-/// s265 added this because the RHEL family could *run* DockPanel while every
+/// s265 added this because the RHEL family could *run* CyberHunter - Panel while every
 /// optional-service installer still shelled out to `apt-get`, failing with
-/// `Failed to find executable apt-get` — a true sentence that tells an operator
+/// `Failed to find executable apt-get` - a true sentence that tells an operator
 /// nothing. s266 gave most of those installers a real `dnf` path, so the guard
 /// now fires only where the refusal is still the honest answer.
 ///
@@ -627,7 +627,7 @@ pub async fn no_installer_reason(what: &str) -> Option<String> {
     match installer().await {
         Some(_) => None,
         None => Some(format!(
-            "{what} is not possible on this box — no supported package manager was found \
+            "{what} is not possible on this box - no supported package manager was found \
              (looked for apt-get, dnf and yum). Install one, or install the service with \
              your own tooling and the panel will detect the result."
         )),
@@ -641,7 +641,7 @@ pub async fn no_installer_reason(what: &str) -> Option<String> {
 /// on the RHEL family, so "it can be installed" is true and irrelevant: these
 /// distros boot with **firewalld** already enforcing, and s265's headline
 /// outage was `setup.sh` installing ufw *beside* it and opening 80/443 in the
-/// filter nobody was consulting — the panel unreachable, Let's Encrypt unable
+/// filter nobody was consulting - the panel unreachable, Let's Encrypt unable
 /// to fetch the ACME challenge, and no certificate, under an installer printing
 /// `installed successfully`. Giving this button a `dnf` path would make that
 /// outage reachable again, this time by one click.
@@ -653,7 +653,7 @@ pub async fn ufw_refusal_reason() -> Option<String> {
         crate::services::firewall::Firewall::Firewalld => Some(
             "This system already runs firewalld, which is the firewall enforcing on RHEL-family \
              distributions. Installing UFW alongside it would create a second rule set that is \
-             not consulted — the panel opens ports through firewalld automatically, so no action \
+             not consulted - the panel opens ports through firewalld automatically, so no action \
              is needed here."
                 .to_string(),
         ),
@@ -682,7 +682,7 @@ pub async fn ufw_refusal_reason() -> Option<String> {
 /// OpenDKIM against a key published in real DNS.
 ///
 /// **The refusal's own premise turned out to be wrong in both directions**, and
-/// that is the part worth keeping. It claimed "the packages install" — they did
+/// that is the part worth keeping. It claimed "the packages install" - they did
 /// not, because EPEL's `opendkim` needs two CRB libraries and CRB was never
 /// enabled; the claim came from a name-availability probe rather than from a
 /// transaction. And it warned about the Debian failure mode (postinst starts
@@ -694,7 +694,7 @@ pub async fn ufw_refusal_reason() -> Option<String> {
 /// the refusal was written about.
 ///
 /// What remains is a REAL precondition rather than a family ban: the package
-/// set has to be installable. On the RHEL family that means CRB is enabled —
+/// set has to be installable. On the RHEL family that means CRB is enabled -
 /// `setup.sh` does it now, but a box installed before s268, or one whose repo
 /// config was changed by hand, would otherwise fail deep inside the installer
 /// with `nothing provides libmilter.so.1.0`. Checking it here turns that into
@@ -711,14 +711,14 @@ pub async fn mail_refusal_reason() -> Option<String> {
 /// probe in front of the installer. It refused a Rocky 9.8 box where the
 /// packages were perfectly installable, because `dnf` run inside the agent's
 /// sandbox answers `Config error: [Errno 30] Read-only file system:
-/// '/var/log/dnf.log'` — a failure that has nothing to do with availability.
+/// '/var/log/dnf.log'` - a failure that has nothing to do with availability.
 /// A probe that cannot distinguish "not installable" from "the probe could not
 /// run" must not be allowed to refuse: that is the same "refusal that stopped
 /// being true" this module warns about, introduced while fixing one.
 ///
 /// So the check moved to where the truth already is. The transaction either
 /// succeeds or reports precisely why, and `nothing provides` on the RHEL family
-/// has one overwhelmingly likely cause — EPEL enabled without CRB, which EPEL
+/// has one overwhelmingly likely cause - EPEL enabled without CRB, which EPEL
 /// itself requires. Attach that hint to the real error instead of guessing in
 /// advance.
 pub async fn explain_package_failure(raw: &str) -> String {
@@ -727,7 +727,7 @@ pub async fn explain_package_failure(raw: &str) -> String {
             "{raw}\n\nThis usually means the CRB repository is not enabled. EPEL requires it, \
              and OpenDKIM's dependencies (sendmail-milter, libmemcached-awesome) live there. \
              Enable it with `dnf config-manager --set-enabled crb` (`powertools` on EL8) and \
-             retry — DockPanel's installer does this on new installs."
+             retry - CyberHunter - Panel's installer does this on new installs."
         );
     }
     raw.to_string()
@@ -736,8 +736,8 @@ pub async fn explain_package_failure(raw: &str) -> String {
 /// Add a third-party repository for `what`, when the running family needs one.
 ///
 /// The two callers differ in an instructive way. Nodesource publishes a
-/// per-family setup script and DockPanel's `setup.sh` already branches to the
-/// rpm one — it was only the agent that still fetched the deb script on every
+/// per-family setup script and CyberHunter - Panel's `setup.sh` already branches to the
+/// rpm one - it was only the agent that still fetched the deb script on every
 /// distro. Cloudflare publishes a **codename-keyed** apt repo and a single flat
 /// rpm repo, which is why `service_installer.rs` had a hard error for a missing
 /// `VERSION_CODENAME`: that value exists on Debian and on no RHEL release. On
@@ -777,12 +777,12 @@ pub async fn add_repo(repo: Repo) -> Result<(), String> {
                 .to_string()
         }
         (Repo::Rspamd, true) => {
-            // Never reached by design — see the enum comment. An explicit error
+            // Never reached by design - see the enum comment. An explicit error
             // beats silently adding an apt repo the archive already covers.
             return Err("Rspamd is packaged by Debian and Ubuntu; no extra repository is needed".into());
         }
         (Repo::Rspamd, false) => {
-            // rspamd is NOT in EPEL — `dnf install rspamd` on a stock Rocky 9
+            // rspamd is NOT in EPEL - `dnf install rspamd` on a stock Rocky 9
             // with EPEL *and* CRB enabled answers "Unable to find a match"
             // (measured s270). Upstream publishes a per-major-version flat
             // repo, keyed `centos-<major>` for the whole RHEL family.
@@ -798,7 +798,7 @@ pub async fn add_repo(repo: Repo) -> Result<(), String> {
     };
 
     // **bash, not sh.** On Debian and Ubuntu `/bin/sh` is dash, which answers
-    // `set -o pipefail` with "Illegal option" and aborts — so running this under
+    // `set -o pipefail` with "Illegal option" and aborts - so running this under
     // `sh` would break the NodeSource install on the family that currently
     // works, while fixing it for the one that does not. `pipefail` is the point
     // of the wrapper: without it a failed `curl` pipes nothing into `bash -`,
@@ -827,18 +827,18 @@ pub async fn add_repo(repo: Repo) -> Result<(), String> {
 /// file `add_repo` itself references.** NodeSource's `setup_22.x` (verified
 /// live against `deb.nodesource.com`/`rpm.nodesource.com` before this list was
 /// written) additionally drops a keyring and two `Pin-Priority: 600` files
-/// that outrank a normally-installed package — leaving them behind after an
+/// that outrank a normally-installed package - leaving them behind after an
 /// operator clicks "Uninstall" silently keeps `deb.nodesource.com` as the
 /// preferred source for `nodejs`/`nsolid` on every LATER unrelated
 /// `apt-get install` (e.g. as another package's dependency), contradicting
 /// this file's own comment two functions up that failure "must leave nothing
-/// behind" — that promise was false on the ORDINARY successful uninstall path
+/// behind" - that promise was false on the ORDINARY successful uninstall path
 /// too, not only on a failed install.
 ///
 /// **Deliberately NOT attempted here:** revoking the RPM-imported GPG key
 /// (`rpm -qa gpg-pubkey`) NodeSource's and Cloudflared's `.repo` `gpgkey=`
-/// lines cause `dnf`/`yum` to import on first use. It is not a file on disk —
-/// there is nothing here to `remove_file` — and matching the right
+/// lines cause `dnf`/`yum` to import on first use. It is not a file on disk -
+/// there is nothing here to `remove_file` - and matching the right
 /// `gpg-pubkey-*` package by heuristic risks revoking a key some OTHER
 /// still-active repo also relies on. Deleting the `.repo` file (below) is
 /// what actually stops the repo from being consulted; the trust-store entry
@@ -882,7 +882,7 @@ fn repo_artifact_paths(repo: Repo) -> &'static [&'static str] {
 pub enum Repo {
     NodeSource,
     Cloudflared,
-    /// Rspamd upstream. **RHEL-family only** — Debian and Ubuntu carry rspamd
+    /// Rspamd upstream. **RHEL-family only** - Debian and Ubuntu carry rspamd
     /// in their own archives (driven at s262), and adding a repo there would
     /// change the family that already works to fix the one that does not.
     Rspamd,
@@ -991,7 +991,7 @@ mod tests {
     }
 
     /// A unit whose name is the same on both families must survive the map
-    /// unchanged — otherwise the translation is the regression.
+    /// unchanged - otherwise the translation is the regression.
     #[test]
     fn leaves_units_that_match_alone() {
         for u in ["nginx", "fail2ban", "postfix", "dovecot", "opendkim", "docker"] {
@@ -1003,7 +1003,7 @@ mod tests {
     /// PACKAGE differs across families (`pdns-server` vs `pdns`) while the UNIT
     /// is `pdns` on BOTH. A single shared translation cannot express that, and
     /// feeding the package name to the unit map would stop a unit that does not
-    /// exist on Debian — a bug this very session wrote and then caught.
+    /// exist on Debian - a bug this very session wrote and then caught.
     #[test]
     fn powerdns_package_differs_while_its_unit_does_not() {
         assert_eq!(rpm_name("pdns-server"), "pdns");
@@ -1027,7 +1027,7 @@ mod tests {
 
     /// `php-mysql` matches no RPM; the driver is `php-mysqlnd`. Because the
     /// extension loop tolerates absent packages by design (#73), an unmapped
-    /// name is skipped *without error* — so getting this wrong ships a PHP with
+    /// name is skipped *without error* - so getting this wrong ships a PHP with
     /// no MySQL driver and no complaint.
     #[test]
     fn maps_the_php_extensions_whose_names_actually_differ() {
@@ -1047,7 +1047,7 @@ mod tests {
 
     /// NodeSource's setup_22.x (verified live against deb.nodesource.com
     /// before this test was written) writes a keyring and two Pin-Priority:600
-    /// files in addition to the .sources file — all three must be on the
+    /// files in addition to the .sources file - all three must be on the
     /// cleanup list, or an uninstalled NodeSource repo keeps silently winning
     /// over Debian's own archive for `nodejs`/`nsolid` on every later install.
     #[test]
@@ -1069,7 +1069,7 @@ mod tests {
     }
 
     /// The legacy `.list` filename must stay on the list even though upstream's
-    /// own script no longer writes it — a box that added the repo under an
+    /// own script no longer writes it - a box that added the repo under an
     /// older script version still has it on disk.
     #[test]
     fn nodesource_cleanup_still_covers_the_legacy_list_filename() {
@@ -1078,7 +1078,7 @@ mod tests {
     }
 
     /// `add_repo`'s Cloudflared branch writes a keyring alongside the repo
-    /// file (pkg.rs's own `add_repo`, apt arm) — `remove_repo` must delete both.
+    /// file (pkg.rs's own `add_repo`, apt arm) - `remove_repo` must delete both.
     #[test]
     fn cloudflared_cleanup_covers_the_keyring_not_just_the_repo_file() {
         let paths = repo_artifact_paths(Repo::Cloudflared);
@@ -1088,7 +1088,7 @@ mod tests {
     }
 
     /// Rspamd's footprint is a single flat repo file (add_repo's rpm-only
-    /// branch never writes a keyring) — unlike NodeSource/Cloudflared, this
+    /// branch never writes a keyring) - unlike NodeSource/Cloudflared, this
     /// list was already correct before this fix and must stay exactly that
     /// size, not grow to match the other two by copy-paste.
     #[test]

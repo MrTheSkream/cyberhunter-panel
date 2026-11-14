@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scheme-and-import-pin-e2e.sh — s293 / v2.51.0
+# scheme-and-import-pin-e2e.sh - s293 / v2.51.0
 #
 # Pins two families of defect fixed this release. Pure source analysis: no box,
 # no network, no build.
@@ -8,8 +8,8 @@
 # ends that disagreed about something each of them already knew.
 #
 #   §A  the SCHEME. Five places printed or fetched `https://<a user's domain>`
-#       while the answer — a certificate, an ssl_email, an `ssl` flag in the very
-#       response being read — was in scope. Issue #96.
+#       while the answer - a certificate, an ssl_email, an `ssl` flag in the very
+#       response being read - was in scope. Issue #96.
 #   §B  the DOCUMENT ROOT and the ARCHIVE ROOT. The migration importer wrote a
 #       site's files one level above the directory its own vhost serves, and
 #       resolved the archive root differently from the analyser that produced
@@ -21,7 +21,7 @@
 #
 # NO PIPES INTO `grep -q`. Under `set -o pipefail` grep -q closes the pipe on its
 # first match, the upstream dies of SIGPIPE (141), and pipefail reports the whole
-# pipeline failed — so an arm goes red on correct code, non-deterministically.
+# pipeline failed - so an arm goes red on correct code, non-deterministically.
 # That bug has now shipped twice (backup-lands at s289, backup-truth at s292).
 # Every arm here feeds grep a here-string.
 
@@ -54,7 +54,7 @@ done
 # The obvious `s{/\*.*?\*/}{}gs` is wrong and shipped in four suites before this
 # one: `/*` occurs INSIDE string literals (a Dockerfile's
 # `COPY --from=builder /app/target/release/*`, a glob, a regex), so it opened a
-# "block comment" that ran to the next `*/` and deleted real code —
+# "block comment" that ran to the next `*/` and deleted real code -
 # git_build.rs 1214 -> 729 lines, agent/routes/nginx.rs 2263 -> 2145. A
 # truncated subject makes an ABSENCE arm pass on code that was merely deleted by
 # the stripper, which is the worst way for a pin to be wrong.
@@ -77,18 +77,18 @@ subj() { local t; t=$(code "$1"); [ -n "$t" ] || return 1; printf '%s' "$t"; }
 has()   { grep -qE -- "$2" <<< "$1"; }
 count() { grep -cE -- "$2" <<< "$1" || true; }
 
-# The N lines following a marker — the window an arm is allowed to reason about.
+# The N lines following a marker - the window an arm is allowed to reason about.
 win() { grep -A"${3:-20}" -E -- "$2" <<< "$1" || true; }
 
 # A presence grep is not an arm. Every probe that beat the first draft of this
 # suite kept the call in the file and made it not happen: `if false { … }`, a
 # discarded `let _ = …`, a `&& false` bolted onto the condition. Same escape that
-# beat backup-truth at s292 (lesson #125) — dead code satisfies a presence grep.
+# beat backup-truth at s292 (lesson #125) - dead code satisfies a presence grep.
 # So an arm asserts BOTH that the window derives its answer AND that the window
 # is live.
 # Only DEAD-CODE markers belong here. An earlier draft also forbade `let _ =`
 # and `return false;`, and immediately reported three failures on code verified
-# by hand minutes earlier — both are ordinary Rust (`domain_is_https` returns
+# by hand minutes earlier - both are ordinary Rust (`domain_is_https` returns
 # false when there is no vhost; the monitor INSERT discards its Result on
 # purpose). That is the #127 tell: when a whole class of arms fails on code you
 # have already verified, the harness is wrong, not the subject. Discards that
@@ -101,7 +101,7 @@ live() {
 #
 # A fixed `-A <n>` window is not a function. Probe P9 removed the directory from
 # parse_plesk's database path and the per-parser arm stayed green, because the
-# 90-line window ran on into parse_hestiacp — whose line still matched. A window
+# 90-line window ran on into parse_hestiacp - whose line still matched. A window
 # that can be satisfied by the code AFTER the subject is not scoped to the
 # subject.
 fnbody() {
@@ -124,7 +124,7 @@ echo "== §A  the scheme is derived, never assumed =="
 
 if S=$(subj "$APPS_UI"); then
   # The link must consume a per-app boolean. Requiring the ternary INSIDE the
-  # href template is what stops "compute app.ssl, then ignore it" — the shape
+  # href template is what stops "compute app.ssl, then ignore it" - the shape
   # that walked through the backup suite at s292.
   if has "$S" 'href=\{`\$\{app\.ssl \? "https" : "http"\}://\$\{app\.domain\}`\}'; then
     ok "the app link picks its scheme from the app's own ssl flag"
@@ -168,7 +168,7 @@ fi
 
 if S=$(subj "$NGINX_SVC"); then
   # The nginx answer must come from the vhost, and Traefik must be consulted
-  # first — when Traefik owns a domain there is no nginx vhost to read, and
+  # first - when Traefik owns a domain there is no nginx vhost to read, and
   # "no file" would otherwise be reported as "no TLS".
   W=$(win "$S" 'pub fn domain_is_https' 26)
   if derives "$W" 'route_is_tls' && derives "$W" 'lines\(\)\.any' && derives "$W" '443'; then
@@ -201,7 +201,7 @@ if S=$(subj "$APPS_BE"); then
     ok "the auto-created app monitor does not hardcode https"
   fi
   # It must read the deploy's own answer. Requiring `result.get("ssl")` in the
-  # same file is not enough — the SSE step already does that — so require the
+  # same file is not enough - the SSE step already does that - so require the
   # scheme binding to exist and the URL to interpolate it.
   W=$(win "$S" 'let scheme = if result\.get\("ssl"\)' 8)
   if derives "$W" 'https' && derives "$W" 'http' \
@@ -227,7 +227,7 @@ fi
 if S=$(subj "$GITDEP"); then
   # v2.168.0: raw `ssl_email` presence stopped being the truth once
   # `provided` mode could withhold it entirely (a certificate-registry
-  # deploy has no ACME address at all) — deploy_url now takes the EFFECTIVE
+  # deploy has no ACME address at all) - deploy_url now takes the EFFECTIVE
   # mode (`stacks::effective_tls_mode`), still resolved in this one place.
   W=$(win "$S" 'fn deploy_url\(domain: &str, tls_mode: &str\)' 6)
   if derives "$W" 'tls_mode == "acme" \|\| tls_mode == "provided"'; then
@@ -246,19 +246,19 @@ if S=$(subj "$GITDEP"); then
   if has "$S" 'async fn set_github_status\(.*target_url: Option<String>\)'; then
     ok "set_github_status takes a finished URL, not a domain"
   else
-    bad "set_github_status takes a domain again — a caller can hardcode the scheme"
+    bad "set_github_status takes a domain again - a caller can hardcode the scheme"
   fi
   # Every call site must route through the resolver. Two of the seven (the
   # success branches, which know what the agent actually served once
   # `provided` mode can be refused and fall back to plain HTTP) pass
-  # `actual_mode` instead of the merely-requested `effective_mode` — still
+  # `actual_mode` instead of the merely-requested `effective_mode` - still
   # the SAME function, never a second hardcoded scheme.
   #
   # A caller may also route through a variable computed ONCE via deploy_url
   # and reused across several calls (the preview-deploy path added at s484,
-  # `github_target`) — same safety property, a DRYer shape. Credit it only
+  # `github_target`) - same safety property, a DRYer shape. Credit it only
   # if that variable's OWN definition resolves through deploy_url, never by
-  # name alone — otherwise a future `let github_target = domain.to_string()`
+  # name alone - otherwise a future `let github_target = domain.to_string()`
   # would satisfy this arm while reintroducing exactly the hardcoded scheme
   # deploy_url exists to prevent.
   CALLS=$(count "$S" 'set_github_status\(')
@@ -296,7 +296,7 @@ if S=$(subj "$SITES"); then
   if has "$S" "'pending', FALSE, 'http'"; then
     ok "the site-creation monitor is still created disabled (its https is earned)"
   else
-    bad "the site-creation monitor is no longer created disabled — its https is now a guess"
+    bad "the site-creation monitor is no longer created disabled - its https is now a guess"
   fi
 fi
 
@@ -307,7 +307,7 @@ if S=$(subj "$NGINX_SVC"); then
   if has "$S" 'pub fn document_root_for'; then
     ok "there is one answer to 'which directory does nginx serve'"
   else
-    bad "document_root_for is gone — the rule is spelled per-caller again"
+    bad "document_root_for is gone - the rule is spelled per-caller again"
   fi
 fi
 
@@ -317,7 +317,7 @@ for f in "$NGINX_ROUTE" "$MIG_SVC"; do
     # Bound, not merely called: a discarded `let _ = document_root_for(..)`
     # beside a hand-built path satisfies a presence grep (probe P4). Read with a
     # line of leading context, because one caller wraps the binding onto its own
-    # line — a single-line pattern misses it and reds correct code.
+    # line - a single-line pattern misses it and reds correct code.
     W=$(grep -B1 -E 'document_root_for' <<< "$S" || true)
     if [ -n "$W" ] && has "$W" 'let [a-z_]+ *=' && ! has "$W" 'let _ *='; then
       ok "$(basename "$f") binds its document root from document_root_for"
@@ -349,7 +349,7 @@ if S=$(subj "$MIG_SVC"); then
   # no parser may emit one.
   # Keyed on the CAPABILITY, not on one spelling of the defect. The first draft
   # forbade `doc_root: doc_root.to_string_lossy`, and probe P6 walked straight
-  # past it by writing `doc_root.display().to_string()` instead — the same
+  # past it by writing `doc_root.display().to_string()` instead - the same
   # spelling-bound-negative disease as lesson #122. What a correct parser must
   # DO is pass the path through `relative_to`; what it must never do is hand a
   # `Path` conversion straight to the field.
@@ -368,7 +368,7 @@ if S=$(subj "$MIG_SVC"); then
   # grep sees neither. Gap BOUNDED to one statement (`[^;{}]`), never `.*`.
   SFLAT=$(tr '\n' ' ' <<< "$S" | tr -s ' ')
   if has "$SFLAT" 'doc_root: *[^;{}]{0,160}\. *(display\(\)|to_string_lossy\(\)|to_str\(\)|into_os_string\(\))'; then
-    bad "a parser hands a filesystem path straight to doc_root — import rejects it as traversal"
+    bad "a parser hands a filesystem path straight to doc_root - import rejects it as traversal"
   else
     ok "no parser hands a filesystem path straight to doc_root"
   fi
@@ -376,7 +376,7 @@ if S=$(subj "$MIG_SVC"); then
   # get past them: an inventory path is joined ONTO the archive root by the
   # importer, so it must never already contain it. Interpolating `{root}` is
   # absolute by another name.
-  # FLATTENED (#383) — same subject, same reason: rustfmt breaks a long `format!(`
+  # FLATTENED (#383) - same subject, same reason: rustfmt breaks a long `format!(`
   # so the field name and its literal land on different lines. `[^,]*` still bounds
   # the match to the field's own initializer, so no `.*` is introduced.
   if has "$SFLAT" '(doc_root|file): *[^,]*\{root\}'; then
@@ -402,14 +402,14 @@ if S=$(subj "$MIG_SVC"); then
   if [ "$DBS_OK" = "1" ]; then
     ok "every parser carries the database's directory"
   else
-    bad "a parser emits a database path with no directory — import looks one level too high"
+    bad "a parser emits a database path with no directory - import looks one level too high"
   fi
 fi
 
 if S=$(subj "$MIG_BE"); then
   # Scoped to the IMPORT body. `"runtime": runtime` also appears in the nginx
   # body a few lines up, so an unscoped grep stays green with the import body
-  # empty — which is exactly what it did on the pre-fix tree when this arm was
+  # empty - which is exactly what it did on the pre-fix tree when this arm was
   # first written (lesson #125: an arm satisfied by unrelated code is not an arm).
   IMPORT_BODY=$(grep -A8 -E 'let import_body = serde_json::json!' <<< "$S" || true)
   if [ -n "$IMPORT_BODY" ] && has "$IMPORT_BODY" '"runtime": runtime'; then

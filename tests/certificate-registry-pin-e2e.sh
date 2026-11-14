@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# certificate-registry-pin-e2e.sh — s408 / v2.160.0 (GitHub #104)
+# certificate-registry-pin-e2e.sh - s408 / v2.160.0 (GitHub #104)
 #
-# Pins the named certificate registry and the STORED TLS mode on a stack —
+# Pins the named certificate registry and the STORED TLS mode on a stack -
 # the three points the reporter and the panel settled in writing, plus the
 # constraint the panel found on its own:
 #
@@ -9,7 +9,7 @@
 #       three bodies the panel sends the agent carries it; an edit that says
 #       nothing about TLS keeps what the row says, domain included. Before this
 #       an edit forwarded the request's address verbatim, so omitting it took
-#       the certificate off a stack that had one — behind a year of HSTS.
+#       the certificate off a stack that had one - behind a year of HSTS.
 #   §C  a provided certificate is refused on an agent too old to honour the
 #       mode, fail-closed, by a FROZEN constant read off the agent's own answer.
 #   §D  the registry's lifecycle on the panel: uniqueness asked before the
@@ -29,13 +29,13 @@
 # Pure source analysis: no box, no network, no build.
 #
 # ⚠ EVERY arm reads STRIPPED source. Both trees carry long comments naming the
-# literals below — the mode words, the flag, the registry root. Against raw
+# literals below - the mode words, the flag, the registry root. Against raw
 # text half of §F and §G would be satisfied by the prose describing them.
 #
-# NO PIPES INTO `grep -q` — under `set -o pipefail` grep -q closes the pipe on
+# NO PIPES INTO `grep -q` - under `set -o pipefail` grep -q closes the pipe on
 # its first match and the arm goes red on correct code.
 #
-# MUTATION-TESTED at HEAD — see the run recorded in the ship's ledger.
+# MUTATION-TESTED at HEAD - see the run recorded in the ship's ledger.
 
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -43,9 +43,9 @@ cd "$(dirname "$0")/.."
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); printf '  \033[32m✓\033[0m %s\n' "$1"; }
 bad() { FAIL=$((FAIL+1)); printf '  \033[31m✗\033[0m %s\n' "$1"; }
-eq()  { [ "$2" = "$3" ] && ok "$1" || bad "$1 — expected '$3', got '$2'"; }
-has() { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1 — missing: $3" ;; esac; }
-hasnt() { case "$2" in *"$3"*) bad "$1 — present but must not be: $3" ;; *) ok "$1" ;; esac; }
+eq()  { [ "$2" = "$3" ] && ok "$1" || bad "$1 - expected '$3', got '$2'"; }
+has() { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1 - missing: $3" ;; esac; }
+hasnt() { case "$2" in *"$3"*) bad "$1 - present but must not be: $3" ;; *) ok "$1" ;; esac; }
 
 STACKS=panel/backend/src/routes/stacks.rs
 TLSC=panel/backend/src/routes/tls_certificates.rs
@@ -96,11 +96,11 @@ fnbody() {
 # A body that must be at least $3 lines, or the arm cannot be trusted.
 body() {
   local b; b=$(fnbody "$1" "$2"); local n; n=$(wc -l <<< "$b")
-  if [ "$n" -ge "$3" ]; then ok "A-body $2 ($n lines)"; else bad "A-body $2 — extracted as $n lines, subject lost"; fi
+  if [ "$n" -ge "$3" ]; then ok "A-body $2 ($n lines)"; else bad "A-body $2 - extracted as $n lines, subject lost"; fi
   printf '%s' "$b"
 }
 # Both offsets found, and the first before the second.
-before() { local a b; a=$(pos "$2" "$3"); b=$(pos "$2" "$4"); if [ "$a" -ge 0 ] && [ "$b" -ge 0 ] && [ "$a" -lt "$b" ]; then ok "$1"; else bad "$1 — offsets $a / $b"; fi; }
+before() { local a b; a=$(pos "$2" "$3"); b=$(pos "$2" "$4"); if [ "$a" -ge 0 ] && [ "$b" -ge 0 ] && [ "$a" -lt "$b" ]; then ok "$1"; else bad "$1 - offsets $a / $b"; fi; }
 
 S=$(subj "$STACKS") || { bad "stacks.rs stripped to nothing"; S=""; }
 T=$(subj "$TLSC") || { bad "tls_certificates.rs stripped to nothing"; T=""; }
@@ -122,7 +122,7 @@ for pair in "stacks.rs:$S:900" "tls_certificates.rs:$T:400" "routes/mod.rs:$BM:9
             "Certificates.tsx:$CT:200" "RegisteredCertificates.tsx:$RC:250"; do
   name=${pair%%:*}; rest=${pair#*:}; min=${rest##*:}; text=${rest%:*}
   n=$(wc -l <<< "$text")
-  if [ "$n" -ge "$min" ]; then ok "A-control $name stripped subject is $n lines"; else bad "A-control $name stripped subject is only $n lines — subject lost"; fi
+  if [ "$n" -ge "$min" ]; then ok "A-control $name stripped subject is $n lines"; else bad "A-control $name stripped subject is only $n lines - subject lost"; fi
 done
 
 echo "== §B  the mode is stored and honoured on every redeploy =="
@@ -130,7 +130,7 @@ FS=$(flat "$S")
 has "B1 STACK_SELECT projects the stored mode" "$FS" 's.tls_mode,s.tls_certificate_id,c.aliasAStls_certificate'
 eq  "B2-control stacks.rs sends the agent exactly three compose deploys" "$(occ "$S" '"/apps/compose/deploy"')" "3"
 CRE=$(body "$S" create 120); UPD=$(body "$S" update 180); RES=$(body "$S" restore_previous 25)
-# Scoped to the DEPLOY BODY of each fn — the create/update responses in the
+# Scoped to the DEPLOY BODY of each fn - the create/update responses in the
 # same bodies spell the same keys, and a whole-body `has` was satisfied by them
 # with the deploy bodies stripped (caught by mutation, s408).
 for pair in "create:$CRE" "update:$UPD" "restore_previous:$RES"; do
@@ -168,7 +168,7 @@ has "B9 a NULL row derives the mode from the address, as the agent always did" "
 
 echo "== §C  an agent too old to honour the mode is refused, fail-closed =="
 FT=$(flat "$T")
-eq  "C1 the minimum agent is a FROZEN literal — a release bump must not move it" "$(occ "$FT" 'PROVIDED_TLS_MIN_AGENT:&str="2.160.0";')" "1"
+eq  "C1 the minimum agent is a FROZEN literal - a release bump must not move it" "$(occ "$FT" 'PROVIDED_TLS_MIN_AGENT:&str="2.160.0";')" "1"
 GATE=$(body "$T" require_agent_at_least 10); FGATE=$(flat "$GATE")
 has "C2 the gate reads the agent's own answer, not a column that is NULL on the local box" "$FGATE" 'agent.get("/health")'
 has "C2 the gate compares releases, not strings" "$FGATE" 'panel_update::semver_key'
@@ -196,22 +196,22 @@ echo "== §E  the migration =="
 FMG=$(flat "$MG")
 has "E1 the mode column carries the vocabulary as a CHECK" "$FMG" "tls_modeTEXTCHECK(tls_modeIN('none','acme','provided'))"
 has "E2 a deleted certificate nulls the reference" "$FMG" 'tls_certificate_idUUIDREFERENCEStls_certificates(id)ONDELETESETNULL'
-hasnt "E3 no RESTRICT — a blocking key is a boot that cannot happen" "$FMG" 'RESTRICT'
+hasnt "E3 no RESTRICT - a blocking key is a boot that cannot happen" "$FMG" 'RESTRICT'
 has "E4 the backfill derives the mode from the only signal that existed" "$FMG" "SETtls_mode=CASEWHENssl_emailISNOTNULLANDssl_email<>''THEN'acme'ELSE'none'END"
 has "E4 …and only where nothing is recorded yet" "$FMG" 'WHEREtls_modeISNULL'
 has "E5 an alias is unique per server" "$FMG" 'UNIQUE(server_id,alias)'
 # E6 was "this migration is the newest on disk", which said what it meant only
-# while nothing had landed since — it went red on the first later migration
+# while nothing had landed since - it went red on the first later migration
 # (v2.162.0's stack ssl_expiry) with nothing wrong. The DURABLE form of the same
 # invariant is that no later migration re-declares what this suite pins above.
 #
 # ⛔ Reads STRIPPED sql. Every other arm here does, and for the reason the header
-# gives: against raw text this arm would be satisfied — or falsely tripped — by a
+# gives: against raw text this arm would be satisfied - or falsely tripped - by a
 # later migration's own PROSE describing what it deliberately does not do.
 # ⛔ Per STATEMENT, not per file: a migration that alters docker_stacks for an
 # unrelated reason and mentions a pinned column in a different statement is not a
 # redeclaration. Flattened first, so the repo's two-line ALTER idiom still matches.
-# ⛔ No `producer | grep -q` — pipefail is on and grep -q SIGPIPEs the producer.
+# ⛔ No `producer | grep -q` - pipefail is on and grep -q SIGPIPEs the producer.
 e6_redeclarations() {
   local stmts
   stmts=$(code "$1" | tr -d ' \n\\' | tr ';' '\n')
@@ -231,13 +231,13 @@ FRQ=$(body "$D" from_request 20); FFRQ=$(flat "$FRQ")
 has "F2 an older panel's request keeps today's presence rule byte-for-byte" "$FFRQ" 'None=>Ok(matchssl_email{Some(email)=>TlsIntent::Acme{email},None=>TlsIntent::None,}),'
 has "F2 a provided intent needs a well-formed alias" "$FFRQ" 'Some(alias)ifssl::is_valid_cert_alias(alias)=>Ok(TlsIntent::Provided{alias}),'
 # s414: a provided intent is ALSO refused up front when the deploy is
-# Traefik-routed — Traefik's file provider has no per-route certificate form,
+# Traefik-routed - Traefik's file provider has no per-route certificate form,
 # so the front door now says so before any container exists, matching every
 # other unhonourable combination this function already refuses at this point.
 has "F2 a provided intent is refused through Traefik before any container exists" "$FFRQ" 'Some(alias)ifuse_traefik=>Err(format!('
 EXP=$(body "$D" expose_domain 150); FEXP=$(flat "$EXP")
 before "F3 the provided arm runs BEFORE the HTTP-first write" "$FEXP" 'ssl::registry_paths(alias)' 'letsite_config=proxy_site_config(port);'
-eq "F4 the per-domain enabler is called once — by the ACME arm" "$(occ "$FEXP" 'enable_ssl_for_site(')" "1"
+eq "F4 the per-domain enabler is called once - by the ACME arm" "$(occ "$FEXP" 'enable_ssl_for_site(')" "1"
 before "F4 …and only after the HTTP-first write, so the provided arm never reaches it" "$FEXP" 'letsite_config=proxy_site_config(port);' 'enable_ssl_for_site('
 before "F5 the provided arm re-asks coverage before it writes" "$FEXP" 'ssl::cert_covers_domain(&pem,domain)' 'std::fs::write(&tmp_path'
 before "F6 a missing certificate refuses before anything is written" "$FEXP" '"tls_refused"' 'std::fs::write(&tmp_path'
@@ -258,7 +258,7 @@ has "F9 a parked write says it is parked" "$PROV" 'response["parked"]=serde_json
 FL=$(flat "$L")
 ROOT=$(printf '%s' "$FL" | /usr/bin/grep -oE 'SSL_REGISTRY_DIR:&str="[^"]+"' | head -1 | sed 's/.*="//; s/"$//')
 eq "F10-control the registry root was extracted" "$([ -n "$ROOT" ] && echo yes || echo no)" "yes"
-case "$ROOT" in /etc/dockpanel/ssl/*|/etc/dockpanel/ssl) bad "F10 the registry root sits INSIDE the per-domain tree ($ROOT) — every walker would call an alias a domain";; /etc/dockpanel/*) ok "F10 the registry root is a sibling under the agent's writable tree ($ROOT)";; *) bad "F10 the registry root is outside the agent's writable tree ($ROOT)";; esac
+case "$ROOT" in /etc/dockpanel/ssl/*|/etc/dockpanel/ssl) bad "F10 the registry root sits INSIDE the per-domain tree ($ROOT) - every walker would call an alias a domain";; /etc/dockpanel/*) ok "F10 the registry root is a sibling under the agent's writable tree ($ROOT)";; *) bad "F10 the registry root is outside the agent's writable tree ($ROOT)";; esac
 RP=$(body "$L" registry_paths 3); has "F10 registry paths are built from the root, never the per-domain tree" "$(flat "$RP")" 'SSL_REGISTRY_DIR'
 FR=$(flat "$R")
 REGB=$(body "$R" register 60); FREGB=$(flat "$REGB")
@@ -287,7 +287,7 @@ for f in "$ASSL" "$AREG" "$ADA"; do
 done
 
 echo "== §G  the seams =="
-# One vocabulary, DERIVED from each tree — a word that drifts in one place
+# One vocabulary, DERIVED from each tree - a word that drifts in one place
 # turns the comparison red, and the character class admits an underscore.
 V_MIG=$(printf '%s' "$FMG" | /usr/bin/grep -oE "tls_modeIN\([^)]*\)" | /usr/bin/grep -oE "'[a-z_]+'" | tr -d "'" | sort -u | tr '\n' ' ')
 V_BE=$(printf '%s' "$FS" | /usr/bin/grep -oE 'constTLS_MODES:\[&str;[0-9]+\]=\[[^]]*\]' | /usr/bin/grep -oE '"[a-z_]+"' | tr -d '"' | sort -u | tr '\n' ' ')

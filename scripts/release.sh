@@ -1,5 +1,5 @@
 #!/bin/bash
-# DockPanel Release Script
+# CyberHunter - Panel Release Script
 # Builds x86_64 + ARM64 binaries, packages, creates GitHub Release
 set -euo pipefail
 
@@ -21,7 +21,7 @@ if [ "$TAG" = "$LATEST_TAG" ]; then
   exit 1
 fi
 
-echo -e "${GREEN}Building DockPanel $TAG${NC}"
+echo -e "${GREEN}Building CyberHunter - Panel $TAG${NC}"
 echo "  Previous tag: $LATEST_TAG"
 echo ""
 
@@ -110,15 +110,15 @@ echo ""
 # output: dynamically linked against this box's glibc. Every published release
 # is a STATIC MUSL build produced by .github/workflows/release.yml with
 # `cargo zigbuild`, signed with Sigstore, precisely so the agent runs on
-# Ubuntu 20.04+, Rocky 9 and Amazon Linux 2023 (#70) — and a glibc agent
+# Ubuntu 20.04+, Rocky 9 and Amazon Linux 2023 (#70) - and a glibc agent
 # reaching a box is a failure this project has already had (s271).
 #
 # So this script BUILDS and AUDITS; the tag PUBLISHES. Uploading $DIST/* by
 # hand would replace 33 signed static assets with 12 unsigned dynamic ones.
 # Until s288 the instructions printed here said to do exactly that.
-echo -e "${YELLOW}Local build complete — these artifacts are for smoke-testing only.${NC}"
+echo -e "${YELLOW}Local build complete - these artifacts are for smoke-testing only.${NC}"
 echo "  $DIST"
-echo "  ($(file "$DIST/dockpanel-agent-linux-amd64" | grep -oE 'statically linked|dynamically linked') — the published assets are static musl)"
+echo "  ($(file "$DIST/dockpanel-agent-linux-amd64" | grep -oE 'statically linked|dynamically linked') - the published assets are static musl)"
 echo ""
 echo -e "${GREEN}To publish $TAG, push the tag and let CI build it:${NC}"
 echo ""
@@ -129,7 +129,7 @@ echo "    generates SBOMs + checksums, signs with Sigstore, and creates the Rele
 echo "  → Then verify per [[feedback_ship_verification_protocol]]: gh release view,"
 echo "    and fetch a published binary to confirm 0 DT_NEEDED."
 echo ""
-echo "Do NOT run 'gh release create' with $DIST/* — see the comment above this block."
+echo "Do NOT run 'gh release create' with $DIST/* - see the comment above this block."
 
 if [ "${1:-}" = "--publish" ]; then
   echo ""

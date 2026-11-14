@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# env-mask-catalogue-secrets-pin-e2e.sh — s447
+# env-mask-catalogue-secrets-pin-e2e.sh - s447
 #
 # Pins docker_apps.rs's `GET /apps/{id}/env` mask gap named in
 # [[project_dockpanel_tech_debt_p185]] §B: the route's mask condition was a
@@ -20,7 +20,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
 echo
 echo "=================================================="
-echo "  docker_apps.rs env mask — catalogue secret coverage (s447)"
+echo "  docker_apps.rs env mask - catalogue secret coverage (s447)"
 echo "=================================================="
 echo
 
@@ -67,7 +67,7 @@ else
   if has "$CSE" '\.secret'; then
     ok "A1 catalogue_secret_env reads the catalogue's own secret flag"
   else
-    bad "A1 catalogue_secret_env doesn't read v.secret — not actually checking the catalogue"
+    bad "A1 catalogue_secret_env doesn't read v.secret - not actually checking the catalogue"
   fi
 fi
 
@@ -81,12 +81,12 @@ else
   if has "$GETENV" 'catalogue_secret_env'; then
     ok "B1 get_env calls catalogue_secret_env"
   else
-    bad "B1 get_env never calls catalogue_secret_env — the route and the fix are disconnected"
+    bad "B1 get_env never calls catalogue_secret_env - the route and the fix are disconnected"
   fi
   if has "$GETENV" '\|\| docker_apps::catalogue_secret_env\(&k\)'; then
     ok "B2 catalogue_secret_env is OR'd in (widens masking, never narrows the substring heuristic)"
   else
-    bad "B2 catalogue_secret_env is not OR'd into is_sensitive — verify by hand it can't narrow the mask instead of widening it"
+    bad "B2 catalogue_secret_env is not OR'd into is_sensitive - verify by hand it can't narrow the mask instead of widening it"
   fi
 fi
 
@@ -97,7 +97,7 @@ for NAME in DB_PASS POSTGRES_PWD SURREAL_PASS GOTIFY_DEFAULTUSER_PASS PLEX_CLAIM
   if grep -qE "name: \"$NAME\".*secret: true" "$SERVICES"; then
     ok "C:$NAME declared secret: true in the catalogue"
   else
-    bad "C:$NAME has no secret:true EnvVarDef — control failed, this name was never actually a control case"
+    bad "C:$NAME has no secret:true EnvVarDef - control failed, this name was never actually a control case"
   fi
 done
 

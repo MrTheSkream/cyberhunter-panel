@@ -209,7 +209,7 @@ export default function Diagnostics() {
 
         {recommendations !== null && recommendations.length === 0 && (
           <div className="text-center py-8 bg-dark-900 rounded-lg border border-dark-500">
-            <p className="text-dark-300 text-sm">No optimization suggestions — current settings look sized correctly.</p>
+            <p className="text-dark-300 text-sm">No optimization suggestions - current settings look sized correctly.</p>
           </div>
         )}
 

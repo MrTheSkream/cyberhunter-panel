@@ -67,7 +67,7 @@ pub struct SiteConfig {
     /// Bot protection mode: "off", "rate-limit", "challenge", "block"
     #[serde(default)]
     pub bot_protection: Option<String>,
-    /// PHP-FPM pool user (SFTP-enabled sites only — see `services::sftp_accounts`).
+    /// PHP-FPM pool user (SFTP-enabled sites only - see `services::sftp_accounts`).
     /// `None` keeps the shared `www-data` identity every other site uses.
     #[serde(default)]
     pub pool_user: Option<String>,
@@ -76,7 +76,7 @@ pub struct SiteConfig {
     /// IPv4 the vhost listens on: an address assigned on one of the host's
     /// interfaces, or `"primary"` (the default-route IP the agent detects).
     /// Absent = keep the IP already written in the existing vhost if it is
-    /// still on the host, else the primary — see
+    /// still on the host, else the primary - see
     /// `services::nginx::resolve_bind_ip`.
     #[serde(default)]
     pub bind_ip: Option<String>,
@@ -123,12 +123,12 @@ struct SiteStatusResponse {
     ssl_expiry: Option<String>,
 }
 
-/// PUT /nginx/sites/:domain — Create or update site nginx config.
+/// PUT /nginx/sites/:domain - Create or update site nginx config.
 ///
 /// The per-site PHP pool (`php_pool`) is applied before the vhost is written
 /// and tested. If anything after it fails, the pool is rolled back here (the
 /// previous file restored, or the new one removed, then FPM reloaded), so the
-/// pool, the vhost and the backend DB — which rolls back on any agent error —
+/// pool, the vhost and the backend DB - which rolls back on any agent error -
 /// stay in step.
 async fn put_site(
     state: State<AppState>,
@@ -248,7 +248,7 @@ async fn put_site_inner(
             // always sends the Debian-shaped path above as the wire format, but the
             // REAL socket on a RHEL-family host is a different, unversioned path
             // (`/run/php-fpm/www.sock`) that this literal `Path::exists()` could
-            // never see — every PHP site creation on RHEL was rejected as "not
+            // never see - every PHP site creation on RHEL was rejected as "not
             // installed" even with PHP-FPM correctly installed and running.
             // `resolve_php_fpm_socket` is the same resolver `php.rs::settle()`
             // already uses, so the two routes can't disagree on what's real.
@@ -261,7 +261,7 @@ async fn put_site_inner(
                 None => {
                     // Where this used to send people was a dead end. Settings →
                     // Services has one PHP tile with no version on it, and it
-                    // reports installed if ANY version is — so on a box with 8.4
+                    // reports installed if ANY version is - so on a box with 8.4
                     // the operator was told to go and install 8.3 on a screen
                     // showing "Installed / Uninstall" and no install button at all.
                     // The PHP Version control is the one place that can do this,
@@ -272,7 +272,7 @@ async fn put_site_inner(
                             success: false,
                             message: format!(
                                 "PHP {version} is not installed, or its PHP-FPM service is not \
-                                 running. Install it from the PHP Version control on the site — \
+                                 running. Install it from the PHP Version control on the site - \
                                  it offers any version this server does not have yet."
                             ),
                         }),
@@ -329,14 +329,14 @@ async fn put_site_inner(
                     // pool was never enough on its own: the rendered config kept the
                     // SHARED php{ver}-fpm.sock, so every request bypassed the per-site
                     // pool and the "PHP Memory" / "PHP Workers" limits the UI
-                    // advertises did nothing — the pool just idled beside the site.
+                    // advertises did nothing - the pool just idled beside the site.
                     // (v2.28.0 fixed the sandbox so the pool gets WRITTEN; the fresh-box
                     // verification then showed nginx still on the shared socket.)
                     //
                     // Fail-safe: only switch once the socket really exists. A reload can
                     // fail or the pool can be rejected, and pointing nginx at a missing
                     // socket would 502 the entire site. If it never appears we keep the
-                    // shared socket — degraded exactly as before, rather than broken.
+                    // shared socket - degraded exactly as before, rather than broken.
                     let pool_name = domain.replace('.', "_");
                     let candidate = format!("/run/php/php{ver}-fpm-{pool_name}.sock");
                     for _ in 0..15 {
@@ -405,7 +405,7 @@ async fn put_site_inner(
     // Write config file atomically (write to .tmp, then rename).
     //
     // `rename` REPLACES whatever is already at this path, and `nginx -t` below is
-    // a whole-server check — an unrelated broken vhost anywhere on the box fails
+    // a whole-server check - an unrelated broken vhost anywhere on the box fails
     // it. So the error paths must be able to put back exactly what was here: for
     // four years they deleted instead, under a comment promising a restore, which
     // meant an ordinary settings toggle (PHP version, WAF, headers) on a healthy
@@ -476,7 +476,7 @@ async fn put_site_inner(
         return Ok(Json(NginxResponse {
             success: true,
             message: format!(
-                "Site {domain} is disabled — its configuration was saved and takes effect \
+                "Site {domain} is disabled - its configuration was saved and takes effect \
                  when the site is enabled. Nginx was not reloaded."
             ),
         }));
@@ -511,7 +511,7 @@ async fn put_site_inner(
             // `jail_name` collapses '.' to '-', which is not injective over the
             // domains `is_valid_domain` accepts, so `a.b.com` and `a-b.com` share
             // one jail file. Writing it unconditionally repointed the existing
-            // jail's `logpath` at the other tenant's access log — leaving the
+            // jail's `logpath` at the other tenant's access log - leaving the
             // first site unprotected while its jail appeared to still exist.
             let jail_path = format!("/etc/fail2ban/jail.d/{jail_name}.conf");
             let jail_is_someone_elses = std::path::Path::new(&jail_path).exists()
@@ -532,7 +532,7 @@ async fn put_site_inner(
             }
 
             // The vhost now points at this version's pool: drop the same pool
-            // from the other versions (contract §A1). Not before — a failed
+            // from the other versions (contract §A1). Not before - a failed
             // `nginx -t` above restores a vhost that may still use them.
             if let Some(ref ver) = php_pool_version {
                 services::php_pool::remove_pool_from_other_versions(&domain, ver).await;
@@ -544,7 +544,7 @@ async fn put_site_inner(
             }))
         }
         Ok(output) => {
-            // Invalid config — put back exactly what was here before.
+            // Invalid config - put back exactly what was here before.
             let restored = restore_or_remove(&config_path, previous.as_deref());
             Err((
                 StatusCode::BAD_REQUEST,
@@ -560,7 +560,7 @@ async fn put_site_inner(
         }
         Err(e) => {
             // `nginx -t` did not answer (timeout, missing binary). The rendered
-            // config is unproven, so it does not stay — but neither does the
+            // config is unproven, so it does not stay - but neither does the
             // previous owner's config get destroyed by our inability to test.
             let restored = restore_or_remove(&config_path, previous.as_deref());
             Err((
@@ -574,7 +574,7 @@ async fn put_site_inner(
     }
 }
 
-/// DELETE /nginx/sites/:domain — Remove site and all associated resources.
+/// DELETE /nginx/sites/:domain - Remove site and all associated resources.
 async fn delete_site(
     Path(domain): Path<String>,
 ) -> Result<Json<NginxResponse>, (StatusCode, Json<NginxResponse>)> {
@@ -637,8 +637,8 @@ async fn delete_site(
     // SSL certificates. A DNS-01 wildcard is provisioned ONCE under the zone
     // apex and every site in the zone points `ssl_certificate` at that one
     // directory, so deleting the apex site used to take the certificate out from
-    // under its siblings. That does not fail now — nginx is already serving from
-    // memory — it fails at the next `nginx -t` anyone triggers, and leaves nginx
+    // under its siblings. That does not fail now - nginx is already serving from
+    // memory - it fails at the next `nginx -t` anyone triggers, and leaves nginx
     // down box-wide at the next full restart.
     let ssl_dir = format!("/etc/dockpanel/ssl/{domain}");
     if std::path::Path::new(&ssl_dir).exists() {
@@ -691,7 +691,7 @@ async fn delete_site(
         tracing::info!("Removed WordPress auto-update cron for {domain}");
     }
 
-    // Fail2Ban jail — same non-injective name as the create side above, so the
+    // Fail2Ban jail - same non-injective name as the create side above, so the
     // file at this path may be another domain's brute-force protection. The
     // jail's own `logpath` says which log it watches.
     let jail_name = format!("nginx-{}", domain.replace('.', "-"));
@@ -718,7 +718,7 @@ async fn delete_site(
     }))
 }
 
-/// POST /nginx/test — Test nginx configuration.
+/// POST /nginx/test - Test nginx configuration.
 async fn test_nginx() -> Json<NginxTestResponse> {
     match services::nginx::test_config().await {
         Ok(output) => Json(NginxTestResponse {
@@ -736,7 +736,7 @@ async fn test_nginx() -> Json<NginxTestResponse> {
     }
 }
 
-/// POST /nginx/reload — Reload nginx.
+/// POST /nginx/reload - Reload nginx.
 async fn reload_nginx() -> Result<Json<NginxResponse>, (StatusCode, Json<NginxResponse>)> {
     match services::nginx::reload().await {
         Ok(_) => Ok(Json(NginxResponse {
@@ -753,7 +753,7 @@ async fn reload_nginx() -> Result<Json<NginxResponse>, (StatusCode, Json<NginxRe
     }
 }
 
-/// GET /nginx/sites/:domain — Get site status.
+/// GET /nginx/sites/:domain - Get site status.
 async fn get_site(
     Path(domain): Path<String>,
 ) -> Result<Json<SiteStatusResponse>, (StatusCode, Json<NginxResponse>)> {
@@ -792,7 +792,7 @@ async fn get_site(
     }))
 }
 
-/// POST /nginx/sites/{domain}/rename — Rename a site's domain.
+/// POST /nginx/sites/{domain}/rename - Rename a site's domain.
 /// Copy the files directly inside `src` into `dst`, creating `dst`.
 ///
 /// Shallow on purpose: a certificate directory is a flat set of PEMs, and a
@@ -811,7 +811,7 @@ fn copy_dir_shallow(src: &str, dst: &str) -> std::io::Result<()> {
 /// The backup trees this agent keys by site domain.
 ///
 /// Two trees, two spellings of the same site, and each one is rebuilt from
-/// the LIVE domain by whoever reads it — the panel's `backups` table stores a
+/// the LIVE domain by whoever reads it - the panel's `backups` table stores a
 /// filename and no path at all. So a rename that does not carry these leaves
 /// every archive on disk under a name nothing will look up again, while the
 /// panel keeps listing the rows and answers a restore with a path that does
@@ -829,8 +829,8 @@ fn domain_backup_trees(old_domain: &str, new_domain: &str) -> Vec<(String, Strin
 
 /// Does anything already live at `path`?
 ///
-/// `NotFound` is the only answer that means "free". Every other error — a
-/// permission problem, a dangling mount — answers `true`, because the
+/// `NotFound` is the only answer that means "free". Every other error - a
+/// permission problem, a dangling mount - answers `true`, because the
 /// alternative is moving one tenant's archives on top of something we could not
 /// read.
 fn dir_is_occupied(path: &str) -> bool {
@@ -843,7 +843,7 @@ fn dir_is_occupied(path: &str) -> bool {
 
 /// Put carried trees back, most recent move first.
 ///
-/// Best-effort by necessity — it runs on a path that is already failing — but
+/// Best-effort by necessity - it runs on a path that is already failing - but
 /// never silent. A tree that cannot be put back is an archive the panel will
 /// look for under the old name and not find, which is the exact defect the
 /// carry exists to prevent, so both paths go into the log at ERROR.
@@ -887,7 +887,7 @@ async fn rename_site(
     // 0. Refuse, before anything moves, if a backup tree is already occupied at
     //    the destination.
     //
-    //    This is not a hypothetical collision — every completed site delete
+    //    This is not a hypothetical collision - every completed site delete
     //    manufactures one. The panel writes a pre-delete archive for a site it is
     //    about to remove and records no row for it, then the site row goes and the
     //    cascade takes the backup rows with it. The directory outlives every
@@ -933,7 +933,7 @@ async fn rename_site(
     // `restore_or_remove` retrofit missed, and it replaces a path that
     // `domain_claim` cannot vouch for: the claim guard clears a name against
     // `sites`, `git_deploys` and Docker-app labels, and never looks at the
-    // filesystem — so a vhost the OPERATOR wrote by hand (`webmail.example.com`,
+    // filesystem - so a vhost the OPERATOR wrote by hand (`webmail.example.com`,
     // a legacy config predating the panel) is claimable, and was silently
     // overwritten here and then bare-deleted on rollback. The tenant's own
     // config came back; the operator's never existed anywhere else.
@@ -962,7 +962,7 @@ async fn rename_site(
     // 4b. Carry the parked body across too, if this site is disabled.
     //
     // What step 3 just rewrote is whatever nginx has in service, and for a
-    // disabled site that is the maintenance stub — which would leave the real
+    // disabled site that is the maintenance stub - which would leave the real
     // body parked under the OLD name, where enabling the site will never look.
     // The site becomes unenableable through the panel while its configuration
     // sits on disk under a name nothing reads.
@@ -980,7 +980,7 @@ async fn rename_site(
                 } else {
                     tracing::warn!(
                         "Could not carry the parked configuration for disabled site {old_domain} \
-                         over to {new_parked} — it can still be enabled under its old name"
+                         over to {new_parked} - it can still be enabled under its old name"
                     );
                 }
             }
@@ -995,14 +995,14 @@ async fn rename_site(
     // A DNS-01 wildcard is issued once under the zone apex and every site in the
     // zone points its `ssl_certificate` at that one directory. MOVING it because
     // one of those sites was renamed leaves all the others pointing at a path
-    // that no longer exists — which does not fail now, because nginx is already
+    // that no longer exists - which does not fail now, because nginx is already
     // serving from memory, but fails the next `nginx -t` anybody triggers and
     // leaves nginx down at the next restart, for every site on the box. v2.53.0
     // guarded the delete paths against exactly this and did not reach the rename.
     //
     // When it is shared we copy instead of moving: the renamed site's vhost was
     // rewritten to the new path two steps ago, so leaving the directory alone
-    // would take the whole server's config invalid — the same outage from the
+    // would take the whole server's config invalid - the same outage from the
     // other side. A copy is a duplicate that renewal will not refresh, and that
     // is worth saying out loud rather than discovering at expiry.
     let old_ssl = format!("/etc/dockpanel/ssl/{old_domain}");
@@ -1010,7 +1010,7 @@ async fn rename_site(
     if std::path::Path::new(&old_ssl).exists() {
         if services::ownership::cert_dir_in_use_elsewhere(&old_domain) {
             tracing::warn!(
-                "{old_ssl} is referenced by another vhost — copying it to {new_ssl} instead of \
+                "{old_ssl} is referenced by another vhost - copying it to {new_ssl} instead of \
                  moving it, so the sites still pointing at it keep working. The copy is a \
                  snapshot: reissue a certificate for {new_domain} before the original expires."
             );
@@ -1053,7 +1053,7 @@ async fn rename_site(
     // rename path was missed, and it does both halves of the damage at once:
     // it DELETES the file at the old name (which may be `a.b.com`'s jail while
     // the caller is renaming `a-b.com`) and WRITES the destination (which may be
-    // a third domain's). Both are answered the same way — open the file and ask.
+    // a third domain's). Both are answered the same way - open the file and ask.
     let old_jail = format!("nginx-{}", old_domain.replace('.', "-"));
     let new_jail = format!("nginx-{}", new_domain.replace('.', "-"));
     let old_jail_path = format!("/etc/fail2ban/jail.d/{old_jail}.conf");
@@ -1150,7 +1150,7 @@ async fn rename_site(
     // The archive names carry the old domain as a prefix, and that prefix is load
     // bearing rather than decorative: off-site retention is handed the site's
     // live domain and uses it to choose which remote objects it may delete. Left
-    // alone, remote pruning silently stops matching this site's archives — and
+    // alone, remote pruning silently stops matching this site's archives - and
     // starts matching the previous occupant's if the old name is ever reused.
     if !carried.is_empty() {
         let moved_dir = format!("/var/backups/dockpanel/{new_domain}");
@@ -1252,7 +1252,7 @@ struct RedirectRequest {
     redirect_type: String,
 }
 
-/// POST /nginx/redirects/add — Add a redirect rule.
+/// POST /nginx/redirects/add - Add a redirect rule.
 async fn add_redirect(
     Json(body): Json<RedirectRequest>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
@@ -1323,7 +1323,7 @@ async fn add_redirect(
             std::fs::write(&redirects_file, &existing).ok();
             return Err(api_err(
                 StatusCode::BAD_REQUEST,
-                "Nginx config test failed — redirect reverted",
+                "Nginx config test failed - redirect reverted",
             ));
         }
     }
@@ -1337,7 +1337,7 @@ async fn add_redirect(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// GET /nginx/redirects/{domain} — List redirects for a domain.
+/// GET /nginx/redirects/{domain} - List redirects for a domain.
 async fn list_redirects(Path(domain): Path<String>) -> Result<Json<serde_json::Value>, ApiErr> {
     if !super::is_valid_domain(&domain) {
         return Err(api_err(StatusCode::BAD_REQUEST, "Invalid domain format"));
@@ -1369,7 +1369,7 @@ async fn list_redirects(Path(domain): Path<String>) -> Result<Json<serde_json::V
     Ok(Json(serde_json::json!({ "redirects": rules })))
 }
 
-/// POST /nginx/redirects/{domain}/remove — Remove a specific redirect.
+/// POST /nginx/redirects/{domain}/remove - Remove a specific redirect.
 async fn remove_redirect(
     Path(domain): Path<String>,
     Json(body): Json<serde_json::Value>,
@@ -1422,7 +1422,7 @@ struct PasswordProtectRequest {
     password: String,
 }
 
-/// POST /nginx/password-protect — Enable basic auth on a path.
+/// POST /nginx/password-protect - Enable basic auth on a path.
 async fn password_protect(
     Json(body): Json<PasswordProtectRequest>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
@@ -1528,7 +1528,7 @@ async fn password_protect(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// GET /nginx/password-protect/{domain} — List protected paths and users.
+/// GET /nginx/password-protect/{domain} - List protected paths and users.
 async fn list_protected(Path(domain): Path<String>) -> Result<Json<serde_json::Value>, ApiErr> {
     if !super::is_valid_domain(&domain) {
         return Err(api_err(StatusCode::BAD_REQUEST, "Invalid domain format"));
@@ -1559,7 +1559,7 @@ async fn list_protected(Path(domain): Path<String>) -> Result<Json<serde_json::V
     Ok(Json(serde_json::json!({ "paths": paths, "users": users })))
 }
 
-/// POST /nginx/password-protect/{domain}/remove — Remove password protection from a path.
+/// POST /nginx/password-protect/{domain}/remove - Remove password protection from a path.
 async fn remove_protection(
     Path(domain): Path<String>,
     Json(body): Json<serde_json::Value>,
@@ -1623,7 +1623,7 @@ struct AliasRequest {
     alias: String,
 }
 
-/// POST /nginx/aliases/add — Add a domain alias to a site.
+/// POST /nginx/aliases/add - Add a domain alias to a site.
 async fn add_alias(
     Json(body): Json<AliasRequest>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
@@ -1679,7 +1679,7 @@ async fn add_alias(
             }
             return Err(api_err(
                 StatusCode::BAD_REQUEST,
-                "Nginx test failed — alias reverted",
+                "Nginx test failed - alias reverted",
             ));
         }
     }
@@ -1688,7 +1688,7 @@ async fn add_alias(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// GET /nginx/aliases/{domain} — List domain aliases.
+/// GET /nginx/aliases/{domain} - List domain aliases.
 async fn list_aliases(Path(domain): Path<String>) -> Result<Json<serde_json::Value>, ApiErr> {
     if !super::is_valid_domain(&domain) {
         return Err(api_err(StatusCode::BAD_REQUEST, "Invalid domain format"));
@@ -1720,7 +1720,7 @@ async fn list_aliases(Path(domain): Path<String>) -> Result<Json<serde_json::Val
     Ok(Json(serde_json::json!({ "aliases": aliases })))
 }
 
-/// POST /nginx/aliases/{domain}/remove — Remove a domain alias.
+/// POST /nginx/aliases/{domain}/remove - Remove a domain alias.
 async fn remove_alias(
     Path(domain): Path<String>,
     Json(body): Json<serde_json::Value>,
@@ -1778,7 +1778,7 @@ struct LogQuery {
     log_type: Option<String>, // "access" or "error"
 }
 
-/// GET /nginx/site-logs/{domain} — Get nginx access or error logs for a site.
+/// GET /nginx/site-logs/{domain} - Get nginx access or error logs for a site.
 async fn site_logs(
     Path(domain): Path<String>,
     axum::extract::Query(params): axum::extract::Query<LogQuery>,
@@ -1810,7 +1810,7 @@ async fn site_logs(
     Ok(Json(serde_json::json!({ "logs": content, "lines": line_count, "file": log_file })))
 }
 
-/// GET /nginx/last-activity/{domain} — When this domain last served a request.
+/// GET /nginx/last-activity/{domain} - When this domain last served a request.
 ///
 /// The access log's mtime, as seconds since the epoch. That is deliberately not
 /// a parse of the log: the only consumer is the auto-sleep timer, which asks
@@ -1818,7 +1818,7 @@ async fn site_logs(
 /// container, and reading the last write time of a file answers that exactly,
 /// in constant time, no matter how large the log has grown.
 ///
-/// `seconds_ago` is `null` when the domain has no access log at all — a vhost
+/// `seconds_ago` is `null` when the domain has no access log at all - a vhost
 /// that has never been written, or an app with no domain. That is "unknown",
 /// not "idle", and callers must treat it as such: reporting a silent zero here
 /// is what would let a timer stop a container it knows nothing about.
@@ -1841,7 +1841,7 @@ async fn last_activity(Path(domain): Path<String>) -> Result<Json<serde_json::Va
     })))
 }
 
-/// GET /nginx/site-stats/{domain} — Basic traffic stats from access log.
+/// GET /nginx/site-stats/{domain} - Basic traffic stats from access log.
 async fn site_stats(Path(domain): Path<String>) -> Result<Json<serde_json::Value>, ApiErr> {
     if !super::is_valid_domain(&domain) {
         return Err(api_err(StatusCode::BAD_REQUEST, "Invalid domain format"));
@@ -1940,7 +1940,7 @@ fn parse_log_line_size(line: &str) -> Option<u64> {
 /// every COMPLETE line found, and return `(bytes_summed, new_offset)`.
 ///
 /// `new_offset` only advances to the last `\n` actually present in what was
-/// read — never to whatever `tail` happened to return. nginx can still be
+/// read - never to whatever `tail` happened to return. nginx can still be
 /// mid-write on the final line when this runs; a partial line's bytes are left
 /// unconsumed so the NEXT poll re-reads it complete, rather than this poll
 /// parsing a truncated size field (which is the number being summed, so a
@@ -1968,7 +1968,7 @@ async fn read_and_advance(path: &str, from: u64) -> (u64, u64) {
     (sum, from + complete.len() as u64)
 }
 
-/// GET /nginx/site-traffic-delta/{domain}?last_inode=&last_size= — bytes
+/// GET /nginx/site-traffic-delta/{domain}?last_inode=&last_size= - bytes
 /// transferred since the caller's last checkpoint, crossing a log rotation if
 /// one happened in between.
 ///
@@ -1976,13 +1976,13 @@ async fn read_and_advance(path: &str, from: u64) -> (u64, u64) {
 /// `traffic_accounting_scheduler`) owns the checkpoint and persists it
 /// centrally, because the agent itself has no durable store that survives a
 /// restart or reinstall. `last_inode`/`last_size` absent means "first poll ever
-/// for this site" — nothing to diff against, so this reads whatever the CURRENT
+/// for this site" - nothing to diff against, so this reads whatever the CURRENT
 /// file holds (bounded to at most today's traffic, since the file rotates
 /// daily) rather than reaching into rotated history no checkpoint ever priced in.
 ///
 /// Only ONE rotation is reconciled per call. `delaycompress` keeps the
 /// just-rotated file plain-text as `.1` for one more rotation cycle (about a
-/// day) — long enough for any reasonable poll interval — but if the caller goes
+/// day) - long enough for any reasonable poll interval - but if the caller goes
 /// quiet for longer than that, the tail end of whatever rotated out from under
 /// it is dropped rather than guessed at from `.2.gz` onward: an inode neither
 /// the current file nor `.1` matches isn't "rotated once", it's "rotated an
@@ -2015,12 +2015,12 @@ async fn site_traffic_delta(
         }
         Some((last_inode, last_size)) => {
             // Inode changed: rotation happened. The rotated predecessor lives at
-            // `.1` (uncompressed — delaycompress) as long as this poll lands
+            // `.1` (uncompressed - delaycompress) as long as this poll lands
             // within one rotation cycle of the previous one.
             let mut carried = 0u64;
             let rotated_file = format!("/var/log/nginx/{domain}.access.log.1");
             // If `.1`'s inode doesn't match, it has already rotated again
-            // (missed more than one cycle) — the tail from the old checkpoint
+            // (missed more than one cycle) - the tail from the old checkpoint
             // is unrecoverable, by design (see the doc comment above).
             if let Ok(rmeta) = std::fs::metadata(&rotated_file)
                 && rmeta.ino() == last_inode
@@ -2028,7 +2028,7 @@ async fn site_traffic_delta(
                 let (d, _) = read_and_advance(&rotated_file, last_size).await;
                 carried = d;
             }
-            // The new current file is entirely unaccounted for — read it whole.
+            // The new current file is entirely unaccounted for - read it whole.
             let (d2, off2) = read_and_advance(&log_file, 0).await;
             (carried + d2, off2, true)
         }
@@ -2048,7 +2048,7 @@ async fn site_traffic_delta(
 }
 
 // Local helper: `Option<(u64, u64)>` from the two independently-optional query
-// params — either both are present (a real checkpoint) or the caller has none.
+// params - either both are present (a real checkpoint) or the caller has none.
 impl TrafficDeltaQuery {
     fn as_pair(&self) -> Option<(u64, u64)> {
         match (self.last_inode, self.last_size) {
@@ -2058,7 +2058,7 @@ impl TrafficDeltaQuery {
     }
 }
 
-/// GET /nginx/php-errors/{domain} — Get PHP-FPM error log for a site.
+/// GET /nginx/php-errors/{domain} - Get PHP-FPM error log for a site.
 async fn php_errors(
     Path(domain): Path<String>,
     axum::extract::Query(params): axum::extract::Query<LogQuery>,
@@ -2108,7 +2108,7 @@ struct CloneRequest {
     target_domain: String,
 }
 
-/// POST /nginx/clone-site — Clone site files from one domain to another.
+/// POST /nginx/clone-site - Clone site files from one domain to another.
 async fn clone_site(Json(body): Json<CloneRequest>) -> Result<Json<serde_json::Value>, ApiErr> {
     if body.source_domain.is_empty() || body.target_domain.is_empty() {
         return Err(api_err(StatusCode::BAD_REQUEST, "Source and target domains required"));
@@ -2119,8 +2119,8 @@ async fn clone_site(Json(body): Json<CloneRequest>) -> Result<Json<serde_json::V
 
     let target_dir = format!("/var/www/{}", body.target_domain);
 
-    // The actual copy — source-existence check, target dir creation, `rsync -a
-    // --delete`, and the www-data/`.git` ownership fixup — lives in
+    // The actual copy - source-existence check, target dir creation, `rsync -a
+    // --delete`, and the www-data/`.git` ownership fixup - lives in
     // `services::staging::clone_files`, which also backs `POST /staging/clone`.
     // This used to be a second, inline copy of that same logic; the 300s cap
     // stays here as the request-level SLA guard it's always been. `is_valid_domain`
@@ -2155,7 +2155,7 @@ async fn clone_site(Json(body): Json<CloneRequest>) -> Result<Json<serde_json::V
 // Environment Variables
 // ──────────────────────────────────────────────────────────────
 
-/// GET /nginx/env/{domain} — Read .env file for a site.
+/// GET /nginx/env/{domain} - Read .env file for a site.
 async fn get_env(Path(domain): Path<String>) -> Result<Json<serde_json::Value>, ApiErr> {
     if !is_valid_domain(&domain) {
         return Err(api_err(StatusCode::BAD_REQUEST, "Invalid domain format"));
@@ -2176,7 +2176,7 @@ async fn get_env(Path(domain): Path<String>) -> Result<Json<serde_json::Value>, 
     Ok(Json(serde_json::json!({ "vars": vars, "raw": content })))
 }
 
-/// PUT /nginx/env/{domain} — Write .env file for a site.
+/// PUT /nginx/env/{domain} - Write .env file for a site.
 async fn set_env(Path(domain): Path<String>, Json(body): Json<serde_json::Value>) -> Result<Json<serde_json::Value>, ApiErr> {
     if !is_valid_domain(&domain) {
         return Err(api_err(StatusCode::BAD_REQUEST, "Invalid domain format"));
@@ -2207,7 +2207,7 @@ async fn set_env(Path(domain): Path<String>, Json(body): Json<serde_json::Value>
     // Fix ownership
     let _ = safe_command("chown").args(["www-data:www-data", &env_path]).output().await;
 
-    // Restart the app service if it's a Node/Python site — if the unit at that
+    // Restart the app service if it's a Node/Python site - if the unit at that
     // name is in fact this site's. The name is not injective.
     if let Some(svc) = services::app_process::owned_service_name(&domain) {
         let _ = safe_command("systemctl").args(["restart", &svc]).output().await;
@@ -2217,7 +2217,7 @@ async fn set_env(Path(domain): Path<String>, Json(body): Json<serde_json::Value>
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// POST /nginx/sites/{domain}/disable — Disable a site by replacing its nginx config with a 503 page.
+/// POST /nginx/sites/{domain}/disable - Disable a site by replacing its nginx config with a 503 page.
 async fn disable_site(Path(domain): Path<String>) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     if !is_valid_domain(&domain) {
         return Err((StatusCode::BAD_REQUEST, "Invalid domain".into()));
@@ -2238,7 +2238,7 @@ async fn disable_site(Path(domain): Path<String>) -> Result<Json<serde_json::Val
     // The maintenance response has to answer where the SITE answered. Naming the
     // addresses here instead of taking them from the body being parked is what
     // made disabling a site do nothing at all on any install whose panel knows
-    // its own address — see `services::nginx::listener_lines`.
+    // its own address - see `services::nginx::listener_lines`.
     let mut listeners = services::nginx::listener_lines(&live);
     if listeners.trim().is_empty() {
         listeners = "    listen 80;\n    listen [::]:80;\n".to_string();
@@ -2261,7 +2261,7 @@ async fn disable_site(Path(domain): Path<String>) -> Result<Json<serde_json::Val
     std::fs::write(&conf_path, &disabled_conf)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Write disabled config: {e}")))?;
 
-    // Stop app process if it exists (node/python) — and is this site's.
+    // Stop app process if it exists (node/python) - and is this site's.
     if let Some(svc) = services::app_process::owned_service_name(&domain) {
         let _ = safe_command("systemctl").args(["stop", &svc]).output().await;
     }
@@ -2274,7 +2274,7 @@ async fn disable_site(Path(domain): Path<String>) -> Result<Json<serde_json::Val
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// POST /nginx/sites/{domain}/enable — Re-enable a disabled site by restoring its nginx config.
+/// POST /nginx/sites/{domain}/enable - Re-enable a disabled site by restoring its nginx config.
 async fn enable_site(Path(domain): Path<String>) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     if !is_valid_domain(&domain) {
         return Err((StatusCode::BAD_REQUEST, "Invalid domain".into()));
@@ -2288,7 +2288,7 @@ async fn enable_site(Path(domain): Path<String>) -> Result<Json<serde_json::Valu
 
     // The backup holds the body as it was when the site was disabled. For a site
     // switched php→static under v2.67.0 and disabled before the operator upgraded,
-    // that is the UNPATCHED body — and the startup retrofit cannot reach it: it
+    // that is the UNPATCHED body - and the startup retrofit cannot reach it: it
     // scans sites-enabled for `*.conf`, while this is `*.conf.disabled` in
     // sites-available, failing both tests. A plain copy therefore re-arms the
     // disclosure v2.68.0 shipped for, at the exact moment the body goes back into
@@ -2304,7 +2304,7 @@ async fn enable_site(Path(domain): Path<String>) -> Result<Json<serde_json::Valu
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Restore config: {e}")))?;
     std::fs::remove_file(&backup_path).ok();
 
-    // Restart app process if it exists (node/python) — and is this site's.
+    // Restart app process if it exists (node/python) - and is this site's.
     if let Some(svc) = services::app_process::owned_service_name(&domain) {
         let _ = safe_command("systemctl").args(["restart", &svc]).output().await;
     }
@@ -2317,7 +2317,7 @@ async fn enable_site(Path(domain): Path<String>) -> Result<Json<serde_json::Valu
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// POST /nginx/sites/{domain}/cache/purge — Purge FastCGI cache for a site.
+/// POST /nginx/sites/{domain}/cache/purge - Purge FastCGI cache for a site.
 async fn purge_cache(
     Path(domain): Path<String>,
 ) -> Result<Json<NginxResponse>, (StatusCode, Json<NginxResponse>)> {
@@ -2378,7 +2378,7 @@ struct RedisEnableBody {
     php_preset: Option<String>,
 }
 
-/// POST /nginx/sites/{domain}/redis/enable — Configure Redis object cache for a PHP site.
+/// POST /nginx/sites/{domain}/redis/enable - Configure Redis object cache for a PHP site.
 async fn redis_enable(
     Path(domain): Path<String>,
     Json(body): Json<RedisEnableBody>,
@@ -2475,7 +2475,7 @@ async fn redis_enable(
     })))
 }
 
-/// POST /nginx/sites/{domain}/redis/disable — Remove Redis object cache config.
+/// POST /nginx/sites/{domain}/redis/disable - Remove Redis object cache config.
 async fn redis_disable(
     Path(domain): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
@@ -2512,7 +2512,7 @@ async fn redis_disable(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// POST /nginx/sites/{domain}/redis/purge — Flush the Redis DB for a site.
+/// POST /nginx/sites/{domain}/redis/purge - Flush the Redis DB for a site.
 async fn redis_purge(
     Path(domain): Path<String>,
     Json(body): Json<serde_json::Value>,
@@ -2552,7 +2552,7 @@ async fn redis_purge(
 
 // ── WAF (ModSecurity) per-site configuration ───────────────────────
 
-/// POST /nginx/sites/{domain}/waf/configure — Generate per-site ModSecurity config.
+/// POST /nginx/sites/{domain}/waf/configure - Generate per-site ModSecurity config.
 async fn waf_configure(
     Path(domain): Path<String>,
     Json(body): Json<serde_json::Value>,
@@ -2584,7 +2584,7 @@ async fn waf_configure(
     let has_crs = std::path::Path::new(&format!("{crs_dir}/crs-setup.conf")).exists();
 
     let config = format!(
-        "# WAF config for {domain} (managed by DockPanel)\n\
+        "# WAF config for {domain} (managed by CyberHunter - Panel)\n\
          Include /etc/modsecurity/modsecurity.conf\n\
          SecRuleEngine {engine}\n\
          SecAuditLog {log_dir}/{safe_domain}_audit.log\n\
@@ -2598,7 +2598,7 @@ async fn waf_configure(
                  Include {crs_dir}/rules/*.conf"
             )
         } else {
-            "# OWASP CRS not found — basic protection only".to_string()
+            "# OWASP CRS not found - basic protection only".to_string()
         }
     );
 
@@ -2614,7 +2614,7 @@ async fn waf_configure(
     })))
 }
 
-/// GET /nginx/sites/{domain}/waf/logs — Get recent WAF events.
+/// GET /nginx/sites/{domain}/waf/logs - Get recent WAF events.
 async fn waf_logs(
     Path(domain): Path<String>,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
@@ -2736,7 +2736,7 @@ fn parse_modsec_event(raw: &str) -> Option<serde_json::Value> {
 
 // ── Image Optimization ──────────────────────────────────────────────
 
-/// POST /nginx/sites/{domain}/optimize-images — Convert images to WebP/AVIF.
+/// POST /nginx/sites/{domain}/optimize-images - Convert images to WebP/AVIF.
 async fn optimize_images(
     Path(domain): Path<String>,
     Json(body): Json<serde_json::Value>,
@@ -2747,7 +2747,7 @@ async fn optimize_images(
 
     // Where this site's files actually are. node/python/proxy serve from the site
     // root; static and php nest under `public/`. This hardcoded `public/`, which
-    // for a node or python site is not where the images are — and before v2.123.0
+    // for a node or python site is not where the images are - and before v2.123.0
     // that directory existed and was empty (`create_app_service` made it), so the
     // WebP/AVIF buttons reported a clean run over zero files rather than failing.
     // An absent `runtime` means an older backend, and keeps the previous behaviour.
@@ -2950,7 +2950,7 @@ mod traffic_delta_tests {
 
     fn write_temp(content: &[u8]) -> std::path::PathBuf {
         // Tests run concurrently in the same process, so PID + a coarse
-        // timestamp isn't unique enough — an atomic counter is.
+        // timestamp isn't unique enough - an atomic counter is.
         static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let path = std::env::temp_dir().join(format!(
@@ -3014,7 +3014,7 @@ mod traffic_delta_tests {
         let (sum, new_offset) = read_and_advance(path.to_str().unwrap(), 0).await;
         // Only the complete line is counted...
         assert_eq!(sum, 100);
-        // ...and the offset stops right after it, NOT at end-of-file — so the
+        // ...and the offset stops right after it, NOT at end-of-file - so the
         // partial line's bytes are re-read (and get counted) once it's finished.
         assert_eq!(new_offset, complete.len() as u64);
         assert!(new_offset < content.len() as u64);

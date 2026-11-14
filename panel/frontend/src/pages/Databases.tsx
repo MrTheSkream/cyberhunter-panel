@@ -213,7 +213,7 @@ function SchemaBrowser({ database, onClose }: { database: Database; onClose: () 
                 </div>
                 )}
 
-                {/* Indexes. Rendered independently of the columns pane above — they are
+                {/* Indexes. Rendered independently of the columns pane above - they are
                     separate endpoints and one must not be able to blank the other. */}
                 {tableIndexes && tableIndexes.rows?.length > 0 && (
                   <div className="bg-dark-800 rounded-lg border border-dark-500 overflow-hidden">
@@ -734,13 +734,13 @@ function ImportDatabase({ database, onClose }: { database: Database; onClose: ()
       await api.post(`/databases/${database.id}/import`, { filename });
       setDone(`Imported ${filename} into ${database.name}.`);
     } catch (e) {
-      // A 504 here is the panel giving up on WATCHING, not the import failing — the
+      // A 504 here is the panel giving up on WATCHING, not the import failing - the
       // backend says so in as many words and the operator must not be told to retry, so
       // it gets its own tone rather than the red banner that means "this did not happen".
       if (e instanceof ApiError && (e.status === 504 || e.status === 524)) {
         setNotice(
           e.status === 524
-            ? `The import is still running on the server — it was NOT cancelled and must not be started again. The connection was cut by Cloudflare at 100 seconds, which is shorter than the panel's own limit. Browse the tables in a few minutes to see it finish.`
+            ? `The import is still running on the server - it was NOT cancelled and must not be started again. The connection was cut by Cloudflare at 100 seconds, which is shorter than the panel's own limit. Browse the tables in a few minutes to see it finish.`
             : e.message
         );
       } else {
@@ -883,7 +883,7 @@ chmod 600 ${dir}/dump.sql.gz`}
       {importing && (
         <p className="text-xs text-dark-400 mt-4">
           Importing streams the dump straight into the database container. Large dumps can take
-          several minutes — leave this page open.
+          several minutes - leave this page open.
         </p>
       )}
     </div>
@@ -901,7 +901,7 @@ export default function Databases() {
   const [error, setError] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
 
-  // Form state. GH #64: a database is now owned by a Site OR a Stack — never both
+  // Form state. GH #64: a database is now owned by a Site OR a Stack - never both
   // (chk_databases_owner). Stacks are admin-only throughout the panel, so ownerType
   // only ever offers "stack" for admins; a non-admin's request is unaffected.
   const [ownerType, setOwnerType] = useState<"site" | "stack">("site");
@@ -930,7 +930,7 @@ export default function Databases() {
   // Import state. Admin-only, matching the server: the dump directory is keyed by
   // database NAME and a name outlives the database that made it, so a tenant-reachable
   // listing would expose a previous holder's leftover dumps. Putting a file there needs
-  // root anyway — there is no per-site SFTP — so no non-admin can use this door for its
+  // root anyway - there is no per-site SFTP - so no non-admin can use this door for its
   // intended purpose in the first place.
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
@@ -945,7 +945,7 @@ export default function Databases() {
       const [dbs, sitesData, stacksData] = await Promise.all([
         api.get<Database[]>("/databases"),
         api.get<Site[]>("/sites"),
-        // Stacks are admin-only server-side (require_admin) — skip the call
+        // Stacks are admin-only server-side (require_admin) - skip the call
         // entirely for non-admins rather than surfacing its 403 as a page error.
         isAdmin ? api.get<Stack[]>("/stacks") : Promise.resolve([] as Stack[]),
       ]);
@@ -1158,7 +1158,7 @@ export default function Databases() {
           onSubmit={handleCreate}
           className="bg-dark-800 rounded-lg border border-dark-500 p-5 mb-6 space-y-4"
         >
-          {/* Owner type toggle — Stacks are admin-only throughout the panel, so this
+          {/* Owner type toggle - Stacks are admin-only throughout the panel, so this
               only appears once the operator has at least one to pick from. Everyone
               else keeps the plain Site picker unchanged. */}
           {isAdmin && stacks.length > 0 && (
@@ -1243,7 +1243,7 @@ export default function Databases() {
                   ))}
                 </select>
                 <p className="text-xs text-dark-300 mt-1">
-                  Reachable from the stack's own containers at this database's name — no
+                  Reachable from the stack's own containers at this database's name - no
                   extra networking to configure.
                 </p>
               </div>
@@ -1263,7 +1263,7 @@ export default function Databases() {
                 title="Letters, numbers and underscores. Must start with a letter or a number."
                 className="w-full px-3 py-2.5 border border-dark-500 rounded-lg focus:ring-2 focus:ring-accent-500 focus:border-accent-500 outline-none text-sm"
               />
-              <p className="text-xs text-dark-300 mt-1">Letters, numbers and underscores — must start with a letter or a number</p>
+              <p className="text-xs text-dark-300 mt-1">Letters, numbers and underscores - must start with a letter or a number</p>
             </div>
             <div>
               <label htmlFor="db-engine" className="block text-sm font-medium text-dark-100 mb-1">
@@ -1374,7 +1374,7 @@ export default function Databases() {
                       {getOwnerLabel(db)}
                     </td>
                     <td className="px-5 py-4 text-sm text-dark-200 font-mono hidden sm:table-cell">
-                      {db.port || "\u2014"}
+                      {db.port || "-"}
                     </td>
                     <td className="px-5 py-4 text-sm text-dark-200 hidden lg:table-cell">
                       {formatDate(db.created_at)}
@@ -1415,17 +1415,17 @@ export default function Databases() {
                               // The flag is stored and nothing consumes it: no WAL is
                               // archived, no binlog retained, and the restore endpoint
                               // answers 501. Saying "recovery enabled" promised a
-                              // recoverability nothing behind this button can deliver —
+                              // recoverability nothing behind this button can deliver -
                               // the worst place in the product to be optimistic.
                               setSuccessMsg(
                                 newEnabled
-                                  ? `Retention preference saved for ${db.name}. Point-in-time recovery is not implemented — nothing is being archived, and restore is unavailable. Use scheduled backups.`
+                                  ? `Retention preference saved for ${db.name}. Point-in-time recovery is not implemented - nothing is being archived, and restore is unavailable. Use scheduled backups.`
                                   : `Retention preference cleared for ${db.name}.`
                               );
                             } catch (e) { setError(e instanceof Error ? e.message : "Failed to save retention preference"); }
                           }}
                           className="px-2 py-1 rounded text-xs font-medium bg-dark-700 text-dark-300 hover:bg-dark-600 transition-colors"
-                          title="Store a PITR retention preference. Point-in-time recovery itself is not implemented — nothing is archived and restore returns 501."
+                          title="Store a PITR retention preference. Point-in-time recovery itself is not implemented - nothing is archived and restore returns 501."
                         >
                           PITR
                         </button>
@@ -1508,7 +1508,7 @@ export default function Databases() {
                   &times;
                 </button>
               </div>
-              <p className="text-xs text-dark-300 mb-2">Save this password now — it will not be shown again after you leave this page.</p>
+              <p className="text-xs text-dark-300 mb-2">Save this password now - it will not be shown again after you leave this page.</p>
               <div className="flex items-center gap-2">
                 <code className="flex-1 bg-dark-900 border border-dark-500 rounded-lg px-3 py-2 text-sm font-mono text-dark-50">
                   {pwResetSuccess}
@@ -1558,7 +1558,7 @@ export default function Databases() {
                       Two of these carry a `hint`, because two of them are the reason
                       this panel generates support questions. A managed database is
                       published on the host's loopback only and sits on a bridge with
-                      container-to-container traffic switched off — so "Host" does not
+                      container-to-container traffic switched off - so "Host" does not
                       work from inside a container, and "Internal Host" is a container
                       NAME rather than a hostname anything can resolve. Stating that
                       here is the whole fix: the field was inviting a connection
@@ -1573,7 +1573,7 @@ export default function Databases() {
                       { label: "Username", value: credentials.username, key: "username" },
                       { label: "Password", value: credentials.password, key: "password" },
                       { label: "Internal Host", value: credentials.internal_host, key: "internal_host",
-                        hint: "The Docker container's name — for docker exec, docker logs and the CLI. It is not a hostname you can connect to." },
+                        hint: "The Docker container's name - for docker exec, docker logs and the CLI. It is not a hostname you can connect to." },
                     ].map((field: { label: string; value: string; key: string; hint?: string }) => (
                       <div key={field.key}>
                         <label className="block text-xs font-medium text-dark-200 mb-1">

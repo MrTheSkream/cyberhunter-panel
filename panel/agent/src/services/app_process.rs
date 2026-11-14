@@ -13,7 +13,7 @@ fn service_name(domain: &str) -> String {
     format!("{SERVICE_PREFIX}{}", domain.replace('.', "-"))
 }
 
-/// The unit name to act on for `domain` — but only when the unit on disk says
+/// The unit name to act on for `domain` - but only when the unit on disk says
 /// it is the one running `domain`.
 ///
 /// `service_name` collapses `.` to `-`, and `-` is legal inside a domain label,
@@ -25,7 +25,7 @@ fn service_name(domain: &str) -> String {
 /// but it is the same outage, reachable by any tenant on their own site.
 ///
 /// `None` when there is nothing to act on OR when the unit belongs to someone
-/// else — the caller does nothing either way, which is why one return value
+/// else - the caller does nothing either way, which is why one return value
 /// serves both.
 pub fn owned_service_name(domain: &str) -> Option<String> {
     let svc = service_name(domain);
@@ -57,8 +57,8 @@ pub fn create_app_service(
     let site_dir = format!("/var/www/{domain}");
 
     // A managed process has to start where its code is. `document_root_for` is the
-    // one place that knows where that is per runtime — node/python/proxy keep the
-    // site root, static and php nest under `public/` — and it is what the vhost,
+    // one place that knows where that is per runtime - node/python/proxy keep the
+    // site root, static and php nest under `public/` - and it is what the vhost,
     // the git clone and `EnvironmentFile` below all already agree on.
     //
     // This used to hardcode `{site_dir}/public` for every runtime, and this
@@ -163,7 +163,7 @@ WantedBy=multi-user.target
 
     // The mirror of the delete-side collision: because `service_name` collapses
     // '.' to '-', writing this unit for `a-b.com` would silently replace the one
-    // running `a.b.com` — pointing its ExecStart and WorkingDirectory at another
+    // running `a.b.com` - pointing its ExecStart and WorkingDirectory at another
     // tenant's docroot. Latent rather than immediate (`enable --now` does not
     // restart an already-active unit), which is worse: it surfaces at the next
     // reboot, running the wrong process for the victim's vhost.
@@ -183,7 +183,7 @@ WantedBy=multi-user.target
 
     // Create working directory if it doesn't exist
     std::fs::create_dir_all(&working_dir).ok();
-    // Set ownership — everything except `.git`, which stays root's. A git-deployed
+    // Set ownership - everything except `.git`, which stays root's. A git-deployed
     // Node/Python app runs this on every (re)create; handing `.git` to www-data
     // gives the app `config`/`hooks/` that `deploy.rs::clone_or_pull` runs as root
     // on the next deploy. Mirrors `deploy.rs::hand_tree_to_web_user`.

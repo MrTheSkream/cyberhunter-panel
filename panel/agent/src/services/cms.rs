@@ -20,7 +20,7 @@ const QUICK_TIMEOUT: Duration = Duration::from_secs(60);
 /// Run a shell command, return stdout on success or stderr on failure.
 ///
 /// `kill_on_drop` matters because of the `timeout` wrapper: without it, a
-/// child that outlives `timeout` is not killed when the future is dropped —
+/// child that outlives `timeout` is not killed when the future is dropped -
 /// it orphans, running to completion (or forever) unattended. Same class as
 /// the `kill_on_drop`-missing bugs already fixed elsewhere in this project.
 async fn run_cmd(program: &str, args: &[&str], timeout: Duration) -> Result<String, String> {
@@ -89,8 +89,8 @@ fn validate_domain(domain: &str) -> Result<(), String> {
 
 /// Fix ownership to www-data for a site directory, without handing over `.git`.
 ///
-/// No caller today has a `.git` present the moment this runs — Composer refuses
-/// a non-empty target and Joomla's release zip ships none — so this is
+/// No caller today has a `.git` present the moment this runs - Composer refuses
+/// a non-empty target and Joomla's release zip ships none - so this is
 /// prospective: once the CMS is live and running as www-data, a future
 /// compromise of the app itself could create one, and this keeps that from
 /// becoming a route to root (see `deploy.rs::hand_tree_to_web_user`, and
@@ -118,7 +118,7 @@ async fn chown_site(path: &str) {
 /// Tighten a freshly-written DB-credential file (an app's .env/settings.php/
 /// configuration.php) to 640 so it isn't left at the process umask's default
 /// 644. `chown_site` above already sets both owner AND group to www-data, so
-/// this closes reads from any OTHER local account on the box — it does not
+/// this closes reads from any OTHER local account on the box - it does not
 /// and cannot isolate one tenant's www-data-identity process from another's,
 /// since every site's PHP-FPM pool and every client-role shell share that
 /// same identity (nginx.rs hardcodes user=www-data/group=www-data for every
@@ -132,7 +132,7 @@ async fn secure_credential_file(path: &str) {
 /// for one specific package file, from a release's `body` field.
 ///
 /// GitHub does not publish a discrete checksum FILE for release assets the
-/// way `getcomposer.org` does for `composer.phar` — Joomla instead documents
+/// way `getcomposer.org` does for `composer.phar` - Joomla instead documents
 /// per-package SHA-256 hashes as a markdown table inside the free-text
 /// release notes (stable across the 8 most recent releases sampled,
 /// including betas/RCs, at the time this was written). Ties the extraction
@@ -157,7 +157,7 @@ fn extract_release_sha256(body: &str, filename: &str) -> Option<String> {
 /// Ensure Composer is installed at /usr/local/bin/composer.
 ///
 /// Verifies the downloaded phar's sha256 against the sidecar Composer itself
-/// publishes at the same path (`<url>.sha256`) before making it executable —
+/// publishes at the same path (`<url>.sha256`) before making it executable -
 /// a bare `curl` had no integrity check at all. Fails closed: any download,
 /// checksum-fetch, or mismatch error removes the (possibly-tampered) phar
 /// rather than leaving it in place for a retry to silently reuse.
@@ -274,11 +274,11 @@ pub async fn install_laravel(
     // Generate application key
     run_cmd_in(&site_dir, "php", &["artisan", "key:generate", "--force"], QUICK_TIMEOUT).await?;
 
-    // Run migrations (allow failure — DB might not be ready)
+    // Run migrations (allow failure - DB might not be ready)
     let _ = run_cmd_in(&site_dir, "php", &["artisan", "migrate", "--force"], CLI_INSTALL_TIMEOUT).await;
 
     // Create public symlink for nginx (Laravel's web root is public/ by default)
-    // No symlink needed — Laravel already uses public/ as document root.
+    // No symlink needed - Laravel already uses public/ as document root.
 
     chown_site(&site_dir).await;
     secure_credential_file(&env_file).await;
@@ -341,10 +341,10 @@ pub async fn install_drupal(
     // Run drush site install
     //
     // db_user/db_pass/db_host are validated at the route layer
-    // (routes/cms.rs) to reject '#', '/', '?' — the characters proven,
+    // (routes/cms.rs) to reject '#', '/', '?' - the characters proven,
     // empirically against PHP's own parse_url() (which this URL eventually
     // goes through via Drupal's Connection::createConnectionOptionsFromUrl),
-    // to either break parsing outright or — worse, for a '#' in the host —
+    // to either break parsing outright or - worse, for a '#' in the host -
     // silently truncate it into a URL fragment. Percent-encoding was
     // considered and rejected: Drupal's parser never calls
     // urldecode()/rawurldecode() on the parsed components, so an encoded
@@ -439,7 +439,7 @@ pub async fn install_joomla(
         format!("https://github.com/joomla/joomla-cms/releases/download/{tag}/{zip_filename}");
     run_cmd("curl", &["-sL", "-o", &zip_path, &download_url], DOWNLOAD_TIMEOUT).await?;
 
-    // Verify BEFORE extracting — fail closed on any mismatch or read error.
+    // Verify BEFORE extracting - fail closed on any mismatch or read error.
     let zip_bytes = tokio::fs::read(&zip_path)
         .await
         .map_err(|e| format!("Failed to read downloaded Joomla package: {e}"))?;
@@ -509,7 +509,7 @@ pub async fn install_symfony(domain: &str, title: &str) -> Result<String, String
     )
     .await?;
 
-    // Symfony's web root is public/ by default — no symlink needed.
+    // Symfony's web root is public/ by default - no symlink needed.
 
     // Set APP_NAME in .env if it exists
     let env_file = format!("{site_dir}/.env");
@@ -599,12 +599,12 @@ pub async fn install_codeigniter(
 /// guard against: phpdotenv's parser treats a bare `#` as a comment-start
 /// with NO whitespace precondition (`EntryParser::processToken`,
 /// `UNQUOTED_STATE` → `COMMENT_STATE` on any `#` token), silently truncating
-/// everything after it. Double-quoting alone is not sufficient either — a
+/// everything after it. Double-quoting alone is not sufficient either - a
 /// `$` inside a double-quoted value starts variable *interpolation*
 /// (`DOUBLE_QUOTED_STATE` → emits with `$var = true`), which phpdotenv
 /// resolves against the process environment when the app loads. `\`, `"`,
 /// and `$` must all be backslash-escaped for a double-quoted value to be
-/// pure-literal in this parser — verified against the real library (`composer
+/// pure-literal in this parser - verified against the real library (`composer
 /// require vlucas/phpdotenv`, round-tripping `#`, space, `"`, `'`, `\`, `$`,
 /// and all of them combined in one value).
 fn quote_laravel_env_value(value: &str) -> String {
@@ -640,21 +640,21 @@ fn replace_env_line(content: &str, key: &str, value: &str) -> String {
 }
 
 /// Quote a value for CodeIgniter 4's OWN `.env` parser (`system/Config/DotEnv.php`
-/// — not phpdotenv; CI4 rolls its own, with different escaping rules).
+/// - not phpdotenv; CI4 rolls its own, with different escaping rules).
 ///
 /// `sanitizeValue()` accepts, inside a quoted value, only `\\` (a literal
-/// backslash) and `\"` (a literal quote) as escapes — its unquoting regex
+/// backslash) and `\"` (a literal quote) as escapes - its unquoting regex
 /// only recognizes those two backslash sequences, so escaping anything else
 /// (in particular a `\$`, which phpdotenv WOULD want) desyncs that regex
 /// instead of producing a literal `$`. So `$` is deliberately left
 /// un-escaped here. That leaves one narrow, unfixable-from-this-side gap:
 /// `resolveNestedVariables()` runs unconditionally after unquoting and
 /// substitutes any literal `${SOME_VAR}` substring against the process
-/// environment, with no way to escape it — CI4 itself provides none. A
+/// environment, with no way to escape it - CI4 itself provides none. A
 /// value that happens to contain that exact substring, for an env var that
 /// happens to be set at load time, would be silently rewritten. Given
 /// `safe_command`'s child environment is a fixed, minimal set (PATH, HOME,
-/// LANG, LC_ALL, DOCKER_CONFIG — nothing password-shaped), this is a
+/// LANG, LC_ALL, DOCKER_CONFIG - nothing password-shaped), this is a
 /// theoretical residual, not a practical one; documented rather than
 /// silently left unmentioned. Verified against the real parser logic
 /// (`sanitizeValue`/`resolveNestedVariables`, pulled from CodeIgniter4's own

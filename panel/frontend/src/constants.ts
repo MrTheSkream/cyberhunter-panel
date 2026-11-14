@@ -7,7 +7,7 @@
  * languages apart; `upload-refusal-pin-e2e.sh` is what holds them together.
  *
  * It is small because an upload is base64-encoded into a JSON body, and that
- * body is capped at 2 MiB by the server framework — twice, once at the panel
+ * body is capped at 2 MiB by the server framework - twice, once at the panel
  * and again on the hop to the agent. Checking it here is what turns a long
  * upload ending in "1 failed" into an immediate sentence naming the limit.
  */
@@ -16,7 +16,7 @@ export const UPLOAD_MAX_FILE_BYTES = 1_500_000;
 /** The refusal, worded the way the server words it. */
 export function uploadTooLargeMessage(fileName: string, size: number): string {
   return (
-    `${fileName} is ${(size / 1_000_000).toFixed(1)} MB — too large for the file ` +
+    `${fileName} is ${(size / 1_000_000).toFixed(1)} MB - too large for the file ` +
     `manager (limit ${(UPLOAD_MAX_FILE_BYTES / 1_000_000).toFixed(1)} MB). Copy it ` +
     `with rsync or scp over the server's own SSH, or use the Migration wizard ` +
     `to move a whole site.`

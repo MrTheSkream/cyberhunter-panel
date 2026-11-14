@@ -1,8 +1,8 @@
-# Fonctionnalité 2 — Réglages PHP par domaine (proposition à valider)
+# Fonctionnalité 2 - Réglages PHP par domaine (proposition à valider)
 
 ## 1. Point de départ
 
-**DockPanel aujourd'hui** (Ubuntu) :
+**CyberHunter - Panel aujourd'hui** (Ubuntu) :
 - un pool PHP-FPM par site (`/etc/php/X.Y/fpm/pool.d/<site>.conf`), utilisateur `www-data`
   (ou l'utilisateur SFTP du site), socket dédiée, versions 8.1 → 8.5, changement de version possible ;
 - réglables : mémoire (`php_memory_mb`) et nombre de workers (`php_max_workers`), c'est tout ;
@@ -96,13 +96,13 @@ valeurs modifiées ; le reste = défauts du code) + `php_isolation BOOLEAN NOT N
 7. Sites existants après migration : toujours fonctionnels (contrôle de la décision D1).
 
 ## 6. Décisions (validées le 2026-11-14)
-- **D1 — Isolation : nouveaux sites seulement.** Les sites existants gardent leur comportement ;
+- **D1 - Isolation : nouveaux sites seulement.** Les sites existants gardent leur comportement ;
   l'admin l'active site par site. Migration : `php_isolation` et `php_disable_shell` ajoutées avec
   `DEFAULT false` (remplit les lignes existantes), puis `SET DEFAULT true` (nouveaux sites).
-- **D2 — Fonctions shell bloquées par défaut** (`exec, system, passthru, shell_exec, proc_open,
+- **D2 - Fonctions shell bloquées par défaut** (`exec, system, passthru, shell_exec, proc_open,
   popen`, en `php_admin_value[disable_functions]`) sur les nouveaux sites ; l'admin peut les
   réautoriser pour un site (case `php_disable_shell`). Sites existants : non bloquées (D1).
-- **D3 — Éditeur du php.ini global inclus.** Page admin « PHP » (par version installée) :
+- **D3 - Éditeur du php.ini global inclus.** Page admin « PHP » (par version installée) :
   - formulaire des réglages principaux (memory_limit, max_execution_time, max_input_time,
     upload_max_filesize, post_max_size, display_errors, error_reporting, date.timezone) +
     éditeur brut de `/etc/php/X.Y/fpm/php.ini` ;

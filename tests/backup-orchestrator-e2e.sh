@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# DockPanel Backup Orchestrator E2E Test Suite
+# CyberHunter - Panel Backup Orchestrator E2E Test Suite
 # Tests database backups, volume backups, encryption, verification, and policies.
 #
 # Usage: bash tests/backup-orchestrator-e2e.sh <host> [port]
@@ -37,7 +37,7 @@ api_post() { curl -sf -H "Authorization: Bearer $AUTH_TOKEN" -X POST "${API}$1" 
 api_put() { curl -sf -H "Authorization: Bearer $AUTH_TOKEN" -X PUT "${API}$1" -H "Content-Type: application/json" -d "$2" 2>/dev/null; }
 api_delete() { curl -sf -H "Authorization: Bearer $AUTH_TOKEN" -X DELETE "${API}$1" 2>/dev/null; }
 
-echo -e "${BOLD}DockPanel Backup Orchestrator E2E Tests${NC}"
+echo -e "${BOLD}CyberHunter - Panel Backup Orchestrator E2E Tests${NC}"
 echo "Target: ${HOST}:${PORT}"
 echo ""
 
@@ -54,7 +54,7 @@ AUTH_TOKEN=$(echo "$LOGIN_RESP" | python3 -c "import sys,json; print(json.load(s
 if [ -n "$AUTH_TOKEN" ]; then
     ok "Login successful"
 else
-    fail "Login failed — cannot continue"
+    fail "Login failed - cannot continue"
     echo -e "\n${RED}${BOLD}Cannot authenticate. Aborting.${NC}"
     exit 1
 fi
@@ -124,13 +124,13 @@ if [ -n "$POLICY_ID" ]; then
     if [ "$UPDATED_NAME" = "E2E Updated Policy" ]; then
         ok "Update policy name to 'E2E Updated Policy'"
     else
-        fail "Update policy — name not updated"
+        fail "Update policy - name not updated"
     fi
 
     # The PUT above is deliberately PARTIAL: it names only `name` and
     # `retention_count`. Until v2.50.0 the handler assigned server_id and
     # destination_id unconditionally, so this very request silently NULLed both
-    # every time it ran — and this test asserted nothing about them, so it drove
+    # every time it ran - and this test asserted nothing about them, so it drove
     # the defect for months without noticing. `schedule` stands in for the whole
     # untouched set: it was created as "0 3 * * *" and no request has changed it.
     KEPT_SCHEDULE=$(echo "$UPDATE_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('schedule',''))" 2>/dev/null)
@@ -225,10 +225,10 @@ for v in vs:
         if [ "$LATEST_STATUS" = "passed" ]; then
             ok "Database backup verification PASSED"
         elif [ "$LATEST_STATUS" = "failed" ]; then
-            # May fail if temp container can't restore — acceptable in some envs
+            # May fail if temp container can't restore - acceptable in some envs
             skip "Database backup verification failed (may be environment-specific)"
         else
-            skip "Verification still running after 60s — timeout"
+            skip "Verification still running after 60s - timeout"
         fi
     fi
 
@@ -242,7 +242,7 @@ for v in vs:
         fi
     fi
 else
-    skip "No databases found — skipping database backup tests"
+    skip "No databases found - skipping database backup tests"
 fi
 
 # ── Verifications List ─────────────────────────────────────────────────

@@ -29,7 +29,7 @@ pub struct ActivityLog {
     /// Which host the action happened on. `activity_logs.server_id` has been
     /// written since v2.58.0 and stamped by the auto-healer's own writers since
     /// v2.60.0, and until now it was read only by this file's sibling cooldown
-    /// gates — never declared here, so `SELECT *` dropped it and the audit feed
+    /// gates - never declared here, so `SELECT *` dropped it and the audit feed
     /// could not say which of N machines an action ran on. NULL for a panel-wide
     /// action that belongs to no single host.
     pub server_id: Option<Uuid>,
@@ -47,7 +47,7 @@ const ACTIVITY_COLUMNS: &str = "a.id, a.user_id, a.user_email, a.action, a.targe
      a.target_name, a.details, a.ip_address, a.created_at, a.server_id, s.name AS server_name \
      FROM activity_logs a LEFT JOIN servers s ON s.id = a.server_id";
 
-/// GET /api/activity — List activity logs (admin only).
+/// GET /api/activity - List activity logs (admin only).
 pub async fn list(
     State(state): State<AppState>,
     AdminUser(_claims): AdminUser,

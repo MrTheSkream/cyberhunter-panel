@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 #
 # Regression pin for the app-template catalogue's IMAGE REFERENCES and start
-# commands — issue #103.
+# commands - issue #103.
 #
 # WHAT HAPPENED. Eighteen of the 153 catalogue entries could not be deployed at
 # all, because the image reference they pinned did not resolve:
 #
 #   fifteen pinned a tag the publisher does not publish. The shape was always the
-#   same — a bare major-version shorthand (`:1`, `:2`, `:11`, `:26`, `v3`, `v4`)
+#   same - a bare major-version shorthand (`:1`, `:2`, `:11`, `:26`, `v3`, `v4`)
 #   assumed to be a convention these publishers simply do not use. `grafana`
 #   publishes `13.1`, never `11`; `keycloak` publishes `26.7`, never `26`;
 #   `rocket.chat` has 7814 tags and not one bare major among them.
@@ -20,11 +20,11 @@
 # None of this was visible from the source, and none of it could be caught by a
 # build: a template is a static string, and the failure happens at `docker pull`
 # on a stranger's machine. s339 found five of them and recorded eight more as
-# "UNKNOWN — Docker Hub rate-limited the sweep"; re-run authenticated at s341,
+# "UNKNOWN - Docker Hub rate-limited the sweep"; re-run authenticated at s341,
 # ALL EIGHT were dead, plus two nobody had flagged.
 #
-# WHY THIS PIN IS SHAPED THE WAY IT IS. The tempting arm — "no template may pin a
-# bare major tag" — is wrong, and would be the #386 mistake of a screen that
+# WHY THIS PIN IS SHAPED THE WAY IT IS. The tempting arm - "no template may pin a
+# bare major tag" - is wrong, and would be the #386 mistake of a screen that
 # flags most of its population: `mongo:7`, `mysql:8`, `postgres:16-alpine`,
 # `gitea:1` and `prom/prometheus:v3` are all bare-major pins that resolve
 # perfectly well, because those publishers DO use that convention. Whether a tag
@@ -74,7 +74,7 @@ N=$(awk '
 if [ "$N" -ge 100 ]; then
   ok "catalogue parsed: $N templates"
 else
-  bad "catalogue parse returned $N — the parser has drifted from the source shape (#100)"
+  bad "catalogue parse returned $N - the parser has drifted from the source shape (#100)"
   echo; printf 'passed: %d   failed: %d\n' "$PASS" "$FAIL"; exit 1
 fi
 
@@ -109,14 +109,14 @@ DEAD=(
 back=0
 for ref in "${DEAD[@]}"; do
   if grep -qF "image:\"$ref\"" <<<"$FLAT"; then
-    bad "$ref is pinned again — it was measured unpullable; this app cannot deploy at all"
+    bad "$ref is pinned again - it was measured unpullable; this app cannot deploy at all"
     back=1
   fi
 done
 [ "$back" -eq 0 ] && ok "none of the ${#DEAD[@]} unpullable references is present"
 
 echo
-echo "§3 each replacement is present (the positive arm — a downgrade must fail loudly too)"
+echo "§3 each replacement is present (the positive arm - a downgrade must fail loudly too)"
 
 # Each proven with an HTTP 200 manifest request at s341, against a control.
 declare -A LIVE=(
@@ -137,7 +137,7 @@ declare -A LIVE=(
 missing=0
 for t in "${!LIVE[@]}"; do
   if grep -qF "image:\"${LIVE[$t]}\"" <<<"$FLAT"; then :; else
-    bad "$t no longer pins ${LIVE[$t]} — the resolvable reference was replaced"
+    bad "$t no longer pins ${LIVE[$t]} - the resolvable reference was replaced"
     missing=1
   fi
 done
@@ -148,20 +148,20 @@ echo "§4 the five withdrawn templates stay withdrawn"
 
 # Withdrawn rather than repointed: the only pullable candidates were a frozen
 # vendor archive (bitnamilegacy, unpatched), a personal-account rebuild, or an
-# amd64-only third-party image — and this panel publishes an arm64 build.
+# amd64-only third-party image - and this panel publishes an arm64 build.
 #
 # portainer (v2.178.0) is a DIFFERENT withdrawal shape: its image resolves
 # fine, but it needs the host Docker socket for its core purpose (create/stop/
 # exec containers, manage volumes/networks) and `deploy_app` deliberately never
 # mounts it (a host-escape vector regardless of who is allowed to trigger the
-# deploy) — see FEATURES.md §Withdrawn Claims. dozzle had the identical defect
+# deploy) - see FEATURES.md §Withdrawn Claims. dozzle had the identical defect
 # and was withdrawn alongside it at v2.178.0, but reinstated at v2.179.0 behind
 # a docker-socket-proxy sidecar that holds the real socket instead (§7 below)
-# — a read-only proxy suffices for it because listing containers and reading
+# - a read-only proxy suffices for it because listing containers and reading
 # logs is ALL it ever needed, unlike portainer's write-level requirements.
 for id in discourse zabbix strapi stable-diffusion-webui portainer; do
   if grep -qF "id:\"$id\"" <<<"$FLAT"; then
-    bad "template '$id' is back in the catalogue — it was withdrawn and should stay withdrawn"
+    bad "template '$id' is back in the catalogue - it was withdrawn and should stay withdrawn"
   else
     ok "'$id' withdrawn"
   fi
@@ -178,7 +178,7 @@ for id in strapi discourse portainer; do
 done
 [ "$orphan" -eq 0 ] && ok "no icon outlives its withdrawn template"
 
-# dozzle never had a dedicated entry in appIcons even before its withdrawal —
+# dozzle never had a dedicated entry in appIcons even before its withdrawal -
 # unlike strapi/discourse/portainer, it was never one of the templates this
 # map special-cases, so there is no icon to reinstate. It renders via the same
 # `tmpl.name[0]` letter-badge fallback it always did; nothing here regresses.
@@ -188,11 +188,11 @@ echo "§5 every start command established by running the image is still declared
 
 # The #101 class: the image's own default does not start a service, so the
 # container prints something and exits on every deploy. Each command below was
-# established by RUNNING the image and observing BOTH directions — without it the
+# established by RUNNING the image and observing BOTH directions - without it the
 # container exits, with it the container stays up and answers on its port.
 #
 # Matched against the whitespace-stripped source and deliberately NOT closed with
-# `)`, so a rustfmt reflow — which both breaks lines and adds a trailing comma —
+# `)`, so a rustfmt reflow - which both breaks lines and adds a trailing comma -
 # cannot make these arms silently blind.
 declare -A CMD=(
   [minio]='("minio",&["server","/data","--console-address",":9001"'
@@ -204,7 +204,7 @@ declare -A CMD=(
 lost=0
 for id in "${!CMD[@]}"; do
   if grep -qF "${CMD[$id]}" <<<"$FLAT"; then :; else
-    bad "TEMPLATE_CMD no longer declares '$id' — that container reverts to printing its default and exiting"
+    bad "TEMPLATE_CMD no longer declares '$id' - that container reverts to printing its default and exiting"
     lost=1
   fi
 done
@@ -224,19 +224,19 @@ echo
 echo "§6 the three templates a command cannot fix carry no command"
 
 # Adding one would be worse than the defect it appears to cure:
-#   authentik  — needs PostgreSQL and Redis. With `server` it runs happily and
+#   authentik  - needs PostgreSQL and Redis. With `server` it runs happily and
 #                retries the database for ever: a container that reports healthy
 #                and never serves, which is a SILENT failure where today's is loud.
-#   vllm       — takes its model as a command-line argument, but TEMPLATE_CMD is a
+#   vllm       - takes its model as a command-line argument, but TEMPLATE_CMD is a
 #                static &[&str] and cannot interpolate the MODEL the template
 #                collects.
-#   surrealdb  — needs a datastore path AND a writable volume. It runs as
+#   surrealdb  - needs a datastore path AND a writable volume. It runs as
 #                `nonroot` while the agent creates volume dirs root-owned, so it
 #                cannot write /data; without the path it silently keeps everything
 #                in memory and loses it on restart.
 for id in authentik vllm surrealdb; do
   if grep -qF "(\"$id\"," <<<"$FLAT"; then
-    bad "TEMPLATE_CMD declares '$id' — see this section's comment; that command cannot work"
+    bad "TEMPLATE_CMD declares '$id' - see this section's comment; that command cannot work"
   else
     ok "'$id' carries no command"
   fi
@@ -246,11 +246,11 @@ echo
 echo "§7 dozzle's reinstated socket access is proxied, never mounted directly"
 
 # #125's root cause was a template needing the host Docker socket; the FIX is
-# not to grant it one — the catalogue file itself must never reference the
+# not to grant it one - the catalogue file itself must never reference the
 # real socket path. Only the sidecar module (a separate file, checked below)
 # does, and only for its OWN container.
 if grep -qE '/var/run/docker\.sock' "$CATALOGUE"; then
-  bad "$CATALOGUE references the host Docker socket directly — it should never; only the sidecar does"
+  bad "$CATALOGUE references the host Docker socket directly - it should never; only the sidecar does"
 else
   ok "the catalogue itself never references the host Docker socket path"
 fi
@@ -258,15 +258,15 @@ fi
 if ! grep -qF '"dozzle",app_sidecar::SidecarDef{' <<<"$FLAT"; then
   bad "dozzle's TEMPLATE_SIDECAR entry changed or is missing"
 elif grep -qF 'image:"tecnativa/docker-socket-proxy:latest"' <<<"$FLAT"; then
-  bad "dozzle's sidecar is back on :latest — a proxy in front of the Docker socket must be version-pinned, not silently changeable underneath a deploy"
+  bad "dozzle's sidecar is back on :latest - a proxy in front of the Docker socket must be version-pinned, not silently changeable underneath a deploy"
 elif grep -qE 'image:"tecnativa/docker-socket-proxy:v[0-9]+\.[0-9]+\.[0-9]+"' <<<"$FLAT"; then
   ok "dozzle's sidecar pins the tecnativa/docker-socket-proxy image to a specific version"
 else
-  bad "dozzle's sidecar image field changed shape — re-read it"
+  bad "dozzle's sidecar image field changed shape - re-read it"
 fi
 
 # Deny-by-default, spelled out explicitly rather than left to the image's own
-# defaults — mutation-detectable: flip any one of these to "1" in source and
+# defaults - mutation-detectable: flip any one of these to "1" in source and
 # this arm goes red.
 DENY=(POST EXEC IMAGES NETWORKS VOLUMES SERVICES SWARM SYSTEM TASKS BUILD COMMIT AUTH SECRETS CONFIGS DISTRIBUTION NODES PLUGINS SESSION GRPC ALLOW_START ALLOW_STOP ALLOW_RESTARTS ALLOW_PAUSE ALLOW_UNPAUSE)
 denied_ok=1
@@ -275,7 +275,7 @@ for tog in "${DENY[@]}"; do
 done
 [ "$denied_ok" -eq 1 ] && ok "all ${#DENY[@]} dangerous socket-proxy endpoints stay denied"
 
-# CONTAINERS + INFO are the only two grants — verified live at s426: with
+# CONTAINERS + INFO are the only two grants - verified live at s426: with
 # INFO=0, Dozzle's client failed `GET /info` on every connect and reported
 # the remote host `available:false` even though container listing worked
 # underneath, which would have shipped looking broken to every real user.
@@ -293,10 +293,10 @@ if [ -f "$SIDECAR" ]; then
   if grep -qF 'binds:Some(vec!["/var/run/docker.sock:/var/run/docker.sock:ro"' <<<"$SIDECAR_FLAT"; then
     ok "only the sidecar container mounts the real socket, and read-only"
   else
-    bad "app_sidecar.rs no longer mounts the host socket into the sidecar — dozzle would be unreachable again"
+    bad "app_sidecar.rs no longer mounts the host socket into the sidecar - dozzle would be unreachable again"
   fi
 else
-  bad "missing $SIDECAR — the sidecar module was removed but dozzle's catalogue entry was not"
+  bad "missing $SIDECAR - the sidecar module was removed but dozzle's catalogue entry was not"
 fi
 
 echo
@@ -304,7 +304,7 @@ echo "§8 the 59 images re-pinned off :latest (s472) stay pinned"
 
 # Each was re-pinned to a tag verified LIVE to resolve to the byte-identical
 # manifest :latest already pointed to (real per-arch platform digests,
-# attestation sub-manifests excluded) — a zero-behavior-change pin, not a
+# attestation sub-manifests excluded) - a zero-behavior-change pin, not a
 # guess. Checking the REPO string rather than the specific version means this
 # arm never goes stale as a future session bumps one of these to a newer
 # release; it only catches a regression back to the unpinned, non-reproducible
@@ -334,7 +334,7 @@ REPINNED_REPO=(
 regressed=0
 for repo in "${REPINNED_REPO[@]}"; do
   if grep -qF "image:\"$repo:latest\"" <<<"$FLAT"; then
-    bad "$repo is back on :latest — it was re-pinned to a verified digest-identical tag"
+    bad "$repo is back on :latest - it was re-pinned to a verified digest-identical tag"
     regressed=1
   fi
 done

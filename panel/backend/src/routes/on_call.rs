@@ -141,7 +141,7 @@ fn validate_input(input: &ScheduleInput) -> Result<(), ApiError> {
 
 /// Reject a member UUID the caller may not page: anyone other than
 /// themselves, or a user they directly manage (`users.reseller_id = caller`)
-/// — the same self-or-managed boundary `escalation_policies.rs`'s
+/// - the same self-or-managed boundary `escalation_policies.rs`'s
 /// `validate_user_routes` enforces for `user:<uuid>` escalation steps.
 ///
 /// ⚠ SECURITY: this used to only check the IDs existed (`SELECT COUNT(*)...
@@ -150,7 +150,7 @@ fn validate_input(input: &ScheduleInput) -> Result<(), ApiError> {
 /// could add ANY other user's UUID (trivially discoverable via `GET
 /// /api/users`, which lists every user on the install) as a rotation member
 /// of a schedule they own, and pages routed at that schedule would deliver
-/// to the victim's real email/Slack/Discord/PagerDuty/webhook — the exact
+/// to the victim's real email/Slack/Discord/PagerDuty/webhook - the exact
 /// sibling gap `validate_user_routes` closed at s437 for the `user:` route,
 /// missed here because this table's own member list is a different path
 /// into the same sink.
@@ -176,10 +176,10 @@ async fn validate_members_exist(
     Ok(())
 }
 
-/// GET /api/on-call/schedules — Admin: list this tenant's rotation schedules.
+/// GET /api/on-call/schedules - Admin: list this tenant's rotation schedules.
 ///
 /// ⚠ SECURITY (s437): this table carried no `user_id` at all until this
-/// release — every route here gated on `AdminUser` (role) alone, so any
+/// release - every route here gated on `AdminUser` (role) alone, so any
 /// admin on the install could list, read, write or delete every OTHER
 /// tenant's on-call rotations. Scoped the same way `alerts.rs`/`servers.rs`
 /// scope a caller-supplied resource: never widens for admin, admin included.
@@ -207,7 +207,7 @@ pub async fn list_schedules(
     Ok(Json(out))
 }
 
-/// GET /api/on-call/schedules/{id} — Admin: fetch one rotation by id, scoped
+/// GET /api/on-call/schedules/{id} - Admin: fetch one rotation by id, scoped
 /// to the caller's own tenant.
 pub async fn get_schedule(
     State(state): State<AppState>,
@@ -234,7 +234,7 @@ pub async fn get_schedule(
     ))
 }
 
-/// POST /api/on-call/schedules — Admin: create a rotation, owned by the
+/// POST /api/on-call/schedules - Admin: create a rotation, owned by the
 /// creating admin's own tenant.
 pub async fn create_schedule(
     State(state): State<AppState>,
@@ -265,7 +265,7 @@ pub async fn create_schedule(
     ))
 }
 
-/// PUT /api/on-call/schedules/{id} — Admin: update an existing rotation,
+/// PUT /api/on-call/schedules/{id} - Admin: update an existing rotation,
 /// scoped to the caller's own tenant.
 pub async fn update_schedule(
     State(state): State<AppState>,
@@ -320,24 +320,24 @@ pub async fn update_schedule(
     ))
 }
 
-/// DELETE /api/on-call/schedules/{id} — Admin: remove a rotation.
+/// DELETE /api/on-call/schedules/{id} - Admin: remove a rotation.
 ///
 /// Escalation-policy steps routing to this schedule (`on_call_schedule:<uuid>`)
 /// are rewritten to `all_channels` in the same transaction as the delete. The
 /// reference lives inside a JSONB blob, so no FK can do it for us, and a
 /// dangling route is not inert: `route_to_user_ids` resolves it to zero users
-/// and the page is dropped — including the *initial* page, because
+/// and the page is dropped - including the *initial* page, because
 /// `try_fire_alert` dispatches step 0 and returns. Every alert bound to the
 /// policy would stop reaching email/Slack/PagerDuty entirely.
 ///
 /// (An earlier version of this comment claimed an hourly `alert_engine`
-/// orphan-route sweep repaired these. No such sweep exists — the engine's only
+/// orphan-route sweep repaired these. No such sweep exists - the engine's only
 /// hourly task is the resolved-alert purge.)
 ///
 /// ⚠ SECURITY (s437): both the delete and the orphan-route sweep below are
 /// now scoped to the caller's own tenant. Scoping the sweep matters even
 /// though `validate_schedule_routes` (escalation_policies.rs) now refuses to
-/// let a policy reference another tenant's schedule going forward — a delete
+/// let a policy reference another tenant's schedule going forward - a delete
 /// must still never touch another tenant's rows, defense-in-depth against any
 /// pre-existing or future cross-tenant reference.
 pub async fn delete_schedule(
@@ -365,7 +365,7 @@ pub async fn delete_schedule(
         .map_err(|e| internal_error("delete schedule", e))?;
 
     if result.rows_affected() == 0 {
-        // Dropping `tx` rolls back — nothing was touched.
+        // Dropping `tx` rolls back - nothing was touched.
         return Err(err(StatusCode::NOT_FOUND, "Schedule not found"));
     }
 
@@ -431,9 +431,9 @@ pub async fn delete_schedule(
 /// Remove a deleted user from every on-call rota and rewrite any escalation
 /// step routed directly at them.
 ///
-/// Called from the user-delete path. Neither reference can be a foreign key —
+/// Called from the user-delete path. Neither reference can be a foreign key -
 /// `on_call_schedules.members` is a `UUID[]` and `escalation_policies.steps` is
-/// JSONB — so nothing else cleans them up, and a dangling reference is not
+/// JSONB - so nothing else cleans them up, and a dangling reference is not
 /// inert: the rotation still hands out the dead UUID and the page goes nowhere.
 ///
 /// Best-effort and non-fatal: a failure here must not block the delete, since
@@ -508,7 +508,7 @@ pub async fn scrub_deleted_user(db: &sqlx::PgPool, user_id: Uuid) {
     }
 }
 
-/// GET /api/on-call/whoami — Any authenticated user: am I currently on-call?
+/// GET /api/on-call/whoami - Any authenticated user: am I currently on-call?
 ///
 /// Returns the list of schedules where this user is the current rotation
 /// holder. Empty array = not on-call right now.

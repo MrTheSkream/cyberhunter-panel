@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression pins for the s386 ship — the SSL controls that lied, the renewal
+# Regression pins for the s386 ship - the SSL controls that lied, the renewal
 # that renewed the wrong machine, and the renewal that destroyed the certificate
 # it was meant to protect.
 #
@@ -7,7 +7,7 @@
 # ship's HEADLINE defect restored, because every arm read RAW SOURCE and a
 # COMMENT quoting the correct SQL satisfied it. That is not hypothetical: the
 # `WHERE s.server_id = $2` term was deleted from the query, the explanatory
-# comment above it — which spells the correct form, as explanatory comments do —
+# comment above it - which spells the correct form, as explanatory comments do -
 # was left alone, and the suite printed 43/43 green. The mutation harness had
 # missed it too, because every plant DELETED the pinned string rather than
 # reverting the code beside prose that quotes it.
@@ -21,17 +21,17 @@
 #     `security_scanner::auto_fix_safe_findings` resolved the site with
 #     `WHERE s.domain = $1` and no server term. `sites.domain` has been unique
 #     only per SERVER since `20260319000000_multi_server.sql`, and the hazard is
-#     spelled out IN THAT SAME FUNCTION on the vhost read 130 lines below — the
+#     spelled out IN THAT SAME FUNCTION on the vhost read 130 lines below - the
 #     author wrote the rule, then applied it to the read that CONSUMES the id
 #     rather than the one that PRODUCES it. On a fleet holding a domain twice it
 #     renewed with another host's config, wrote the expiry onto another host's
 #     row, and pushed that host's vhost through this host's agent.
 #   * A RENEWAL IS A REPLACEMENT, AND NOTHING CHECKED WHOSE CERTIFICATE IT WAS.
 #     The agent's ACME client is pinned to `LetsEncrypt::Production`, so an issuer
-#     that is not Let's Encrypt PROVES DockPanel did not issue the certificate.
+#     that is not Let's Encrypt PROVES CyberHunter - Panel did not issue the certificate.
 #     Nothing asked. The scanner's auto-fix needs no opt-in, walks the SSL
 #     directory with `openssl -checkend`, never reads the issuer and never
-#     consults the database — so a commercial wildcard or a Cloudflare Origin CA
+#     consults the database - so a commercial wildcard or a Cloudflare Origin CA
 #     certificate uploaded through the panel's own control was overwritten with a
 #     90-day Let's Encrypt certificate, weekly, on every install. §F pins the
 #     guard at all three doors, and pins that doubt still RENEWS: refusing when
@@ -47,8 +47,8 @@
 #     the handler and `|| STATUS_STYLES.ok` in the page.
 #   * AN ADMIN WAS SHOWN A FINDING NO LIST COULD SHOW. The agent's diagnostics
 #     walks the host; the certificate list was `WHERE user_id = $1`. §G pins the
-#     separate admin route — the shape `sites::list` + `/api/admin/sites` already
-#     chose — and pins that the tenant list did NOT gain a role branch.
+#     separate admin route - the shape `sites::list` + `/api/admin/sites` already
+#     chose - and pins that the tenant list did NOT gain a role branch.
 #
 # Every arm is static analysis over source text: offline and deterministic, so it
 # judges a MUTATED tree the same way on an air-gapped runner (lesson #641).
@@ -57,7 +57,7 @@ cd "$(dirname "$0")/.." || exit 1
 
 PASS=0; FAIL=0
 ok()  { printf '\033[32m✓\033[0m %s\n' "$1"; PASS=$((PASS+1)); }
-bad() { printf '\033[31m✗\033[0m %s — %s\n' "$1" "$2"; FAIL=$((FAIL+1)); }
+bad() { printf '\033[31m✗\033[0m %s - %s\n' "$1" "$2"; FAIL=$((FAIL+1)); }
 eq()  { [ "$2" = "$3" ] && ok "$1" || bad "$1" "expected '$3', got '$2'"; }
 
 # ugrep's --ignore-files shim honours .gitignore, so every count below uses the
@@ -68,15 +68,15 @@ G=/usr/bin/grep
 # continues a Rust string literal, so a multi-line SQL statement flattens into
 # the one token it becomes at compile time.
 #
-# Stripping comments is the load-bearing half — see the header. `//` covers `///`
+# Stripping comments is the load-bearing half - see the header. `//` covers `///`
 # doc comments; `--` covers SQL. Neither appears inside any string this file
 # pins, and an arm that needs one must say so and use its own extractor.
 subj() { sed -E -e 's://.*$::' -e 's:^[[:space:]]*--.*$::' "$1" | tr -d ' \n\\'; }
 
 # Occurrences, not matching LINES. `grep -c` over a flattened file always answers
-# 1 or 0 — which silently turns "this appears twice" into "this appears".
+# 1 or 0 - which silently turns "this appears twice" into "this appears".
 # ⚠ -F, always: an arm whose pattern is a regex can match something the defect it
-# guards would also produce (lesson #653 — an unescaped `.` matched the space in
+# guards would also produce (lesson #653 - an unescaped `.` matched the space in
 # the very mutation the arm existed to catch).
 occ() { printf '%s' "$1" | $G -oF -- "$2" | wc -l | tr -d ' '; }
 
@@ -105,7 +105,7 @@ done
 
 # An arm that measures an empty subject prints green for every absence below, so
 # each subject is asserted before it is measured (lesson #143). The floors are on
-# the POST-comment-strip subject, because that is what the arms actually read —
+# the POST-comment-strip subject, because that is what the arms actually read -
 # a file that is all comments would otherwise pass a line-count guard and then
 # satisfy every absence arm vacuously.
 for pair in "$SCAN:6000" "$HEAL:20000" "$SYS:3000" "$SSL:12000" "$SITES:60000" "$MAIL:20000" \
@@ -136,31 +136,31 @@ eq "A3 the auto-fix site lookup carries a server term" \
    "$(occ "$F_SCAN" 'FROMsitessWHEREs.domain=$1ANDs.server_id=$2ANDs.ssl_enabled=TRUE')" "1"
 # FIVE since GAP 209 (was two since v2.161.0): the site lookup, the
 # Compose-stack lookup, its cooldown, and now the Docker-app lookup and ITS
-# cooldown — the same loop falls through to both fallbacks in turn. All resolve
+# cooldown - the same loop falls through to both fallbacks in turn. All resolve
 # a DOMAIN, and a domain is unique only per server, so every one must bind the
-# member that raised the finding — a name-only lookup on a fleet renews through
+# member that raised the finding - a name-only lookup on a fleet renews through
 # the wrong host's agent.
 eq "A4 it binds the scanned member, not an arbitrary host" \
    "$(occ "$F_SCAN" '.bind(domain).bind(member.id)')" "5"
-# ⛔ A COUNT CANNOT SEE A DOOR THAT DOES NOT BIND — a sixth domain-keyed lookup
+# ⛔ A COUNT CANNOT SEE A DOOR THAT DOES NOT BIND - a sixth domain-keyed lookup
 # added without the server term leaves this arm at 5 and green. So each door
 # also owns a literal arm: A3 for the site read, A4b for the stack read, A4c for
 # the stack renewal's cooldown, A4d for the Docker-app read, A4e for the
 # Docker-app renewal's cooldown. THIS IS NOT BOOKKEEPING: when the stack read
 # joined, bumping A4 from 1 to 2 left it satisfied by the site door alone, and a
-# mutation that deleted the new door's server term kept A4 GREEN — only A4b
+# mutation that deleted the new door's server term kept A4 GREEN - only A4b
 # caught it. The count tracks the total; the literal arms hold each door.
 eq "A4b the stack fallback lookup carries a server term too" \
    "$(occ "$F_SCAN" 'FROMdocker_stacksWHERElower(domain)=lower($1)ANDserver_id=$2')" "1"
 # The cooldown counts the rows the renewal writes, and those rows are stamped
 # per host. Counting them name-only let one host's renewal mute another's for six
-# hours — a domain is unique only per server, and this query is the last one in
+# hours - a domain is unique only per server, and this query is the last one in
 # the file that had not learned it.
 eq "A4c the stack renewal cooldown counts this host's attempts, not the fleet's" \
    "$(occ "$F_SCAN" "action='auto_fix.renew_stack_ssl'ANDtarget_name=\$1ANDserver_id=\$2")" "1"
 # GAP 209: the Docker-app fallback, added because neither the site lookup above
 # nor the stack lookup can ever match a Docker app's domain (it owns no `sites`
-# row and no `docker_stacks` row either) — see migration
+# row and no `docker_stacks` row either) - see migration
 # 20260905180000_docker_app_ssl_domains.sql.
 eq "A4d the Docker-app fallback lookup carries a server term too" \
    "$(occ "$F_SCAN" 'FROMdocker_app_domainsWHERElower(domain)=lower($1)ANDserver_id=$2')" "1"
@@ -172,7 +172,7 @@ eq "A5 auto_fix_safe_findings receives the member, not just its handle" \
 # TWO reads by id since v2.145.0, and the arm is about the KEY, not the count:
 # the post-renewal vhost rebuild reads by the id already resolved, and so does
 # the provenance read that decides which challenge renews this certificate.
-# Both must stay keyed on the id — `domain` is unique only per server
+# Both must stay keyed on the id - `domain` is unique only per server
 # (`idx_sites_domain_server`), so a lookup on it can hand back another host's row.
 eq "A6 every site re-read in this loop stays keyed on the resolved id" \
    "$(occ "$F_SCAN" 'SELECT*FROMsitesWHEREid=$1')" "2"
@@ -199,7 +199,7 @@ eq "A7 the census found site-by-domain lookups to judge" \
 eq "A8 every site-by-domain lookup names a server" "${offenders:-none}" "none"
 
 # The CMS provisioner resolved a site by domain INSIDE an insert, attaching a new
-# database — credentials included — to whichever row the planner returned first.
+# database - credentials included - to whichever row the planner returned first.
 eq "A9 no site is resolved by domain alone in a subquery" \
    "$(occ "$F_SITES" '(SELECTidFROMsitesWHEREdomain=$1)')" "0"
 eq "A10 the CMS database insert binds the site id it already has" \
@@ -209,7 +209,7 @@ echo "── B. The Fix button does something, and says so when it cannot ──
 
 eq "B1 the agent advertises renew-ssl on expiring certificates" \
    "$(occ "$F_ADIAG" 'fix_id:Some(format!("renew-ssl:{domain}"))')" "2"
-# ⚠ and it still has NO arm for it. Not a defect any more — it is WHY the panel
+# ⚠ and it still has NO arm for it. Not a defect any more - it is WHY the panel
 # takes the fix: the agent has no database, so it cannot know a site's runtime,
 # root, PHP version or ACME contact.
 eq "B2 the agent has no renew-ssl arm (it structurally cannot)" \
@@ -220,8 +220,8 @@ eq "B2 the agent has no renew-ssl arm (it structurally cannot)" \
 # so neither satisfies it alone.
 #
 # The extractor takes the whole `fix_id: Some(...)` payload and keeps the leading
-# identifier of the literal, covering both spellings the tree uses —
-# `Some("clean-logs".into())` and `Some(format!("create-root:{p}"))` — and any
+# identifier of the literal, covering both spellings the tree uses -
+# `Some("clean-logs".into())` and `Some(format!("create-root:{p}"))` - and any
 # name containing an underscore or digit, which an earlier draft dropped
 # silently. A dropped name is an unhandled action the census never judges.
 ADVERTISED=$(printf '%s' "$F_ADIAG" | $G -oE 'fix_id:Some\((format!\()?"[A-Za-z0-9_-]+' \
@@ -250,10 +250,10 @@ eq "B8 the shared predicate still carries its admin arm" \
 # sibling rule cannot later collapse it into an incident id.
 eq "B9 an unmatched certificate answers 4xx, not 5xx" \
    "$(occ "$F_SYS" 'StatusCode::UNPROCESSABLE_ENTITY')" "1"
-# ⚠ and it must NOT claim the certificate came from outside DockPanel: the agent
+# ⚠ and it must NOT claim the certificate came from outside CyberHunter - Panel: the agent
 # issues certificates for Docker apps, Git deploys and mail domains, none of
 # which becomes a `sites` row. The refusal names what the panel actually found.
-eq "B10 the refusal asks which DockPanel record claims the name" \
+eq "B10 the refusal asks which CyberHunter - Panel record claims the name" \
    "$(occ "$F_SYS" "FROMmail_domainsWHEREdomain=\$1")" "1"
 eq "B11 including the two other domain-bearing tables" \
    "$([ "$(occ "$F_SYS" 'FROMgit_deploysWHEREdomain=$1')" = 1 ] && \
@@ -262,7 +262,7 @@ eq "B12 and it no longer asserts provenance it cannot know" \
    "$($G -cF 'by something outside the panel' "$SYS")" "0"
 
 # The renewal itself is the one the Certificates page already uses. Reuse carries
-# the mechanism, never the gate — so the shared function takes a Site the CALLER
+# the mechanism, never the gate - so the shared function takes a Site the CALLER
 # resolved; it does not resolve one itself.
 eq "B13 both doors call one renewal" \
    "$(occ "$F_SSL" 'pub(crate)asyncfnrenew_for_site(state:&AppState,site:&Site,')" "1"
@@ -287,8 +287,8 @@ eq "B18 the handler answers success+message" \
 eq "B19 the docs promise a logged fix" \
    "$($G -cF 'Each fix is logged in the activity log' "$DOCS")" "1"
 # ⚠ the pattern runs to `server_id` deliberately: an earlier draft stopped four
-# arguments short, so dropping the host stamp — the whole point of using
-# `log_activity_on_server` — survived with the arm green and its title intact.
+# arguments short, so dropping the host stamp - the whole point of using
+# `log_activity_on_server` - survived with the arm green and its title intact.
 eq "B20 and the handler writes one, stamped with the server" \
    "$(occ "$F_SYS" 'Some(&action),target.as_deref(),None,None,Some(server_id),')" "1"
 eq "B21 including for the panel-side renewal" \
@@ -298,7 +298,7 @@ echo "── C. An uploaded certificate is a certificate the panel can see ─�
 
 # The SET comparison, not a literal: whatever ssl_* columns the ACME path records,
 # the upload path records too.
-# ⚠ guarded against vacuity — an extraction that matches nothing yields an empty
+# ⚠ guarded against vacuity - an extraction that matches nothing yields an empty
 # reference set, and every subset test over an empty set passes.
 acme_cols=$(printf '%s' "$F_SITES" | $G -oE 'UPDATEsitesSETssl_enabled=true,ssl_cert_path=\$1,[^"]*' | head -1 \
             | $G -oE 'ssl_[a-z_]+' | sort -u | tr '\n' ' ')
@@ -306,7 +306,7 @@ upload_cols=$(printf '%s' "$F_SITES" | $G -oE 'UPDATEsitesSETssl_enabled=true,ss
             | $G -oE 'ssl_[a-z_]+' | sort -u | tr '\n' ' ')
 # v2.145.0 widened this set twice over. `ssl_profile` had ALWAYS been missing
 # from the auto-SSL-on-create statement while both deliberate issuance doors
-# recorded it — a real gap this arm could not see, because it compares this
+# recorded it - a real gap this arm could not see, because it compares this
 # statement against the UPLOAD path rather than against the doors in
 # `routes/ssl.rs`. And the four provenance columns join it, because which
 # challenge issued a certificate is decided here and nowhere else.
@@ -318,7 +318,7 @@ eq "C3 the upload path records at least the same ssl_* columns" \
    "$(for c in $acme_cols; do case " $upload_cols " in *" $c "*) ;; *) echo -n "MISSING:$c ";; esac; done; echo -n done)" "done"
 
 # ⚠ NON-DESTRUCTIVE. An independent read-back can fail on its own, and binding a
-# bare NULL there erased a known expiry — removing the site from auto_healer AND
+# bare NULL there erased a known expiry - removing the site from auto_healer AND
 # the alert ladder, which is precisely the invisibility this section repairs. Its
 # two sibling columns were already guarded; this one was not.
 eq "C4 a failed read-back cannot erase a known expiry" \
@@ -342,7 +342,7 @@ eq "C10 a retired certificate's renewal hints are cleared with it" \
    "$(occ "$F_SITES" 'ssl_renewal_at=NULL,ssl_renewal_checked_at=NULL,updated_at=NOW()WHEREid=$4')" "1"
 
 # THE WIRE CONTRACT. These key names cross the panel/agent boundary and are
-# matched as strings on both sides — nothing type-checks them together, so a
+# matched as strings on both sides - nothing type-checks them together, so a
 # rename on either side compiles cleanly and silently stops working.
 # ⚠ scoped to the UPLOAD response as one object, not to each key name: three
 # different handlers in that file answer with a `cert_path`, so an arm counting
@@ -361,21 +361,21 @@ eq "C12 CertStatus still names not_after / issuer / days_remaining / has_cert" \
 
 echo "── D. 'Unknown' is not 'OK' ─────────────────────────────────────────────────"
 
-# ONE ladder, shared by both certificate lists — two copies is how the Dashboard
+# ONE ladder, shared by both certificate lists - two copies is how the Dashboard
 # tile and this page came to disagree in the first place.
 eq "D1 there is a single expiry ladder" \
    "$(occ "$F_MON" "fnexpiry_status(days_left:Option<i64>,renewal_failing:bool)->&'staticstr{")" "1"
 # Five call sites, two lists: the admin list classifies its site-backed rows,
 # its host-only rows and its stack rows separately, and the per-caller list
-# classifies its own site rows AND — since s413 — its own stack rows too. All
-# five must use the same ladder — a second ladder is how two screens came to
+# classifies its own site rows AND - since s413 - its own stack rows too. All
+# five must use the same ladder - a second ladder is how two screens came to
 # describe the same certificate differently.
 # ⚠ The trailing comma is what excludes the DECLARATION, whose parameter list
-# reads `days_left:` — matching on the name alone would count one more.
+# reads `days_left:` - matching on the name alone would count one more.
 eq "D2 both lists use it, on every row class" \
    "$(occ "$F_MON" 'expiry_status(days_left,')" "5"
 # ⛔ AND THE FOURTH GETS ITS OWN ARM. Raising D2 from 3 to 4 leaves it satisfied
-# by the three that were already there — a count cannot tell which member is
+# by the three that were already there - a count cannot tell which member is
 # missing. This one names the offline row by the field only it carries.
 eq "D2b the offline half classifies through the same ladder and says it is stored" \
    "$(occ "$F_MON" '"stale":true,')" "1"
@@ -383,12 +383,12 @@ eq "D3 a missing expiry is unknown" \
    "$(occ "$F_MON" 'None=>"unknown",')" "1"
 # ⚠ absence arms, and the token is spelled two ways on purpose: the defect was
 # `.unwrap_or(999)` and a reformat to `.unwrap_or( 999 )` is the same defect.
-# `subj` removes the whitespace, so one fixed string covers both — what it does
+# `subj` removes the whitespace, so one fixed string covers both - what it does
 # NOT cover is a different sentinel, which D5 catches by construction.
 eq "D4 the 999-day placeholder is gone" \
    "$(occ "$F_MON" 'unwrap_or(999)')" "0"
 # Three now, not two: `certificate_dashboard`'s own site branch, the admin
-# list's site branch, and — since s413 — `certificate_dashboard`'s own new
+# list's site branch, and - since s413 - `certificate_dashboard`'s own new
 # stack branch, all computing `days_left` the identical `Option`-preserving
 # way (the admin list's host-scan and offline halves use their own shapes,
 # not this one, so they are not counted here).
@@ -397,12 +397,12 @@ eq "D5 days_left is an Option all the way out of the handler" \
 eq "D6 the page no longer falls back to the reassuring badge" \
    "$(occ "$F_CERTS" 'STATUS_STYLES[cert.status]||STATUS_STYLES.ok')" "0"
 
-# CROSS-TREE VOCABULARY CENSUS. Both sides derived from their own file — an
+# CROSS-TREE VOCABULARY CENSUS. Both sides derived from their own file - an
 # earlier draft extracted the backend set with a fixed string that SUPPLIED the
 # answer it then compared against, which is the tautology this repo has a named
 # lesson about.
 # ⚠ BOTH character classes admit `_`, and v2.159.0 is why. The ladder gained a
-# rung named with an underscore, and `[a-z]+` matched only the tail of it — the
+# rung named with an underscore, and `[a-z]+` matched only the tail of it - the
 # census compared a frontend key it had silently truncated to `failed` against a
 # backend set the same truncation had dropped entirely. Neither side was wrong
 # about the code; the instrument could not see the name. A vocabulary census is
@@ -420,15 +420,15 @@ eq "D8 the page's style map was extracted" \
 eq "D9 the page renders exactly the vocabulary the handler emits" "$FRONT_STATUS" "$BACK_STATUS"
 
 eq "D10 the countdown column admits it does not know" \
-   "$(occ "$F_CERTS" 'cert.days_left===null?"—"')" "1"
+   "$(occ "$F_CERTS" 'cert.days_left===null?"-"')" "1"
 eq "D11 the type admits it too" \
    "$(occ "$F_CERTS" 'days_left:number|null;')" "1"
 
 echo "── E. The published Auto-Fix list is the real one ───────────────────────────"
 
-# The docs named three example fixes. One is what §B made true; the other two —
+# The docs named three example fixes. One is what §B made true; the other two -
 # "Fixing file permissions on config files" and "Disabling debug mode in web
-# applications" — were implemented by NEITHER fix system, on either screen.
+# applications" - were implemented by NEITHER fix system, on either screen.
 eq "E1 the docs no longer promise a permissions fix" \
    "$($G -cF 'Fixing file permissions on config files' "$DOCS")" "0"
 eq "E2 the docs no longer promise a debug-mode fix" \
@@ -455,7 +455,7 @@ eq "F2 and the panel reasons from that issuer" \
    "$([ "$(occ "$F_HELP" "lowered.contains(\"let'sencrypt\")||lowered.contains(\"letsencrypt\")")" = 1 ] && echo yes || echo no)" "yes"
 
 # ⚠ DOUBT MUST RENEW. Every early return in the helper yields None, and every
-# caller treats None as permission to proceed — because refusing on an
+# caller treats None as permission to proceed - because refusing on an
 # unreachable agent or an unreadable certificate would let a real Let's Encrypt
 # certificate lapse. We act only on a POSITIVE identification.
 eq "F3 an unreadable issuer is 'unknown', never 'foreign'" \
@@ -467,16 +467,16 @@ eq "F4 a host with no certificate is not foreign either" \
 # ⚠ Was "ALL THREE" and named three while the tree held five: the mail host door
 # has been unpinned since it was written, and v2.161.0 added the Compose-stack
 # door; GAP 209 then added a sixth, the Docker-app door. A census whose prose
-# counts lower than the tree is how a new door joins without ever being asked —
+# counts lower than the tree is how a new door joins without ever being asked -
 # which is exactly how the stack door was written without the guard in the
 # first place.
 #
 # ⚠ s411: THE NAME CHECKED MUST BE THE NAME THE ORDER IS ABOUT TO OVERWRITE.
-# This asked `site.domain` unconditionally until s411 — correct for HTTP-01, but
+# This asked `site.domain` unconditionally until s411 - correct for HTTP-01, but
 # a DNS-01 renewal orders against `subject`, the zone apex for a wildcard, and
 # `site.domain` typically has no certificate directory of its own in that case.
 # So the guard always answered "no certificate here" for exactly the shape a
-# foreign wildcard certificate at the zone apex would take — #832's shape,
+# foreign wildcard certificate at the zone apex would take - #832's shape,
 # alive in shipped code until this fix. F5 alone would still pass if a later
 # edit made `subject_domain` collapse back to `site.domain` in every case
 # (renaming a variable proves nothing about what it holds), so F5b pins the
@@ -488,11 +488,11 @@ eq "F5b and that name is the DNS-01 order's own subject, not always the site" \
 eq "F6 the scanner's auto-fix asks (the loop that needs no opt-in)" \
    "$(occ "$F_SCAN" 'crate::helpers::foreign_cert_issuer(agent,domain).await')" "1"
 # TWO since GAP 209: the Compose-stack fallback and the Docker-app fallback call
-# this literally the same way (`&member.agent, domain` — neither function has a
+# this literally the same way (`&member.agent, domain` - neither function has a
 # local `agent` binding the way the site arm above does), so this count is now
 # shared between them. F8b/F8c disambiguate WHICH door by pinning each one's own
 # distinct "stops rather than renewing" sentence instead.
-eq "F6b and its Compose-stack and Docker-app siblings ask too — the same loop, the same disk" \
+eq "F6b and its Compose-stack and Docker-app siblings ask too - the same loop, the same disk" \
    "$(occ "$F_SCAN" 'crate::helpers::foreign_cert_issuer(&member.agent,domain).await')" "2"
 eq "F7 the auto-healer asks" \
    "$(occ "$F_HEAL" 'crate::helpers::foreign_cert_issuer(&agent,domain).await')" "1"
@@ -503,7 +503,7 @@ eq "F7b the mail host door asks" \
 eq "F8 the scanner stops rather than renewing" \
    "$(occ "$F_SCAN" 'Auto-fix:NOTrenewing{domain}')" "1"
 # Deliberately a DIFFERENT sentence from F8's, so neither arm can be satisfied by
-# the other's line — the sibling-satisfaction discipline this file keeps.
+# the other's line - the sibling-satisfaction discipline this file keeps.
 eq "F8b and the stack door stops too" \
    "$(occ "$F_SCAN" 'Auto-fix:NOTrenewingtheComposestackcertificatefor{domain}')" "1"
 eq "F8c and the Docker-app door stops too" \
@@ -514,22 +514,22 @@ eq "F9 the healer stops rather than renewing" \
 # ── F-CHOKE. The doors above are a CENSUS, and a census is a promise somebody
 # has to keep. It was short twice: "ALL THREE" while the tree held five, and the
 # stack door written with no guard because nothing enumerated the others. Twenty
-# -six reachable call sites reach an ACME order — Compose deploys, git deploys,
-# template apps, four CLI commands, raw curl — and before v2.162.0 exactly three
+# -six reachable call sites reach an ACME order - Compose deploys, git deploys,
+# template apps, four CLI commands, raw curl - and before v2.162.0 exactly three
 # asked. So the question is now ALSO asked at the two functions all of them pass
 # through, where a door added tomorrow inherits it without anyone remembering.
 # ⛔ These arms are what stop that from being deleted as "redundant".
 eq "F10 the HTTP-01 writer asks before it orders" \
    "$(occ "$F_ASSL" 'ifletSome(issuer)=foreign_installed_issuer(domain).await{')" "2"
 # ⛔ FAIL CLOSED. Both writers take `Option<&ProvisionOpts>` and the callers that
-# never asked the question pass None — the compose deploy, the git build. If
+# never asked the question pass None - the compose deploy, the git build. If
 # absent ever came to mean "go ahead", the guard would protect only the doors
 # that did not need it.
 eq "F11 an absent option means refuse, not proceed" \
    "$(occ "$F_ASSL" 'if!opts.map(|o|o.replace_foreign).unwrap_or(false){')" "2"
 # The same three-state reading as the panel's helper, and it CANNOT import it:
 # separate crates, no shared dependency. Both apostrophe spellings are deliberate
-# in both copies — a straight quote is a typographic accident, not a different CA.
+# in both copies - a straight quote is a typographic accident, not a different CA.
 eq "F12 the agent reads the issuer the same way the panel does" \
    "$([ "$(occ "$F_ASSL" "lowered.contains(\"let'sencrypt\")||lowered.contains(\"letsencrypt\")")" = 1 ] && echo yes || echo no)" "yes"
 eq "F13 no certificate on disk is not 'foreign'" \
@@ -537,12 +537,12 @@ eq "F13 no certificate on disk is not 'foreign'" \
 eq "F14 an unreadable issuer is not 'foreign' either" \
    "$(occ "$F_ASSL" 'ifissuer.is_empty(){returnNone;}')" "1"
 # ⛔ A REFUSAL IS NOT A FAULT. Everything unlabelled leaves the agent as a 500,
-# and the panel hides every agent 5xx behind an incident id — which would answer
+# and the panel hides every agent 5xx behind an incident id - which would answer
 # the most actionable message this door produces with a reference number.
 eq "F15 the marker exists" \
    "$(occ "$F_ASSL" 'pubconstFOREIGN_CERT_REFUSED:&str="[foreign]";')" "1"
 # ⛔ AND THE SENTENCE ACTUALLY WEARS IT. F15 and F16 pin that the machinery
-# EXISTS — the constant, and the arm that reads it — and a mutation proved that
+# EXISTS - the constant, and the arm that reads it - and a mutation proved that
 # is not the same as it being USED: stripping the marker off the refusal string
 # left both of them green while the refusal quietly went back to being a 500 the
 # panel answers with an incident id. The declaration and the reader can both be
@@ -554,25 +554,25 @@ eq "F16 and the marker becomes a 4xx, not an internal fault" \
 # ⚠ s387 moved this from a bare status count to the refusal's own sentence. The
 # count went 1 -> 2 when a SECOND, unrelated 422 landed in this file (a failed
 # ACME order now answers with its reason instead of an incident id), and a count
-# alone could not tell the two apart — the arm's title claims it names the ISSUER,
+# alone could not tell the two apart - the arm's title claims it names the ISSUER,
 # so that is what it now reads.
 # ⚠ THE PROSE HERE WAS STALE: it said "two is the number that is correct" while
 # the arm below already pinned FOUR. Whoever moves that number moves this sentence.
-# Five since v2.145.0 — a DNS-01 renewal that cannot reach its Cloudflare zone
+# Five since v2.145.0 - a DNS-01 renewal that cannot reach its Cloudflare zone
 # answers 422 rather than silently re-ordering the certificate over HTTP-01.
 # ⚠ `carry-sweep` B5b pins this SAME literal in this SAME file. Both move together.
 eq "F10 the manual door refuses with a 4xx naming the issuer" \
-   "$(occ "$F_SSL" 'StatusCode::UNPROCESSABLE_ENTITY,&format!("Thecertificateon{}wasnotissuedbyDockPanel(issuer:{})')" "1"
+   "$(occ "$F_SSL" 'StatusCode::UNPROCESSABLE_ENTITY,&format!("Thecertificateon{}wasnotissuedbyCyberHunter-Panel(issuer:{})')" "1"
 eq "F10b and this file holds exactly the five refusals that earn one" \
    "$(occ "$F_SSL" 'StatusCode::UNPROCESSABLE_ENTITY,')" "5"
 # The operator has to LEARN about a declined renewal, or a protected certificate
 # and a forgotten one look identical from the panel. Counts the CALL, so deleting
-# the alert while keeping the `continue` — a silent skip, which is what a
-# protected certificate must never be — goes red.
+# the alert while keeping the `continue` - a silent skip, which is what a
+# protected certificate must never be - goes red.
 eq "F11 the declined renewal raises an alert" \
    "$(occ "$F_SCAN" 'ssl_renewal_declined_alert(pool,user_id,site_id,domain,&issuer)')" "1"
 # ⚠ and it must NOT borrow the failure helper's words. That helper says "SSL
-# renewal failed", "could not renew it automatically" and `critical` — three
+# renewal failed", "could not renew it automatically" and `critical` - three
 # statements that are all false when the panel declined ON PURPOSE. Paging an
 # operator about a failure that did not happen is this release's own defect class
 # one layer out, and it trains them to ignore the alert that means a site really
@@ -580,13 +580,13 @@ eq "F11 the declined renewal raises an alert" \
 eq "F12 the declined case has its own helper" \
    "$(occ "$F_SCAN" 'asyncfnssl_renewal_declined_alert(')" "1"
 # TWO declines now, and both are warnings worded as the operator's job: a
-# certificate DockPanel did not issue, and a DNS-01 certificate whose Cloudflare
+# certificate CyberHunter - Panel did not issue, and a DNS-01 certificate whose Cloudflare
 # zone it cannot reach. The count is what stops a THIRD outcome being wired into
-# the warning wording without a decision — and `ssl-correctness` guards the other
+# the warning wording without a decision - and `ssl-correctness` guards the other
 # direction, that neither decline borrows the failure helper.
 #
 # ⚠ This arm used to read the two declines as `"ssl_renewal_failure","","warning",`
-# twice, which pinned the EMPTY dedup key as correct — the very defect fixed here.
+# twice, which pinned the EMPTY dedup key as correct - the very defect fixed here.
 # Both declines are still warnings, but they are now SEPARATE dedup subjects, so
 # the arm names each one instead of counting an indistinguishable pair. Keying
 # them apart is what `alert-resolve-scope` §G pins; this arm keeps the severity
@@ -596,7 +596,7 @@ eq "F13 both declines are worded as the operator's job, at warning severity" \
       [ "$(occ "$F_SCAN" '"ssl_renewal_failure",notifications::ssl_renewal_key::DNS01_DECLINED,"warning",')" = 1 ] && \
       [ "$(occ "$F_SCAN" 'SSLcertificatefor{domain}needsrenewingbyyou')" = 1 ] && \
       [ "$(occ "$F_SCAN" 'SSLcertificatefor{domain}needsaCloudflarezone')" = 1 ] && echo yes || echo no)" "yes"
-# The four genuine failure paths keep the helper that names a failure — the split
+# The four genuine failure paths keep the helper that names a failure - the split
 # is the point, so both counts are pinned.
 eq "F14 the real failure paths still alert as failures" \
    "$(occ "$F_SCAN" 'ssl_renewal_alert(')" "4"
@@ -612,7 +612,7 @@ eq "G3 it reads the whole server, not one caller" \
 
 # ⚠ THE TENANT LIST MUST NOT HAVE GAINED A ROLE BRANCH. The whole reason for a
 # separate route is that a per-caller list can never quietly start returning
-# other people's rows — the shape `sites::list` + `/api/admin/sites` chose.
+# other people's rows - the shape `sites::list` + `/api/admin/sites` chose.
 eq "G4 the tenant certificate list is still caller-scoped" \
    "$(occ "$F_MON" 'FROMsitesWHEREuser_id=$1ANDssl_enabled=trueORDERBYssl_expiryASCNULLSLAST')" "1"
 eq "G5 and it still has no admin arm of its own" \
@@ -633,7 +633,7 @@ eq "G10 the page surfaces that limitation instead of hiding it" \
 
 # A certificate that belongs to neither a site nor a Let's Encrypt stack has
 # nothing on this page that could renew or delete it, so the page must not offer
-# either — the same defect class the rest of this ship removes.
+# either - the same defect class the rest of this ship removes.
 eq "G11 an unmanaged row is marked as such by the handler" \
    "$(occ "$F_MON" '"managed":false,')" "1"
 # ⛔ THE PAGE MUST READ THE HANDLER'S ANSWER, not re-derive it. This arm used to
@@ -646,7 +646,7 @@ eq "G12 and the page renders no control for a row the handler calls unmanaged" \
    "$(occ "$F_CERTS" 'cert.managed===false?(')" "1"
 # ⛔ AND THE STACK BRANCH GETS ITS OWN ARM. G12 is satisfied by the refusal
 # branch alone; it cannot tell whether the row that IS managed reaches anything.
-# A stack has no `sites` row, so the site-shaped route could never address one —
+# A stack has no `sites` row, so the site-shaped route could never address one -
 # posting there is how this control lied for two releases.
 eq "G13 a stack row renews through the stack route, not the site one" \
    "$(occ "$F_CERTS" '`/stacks/${cert.stack_id}/renew-ssl`')" "1"
@@ -660,18 +660,18 @@ echo
 echo "── H. an uploaded certificate has to name the site it secures (s395) ──"
 # Until v2.148.0 this door took any text containing `BEGIN CERTIFICATE`. A
 # certificate for ANOTHER site installed cleanly: nginx does not compare a
-# certificate against `server_name` (measured — `nginx -t` is "successful" for a
+# certificate against `server_name` (measured - `nginx -t` is "successful" for a
 # cert naming a different host), the panel wrote `ssl_enabled = true` and drew a
 # padlock reading the hardcoded literal "Enabled (Let's Encrypt)", and only the
 # browser ever disagreed. Reachable by a site OWNER, not just an admin.
 #
 # The subject is upload_cert's OWN BODY. `routes/ssl.rs` holds several handlers
-# and a whole-file arm here would be satisfied by a sibling — the class that
+# and a whole-file arm here would be satisfied by a sibling - the class that
 # printed 43/43 green over a restored defect at s386.
 ufn() { awk -v p="$2" 'index($0,p){f=1} f{print} f && /^}$/{exit}' "$1"; }
 U=$(ufn "$ASSLR" 'async fn upload_cert(' | sed -E -e 's://.*$::' | tr -d ' \n\\')
 if [ "${#U}" -lt 900 ]; then
-  bad "H0 SETUP" "upload_cert body extracted to ${#U} chars — the extractor broke, not the code"
+  bad "H0 SETUP" "upload_cert body extracted to ${#U} chars - the extractor broke, not the code"
 else
   ok "H0 upload_cert body extracted (${#U} chars)"
 
@@ -679,7 +679,7 @@ else
      "$(occ "$U" 'ssl::cert_covers_domain(&body.certificate,&body.domain)')" "1"
 
   # ORDERING is the arm that matters. Refusing AFTER the write leaves the files
-  # on disk and the vhost re-rendered from a SiteConfig this handler invents —
+  # on disk and the vhost re-rendered from a SiteConfig this handler invents -
   # so a refusal that arrives late is worse than none.
   CHK=$(printf '%s' "$U" | $G -boF 'cert_covers_domain' | head -1 | cut -d: -f1)
   WRT=$(printf '%s' "$U" | $G -boF 'tokio::fs::write(&cert_path' | head -1 | cut -d: -f1)
@@ -696,7 +696,7 @@ else
   eq "H3 the refusal is a 400 carrying the reason" \
      "$(occ "$U" 'StatusCode::BAD_REQUEST,Json(serde_json::json!({"error":reason}))')" "1"
 
-  # The bare substring gate is GONE — a key-then-certificate paste satisfied it.
+  # The bare substring gate is GONE - a key-then-certificate paste satisfied it.
   eq "H4 the bare BEGIN-CERTIFICATE substring gate is gone" \
      "$(occ "$U" 'body.certificate.contains("BEGINCERTIFICATE")')" "0"
   eq "H4b control: the private-key format check is still there, so H4 is not green by an empty subject" \
@@ -723,7 +723,7 @@ eq "H7b control: the leaf IS parsed, so H7 is not green by absence" \
    "$(occ "$F_ASSL" '.parse_x509()')" "3"
 
 # A wildcard covers EXACTLY ONE label. Pinned as the DERIVATION, not as the
-# identifier — an arm naming `dns_name_covers` survives the rule being inverted
+# identifier - an arm naming `dns_name_covers` survives the rule being inverted
 # inside it.
 eq "H8 the wildcard rule compares exactly one label" \
    "$(occ "$F_ASSL" '=>!label.is_empty()&&!label.contains(')" "1"
@@ -734,10 +734,10 @@ eq "H9 the Common Name is used only when no SAN name was found" \
 # §I  THE CONTROL THAT WAS NAMED BUT NOT RENDERED (s400)
 #
 # THREE separate sentences in this product tell the operator to install a
-# replacement certificate "under the site's SSL tab" — the hand-driven renew
+# replacement certificate "under the site's SSL tab" - the hand-driven renew
 # refusal, the scanner's declined-renewal alert, and the DNS-01 renewal plan's
 # refusal. §F (above) pins all three, and they are RIGHT to refuse: renewing a
-# certificate DockPanel did not issue replaces it.
+# certificate CyberHunter - Panel did not issue replaces it.
 #
 # Nothing rendered the tab they name. `SiteDetail.tsx` put EVERY SSL control,
 # the upload form included, inside the `else` branch of `{site.ssl_enabled ? …}`,
@@ -749,15 +749,15 @@ eq "H9 the Common Name is used only when no SAN name was found" \
 # ⛔⛔ WHY THESE ARMS USE AN EXTRACTOR AND NOT `subj`. The defect is a control
 # that is PRESENT IN THE FILE and UNREACHABLE IN A STATE. A whole-file arm
 # asserting SiteDetail calls `/ssl/upload` IS GREEN WITH THE DEFECT FULLY
-# RESTORED — the caller exists, it is merely in the other branch. Every arm below
+# RESTORED - the caller exists, it is merely in the other branch. Every arm below
 # reads ONE BRANCH, via `tests/helpers/ssl-enabled-branch.py`, which also strips
 # `{/* … */}` JSX comments that `subj` does not (the true branch carries a long
-# comment naming these very controls — [[feedback_source_pin_prose_trap]]).
+# comment naming these very controls - [[feedback_source_pin_prose_trap]]).
 #
 # And the badge: the row asserted ONE CA's name over every enabled certificate,
 # including one the panel had just refused to renew BECAUSE it came from another
 # CA. It now renders what the backend decided. `unknown` is a real answer and
-# must stay neutral — an unreachable agent and a zone-wildcard child both land
+# must stay neutral - an unreachable agent and a zone-wildcard child both land
 # there holding real certificates, and rendering either as a CA name is the
 # original lie re-emitted on every hiccup.
 
@@ -798,7 +798,7 @@ eq "I3 the not-yet-secured branch keeps its own upload entry point and its colla
 # The form is HOISTED out of the ternary so both branches drive one instance.
 # Two copies would mean two success handlers to drift apart, and a later reader
 # deleting "the dead one" from whichever branch they were looking at.
-eq "I4 the upload form itself is in NEITHER branch — it is hoisted and shared" \
+eq "I4 the upload form itself is in NEITHER branch - it is hoisted and shared" \
    "$(( $(occ "$B_TRUE" '/ssl/upload') + $(occ "$B_FALSE" '/ssl/upload') ))" "0"
 eq "I5 control: the page really does call the upload endpoint, exactly once" \
    "$(occ "$(subj "$DETAIL")" '/ssl/upload')" "1"
@@ -816,7 +816,7 @@ eq "I8 a foreign certificate is labelled with ITS OWN issuer" \
 # tell" into one `None`, which is correct for renewal and is the original lie for
 # a badge. If the CA name ever appears twice in this branch, the neutral
 # fallback has been written as the CA again.
-eq "I9 the CA name appears exactly once in the branch — no unknown fallback to it" \
+eq "I9 the CA name appears exactly once in the branch - no unknown fallback to it" \
    "$(occ "$B_TRUE" 'Let'"'"'sEncrypt')" "1"
 eq "I10 an unresolved provenance renders the neutral wording" \
    "$(occ "$B_TRUE" ':"Enabled"}')" "1"
@@ -843,7 +843,7 @@ eq "I14 the issuer test exists once in the backend, inside cert_provenance" \
 # have quietly changed which way the middle state falls.
 # TWO, and BOTH are load-bearing: the collapse inside `foreign_cert_issuer`,
 # and the unit test that asserts it independently of the enum's own declaration.
-# Deleting either is the regression — the first changes renewal behaviour, the
+# Deleting either is the regression - the first changes renewal behaviour, the
 # second removes the only check that would have noticed.
 eq "I15 renewal still treats BOTH non-foreign states as permission to proceed" \
    "$(occ "$(subj "$HELP")" 'CertProvenance::DockPanelIssued|CertProvenance::Unknown=>None,')" "2"

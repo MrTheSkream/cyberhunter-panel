@@ -2,7 +2,7 @@
 
 ## Log Locations
 
-DockPanel services run via systemd. View their logs with `journalctl`:
+CyberHunter - Panel services run via systemd. View their logs with `journalctl`:
 
 ```bash
 # Agent logs
@@ -53,7 +53,7 @@ tail -50 /var/log/mail.log
 
 ### Panel shows 502 Bad Gateway
 
-**Cause**: The DockPanel agent is not running.
+**Cause**: The CyberHunter - Panel agent is not running.
 
 **Fix**:
 
@@ -81,7 +81,7 @@ journalctl -u dockpanel-api -n 50 --no-pager
 
 **Cause**: The login cookie carries the `Secure` flag, which browsers only return over HTTPS, while the panel is being served over plain HTTP.
 
-**Fix**: serve the panel over HTTPS — `BASE_URL` has nothing to do with it.
+**Fix**: serve the panel over HTTPS - `BASE_URL` has nothing to do with it.
 
 The `Secure` flag is decided by the scheme nginx reports for the actual connection
 (`X-Forwarded-Proto`), not by any setting. Keying it off `BASE_URL` was the cause of issue
@@ -95,8 +95,8 @@ HTTPS either way. If you are on an older install serving plain HTTP, either re-r
 installer with `PANEL_DOMAIN=your.domain`, or put a certificate in front of the panel vhost
 (`/etc/nginx/sites-available/dockpanel-panel`).
 
-`BASE_URL` is still worth setting correctly — it is what the panel uses to build links in
-outgoing notifications and runbooks — it simply is not what gates the cookie.
+`BASE_URL` is still worth setting correctly - it is what the panel uses to build links in
+outgoing notifications and runbooks - it simply is not what gates the cookie.
 
 ---
 
@@ -111,7 +111,7 @@ outgoing notifications and runbooks — it simply is not what gates the cookie.
    ls -la /var/www/example.com/public/
    ```
 
-2. If the directory is empty, DockPanel should have created a default `index.html`. Re-create the site from the panel.
+2. If the directory is empty, CyberHunter - Panel should have created a default `index.html`. Re-create the site from the panel.
 
 3. Check DNS is pointing to this server:
    ```bash
@@ -162,7 +162,7 @@ grep fastcgi_pass /etc/nginx/sites-available/example.com
 
 **Cause**: Let's Encrypt cannot verify domain ownership.
 
-Before working through this list, check the SSL card on the site itself. DockPanel evaluates the DNS prerequisite before it will attempt issuance, and says which of these it is — see [What DockPanel checks for you](guides/prerequisites.md). If the button is disabled, the reason is on screen.
+Before working through this list, check the SSL card on the site itself. CyberHunter - Panel evaluates the DNS prerequisite before it will attempt issuance, and says which of these it is - see [What CyberHunter - Panel checks for you](guides/prerequisites.md). If the button is disabled, the reason is on screen.
 
 **Fix**:
 
@@ -239,7 +239,7 @@ sudo bash /opt/dockpanel/scripts/update.sh
 **Fix**:
 
 ```bash
-# Enable all DockPanel services
+# Enable all CyberHunter - Panel services
 systemctl enable dockpanel-agent
 systemctl enable dockpanel-api
 
@@ -309,7 +309,7 @@ Go to Security > Diagnostics for a full diagnostic report.
 ## Restarting Services
 
 ```bash
-# Restart all DockPanel services
+# Restart all CyberHunter - Panel services
 systemctl restart dockpanel-agent
 systemctl restart dockpanel-api
 
@@ -326,7 +326,7 @@ systemctl restart docker
 docker restart CONTAINER_ID
 ```
 
-## Updating DockPanel
+## Updating CyberHunter - Panel
 
 ```bash
 sudo bash /opt/dockpanel/scripts/update.sh

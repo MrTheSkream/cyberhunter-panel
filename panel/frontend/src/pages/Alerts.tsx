@@ -86,12 +86,12 @@ const TYPE_LABELS: Record<string, string> = {
   gpu_temperature: "GPU temperature",
   gpu_vram: "GPU VRAM",
   memory_leak: "Memory leak",
-  // Fired outside alert_engine, and absent here until v2.155.0 — the badge
+  // Fired outside alert_engine, and absent here until v2.155.0 - the badge
   // printed the raw column value and the filter row, built from these same
   // keys, offered no way to select them. Certificate renewal failures are the
   // sharpest: nine producers under six keys, five of them critical.
   //
-  // `slow_response` was the FIFTH and was still missing at v2.156.0 — the
+  // `slow_response` was the FIFTH and was still missing at v2.156.0 - the
   // v2.155.0 pass collected the four raised by services and missed the one
   // raised by the uptime monitor. Nothing noticed, because `alert-controls` §A
   // pinned only this map's SIBLING (the Settings mute grid), which had
@@ -144,7 +144,7 @@ export default function Alerts() {
     setExpanded(alert.id);
     // Runbooks are administrator-only to read. Asking anyway would spend a
     // guaranteed 403 and cache `null`, which this component renders exactly like
-    // "no runbook has been written for this alert type" — a refusal a client
+    // "no runbook has been written for this alert type" - a refusal a client
     // could never tell from an ordinary absence, and so could never report.
     if (isAdmin && runbookCache[alert.alert_type] === undefined) {
       try {
@@ -494,14 +494,14 @@ export default function Alerts() {
                           onClick={(e) => e.stopPropagation()}
                         >
                           <label className="text-xs text-dark-200 block mb-1">
-                            Acknowledge — optional comment (max 500 chars)
+                            Acknowledge - optional comment (max 500 chars)
                           </label>
                           <textarea
                             value={ackComment}
                             onChange={(e) => setAckComment(e.target.value)}
                             maxLength={500}
                             rows={2}
-                            placeholder="e.g. 'looking into it — disk forecast model is hot, no action needed'"
+                            placeholder="e.g. 'looking into it - disk forecast model is hot, no action needed'"
                             className="w-full bg-dark-800 text-dark-100 text-sm border border-dark-500 rounded p-2 outline-none focus:border-warn-500/50"
                             autoFocus
                           />
@@ -634,9 +634,9 @@ function RunbooksTab({ onMessage }: { onMessage: (m: { text: string; type: strin
       const res = await api.post<{ inserted: string[]; skipped: string[] }>("/alerts/runbooks/apply-defaults", {});
       const msg =
         res.inserted.length === 0
-          ? `All ${res.skipped.length} runbooks already exist — nothing seeded`
+          ? `All ${res.skipped.length} runbooks already exist - nothing seeded`
           : `Seeded ${res.inserted.length} runbook${res.inserted.length === 1 ? "" : "s"}` +
-            (res.skipped.length ? ` (${res.skipped.length} already customized — skipped)` : "");
+            (res.skipped.length ? ` (${res.skipped.length} already customized - skipped)` : "");
       onMessage({ text: msg, type: "success" });
       fetchRunbooks();
     } catch (e) {
@@ -663,12 +663,12 @@ function RunbooksTab({ onMessage }: { onMessage: (m: { text: string; type: strin
           <div className="min-w-0 max-w-2xl">
             <h2 className="font-medium text-dark-50 mb-1">Runbooks</h2>
             <p className="text-sm text-dark-200">
-              Markdown attached to each alert type. Excerpts ride along in slack/discord/pagerduty/webhook payloads, full text appears in incident detail and email. Edit any runbook to customize for your environment — your edits survive panel upgrades.
+              Markdown attached to each alert type. Excerpts ride along in slack/discord/pagerduty/webhook payloads, full text appears in incident detail and email. Edit any runbook to customize for your environment - your edits survive panel upgrades.
             </p>
           </div>
           {confirmSeed ? (
             <div className="flex gap-2 items-center bg-dark-700 border border-dark-500 rounded-lg px-3 py-2">
-              <span className="text-xs text-dark-200">Seed missing only — won't overwrite edits.</span>
+              <span className="text-xs text-dark-200">Seed missing only - won't overwrite edits.</span>
               <button
                 onClick={seedDefaults}
                 disabled={seeding}
@@ -748,7 +748,7 @@ function RunbooksTab({ onMessage }: { onMessage: (m: { text: string; type: strin
                   Edit runbook: <span className="font-mono text-sm text-dark-200">{editing.alert_type}</span>
                 </h3>
                 <p className="text-xs text-dark-300 mt-0.5">
-                  {editing.is_default ? "Currently using default — your edits will create a custom version." : "Currently customized."}
+                  {editing.is_default ? "Currently using default - your edits will create a custom version." : "Currently customized."}
                 </p>
               </div>
               <button onClick={closeEdit} className="text-dark-300 hover:text-dark-100 text-xl leading-none">×</button>
@@ -947,7 +947,7 @@ function OnCallTab({ onMessage }: { onMessage: (m: { text: string; type: string 
               Ordered list of users plus a cadence (in days). Whoever the
               rotation lands on right now is the one paged when an escalation
               policy routes to <code className="text-dark-100">on_call_schedule:&lt;id&gt;</code>.
-              No calendar, no overrides — keep the list small, advance by days.
+              No calendar, no overrides - keep the list small, advance by days.
             </p>
           </div>
           <button
@@ -1081,10 +1081,10 @@ function OnCallTab({ onMessage }: { onMessage: (m: { text: string; type: string 
               </div>
               <div>
                 <label className="block text-xs font-medium text-dark-200 mb-1">
-                  Members (ordered — top of list goes first)
+                  Members (ordered - top of list goes first)
                 </label>
                 {draftMembers.length === 0 ? (
-                  <div className="text-xs text-dark-300 mb-2">No members yet — add from the list below.</div>
+                  <div className="text-xs text-dark-300 mb-2">No members yet - add from the list below.</div>
                 ) : (
                   <div className="space-y-1 mb-3">
                     {draftMembers.map((mid, i) => {
@@ -1285,7 +1285,7 @@ function PoliciesTab({ onMessage }: { onMessage: (m: { text: string; type: strin
               An ordered chain of steps. The first fires the moment an alert is
               created; each later step fires if the alert still isn't
               acknowledged once its threshold passes. After the last step the
-              alert does not go quiet — it keeps re-paging that step's route
+              alert does not go quiet - it keeps re-paging that step's route
               every 30 minutes until someone acknowledges or resolves it.
               Attach a policy under Settings → Notifications; without one,
               alerts re-page every 30 minutes once they are 15 minutes old.
@@ -1415,7 +1415,7 @@ function PolicyEditModal({
     onStepsChange([...steps, { after_minutes: nextMinutes, route: "all_channels" }]);
   };
   const removeStep = (i: number) => {
-    if (i === 0) return; // Step 0 is structural — can't delete.
+    if (i === 0) return; // Step 0 is structural - can't delete.
     onStepsChange(steps.filter((_, idx) => idx !== i));
   };
   const routeKind = (route: string): "all_channels" | "on_call_schedule" | "user" | "webhook" => {
@@ -1499,7 +1499,7 @@ function PolicyEditModal({
                           className="bg-dark-700 border border-dark-500 rounded text-sm text-dark-100 px-2 py-1"
                         >
                           {schedules.length === 0 ? (
-                            <option value="">— no schedules defined —</option>
+                            <option value="">- no schedules defined -</option>
                           ) : (
                             schedules.map((s) => (
                               <option key={s.id} value={s.id}>{s.name}</option>
@@ -1514,7 +1514,7 @@ function PolicyEditModal({
                           className="bg-dark-700 border border-dark-500 rounded text-sm text-dark-100 px-2 py-1"
                         >
                           {users.length === 0 ? (
-                            <option value="">— no users —</option>
+                            <option value="">- no users -</option>
                           ) : (
                             users.map((u) => (
                               <option key={u.id} value={u.id}>{u.email}</option>

@@ -1,6 +1,6 @@
 # API Reference
 
-DockPanel exposes 840 REST endpoints (545 backend + 295 agent) across 50+ categories — the figure derived from the two routers in `FEATURES.md` §Verified Metrics, which owns it. The tables below document the commonly used subset, not every route. All endpoints except `/api/health`, `/api/branding`, `/api/auth/setup-status`, and `/api/auth/login` require authentication.
+CyberHunter - Panel exposes 840 REST endpoints (545 backend + 295 agent) across 50+ categories - the figure derived from the two routers in `FEATURES.md` §Verified Metrics, which owns it. The tables below document the commonly used subset, not every route. All endpoints except `/api/health`, `/api/branding`, `/api/auth/setup-status`, and `/api/auth/login` require authentication.
 
 ## Authentication
 
@@ -114,7 +114,7 @@ Delete site and all associated resources (database containers, nginx config, SSL
 | POST | `/api/sites/{id}/files/create` | `{ "path": "dir", "is_dir": true }` |
 | POST | `/api/sites/{id}/files/rename` | `{ "from": "old.txt", "to": "new.txt" }` |
 | DELETE | `/api/sites/{id}/files?path=file.txt` | Delete file |
-| POST | `/api/sites/{id}/files/upload` | Upload a file — JSON body, `content` base64-encoded, 1.5 MB limit |
+| POST | `/api/sites/{id}/files/upload` | Upload a file - JSON body, `content` base64-encoded, 1.5 MB limit |
 | GET | `/api/sites/{id}/files/download?path=file.txt` | Download file |
 
 ### Backups
@@ -150,9 +150,9 @@ Delete site and all associated resources (database containers, nginx config, SSL
 
 | Value | Meaning |
 |-------|---------|
-| `dockpanel` | Issued by Let's Encrypt, so DockPanel issued it and renews it |
-| `foreign` | Issued by somebody else; `issuer` names them, and DockPanel will not renew it |
-| `unknown` | No answer to act on — the agent was unreachable, or the site is served by a certificate stored under its zone's name rather than its own |
+| `dockpanel` | Issued by Let's Encrypt, so CyberHunter - Panel issued it and renews it |
+| `foreign` | Issued by somebody else; `issuer` names them, and CyberHunter - Panel will not renew it |
+| `unknown` | No answer to act on - the agent was unreachable, or the site is served by a certificate stored under its zone's name rather than its own |
 
 ⛔ `unknown` must never be rendered as a CA name. It is what an unreachable agent
 returns, and a certificate that is real and healthy sits behind it.
@@ -214,10 +214,10 @@ Execute SQL query.
 | GET | `/api/databases/{id}/indexes/{table}` | Table indexes |
 | GET | `/api/databases/{id}/foreign-keys` | Foreign-key map |
 | GET | `/api/databases/{id}/schema-overview` | Tables + relationships in one call |
-| GET/PUT | `/api/databases/{id}/pitr` | Read/store a PITR retention preference. Point-in-time recovery is **not implemented** — nothing is archived and `POST /pitr/restore` answers 501 |
+| GET/PUT | `/api/databases/{id}/pitr` | Read/store a PITR retention preference. Point-in-time recovery is **not implemented** - nothing is archived and `POST /pitr/restore` answers 501 |
 | POST | `/api/databases/{id}/reset-password` | Rotate the database password |
 | GET | `/api/databases/{id}/dumps` | **Admin only.** List dumps the operator placed in this database's backup directory, including files that cannot be imported and why |
-| POST | `/api/databases/{id}/import` | **Admin only.** Import one of those dumps. Body: `{"filename": "mydb-20260821-120000.sql.gz"}`. Answers `504` with an explanation if the import outlasts the panel's 270s wait — that is not a failure |
+| POST | `/api/databases/{id}/import` | **Admin only.** Import one of those dumps. Body: `{"filename": "mydb-20260821-120000.sql.gz"}`. Answers `504` with an explanation if the import outlasts the panel's 270s wait - that is not a failure |
 
 ---
 
@@ -268,7 +268,7 @@ List running containers.
 object you send: a name you omit is removed, and a value sent back as `********`
 means "leave this one alone" (the container is the only place an app's
 environment is stored, so the masked read is what the panel has to reconcile
-against). Names may be added freely — the same bounds the deploy endpoint
+against). Names may be added freely - the same bounds the deploy endpoint
 enforces apply here: at most 50 variables, names up to 255 characters, values up
 to 4KB, and a name may not contain `=` or a null byte.
 
@@ -318,11 +318,11 @@ Create a named stack from compose YAML, optionally fronted by a domain.
 `tls_mode` is how the domain is served and is **stored on the stack**: `none`
 (plain HTTP, or TLS terminated upstream), `acme` (a Let's Encrypt certificate
 ordered under `ssl_email`) or `provided` (a certificate registered under the alias
-in `tls_certificate` — see the registry below). Omitted, it is derived from
+in `tls_certificate` - see the registry below). Omitted, it is derived from
 `ssl_email` exactly as every client before v2.160.0 meant it. A `provided` claim is
 refused before any row is written when the alias is unknown on the stack's server,
 when that server's agent predates v2.160.0, or when the certificate does not name
-the domain — the refusal says which names it does cover.
+the domain - the refusal says which names it does cover.
 
 `PUT /api/stacks/{id}` treats an **absent** field as *keep*: the mode, `ssl_email`,
 the alias and `domain` itself stay as stored unless the request names them. An
@@ -351,7 +351,7 @@ beside the per-domain tree; the panel keeps the alias and the metadata. Administ
 | Method | Path | Purpose |
 |--------|------|---------|
 | GET | `/api/tls-certificates` | List the certificates registered on the scoped server, with names, issuer, expiry, status and the stacks using each |
-| POST | `/api/tls-certificates` | Register `{alias, certificate, private_key}` — the alias is 1–64 lowercase letters, digits or hyphens; the key must belong to the certificate; 409 if the alias is taken |
+| POST | `/api/tls-certificates` | Register `{alias, certificate, private_key}` - the alias is 1–64 lowercase letters, digits or hyphens; the key must belong to the certificate; 409 if the alias is taken |
 | PUT | `/api/tls-certificates/{id}` | Replace the pair behind an alias; refused if the new certificate stops covering a domain a stack serves under it |
 | DELETE | `/api/tls-certificates/{id}` | Remove it; 409 naming the stacks while any still uses it |
 
@@ -388,7 +388,7 @@ The build has started. Stream it via `GET /api/git-deploys/deploy/{deploy_id}/lo
 { "status": "pending_approval", "message": "Deploy requires approval from another admin …" }
 ```
 The deployment has `deploy_protected` set, so **nothing was built**. A request was filed
-and a different administrator must resolve it — see *Deploy Approvals* below. There is no
+and a different administrator must resolve it - see *Deploy Approvals* below. There is no
 `deploy_id`, and none exists until the approval is granted. Filing a request is
 idempotent: a deployment may have only one waiting at a time, and a repeat call says so
 rather than queueing a second.
@@ -516,7 +516,7 @@ Add a DNS record.
 | POST | `/api/security/fix` | Apply security fix |
 | POST | `/api/security/panel-jail/setup` | Create Fail2Ban jail for panel |
 | GET | `/api/security/panel-jail/status` | Panel jail status |
-| GET | `/api/security/canary-status` | Canary tripwire state — which paths are watched, absent or masked |
+| GET | `/api/security/canary-status` | Canary tripwire state - which paths are watched, absent or masked |
 | POST | `/api/security/canary/arm` | Plant the canary files the agent can write |
 
 ---
@@ -565,7 +565,7 @@ Add a mail domain.
 
 **Account passwords** are hashed with **Argon2id** and stored in Dovecot's
 `{ARGON2ID}` scheme (since v2.13.1). Accounts created before v2.13.1 were stored
-with a hash Dovecot could not verify — **reset each mailbox's password once**
+with a hash Dovecot could not verify - **reset each mailbox's password once**
 after upgrading so login works. Address fields (e-mail, alias source/destination,
 catch-all, forward-to) are validated against a strict character set and return
 `400` on invalid input.
@@ -616,7 +616,7 @@ Create a webhook integration.
 
 ## Other Endpoints
 
-### Users (4) — Admin only
+### Users (4) - Admin only
 | Method | Path | Purpose |
 |--------|------|---------|
 | GET | `/api/users` | List users |
@@ -631,7 +631,7 @@ Create a webhook integration.
 
 > ⚠ **These endpoints grant no access.** They create teams, invite members and
 > validate roles, but `team_members` is read by `routes/teams.rs` and by nothing
-> else, so no authorization path in the panel consults team membership — the
+> else, so no authorization path in the panel consults team membership - the
 > `admin` / `developer` / `viewer` roles have no effect on any resource. There is
 > also no Teams UI, and the invite email links to an SPA route that does not
 > exist. Documented because the endpoints are real and routed; do not build
@@ -646,10 +646,10 @@ Create a webhook integration.
 | POST | `/api/teams/accept` | Accept invitation |
 | PUT/DELETE | `/api/teams/{id}/members/{member_id}` | Update/remove member |
 
-### Resellers (14) — Admin creates, reseller manages
+### Resellers (14) - Admin creates, reseller manages
 The `/api/resellers` family is admin-only and is driven by **Admin → Resellers**.
 The `/api/reseller/*` family answers for the calling reseller's own tenant and
-refuses an administrator, who has no tenant — use `/api/resellers/{id}` instead.
+refuses an administrator, who has no tenant - use `/api/resellers/{id}` instead.
 
 | Method | Path | Purpose |
 |--------|------|---------|
@@ -663,7 +663,7 @@ refuses an administrator, who has no tenant — use `/api/resellers/{id}` instea
 refuses an administrator (400) and an account that already has a profile (409). An
 account that kept a profile through an earlier demotion is restored with its stored
 quotas rather than re-created. `PUT` is COALESCE on every column, so a `null` field
-leaves the stored value unchanged — there is no way to clear one through this API.
+leaves the stored value unchanged - there is no way to clear one through this API.
 
 ### API Keys (4)
 
@@ -672,7 +672,7 @@ leaves the stored value unchanged — there is no way to clear one through this 
 > its hash and authenticates as the owning user (since v2.221.0; `last_used_at`
 > updates on each use). This does **not** extend to the separate `dpiac_`
 > (Terraform/Pulumi) or `dpx_` (extensions) key families, which still
-> authenticate nothing — see `FEATURES.md` §Withdrawn Claims.
+> authenticate nothing - see `FEATURES.md` §Withdrawn Claims.
 
 | Method | Path | Purpose |
 |--------|------|---------|
@@ -789,7 +789,7 @@ leaves the stored value unchanged — there is no way to clear one through this 
 | POST | `/api/backup-orchestrator/volume-backups/{id}/restore` | Restore volume backup |
 | GET | `/api/backup-orchestrator/verifications` | List verifications |
 | POST | `/api/backup-orchestrator/verify` | Verify the most recent backups |
-| POST | `/api/backup-orchestrator/drill` | Trigger end-to-end drill (site/db/volume) — async, returns 202 |
+| POST | `/api/backup-orchestrator/drill` | Trigger end-to-end drill (site/db/volume) - async, returns 202 |
 | GET | `/api/backup-orchestrator/drills` | List drills (paginated `{items, total}`) |
 
 ---
@@ -799,7 +799,7 @@ leaves the stored value unchanged — there is no way to clear one through this 
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/incidents` | List incidents |
-| GET | `/api/incidents/summary` | Counts by status, plus `open` — every status except `resolved` and `postmortem` |
+| GET | `/api/incidents/summary` | Counts by status, plus `open` - every status except `resolved` and `postmortem` |
 | POST | `/api/incidents` | Create incident |
 | GET | `/api/incidents/{id}` | Get incident |
 | PUT | `/api/incidents/{id}` | Update incident |
@@ -849,16 +849,16 @@ leaves the stored value unchanged — there is no way to clear one through this 
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/webhooks/gateway/{token}` | **Public inbound receiver.** The only unauthenticated route here — the token in the path is the credential |
+| POST | `/api/webhooks/gateway/{token}` | **Public inbound receiver.** The only unauthenticated route here - the token in the path is the credential |
 | GET | `/api/webhook-gateway/endpoints` | List endpoints |
 | POST | `/api/webhook-gateway/endpoints` | Create endpoint |
-| PUT | `/api/webhook-gateway/endpoints/{id}` | Pause or resume an endpoint — body `{"enabled": bool}` |
+| PUT | `/api/webhook-gateway/endpoints/{id}` | Pause or resume an endpoint - body `{"enabled": bool}` |
 | DELETE | `/api/webhook-gateway/endpoints/{id}` | Delete endpoint, and every delivery and route recorded against it |
 | GET | `/api/webhook-gateway/endpoints/{id}/deliveries` | List deliveries |
 | POST | `/api/webhook-gateway/deliveries/{delivery_id}/replay` | Replay a delivery to its matching routes |
 | GET | `/api/webhook-gateway/endpoints/{id}/routes` | List routes |
 | POST | `/api/webhook-gateway/endpoints/{id}/routes` | Create route |
-| PUT | `/api/webhook-gateway/routes/{route_id}` | Pause or resume a route — body `{"enabled": bool}` |
+| PUT | `/api/webhook-gateway/routes/{route_id}` | Pause or resume a route - body `{"enabled": bool}` |
 | DELETE | `/api/webhook-gateway/routes/{id}` | Delete route |
 
 ---
@@ -891,7 +891,7 @@ leaves the stored value unchanged — there is no way to clear one through this 
 ## Deploy Approvals
 
 A Git deployment with `deploy_protected` set will not build when its owner asks. The
-request is filed here and a **different** administrator has to resolve it — the panel
+request is filed here and a **different** administrator has to resolve it - the panel
 surfaces this as *Pending Approvals* on the Git Deploy page.
 
 | Method | Path | Description |
@@ -901,7 +901,7 @@ surfaces this as *Pending Approvals* on the Git Deploy page.
 | POST | `/api/deploy-approvals/{id}/reject` | Reject, or withdraw your own |
 
 `GET /api/deploy-approvals` returns only requests whose deployment is **still** protected,
-on machines this administrator operates — this box, or a server they registered
+on machines this administrator operates - this box, or a server they registered
 themselves. Each row carries `id`, `deploy_id`, `deploy_name`, `repo_url`, `branch`,
 `requested_by`, `requested_by_email`, `status` and `created_at`.
 
@@ -913,7 +913,7 @@ themselves. Each row carries `id`, `deploy_id`, `deploy_name`, `repo_url`, `bran
 | `409` | the request is already resolved, the deployment is no longer protected, or a build is already running |
 | `404` | the request is not on a machine you operate |
 
-`reject` is terminal — the requester has to ask again. It carries **no** self-rejection
+`reject` is terminal - the requester has to ask again. It carries **no** self-rejection
 rule, deliberately: withdrawing your own request is the only exit on an install with a
 single administrator, where nobody else can ever approve it.
 
@@ -924,14 +924,14 @@ single administrator, where nobody else can ever approve it.
 Admin-only endpoints to drive panel updates from the UI instead of SSH.
 The orchestrator shells out to `scripts/update.sh` under
 `DOCKPANEL_NO_SELF_REFRESH=1 + DOCKPANEL_VERSION=<target>` rather than
-reimplementing binary swap — every bug fix in update.sh keeps working.
+reimplementing binary swap - every bug fix in update.sh keeps working.
 
 | Method | Path | Description |
 |--------|------|-------------|
 | GET    | `/api/update/status` | Current update state + version + channel |
 | POST   | `/api/update/manual-check` | Force a `/releases` poll now (bypasses `hold`) |
 | POST   | `/api/update/apply` | Snapshot + invoke update.sh. `{target_version: "v2.10.0"}` must match advertised version |
-| POST   | `/api/update/rollback` | Restore from snapshot. `{snapshot_id: "<uuid>"}`. Destructive — DB is also restored. Returns `202` immediately; see below |
+| POST   | `/api/update/rollback` | Restore from snapshot. `{snapshot_id: "<uuid>"}`. Destructive - DB is also restored. Returns `202` immediately; see below |
 | GET    | `/api/update/channel` | Read current channel (`stable` \| `candidate` \| `hold`) |
 | PUT    | `/api/update/channel` | Set channel. `{channel: "candidate"}` |
 | GET    | `/api/snapshots` | List panel snapshots (newest first) |
@@ -970,14 +970,14 @@ nothing at all. The same document is written to
 
 **What a rollback does and does not rewind.** It restores what the snapshot
 contains: the three binaries, `/etc/dockpanel`, and the database. The database is
-a true point-in-time revert — the `public` schema is dropped and rebuilt from the
-dump in a single transaction — so database objects created *after* the snapshot
+a true point-in-time revert - the `public` schema is dropped and rebuilt from the
+dump in a single transaction - so database objects created *after* the snapshot
 do **not** survive it, and neither does data written into them. The database as it
 stood immediately before the rollback is dumped first to
 `/var/lib/dockpanel/pre-rollback-<id>.sql.gz` (mode `0600`), which is the way
 back from a rollback you did not mean; the three most recent are kept and older
-ones are pruned. Nothing outside the snapshot — nginx vhosts, Let's Encrypt
-certificates, site files, docker volumes — is touched. A rollback restores the
+ones are pruned. Nothing outside the snapshot - nginx vhosts, Let's Encrypt
+certificates, site files, docker volumes - is touched. A rollback restores the
 panel, not the machine.
 
 Up to and including v2.11.6 the database stage applied only the dump's own `DROP`
@@ -990,12 +990,12 @@ schema outright and is unaffected.
 
 #### What a fleet rolling update actually does
 
-`POST /api/update/fleet` builds an ordered plan of your remote servers — oldest
+`POST /api/update/fleet` builds an ordered plan of your remote servers - oldest
 agent version first, skipping any that are already at the target and any that
-have not checked in for five minutes — and returns `202` with a `run_id`. Poll
+have not checked in for five minutes - and returns `202` with a `run_id`. Poll
 `GET /api/update/fleet` (the list endpoint) for progress; it returns every run
 with its full per-server `plan`/`progress`/outcome, which is already everything
-a single run needs to render — there is no need to additionally fetch a
+a single run needs to render - there is no need to additionally fetch a
 single run by id.
 
 Each member updates **its own agent binary**: the agent fetches
@@ -1004,10 +1004,10 @@ against that release's `checksums.txt` *before* installing it, swaps it in by
 rename, restarts itself, and rolls back to the previous binary if the new one
 does not come up. The result is written to
 `/var/lib/dockpanel/last-agent-update.json` on the member. A server that is
-itself a full DockPanel install runs the ordinary `update.sh` flow instead.
+itself a full CyberHunter - Panel install runs the ordinary `update.sh` flow instead.
 
 A member counts as updated only when its `/health` reports the target version.
-Nothing infers success from an exit status or from the agent's own claim — up to
+Nothing infers success from an exit status or from the agent's own claim - up to
 v2.11.7 it did, and a fleet run could report success on a box whose update had
 aborted a second earlier.
 
@@ -1017,7 +1017,7 @@ after the fleet, and only if every member succeeded.
 
 **Upgrading a fleet that is on 2.11.7 or older:** the mechanism lives in the
 agent, so those members cannot be rolled from the panel. They report that they
-are too old and name the remedy — re-run `install-agent.sh` on them once to
+are too old and name the remedy - re-run `install-agent.sh` on them once to
 reach 2.11.8, after which fleet updates work normally.
 
 Agent-side (called by the orchestrator over the agent's bearer-auth API):
@@ -1047,7 +1047,7 @@ switch. The decision is made by the panel, not the agent: an agent only ever
 learns things by asking, so the panel is the only place a switch can actually
 take effect.
 
-The target is always **the release the panel itself is running** — an agent is
+The target is always **the release the panel itself is running** - an agent is
 never pushed ahead of its panel, and the release that built the panel also built
 that agent asset, so it is guaranteed to exist.
 
@@ -1062,7 +1062,7 @@ written to `/var/lib/dockpanel/last-agent-update.json` on every exit path.
 Rate limit: 120 requests/minute per server, as for the other agent endpoints.
 
 **Agents older than 2.12.0 ignore this.** They read a different field, so they
-see nothing to do and carry on — the response deliberately carries no `version`,
+see nothing to do and carry on - the response deliberately carries no `version`,
 `download_url` or `checksum` key, so an old agent cannot be walked into an
 update it has no working code to perform. Bring them forward with a fleet
 rolling update.
@@ -1072,32 +1072,32 @@ Note: distinct from `/system/updates/*` (OS-package apt-get mgmt).
 ## Configuration Drift (v2.13.0, Phase 4 W5)
 
 Read-only report answering "is my fleet's operational posture consistent?".
-Because DockPanel is a single hub DB + thin agents, every server's declared
+Because CyberHunter - Panel is a single hub DB + thin agents, every server's declared
 config already lives centrally keyed by `server_id`, so this is a **local
-cross-server diff** — no remote agent call, and an offline member is still
+cross-server diff** - no remote agent call, and an offline member is still
 comparable. Computed on demand (no background scan). Admin only.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/drift/servers` | Comparable servers (local first) — reference/target picker source |
+| GET | `/api/drift/servers` | Comparable servers (local first) - reference/target picker source |
 | GET | `/api/drift?reference=<uuid>&targets=<uuid,uuid>` | Drift report against the reference server |
 
 `reference` defaults to the local server; `targets` defaults to every other
 server. Four entities are compared, each in its most meaningful form:
 
-- **alert_rules** — one row per server, whole-row posture diff (the flagship
+- **alert_rules** - one row per server, whole-row posture diff (the flagship
   signal: "monitoring is not identical").
-- **sites** — per-domain inventory asymmetry (present on one server, not the
+- **sites** - per-domain inventory asymmetry (present on one server, not the
   other) plus per-site config diffs (`waf_mode`, `ssl_enabled`, `php_version`,
   caches, limits, …) for domains present on both.
-- **crons** — per `(domain, command)` job parity.
-- **backup_coverage** — per-server summary: how many sites have an enabled
+- **crons** - per `(domain, command)` job parity.
+- **backup_coverage** - per-server summary: how many sites have an enabled
   backup schedule, how many are unprotected, how many destinations exist.
 
 Secret-bearing fields (`notify_slack_url`, `notify_discord_url`) are compared by
-**presence only** — the report shows `set`/`unset`, never the value.
+**presence only** - the report shows `set`/`unset`, never the value.
 
 **Report only.** Reconcile (push a source-of-truth server's config to the
-others) is deliberately not in this release — it is cross-server mutation with no
-existing transport, and DockPanel keeps that surface explicit. Comparing a
+others) is deliberately not in this release - it is cross-server mutation with no
+existing transport, and CyberHunter - Panel keeps that surface explicit. Comparing a
 member's live on-box state against its declared config is likewise a later leg.

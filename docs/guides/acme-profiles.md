@@ -1,17 +1,17 @@
 # ACME Profiles & Renewal
 
-DockPanel issues and renews certificates via the ACME protocol
+CyberHunter - Panel issues and renews certificates via the ACME protocol
 ([RFC 8555](https://datatracker.ietf.org/doc/rfc8555/)) with two 2026-ready
 extensions enabled by default:
 
-- **Profiles** — client picks which certificate "shape" (lifetime,
+- **Profiles** - client picks which certificate "shape" (lifetime,
   extensions, policies) the CA should issue. Let's Encrypt exposes
   `classic`, `tlsserver`, `shortlived`, and `tlsclient`.
 - **ACME Renewal Information (ARI)**
-  ([RFC 9773](https://datatracker.ietf.org/doc/rfc9773/)) — CA tells the
+  ([RFC 9773](https://datatracker.ietf.org/doc/rfc9773/)) - CA tells the
   client *when* to renew instead of the client guessing.
 
-Together they prepare DockPanel for Let's Encrypt's staged move to
+Together they prepare CyberHunter - Panel for Let's Encrypt's staged move to
 shorter-lived certificates:
 
 | Date | Change |
@@ -21,7 +21,7 @@ shorter-lived certificates:
 | 2027-02-10 | Default `classic` profile → 64-day with 10-day authz reuse |
 | 2028-02-16 | Default `classic` profile → 45-day with 7-hour authz reuse |
 
-You don't have to change anything to remain working — classic stays the
+You don't have to change anything to remain working - classic stays the
 default until 2027. This guide describes how to opt into the newer
 profiles when you're ready.
 
@@ -32,17 +32,17 @@ its server directory, with the descriptions the CA publishes.
 
 Recommendations:
 
-- **`classic`** (DockPanel default) — 90-day certs today, 64-day in Feb
+- **`classic`** (CyberHunter - Panel default) - 90-day certs today, 64-day in Feb
   2027, 45-day in Feb 2028. Widest compatibility. Pick this if you're
   unsure.
-- **`tlsserver`** — same as classic today; becomes **45-day on
+- **`tlsserver`** - same as classic today; becomes **45-day on
   2026-05-13**. Opt into this when you want to rehearse short-lived
   renewals before the automatic classic flip in 2028.
-- **`shortlived`** — ~6-day (160-hour) certs.
+- **`shortlived`** - ~6-day (160-hour) certs.
   [Requires](https://letsencrypt.org/2026/01/15/6day-and-ip-general-availability/)
   renewal every 2-3 days. Use only if you fully trust your automation and
   want the smallest possible compromise window.
-- **`tlsclient`** — legacy, phased out by 2026-07-08. Don't pick it.
+- **`tlsclient`** - legacy, phased out by 2026-07-08. Don't pick it.
 
 The default applies to new issuances. Existing certificates keep their
 original profile until renewed. You can override the default per
@@ -60,7 +60,7 @@ The auto-healer runs every 120 seconds and does two things:
    and serial are attached as the ARI `replaces` hint so the CA can
    correlate the renewal with the original issuance.
 
-When the CA doesn't advertise ARI (or the fetch fails), DockPanel falls
+When the CA doesn't advertise ARI (or the fetch fails), CyberHunter - Panel falls
 back to a profile-aware threshold:
 
 | Profile | Fallback: renew when `days_remaining` ≤ |
@@ -77,7 +77,7 @@ exhaustion.
 **Certificates page → Renew** issues a fresh cert immediately. This calls
 the agent's `/ssl/{domain}/renew` endpoint, which uses the same ACME path
 as provisioning (the previous hybrid certbot-CLI path was removed in
-v2.7.17). Force-renew respects the cert's stored profile — it does not
+v2.7.17). Force-renew respects the cert's stored profile - it does not
 reset to the panel default.
 
 ## API surface (admin)
@@ -91,9 +91,9 @@ POST /api/ssl/{id}/renew            # force-renew (preserves site's profile)
 
 ## What's not done yet
 
-- **DNS-PERSIST-01** — Let's Encrypt targets a Q2 2026 production
-  rollout. DockPanel will land support after the LE production date is
+- **DNS-PERSIST-01** - Let's Encrypt targets a Q2 2026 production
+  rollout. CyberHunter - Panel will land support after the LE production date is
   announced and the upstream `instant-acme` crate exposes a stable API.
   The current Cloudflare DNS-01 flow continues to work as before.
-- **Grafana dashboard JSON** for the cert-renewal metrics — planned with
+- **Grafana dashboard JSON** for the cert-renewal metrics - planned with
   the Prometheus endpoint polish pass.

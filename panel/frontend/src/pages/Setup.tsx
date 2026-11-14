@@ -40,7 +40,7 @@ export default function Setup() {
     }
 
     // The account exists. Sign in with the credentials already in hand rather
-    // than bouncing to /login to retype what was just chosen — going through
+    // than bouncing to /login to retype what was just chosen - going through
     // the ordinary `login` path means the session cookie and the auth context
     // are established exactly as they are everywhere else.
     try {
@@ -49,7 +49,7 @@ export default function Setup() {
       // unreachable: hand it to the login screen, which knows how to finish.
       navigate(challenge ? "/login" : "/");
     } catch {
-      // The account was created — that part succeeded and must not be reported
+      // The account was created - that part succeeded and must not be reported
       // as a failure. Only the convenience step didn't.
       navigate("/login");
     } finally {
@@ -69,8 +69,8 @@ export default function Setup() {
               <rect x="18" y="18" width="10" height="10" rx="2" opacity="0.5" />
             </svg>
           </div>
-          <h1 className="text-base font-bold text-rust-500 uppercase font-mono tracking-widest">DockPanel</h1>
-          <p className="text-dark-200 text-sm mt-1">Set up your DockPanel administrator</p>
+          <h1 className="text-base font-bold text-rust-500 uppercase font-mono tracking-widest">CyberHunter - Panel</h1>
+          <p className="text-dark-200 text-sm mt-1">Set up your CyberHunter - Panel administrator</p>
         </div>
 
         <form onSubmit={handleSubmit} className="bg-dark-800 rounded-lg border border-dark-600 p-6 space-y-4">

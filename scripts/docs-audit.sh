@@ -1,5 +1,5 @@
 #!/bin/bash
-# DockPanel docs audit — verify all 10 doc surfaces match reality
+# CyberHunter - Panel docs audit - verify all 10 doc surfaces match reality
 # Run after feature work, before release
 
 RED='\033[0;31m'
@@ -10,7 +10,7 @@ ISSUES=0
 
 cd "$(dirname "$0")/.." || exit 1
 
-echo "=== DockPanel Docs Audit ==="
+echo "=== CyberHunter - Panel Docs Audit ==="
 echo ""
 
 # ─── Count actual values from source ───
@@ -18,7 +18,7 @@ echo ""
 # Template count (from agent docker_apps.rs id: definitions)
 ACTUAL_TEMPLATES=$(grep -c 'id: "' panel/agent/src/services/docker_apps.rs 2>/dev/null || echo "?")
 
-# E2E test assertions (across all test files — invocations of test_api, test_it, ok, check, assert, etc.)
+# E2E test assertions (across all test files - invocations of test_api, test_it, ok, check, assert, etc.)
 ACTUAL_E2E=$(grep -chE '^\s*(test_api|test_contains|test_it|ok|fail|check|assert|expect|skip)\s+' tests/*.sh 2>/dev/null | awk '{s+=$1} END {print s}')
 
 # API endpoint count (.route() registrations in backend + agent)

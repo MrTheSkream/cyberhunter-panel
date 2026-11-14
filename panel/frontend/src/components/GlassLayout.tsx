@@ -109,8 +109,8 @@ export default function GlassLayout() {
               </svg>
             </div>
             <span className="text-base font-semibold whitespace-nowrap overflow-hidden">
-              <span className="text-rust-400">Dock</span>
-              <span className="text-dark-50">Panel</span>
+              <span className="text-rust-400">CyberHunter</span>
+              <span className="text-dark-50"> - Panel</span>
             </span>
           </Link>
 
@@ -163,7 +163,7 @@ export default function GlassLayout() {
         {/* ── Nav ────────────────────────────────────────────────── */}
         <nav className="flex-1 px-2 pt-4 overflow-y-auto overflow-x-hidden sidebar-scroll-fade">
           {flatNav ? (
-            /* Flat nav — no group labels */
+            /* Flat nav - no group labels */
             <div className="space-y-0.5">
               {visibleGroups.flatMap(g => g.items).map((item) => (
                 <NavLink
@@ -292,7 +292,7 @@ export default function GlassLayout() {
 
         {/* ── Footer ─────────────────────────────────────────────── */}
         <div className="px-2 py-3 border-t border-dark-600/30">
-          {/* Collapsed: just the health dot centered — admins only. */}
+          {/* Collapsed: just the health dot centered - admins only. */}
           {!expanded && !sidebarOpen && canSeeHealth && (
             <div className="flex flex-col items-center gap-3">
               <div
@@ -409,8 +409,8 @@ export default function GlassLayout() {
             <Icon name="hamburger" className="w-6 h-6" />
           </button>
           <span className="text-base font-semibold">
-            <span className="text-rust-400">Dock</span>
-            <span className="text-dark-50">Panel</span>
+            <span className="text-rust-400">CyberHunter</span>
+            <span className="text-dark-50"> - Panel</span>
           </span>
         </div>
 

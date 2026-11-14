@@ -33,17 +33,17 @@ pub struct AlertRow {
     acknowledged_at: Option<chrono::DateTime<chrono::Utc>>,
     /// Phase 4 W3: actor who ack'd (NULL on legacy rows + un-ack'd alerts).
     acknowledged_by: Option<Uuid>,
-    /// Resolved via LEFT JOIN users — surfaces email for the UI's "Ack by"
+    /// Resolved via LEFT JOIN users - surfaces email for the UI's "Ack by"
     /// column without forcing the frontend into N+1 lookups.
     acknowledged_by_email: Option<String>,
     /// Phase 4 W3: optional free-text note from the actor (500-char cap).
     acknowledged_comment: Option<String>,
-    /// Phase 4 W3: position in the policy chain — 0 means initial fire.
+    /// Phase 4 W3: position in the policy chain - 0 means initial fire.
     escalation_step_index: i32,
     created_at: chrono::DateTime<chrono::Utc>,
 }
 
-/// GET /api/alerts — List alerts with optional filters.
+/// GET /api/alerts - List alerts with optional filters.
 pub async fn list(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -52,12 +52,12 @@ pub async fn list(
 ) -> Result<Json<Vec<AlertRow>>, ApiError> {
     let limit = q.limit.unwrap_or(100).min(500);
 
-    // Build dynamic query — scoped to the caller, then to the ServerScope
+    // Build dynamic query - scoped to the caller, then to the ServerScope
     // server. NULL server_id is admitted: backup_failure, cron_failure,
     // security-scan and ssl_expiry alerts are fired with server_id = None (they
     // are site- or account-scoped), and a bare `server_id = $2` predicate hid
-    // that entire class from the list and the summary permanently — including
-    // criticals — while the bell, external channels and the escalation engine
+    // that entire class from the list and the summary permanently - including
+    // criticals - while the bell, external channels and the escalation engine
     // all still paged for them. Deleting a server also NULLs the column
     // (ON DELETE SET NULL), which used to make its alert history vanish.
     // LEFT JOIN users resolves acknowledged_by → email for the UI without
@@ -104,13 +104,13 @@ pub async fn list(
     Ok(Json(alerts))
 }
 
-/// GET /api/alerts/summary — Count of alerts by status.
+/// GET /api/alerts/summary - Count of alerts by status.
 pub async fn summary(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
     ServerScope(server_id, _agent): ServerScope,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    // Same NULL-server_id admission as list() — the two must agree or the badge
+    // Same NULL-server_id admission as list() - the two must agree or the badge
     // count contradicts the rows underneath it.
     let counts: Vec<(String, i64)> = sqlx::query_as(
         "SELECT status, COUNT(*) FROM alerts \
@@ -148,7 +148,7 @@ pub async fn summary(
 }
 
 /// Phase 4 W3: optional payload for `acknowledge`. Empty body still works
-/// — `Option<Json<…>>` returns `None` when no body / no content-type, so
+/// - `Option<Json<…>>` returns `None` when no body / no content-type, so
 /// older clients that PUT with no body keep functioning.
 #[derive(serde::Deserialize, Default)]
 pub struct AcknowledgePayload {
@@ -156,11 +156,11 @@ pub struct AcknowledgePayload {
     pub comment: Option<String>,
 }
 
-/// PUT /api/alerts/{id}/acknowledge — Acknowledge an alert.
+/// PUT /api/alerts/{id}/acknowledge - Acknowledge an alert.
 ///
 /// Phase 4 W3: stores the acting user (`claims.sub`) on the row plus an
 /// optional 500-char comment. Older clients that PUT with no body still
-/// work — the only state difference is `acknowledged_by` instead of NULL.
+/// work - the only state difference is `acknowledged_by` instead of NULL.
 pub async fn acknowledge(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -175,7 +175,7 @@ pub async fn acknowledge(
         .filter(|s| !s.is_empty())
         .map(str::to_string);
     if let Some(ref c) = comment {
-        // Char count, not byte length — runs cap is "what the operator typed."
+        // Char count, not byte length - runs cap is "what the operator typed."
         if c.chars().count() > 500 {
             return Err(err(
                 StatusCode::BAD_REQUEST,
@@ -204,7 +204,7 @@ pub async fn acknowledge(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// PUT /api/alerts/{id}/resolve — Manually resolve an alert.
+/// PUT /api/alerts/{id}/resolve - Manually resolve an alert.
 pub async fn resolve(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -263,7 +263,7 @@ pub struct AlertRuleRow {
     escalation_policy_id: Option<Uuid>,
 }
 
-/// GET /api/alert-rules — Get user's alert rules.
+/// GET /api/alert-rules - Get user's alert rules.
 pub async fn get_rules(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -336,7 +336,7 @@ pub struct UpdateRules {
     pub alert_gpu: Option<bool>,
 }
 
-/// PUT /api/alert-rules — Create or update global alert rules.
+/// PUT /api/alert-rules - Create or update global alert rules.
 pub async fn update_rules(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -345,30 +345,30 @@ pub async fn update_rules(
     upsert_rules(&state, claims.sub, None, &body).await
 }
 
-/// PUT /api/alert-rules/{server_id} — Create or update per-server alert rules.
+/// PUT /api/alert-rules/{server_id} - Create or update per-server alert rules.
 ///
 /// ⚠ SECURITY (s433): `server_id` comes from the URL, not from anything
-/// scoped to the caller — without an ownership check here, any authenticated
+/// scoped to the caller - without an ownership check here, any authenticated
 /// user could PUT rules for a `server_id` they don't own. `upsert_rules`'s
 /// own existence lookup is `WHERE user_id = $1 AND server_id = $2`, so a
-/// non-owner's write was never actually overwriting the real owner's row —
+/// non-owner's write was never actually overwriting the real owner's row -
 /// it was silently INSERTing a second, independent row for that server_id
 /// (`alert_rules` only enforces `UNIQUE(user_id, server_id)`, not
 /// `UNIQUE(server_id)`), a stray row `services/drift.rs::fetch_alert_rules`
 /// had to defend against (s432).
 ///
 /// This does NOT widen for `claims.role == "admin"`, unlike the read routes
-/// s432 fixed — and that's not an inconsistency, it's a different axis
+/// s432 fixed - and that's not an inconsistency, it's a different axis
 /// entirely: a single resource resolved by a caller-supplied ID (this route,
 /// `auth::ServerScope`, `metrics.rs::server_metrics`, `servers.rs`'s own
-/// single-server writes) never widens for anyone, admin included — an
+/// single-server writes) never widens for anyone, admin included - an
 /// account only acts on what it's the registered owner of. What widens is a
 /// FLEET-WIDE AGGREGATE with no mandatory per-resource ID (`dashboard.rs`'s
 /// `fleet_overview`/`metrics_history`/`gpu_metrics_history`/`timeline`,
-/// `drift.rs`) — there an admin legitimately needs the whole install's data
+/// `drift.rs`) - there an admin legitimately needs the whole install's data
 /// in one read. `helpers::SITE_CALLER_PREDICATE`'s admin arm looks like a
 /// third case (a WRITE that DOES widen) but isn't a counterexample to either
-/// rule above — it's site-specific: a site's owner (often a `client`
+/// rule above - it's site-specific: a site's owner (often a `client`
 /// account) and the admin who registered the underlying SERVER are
 /// legitimately different people, which this route has no equivalent of.
 pub async fn update_server_rules(
@@ -421,7 +421,7 @@ async fn upsert_rules(
         }
     }
 
-    // Encrypt at rest — validated above on PLAINTEXT (SSRF check needs a real
+    // Encrypt at rest - validated above on PLAINTEXT (SSRF check needs a real
     // URL), encrypted here before it ever reaches SQL. `None` means "leave the
     // stored value alone" (the COALESCE below depends on that), `Some("")`
     // means "clear it", so both are passed through unencrypted; only a
@@ -570,12 +570,12 @@ pub struct AttachPolicy {
     pub policy_id: Option<Uuid>,
 }
 
-/// PUT /api/alert-rules/{rule_id}/escalation-policy — Admin: attach or
+/// PUT /api/alert-rules/{rule_id}/escalation-policy - Admin: attach or
 /// detach an escalation policy on a single rule. Admin-only because
 /// mis-attaching a policy can route 3 AM pages to the wrong on-call user.
 ///
 /// ⚠ SECURITY (s437): `rule_id` came from the URL under plain `AdminUser`
-/// (role only) with NO ownership check at all — any admin on the install
+/// (role only) with NO ownership check at all - any admin on the install
 /// could re-point ANY other tenant's alert rule at ANY escalation policy
 /// (including one they don't own, since the old existence check was also
 /// unscoped). Same shape as `update_server_rules`/`delete_server_rules`
@@ -630,11 +630,11 @@ pub async fn attach_escalation_policy(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// DELETE /api/alert-rules/{server_id} — Remove server-specific override.
+/// DELETE /api/alert-rules/{server_id} - Remove server-specific override.
 ///
 /// ⚠ SECURITY/HONESTY (s433): the DELETE itself was already scoped
 /// `WHERE user_id = $1 AND server_id = $2`, so a non-owner could never
-/// remove the real owner's row — but with no upfront ownership check on
+/// remove the real owner's row - but with no upfront ownership check on
 /// `server_id`, a request naming a server the caller doesn't own (or that
 /// doesn't exist) matched 0 rows and still answered `{"ok": true}`, same as
 /// a real deletion. Checked the same way `update_server_rules` above now
@@ -673,7 +673,7 @@ pub async fn delete_server_rules(
 // Runbooks (Phase 4 W2)
 //
 // Markdown-per-alert-type, attached to fired alerts and rendered into
-// notification payloads. Admin-only. Resolution is DB-row-then-default —
+// notification payloads. Admin-only. Resolution is DB-row-then-default -
 // fresh installs still produce useful payloads from the const slice without
 // the operator having to click "Seed missing default runbooks" first.
 // ---------------------------------------------------------------------------
@@ -692,7 +692,7 @@ pub struct ApplyDefaultsResponse {
     pub skipped: Vec<String>,
 }
 
-/// GET /api/alerts/runbooks — List every known runbook.
+/// GET /api/alerts/runbooks - List every known runbook.
 /// Returns the union of DB rows and compile-time defaults; defaults that have
 /// no DB row yet are flagged `is_default = true`.
 pub async fn list_runbooks_route(
@@ -702,7 +702,7 @@ pub async fn list_runbooks_route(
     Ok(Json(list_runbooks(&state.db).await))
 }
 
-/// GET /api/alerts/runbooks/{alert_type} — Single runbook with `is_default` flag.
+/// GET /api/alerts/runbooks/{alert_type} - Single runbook with `is_default` flag.
 pub async fn get_runbook_route(
     State(state): State<AppState>,
     AdminUser(_claims): AdminUser,
@@ -714,7 +714,7 @@ pub async fn get_runbook_route(
     }
 }
 
-/// PUT /api/alerts/runbooks/{alert_type} — Upsert. Sets updated_by from auth.
+/// PUT /api/alerts/runbooks/{alert_type} - Upsert. Sets updated_by from auth.
 pub async fn put_runbook(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -766,7 +766,7 @@ pub async fn put_runbook(
     }
 }
 
-/// DELETE /api/alerts/runbooks/{alert_type} — Remove DB row → next read falls back to default.
+/// DELETE /api/alerts/runbooks/{alert_type} - Remove DB row → next read falls back to default.
 pub async fn delete_runbook(
     State(state): State<AppState>,
     AdminUser(_claims): AdminUser,
@@ -784,7 +784,7 @@ pub async fn delete_runbook(
     })))
 }
 
-/// POST /api/alerts/runbooks/apply-defaults — Insert-or-skip from const slice.
+/// POST /api/alerts/runbooks/apply-defaults - Insert-or-skip from const slice.
 /// **Never overwrites operator edits** (ON CONFLICT DO NOTHING).
 pub async fn apply_defaults(
     State(state): State<AppState>,

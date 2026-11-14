@@ -1,15 +1,15 @@
 // Every `#[tool]` method in tools.rs reads /etc/dockpanel/mcp.token to
-// authenticate ITS OWN outbound calls to the panel API — but nothing checked
+// authenticate ITS OWN outbound calls to the panel API - but nothing checked
 // what the INBOUND caller presented before this file existed. rmcp's
 // StreamableHttpServerConfig::default() only restricts the Host header to
 // loopback names (a DNS-rebinding guard, documented as unfit for "public
 // deployments" in the SDK's own doc comment), which is not caller
-// authentication at all — main.rs disables that check (see its comment) once
+// authentication at all - main.rs disables that check (see its comment) once
 // this layer exists. Without this middleware, `/mcp` would be reachable by
 // anyone who can reach the panel's nginx, on the panel's own admin-scoped
 // key, with zero credential of their own required. Found live: nginx forwards
 // the real Host header, not "127.0.0.1", so the loopback-only default was
-// accidentally the only thing stopping this — an artifact, not a control.
+// accidentally the only thing stopping this - an artifact, not a control.
 //
 // The fix reuses the SAME token file as the shared secret in both
 // directions: the operator gives their MCP client the identical `dp_` key
@@ -37,10 +37,10 @@ fn constant_time_eq(a: &str, b: &str) -> bool {
 
 pub async fn require_bearer_token(req: Request, next: Next) -> Response {
     let Ok(expected) = backend_client::load_token() else {
-        // Same "not configured" state get_json() already reports per-call —
+        // Same "not configured" state get_json() already reports per-call -
         // surfaced here too so a misconfigured server fails closed instead of
         // 500ing on every request before a token file even exists.
-        return (StatusCode::UNAUTHORIZED, "No panel API key configured — see /etc/dockpanel/mcp.token").into_response();
+        return (StatusCode::UNAUTHORIZED, "No panel API key configured - see /etc/dockpanel/mcp.token").into_response();
     };
     let provided = req
         .headers()

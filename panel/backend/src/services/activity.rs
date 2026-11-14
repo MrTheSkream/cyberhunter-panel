@@ -67,7 +67,7 @@ pub async fn log_activity_on_server(
     .await
 }
 
-/// `log_activity` for an event **no user initiated** — an unattended service
+/// `log_activity` for an event **no user initiated** - an unattended service
 /// acting on its own schedule, or a request that failed before any account could
 /// be identified.
 ///
@@ -83,11 +83,11 @@ pub async fn log_activity_on_server(
 /// Four writers reached for that nil uuid, and none of them ever recorded
 /// anything. Two were worse than silent: they read their **own** rows back as a
 /// rate-limit gate, so a `COUNT(*)` that could only ever return 0 was standing in
-/// for a cooldown. See the SSL renewal gate in `auto_healer::auto_renew_ssl` —
+/// for a cooldown. See the SSL renewal gate in `auto_healer::auto_renew_ssl` -
 /// the fix there is to name the site's real owner, not to use this function.
 ///
 /// Use this only where there genuinely is no user to name. `user_email` is NOT
-/// NULL in the schema, so pass something an operator can read — the attempted
+/// NULL in the schema, so pass something an operator can read - the attempted
 /// login address, or the name of the service acting.
 #[allow(clippy::too_many_arguments)]
 pub async fn log_activity_system(
@@ -110,7 +110,7 @@ pub async fn log_activity_system(
         details,
         ip_address,
         server_id,
-        // No authenticated request is involved — nothing to attribute to a key.
+        // No authenticated request is involved - nothing to attribute to a key.
         None,
     )
     .await
@@ -118,7 +118,7 @@ pub async fn log_activity_system(
 
 /// The single INSERT. `user_id` is `Option` here and nowhere else in the public
 /// API, so a caller has to choose between naming a user and declaring there
-/// isn't one — rather than inventing a third answer out of a sentinel uuid.
+/// isn't one - rather than inventing a third answer out of a sentinel uuid.
 #[allow(clippy::too_many_arguments)]
 async fn write_row(
     pool: &PgPool,

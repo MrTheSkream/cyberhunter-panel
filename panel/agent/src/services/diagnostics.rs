@@ -94,7 +94,7 @@ async fn check_nginx() -> Vec<DiagnosticFinding> {
         let warn_lines: Vec<&str> = stderr.lines().filter(|l| l.contains("[warn]")).collect();
 
         if has_fatal {
-            // Real failure — nginx config is broken
+            // Real failure - nginx config is broken
             let error_lines: Vec<&str> = stderr.lines()
                 .filter(|l| l.contains("[emerg]") || l.contains("[error]") || l.contains("[crit]"))
                 .collect();
@@ -108,7 +108,7 @@ async fn check_nginx() -> Vec<DiagnosticFinding> {
                 fix_id: None,
             });
         } else if !warn_lines.is_empty() {
-            // Warnings only — nginx works fine, cosmetic issues
+            // Warnings only - nginx works fine, cosmetic issues
             findings.push(DiagnosticFinding {
                 id: "nginx-config-warnings".into(),
                 category: "nginx".into(),
@@ -398,7 +398,7 @@ async fn check_services() -> Vec<DiagnosticFinding> {
                 category: "services".into(),
                 severity: "info".into(),
                 title: format!("{label} ({service}) is not active"),
-                description: format!("{service} is not running — recommended for security"),
+                description: format!("{service} is not running - recommended for security"),
                 fix_available: true,
                 fix_id: Some(format!("restart-service:{service}")),
             });
@@ -551,7 +551,7 @@ async fn check_log_patterns() -> Vec<DiagnosticFinding> {
 
     // Check the auth log for brute force patterns (last 500 lines). RHEL
     // family logs the same sshd events to /var/log/secure, not
-    // /var/log/auth.log — this used to hardcode the Debian path, so this
+    // /var/log/auth.log - this used to hardcode the Debian path, so this
     // finding never fired on a RHEL box, whatever the actual login traffic
     // looked like (same gap class as `security::get_login_audit`, s454).
     if let Ok(Ok(output)) = tokio::time::timeout(
@@ -667,7 +667,7 @@ async fn check_security() -> Vec<DiagnosticFinding> {
     }
 
     // Firewall active? This asked ufw specifically, so on the whole RHEL
-    // family — where firewalld is running and ufw is usually not installed —
+    // family - where firewalld is running and ufw is usually not installed -
     // it raised "Firewall (ufw) is not active" on boxes that were firewalled
     // perfectly well, and named a tool the operator does not have (s265).
     if crate::services::firewall::detect().await == crate::services::firewall::Firewall::None {
@@ -676,7 +676,7 @@ async fn check_security() -> Vec<DiagnosticFinding> {
             category: "security".into(),
             severity: "warning".into(),
             title: "No firewall is active".into(),
-            description: "Neither firewalld nor ufw is running — all ports are exposed to the internet.".into(),
+            description: "Neither firewalld nor ufw is running - all ports are exposed to the internet.".into(),
             fix_available: false,
             fix_id: None,
         });
@@ -715,7 +715,7 @@ pub async fn apply_fix(fix_id: &str) -> Result<String, String> {
                 return Err("No service specified".into());
             }
             // Validate service name. systemd unit names can legitimately contain
-            // dots (php8.3-fpm, containerd.service, etc.) — the previous validator
+            // dots (php8.3-fpm, containerd.service, etc.) - the previous validator
             // rejected dots and silently broke every PHP-FPM restart on hosts
             // where the unit is named with a version (Debian / Ubuntu default).
             if !target.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.') {
@@ -881,14 +881,14 @@ pub async fn apply_fix(fix_id: &str) -> Result<String, String> {
                 Ok(format!("Tmp cleanup completed with warnings: {}", stderr.chars().take(200).collect::<String>()))
             }
         }
-        // Reclaim only what DockPanel does NOT manage.
+        // Reclaim only what CyberHunter - Panel does NOT manage.
         //
         // This replaces `docker system prune -af --volumes`, which removed every
         // stopped container, every image not held by a RUNNING container, and
         // every unattached volume. Three things made that catastrophic rather
         // than merely aggressive:
         //   * a container the panel had put to SLEEP is a stopped container, so
-        //     the panel deleted the app it intended to wake — and `wake` only
+        //     the panel deleted the app it intended to wake - and `wake` only
         //     issues `docker start` on an id that no longer exists;
         //   * removing that container detached its volumes, which the same
         //     command then reclaimed, so the tenant's data went with it;
@@ -922,7 +922,7 @@ pub async fn apply_fix(fix_id: &str) -> Result<String, String> {
                 }
             }
 
-            // Build cache is never a live resource — safe to reclaim in full.
+            // Build cache is never a live resource - safe to reclaim in full.
             if let Ok(out) = tokio::time::timeout(
                 std::time::Duration::from_secs(60),
                 safe_command("docker").args(["builder", "prune", "-f"]).output(),
@@ -948,7 +948,7 @@ pub async fn apply_fix(fix_id: &str) -> Result<String, String> {
             Ok(if freed.is_empty() {
                 "Reclaimed unmanaged Docker resources (nothing to free)".into()
             } else {
-                format!("Reclaimed unmanaged Docker resources — {}", freed.join("; "))
+                format!("Reclaimed unmanaged Docker resources - {}", freed.join("; "))
             })
         }
         "clean-cache" => {

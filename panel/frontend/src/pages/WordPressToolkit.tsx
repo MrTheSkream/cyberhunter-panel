@@ -39,7 +39,7 @@ interface PluginVulnResult {
   vulnerabilities: KnownVuln[];
 }
 
-// The wire shape is nested (per-plugin, each carrying its own vuln list) —
+// The wire shape is nested (per-plugin, each carrying its own vuln list) -
 // this is the flattened row this page actually renders, one per vuln, so a
 // list entry can name both the plugin and the CVE-style title without the
 // render loop reaching back into two levels of the source data.
@@ -59,7 +59,7 @@ interface VulnScanResult {
 }
 
 // The agent's SiteScanResult.plugin_vulns[].vulnerabilities[] is the only
-// place a vuln's title/severity actually lives on the wire — a top-level
+// place a vuln's title/severity actually lives on the wire - a top-level
 // `vulnerabilities` field on VulnScanResult has never existed, which used to
 // leave this list permanently empty for every scan (the field name a prior
 // version of this page read, `.vulnerabilities`, doesn't exist at this level).
@@ -77,7 +77,7 @@ interface SecurityCheckResponse {
   checks?: SecurityItem[];
 }
 
-// One persisted row from GET /wordpress/{id}/hardening-history — the read
+// One persisted row from GET /wordpress/{id}/hardening-history - the read
 // half of a write that has run on every security-check since 2026-03-19
 // with nothing ever reading it back (s468 completeness-critic finding).
 interface HardeningHistoryRow {
@@ -138,7 +138,7 @@ export default function WordPressToolkit() {
 
   // A pure DB read (no agent round-trip), so it's cheap to fetch for every
   // site up front rather than gating it behind the security tab or a manual
-  // check — an operator who never clicks "Check" should still be able to see
+  // check - an operator who never clicks "Check" should still be able to see
   // whether this site has ever been checked, and when.
   useEffect(() => {
     let cancelled = false;
@@ -172,8 +172,8 @@ export default function WordPressToolkit() {
     try {
       // `selected.size` is how many boxes were ticked, which is not how many sites
       // updated. The handler answers 200 with a per-site verdict even when every entry
-      // is `ok: false` — an offline agent, a missing wp-cli, or the wrong server in the
-      // switcher resolving every site to "Site not found" — so counting the selection
+      // is `ok: false` - an offline agent, a missing wp-cli, or the wrong server in the
+      // switcher resolving every site to "Site not found" - so counting the selection
       // reports a clean sweep for a run in which nothing happened.
       const res = await api.post<{ results?: BulkUpdateResult[] }>("/wordpress/bulk-update", {
         site_ids: Array.from(selected),
@@ -229,7 +229,7 @@ export default function WordPressToolkit() {
       const result = await api.get<SecurityCheckResponse>(`/sites/${siteId}/wordpress/security-check`);
       const checks: SecurityItem[] = Array.isArray(result?.checks) ? result.checks : [];
       setSecurityChecks((prev) => ({ ...prev, [siteId]: checks }));
-      // `security-check` just upserted wp_hardening rows for this site —
+      // `security-check` just upserted wp_hardening rows for this site -
       // refetch its history so "last checked" reflects the run that just
       // happened, rather than waiting on the sites-array effect (which won't
       // re-fire; the array reference is unchanged by a check).
@@ -239,7 +239,7 @@ export default function WordPressToolkit() {
         );
         setHardeningHistory((prev) => ({ ...prev, [siteId]: history }));
       } catch {
-        // Non-fatal — the live check result above already rendered.
+        // Non-fatal - the live check result above already rendered.
       }
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Security check failed");
@@ -260,8 +260,8 @@ export default function WordPressToolkit() {
     setHardening(siteId);
     setError("");
     try {
-      // Every failure path in the agent — wp-cli missing, chmod refused, an unwritable
-      // uploads/.htaccess, an unrecognised fix name — returns `applied: false` inside a
+      // Every failure path in the agent - wp-cli missing, chmod refused, an unwritable
+      // uploads/.htaccess, an unrecognised fix name - returns `applied: false` inside a
       // 200, so an unbound response means a blanket success banner is printed over a
       // run in which nothing was applied. On a security checklist that is the reading
       // an operator acts on and then stops looking.
@@ -592,7 +592,7 @@ export default function WordPressToolkit() {
                           className="text-xs font-mono text-dark-400"
                           title={new Date(scanResults[site.site_id].scanned_at).toLocaleString()}
                         >
-                          Scanned {timeAgo(scanResults[site.site_id].scanned_at)} — checked against 14 known plugin vulnerabilities, not a live feed
+                          Scanned {timeAgo(scanResults[site.site_id].scanned_at)} - checked against 14 known plugin vulnerabilities, not a live feed
                         </span>
                       )}
                     </div>
@@ -679,13 +679,13 @@ export default function WordPressToolkit() {
               const failedChecks = checks?.filter((c) => c.status === "fail") || [];
               // "All Passed" used to be printed whenever nothing had FAILED,
               // which was a lie over any row already rendering a warning
-              // triangle — and it would now contradict a Fix button counting
+              // triangle - and it would now contradict a Fix button counting
               // the same warning. One population, read by the badge and by the
               // bulk control alike.
               const openChecks = checks?.filter((c) => c.status !== "pass") || [];
               // A fix is offered for anything that is not passing, not only for
               // `fail`. `auto-updates` grades an absent WP_AUTO_UPDATE_CORE as
-              // `warning` — WordPress's own default rather than a regression —
+              // `warning` - WordPress's own default rather than a regression -
               // and gating the controls on `fail` alone left its working
               // backend arm unreachable from the panel: a fix that exists, is
               // advertised as auto-fixable, and no operator can press.
@@ -693,7 +693,7 @@ export default function WordPressToolkit() {
                 checks?.filter((c) => c.status !== "pass" && c.auto_fixable).map((c) => c.name) || [];
               // The most recent persisted check across every row, independent
               // of whether `checks` (this tab's live in-memory result) is
-              // populated — so a site nobody has re-checked THIS session still
+              // populated - so a site nobody has re-checked THIS session still
               // shows when it was last checked, not a blank.
               const history = hardeningHistory[site.site_id] || [];
               const lastChecked = history.reduce<string | null>(

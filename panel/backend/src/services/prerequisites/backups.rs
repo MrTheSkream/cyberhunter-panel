@@ -1,4 +1,4 @@
-//! The backups vertical — "will these backups survive losing this machine?"
+//! The backups vertical - "will these backups survive losing this machine?"
 //!
 //! The cheapest check in the layer and the one with the worst failure mode. A
 //! backup policy with no destination writes its archives to
@@ -33,7 +33,7 @@ pub struct PolicyDestinationFacts {
     /// The destination row still exists. A policy can point at a deleted one.
     pub destination_exists: bool,
     pub destination_name: Option<String>,
-    /// How many destinations are configured panel-wide — decides whether the fix
+    /// How many destinations are configured panel-wide - decides whether the fix
     /// is "pick one" or "create one".
     pub destinations_available: usize,
 }
@@ -43,7 +43,7 @@ pub struct PolicyDestinationFacts {
 /// # Severity
 ///
 /// `Warning`, not `Blocking`, and this one is worth defending. Local-only
-/// backups are a legitimate choice — plenty of people run a box whose real
+/// backups are a legitimate choice - plenty of people run a box whose real
 /// protection is their provider's snapshots, and refusing to save a policy
 /// without a destination would be the panel overriding a decision that is not
 /// its to make. What is *not* legitimate is making that choice by accident and
@@ -72,7 +72,7 @@ pub fn check_backup_destination(facts: &PolicyDestinationFacts) -> PrereqResult 
         // operator believes this is handled.
         // The fix is on the POLICY, so the link goes where the policy is edited.
         // It used to point at the destinations tab, which lists destinations and
-        // cannot attach one — and until this release no screen could, so the
+        // cannot attach one - and until this release no screen could, so the
         // advice named an action the product did not offer.
         (Some(_), false) => BACKUPS_DEST_CHECK
             .result(&BACKUPS_DEST_DELETED, &[("policy", name)])
@@ -82,7 +82,7 @@ pub fn check_backup_destination(facts: &PolicyDestinationFacts) -> PrereqResult 
             }),
 
         // Never chose one. The advice differs by whether there is anything to
-        // pick — telling someone to create a destination they already have is
+        // pick - telling someone to create a destination they already have is
         // how guidance loses its credibility.
         (None, _) => {
             let has_options = facts.destinations_available > 0;
@@ -115,7 +115,7 @@ pub fn check_backup_destination(facts: &PolicyDestinationFacts) -> PrereqResult 
 
 /// Check: is anything being backed up at all?
 ///
-/// Distinct from the destination question and prior to it — a panel with zero
+/// Distinct from the destination question and prior to it - a panel with zero
 /// enabled policies has nothing to send anywhere.
 pub fn check_any_policy_enabled(enabled_policies: usize, sites: usize) -> PrereqResult {
     if sites == 0 {
@@ -206,7 +206,7 @@ mod tests {
         assert_eq!(check_any_policy_enabled(1, 3).state, PrereqState::Satisfied);
     }
 
-    /// See the equivalent in `apps` — the registry proves its templates *can* be
+    /// See the equivalent in `apps` - the registry proves its templates *can* be
     /// filled; this proves these callers *do* fill them, which a release build's
     /// compiled-out `debug_assert` cannot.
     #[test]
@@ -222,7 +222,7 @@ mod tests {
         let mut with_options = facts();
         with_options.destinations_available = 2;
 
-        // A live destination whose name we somehow don't have — the `unwrap_or`
+        // A live destination whose name we somehow don't have - the `unwrap_or`
         // branch, which is the one a placeholder would hide in.
         let mut unnamed = live.clone();
         unnamed.destination_name = None;

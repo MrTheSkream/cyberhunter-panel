@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 #
-# DockPanel — update the AGENT binary on a remote (agent-only) server.
+# CyberHunter - Panel - update the AGENT binary on a remote (agent-only) server.
 #
 # This is what a fleet rolling update actually runs on each member box. It is
 # compiled into dockpanel-agent (`include_str!`) and written to
 # /var/lib/dockpanel/agent-self-update.sh at update time, so it cannot drift
 # from the binary that invokes it and needs nothing from /opt/dockpanel
-# (lessons #35/#38 — a repo-side file no installer deploys is dev fiction).
+# (lessons #35/#38 - a repo-side file no installer deploys is dev fiction).
 #
-# WHY THIS EXISTS AT ALL — measured on a two-box lab, s232:
+# WHY THIS EXISTS AT ALL - measured on a two-box lab, s232:
 #   The agent used to shell out to /opt/dockpanel/scripts/update.sh. Two things
 #   were wrong with that, and the second is why the first could not simply be
 #   "fixed" by shipping the repo to agent boxes:
@@ -16,7 +16,7 @@
 #   1. `scripts/install-agent.sh` never creates /opt/dockpanel. On a real
 #      agent-only box `/opt` holds nothing but containerd. So every fleet update
 #      died instantly with `500: update script not found at
-#      /opt/dockpanel/scripts/update.sh` — and install-agent.sh is the only
+#      /opt/dockpanel/scripts/update.sh` - and install-agent.sh is the only
 #      documented way to add a remote server, so the feature's success rate on
 #      its entire target population was zero.
 #
@@ -27,7 +27,7 @@
 #      container: dockpanel-postgres` → `[x] Database backup failed, aborting
 #      upgrade` → exit 1, one second after the panel had already recorded the
 #      server as **succeeded**. Fixing only (1) would have turned a loud, safe
-#      500 into a silent false success on every box in the fleet — lesson #50.
+#      500 into a silent false success on every box in the fleet - lesson #50.
 #
 #   An agent-only box needs an agent-only update: fetch one binary, verify it,
 #   swap it, restart the unit, and prove the running version changed.
@@ -35,13 +35,13 @@
 # WHY A PID1-OWNED TRANSIENT UNIT:
 #   This script restarts dockpanel-agent.service, and that unit is
 #   KillMode=control-group (systemd's default). Anything left in the unit's
-#   cgroup — including the process doing the restarting — is SIGTERMed. The
+#   cgroup - including the process doing the restarting - is SIGTERMed. The
 #   agent launches this via `systemd-run --collect --unit=`, and the guard below
 #   is the belt-and-braces for a manual invocation. It must be a transient
 #   SERVICE, owned by PID1. The session-scoped alternative is not a substitute:
 #   that kind of unit is created in the caller's context and dies with the
 #   invoking session, which was observed killing an update mid-swap (lesson #47).
-#   A test pins that, by grepping this file for the flag that would select it —
+#   A test pins that, by grepping this file for the flag that would select it -
 #   so the flag itself must not appear here, not even in a comment.
 #
 # Env:
@@ -51,7 +51,7 @@
 #   DOCKPANEL_AGENT_BIN                 optional override of the binary path
 #
 # The result is ALWAYS written to /var/lib/dockpanel/last-agent-update.json,
-# on every exit path including the abort trap — a run that failed and a run that
+# on every exit path including the abort trap - a run that failed and a run that
 # never happened are otherwise indistinguishable (lesson #52).
 #
 # Exit 0 = the agent is running the target version. Non-zero = it is running the
@@ -94,16 +94,16 @@ log() {
     command -v systemd-cat >/dev/null 2>&1 && echo "[agent-update] $*" | systemd-cat -t "$LOG_TAG" || true
 }
 
-# dp_fetch <url> <out> [max-time] — download, retrying the failures curl's own
+# dp_fetch <url> <out> [max-time] - download, retrying the failures curl's own
 # --retry does not. Same shape as setup.sh's dp_fetch, deliberately: four
 # programs in this repo perform the identical operation against the identical
 # host, and until s354 only the installer retried it at all.
 #
 # `--retry` covers connection refusals, timeouts and some HTTP codes. It does
-# NOT cover a connection dropped MID-TRANSFER, which exits 56 — the error that
+# NOT cover a connection dropped MID-TRANSFER, which exits 56 - the error that
 # has aborted real installs against the release CDN. curl grew
 # `--retry-all-errors` for exactly this, but it landed in 7.71 and the installer
-# supports Ubuntu 20.04, which ships 7.68 — so the loop lives in shell, and the
+# supports Ubuntu 20.04, which ships 7.68 - so the loop lives in shell, and the
 # four copies stay identical rather than drifting apart.
 #
 # The per-attempt `--max-time` is the caller's, not a new policy: this is the
@@ -119,7 +119,7 @@ dp_fetch() {
         rc=0
         curl --retry 3 --retry-delay 2 -fsSL --max-time "$maxtime" "$url" -o "$out" || rc=$?
         if [ "$rc" -eq 0 ]; then return 0; fi
-        log "fetch attempt ${attempt}/3 exited ${rc} — $url"
+        log "fetch attempt ${attempt}/3 exited ${rc} - $url"
         rm -f "$out"
         attempt=$((attempt + 1))
         if [ "$attempt" -le 3 ]; then sleep 3; fi
@@ -149,7 +149,7 @@ JSON
 
 WORK=""
 
-# Capture the real exit status FIRST — anything that runs before reading `$?`
+# Capture the real exit status FIRST - anything that runs before reading `$?`
 # (a cleanup `rm`, a log line) overwrites it, and the reason string would then
 # describe the janitor instead of the failure.
 on_exit() {
@@ -182,7 +182,7 @@ if [ -n "$from_version" ] && [ "$from_version" = "$TARGET_CLEAN" ]; then
     stage="complete"
     finished=1
     write_result true "already running $TARGET_CLEAN"
-    log "already at $TARGET_CLEAN — nothing to do"
+    log "already at $TARGET_CLEAN - nothing to do"
     exit 0
 fi
 
@@ -199,7 +199,7 @@ BASE="https://github.com/${GITHUB_REPO}/releases/download/${TARGET}"
 # ── 2. Download to a file, then verify, then install ─────────────────────
 # Never `curl | install`: once the bytes have been streamed into the consumer
 # there is no verification window left (lesson #25). And never take the status
-# of a pipeline whose last stage is not the fallible one (lesson #51) — each
+# of a pipeline whose last stage is not the fallible one (lesson #51) - each
 # curl below writes a file and is status-checked on its own.
 stage="download"
 WORK="$(mktemp -d "${STATE_DIR}/agent-update-XXXXXX")"
@@ -217,12 +217,12 @@ if dp_fetch "${BASE}/checksums.txt" "$WORK/checksums.txt" 60; then
         fail verify "checksums.txt for $TARGET has no entry for $ASSET"
     fi
     ACTUAL=$(sha256sum "$WORK/agent" | awk '{print $1}')
-    # A mismatch is NOT a retryable failure — distinct exit code so an operator
+    # A mismatch is NOT a retryable failure - distinct exit code so an operator
     # (or a caller's retry loop) can tell "network hiccup" from "wrong bytes".
     [ "$ACTUAL" = "$EXPECT" ] || fail verify "sha256 mismatch for $ASSET: got $ACTUAL, expected $EXPECT" 99
     log "sha256 verified against the release's checksums.txt"
 else
-    fail verify "could not download ${BASE}/checksums.txt — refusing to install an unverified binary"
+    fail verify "could not download ${BASE}/checksums.txt - refusing to install an unverified binary"
 fi
 
 MAGIC=$(head -c 4 "$WORK/agent" | od -An -tx1 | tr -d ' \n')
@@ -242,7 +242,7 @@ BACKUP="${AGENT_BIN}.bak"
 mv -f "$WORK/agent" "$STAGED" || fail swap "could not stage the new binary into $BIN_DIR"
 # Reading a running executable is always allowed; it is WRITING onto its inode
 # that fails ETXTBSY. So the backup copy is fine, and the install below is a
-# rename of the directory entry — the live process keeps the old inode.
+# rename of the directory entry - the live process keeps the old inode.
 cp -a "$AGENT_BIN" "$BACKUP" 2>/dev/null || true
 mv -f "$STAGED" "$AGENT_BIN" || fail swap "could not move the new binary into place"
 swapped=1
@@ -251,7 +251,7 @@ swapped=1
 # ever performs.
 #
 # $WORK lives under the state dir, so the downloaded binary carries `var_lib_t`,
-# and BOTH moves above are renames within one filesystem — which PRESERVE the
+# and BOTH moves above are renames within one filesystem - which PRESERVE the
 # label rather than taking the destination's. On an Enforcing box systemd then
 # cannot exec it (`status=203/EXEC`, "Permission denied"), and because this
 # runs on a 6-hourly timer, every RHEL-family install would lose its agent at
@@ -268,12 +268,12 @@ log "binary swapped ($SIZE bytes)"
 
 # ── 3b. Bring the systemd unit along with the binary ─────────────────────
 # The unit is compiled into the agent (`--print-unit`), from the same file
-# setup.sh and update.sh copy — so this is not a fourth mirror, it is the one
+# setup.sh and update.sh copy - so this is not a fourth mirror, it is the one
 # source arriving by the one delivery path that reaches a fleet member.
 #
 # WHY HERE, and not only at agent startup: the agent also reconciles its unit
 # when it boots (services/agent_unit.rs), but a sandbox written after the
-# process has started does not apply to that process — it would wait for some
+# process has started does not apply to that process - it would wait for some
 # LATER restart, which on a box that is already current may be weeks away. Doing
 # it here means the restart below is the one that applies it, and the
 # verify-running + rollback steps that follow already cover the outcome.
@@ -281,7 +281,7 @@ log "binary swapped ($SIZE bytes)"
 # Every fleet member installed before s271 is running a unit install-agent.sh
 # hand-wrote with systemd's protection directives switched off and no writable
 # path list at all. This is how they get the real one. (The directives are not
-# named here on purpose — the pin suite greps the installers for them.)
+# named here on purpose - the pin suite greps the installers for them.)
 stage="unit"
 UNIT_PATH=/etc/systemd/system/dockpanel-agent.service
 UNIT_BACKUP=""
@@ -317,7 +317,7 @@ fi
 
 # ── 4. Restart and prove the version actually changed ────────────────────
 # The whole point. "The service came back up" is a step, not an outcome
-# (lesson #49) — the outcome is what /health reports afterwards.
+# (lesson #49) - the outcome is what /health reports afterwards.
 stage="restart"
 systemctl restart dockpanel-agent || log "systemctl restart returned non-zero; still checking the outcome"
 
@@ -331,7 +331,7 @@ done
 
 if [ "$NEW_VERSION" != "$TARGET_CLEAN" ]; then
     stage="rollback"
-    log "agent reports '${NEW_VERSION:-nothing}' after the swap, expected $TARGET_CLEAN — rolling back"
+    log "agent reports '${NEW_VERSION:-nothing}' after the swap, expected $TARGET_CLEAN - rolling back"
 
     # Never suffix a restore with `|| true` and never claim it worked without
     # looking (lesson #48, and #58 for doing it anyway). What goes in the result
@@ -340,8 +340,8 @@ if [ "$NEW_VERSION" != "$TARGET_CLEAN" ]; then
     # not start".
     # Put the UNIT back before the binary, and before any restart. Restoring
     # only the binary would be a restore that cannot restore (lesson #48): if
-    # what stopped the agent coming up was the new unit — a ReadWritePaths entry
-    # this box cannot satisfy, say — then the old binary starting under it fails
+    # what stopped the agent coming up was the new unit - a ReadWritePaths entry
+    # this box cannot satisfy, say - then the old binary starting under it fails
     # exactly the same way, and the rollback would report a box it had not
     # actually rescued.
     if [ -n "$UNIT_BACKUP" ] && [ -f "$UNIT_BACKUP" ]; then
@@ -349,7 +349,7 @@ if [ "$NEW_VERSION" != "$TARGET_CLEAN" ]; then
             systemctl daemon-reload || log "daemon-reload returned non-zero during unit rollback"
             log "restored the previous systemd unit"
         else
-            log "COULD NOT RESTORE THE PREVIOUS UNIT at $UNIT_PATH — this box needs attention"
+            log "COULD NOT RESTORE THE PREVIOUS UNIT at $UNIT_PATH - this box needs attention"
         fi
     fi
 
@@ -363,10 +363,10 @@ if [ "$NEW_VERSION" != "$TARGET_CLEAN" ]; then
             if [ -n "$back" ]; then
                 restored="restored, agent reports $back"
             else
-                restored="RESTORED THE OLD BINARY BUT THE AGENT IS NOT ANSWERING — this box needs attention"
+                restored="RESTORED THE OLD BINARY BUT THE AGENT IS NOT ANSWERING - this box needs attention"
             fi
         else
-            restored="COULD NOT RESTORE $BACKUP — this box is running a binary that did not come up"
+            restored="COULD NOT RESTORE $BACKUP - this box is running a binary that did not come up"
         fi
         log "$restored"
     fi

@@ -48,7 +48,7 @@ export default function Sites() {
   const [displayCount, setDisplayCount] = useState(25);
 
   // Admin all-sites view. Ownership is exclusive, so a site handed to a client
-  // leaves the admin's own list entirely — this is how they find it again, and
+  // leaves the admin's own list entirely - this is how they find it again, and
   // the only place from which a transfer can be undone.
   const isAdmin = user?.role === "admin";
   /** The one role that may hold sites but never claim a new domain. */
@@ -79,7 +79,7 @@ export default function Sites() {
   // Only worth a field when there is a choice beyond the primary IP.
   const ipChoices = serverIps.filter((ip) => !ip.is_primary);
 
-  // Preflight the domain as it is typed. Nothing here BLOCKS creation — a site
+  // Preflight the domain as it is typed. Nothing here BLOCKS creation - a site
   // is perfectly valid before its DNS exists, and the brief is explicit that a
   // not-yet-propagated record must not be presented as an error. The point is
   // that the user learns about the prerequisite here, rather than discovering it
@@ -98,7 +98,7 @@ export default function Sites() {
   useEffect(fetchSites, [allSites]);
 
   // The transfer recipient is picked, not typed. A free-text email could only
-  // ever fail late — `transfer` answers 404 "No account with that email" — and
+  // ever fail late - `transfer` answers 404 "No account with that email" - and
   // an operator does not carry their clients' addresses in their head.
   useEffect(() => {
     if (!isAdmin) return;
@@ -184,7 +184,7 @@ export default function Sites() {
               className="px-3 py-1.5 bg-dark-800 border border-dark-600 rounded-lg text-sm text-dark-100 placeholder-dark-400 focus:outline-none focus:border-dark-400"
             />
           )}
-          {/* A `client` holds sites and cannot bring a new domain into service —
+          {/* A `client` holds sites and cannot bring a new domain into service -
               that single refusal is what the role IS
               (`services::domain_claim::ensure_claimable`). Offering the control
               anyway meant the client filled in a domain, a runtime, a PHP version
@@ -291,7 +291,7 @@ export default function Sites() {
                   {runtime === "node" ? "Node.js app with managed process (systemd + nginx reverse proxy)" :
                    runtime === "python" ? "Python app with managed process (systemd + nginx reverse proxy)" :
                    runtime === "proxy" ? "Reverse proxy to a port (Docker container or external service)" :
-                   runtime === "php" ? "PHP with PHP-FPM — WordPress, Laravel, Drupal, etc." :
+                   runtime === "php" ? "PHP with PHP-FPM - WordPress, Laravel, Drupal, etc." :
                    "Static HTML/CSS/JS files served by nginx"}
                 </p>
               </div>
@@ -381,13 +381,13 @@ export default function Sites() {
                 {runtime === "node"
                   ? "e.g., npm start, node server.js, npx next start"
                   : "e.g., gunicorn app:app, uvicorn main:app, flask run"}
-                {" "}— port auto-allocated via $PORT env var
+                {" "}- port auto-allocated via $PORT env var
               </p>
             </div>
           )}
 
           {/* Shown for a CMS too. `handleCreate` sends `php_version` for every
-              CMS install — a one-click WordPress is a PHP site — so gating this
+              CMS install - a one-click WordPress is a PHP site - so gating this
               on `!cms` left the most common route to a PHP site submitting the
               form's untouched default with nothing on screen to say which
               versions the server has. That is the same failure the picker exists
@@ -479,7 +479,7 @@ export default function Sites() {
           {isClient ? (
             <p className="text-dark-300 text-sm mt-2 max-w-md mx-auto">
               No sites have been assigned to your account yet. Sites are created and handed
-              over by your administrator — once one is, it appears here and you can manage it
+              over by your administrator - once one is, it appears here and you can manage it
               fully.
             </p>
           ) : (
@@ -522,7 +522,7 @@ export default function Sites() {
                     {/* Every row links to its own page, including a site this
                         admin does not own. That used to be rendered as inert
                         text, correctly, because a per-site read answered 404 for
-                        anybody but the owner — so the operator who had handed a
+                        anybody but the owner - so the operator who had handed a
                         site to a client could see it here and go no further.
                         An administrator now reaches any site on a machine they
                         run, so the link goes somewhere. */}
@@ -561,7 +561,7 @@ export default function Sites() {
                   {allSites && (
                     <>
                       <td className="px-5 py-4 text-sm">
-                        <span className="text-dark-100 font-mono">{site.owner_email ?? "—"}</span>
+                        <span className="text-dark-100 font-mono">{site.owner_email ?? "-"}</span>
                         {site.owner_role && site.owner_role !== "admin" && (
                           <span className="ml-2 inline-flex px-2 py-0.5 rounded-full text-[10px] font-medium bg-dark-700 text-dark-200 uppercase tracking-wide">
                             {site.owner_role}
@@ -616,7 +616,7 @@ export default function Sites() {
             <h2 id="transfer-title" className="text-base font-medium text-dark-100">Transfer {transferFor.domain}</h2>
             <p className="text-xs text-dark-300 mt-1">
               Ownership is exclusive. The account you choose becomes the owner and the current
-              one — {transferFor.owner_email ?? "the current owner"} — stops being it.
+              one - {transferFor.owner_email ?? "the current owner"} - stops being it.
             </p>
             <label htmlFor="transfer-to" className="block text-sm font-medium text-dark-100 mt-4 mb-1">Transfer to</label>
             <select
@@ -627,7 +627,7 @@ export default function Sites() {
             >
               <option value="">Choose an account…</option>
               {users
-                /* `suspended` is refused by the endpoint with a 409 — leaving it
+                /* `suspended` is refused by the endpoint with a 409 - leaving it
                    out of the list is the same rule stated earlier. Every other
                    role is a legitimate destination, including admin, which is
                    how a transfer is undone. */

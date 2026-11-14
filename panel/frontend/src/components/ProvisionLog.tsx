@@ -19,13 +19,13 @@ export default function ProvisionLog({ siteId, sseUrl, onComplete }: Props) {
   // The stream ended without ever delivering a step. That is not success, and
   // it used to be drawn as success: onerror with an empty list set `done` and
   // fired onComplete, so a refused or expired stream rendered a green check
-  // over an empty log. Whatever hid behind that — a job that finished before
-  // the page attached, or a log this account is not entitled to read — the one
+  // over an empty log. Whatever hid behind that - a job that finished before
+  // the page attached, or a log this account is not entitled to read - the one
   // thing it never was is a completed provisioning.
   const [severed, setSevered] = useState(false);
   // Counted outside React state because `onerror` has to make its decision
   // synchronously, and reading `steps` there would either close over a stale
-  // value or force the decision inside a state updater — where it was, which
+  // value or force the decision inside a state updater - where it was, which
   // made the updater impure and ran it twice under StrictMode.
   const receivedRef = useRef(0);
 
@@ -36,7 +36,7 @@ export default function ProvisionLog({ siteId, sseUrl, onComplete }: Props) {
 
     // Reset per stream. The PHP picker deliberately keeps this component
     // mounted across attempts, so without this a run that severed left
-    // `severed`/`done` set and the previous run's steps in the list — the retry
+    // `severed`/`done` set and the previous run's steps in the list - the retry
     // then streamed correctly under a permanent "Progress unavailable".
     receivedRef.current = 0;
     setSteps([]);
@@ -76,7 +76,7 @@ export default function ProvisionLog({ siteId, sseUrl, onComplete }: Props) {
       // Deferred, exactly like the terminal-step path above. Every mount but
       // the PHP picker clears the state that gates this component inside
       // `onComplete`, so calling it synchronously unmounted us in the same
-      // update — the message set on the line above never reached the screen and
+      // update - the message set on the line above never reached the screen and
       // the panel just vanished. It still fires, so the parent refreshes and
       // shows the real state from its own list; it just does so afterwards.
       setTimeout(() => onComplete?.(), 4000);
@@ -85,14 +85,14 @@ export default function ProvisionLog({ siteId, sseUrl, onComplete }: Props) {
     return () => es.close();
   }, [url]);
 
-  // The "complete" pseudo-step isn't rendered in the list — it drives the header.
+  // The "complete" pseudo-step isn't rendered in the list - it drives the header.
   const visibleSteps = steps.filter((s) => s.step !== "complete");
   const completeStep = steps.find((s) => s.step === "complete");
 
   const hasError = completeStep?.status === "error";
   const isComplete = done && !hasError && !severed;
 
-  // The terminal step now carries a real verdict ("Site created — HTTPS not
+  // The terminal step now carries a real verdict ("Site created - HTTPS not
   // configured", and why). Previously it was always "Site ready / done" and the
   // header said "Provisioning complete" over a provisioning that had failed
   // (s252 F2), so prefer whatever the server actually reported.
@@ -127,7 +127,7 @@ export default function ProvisionLog({ siteId, sseUrl, onComplete }: Props) {
       {severed && (
         <p className="text-xs mb-3 text-warn-400">
           The progress stream closed before reporting anything. The job may still
-          be running, or may have finished before this page attached — check the
+          be running, or may have finished before this page attached - check the
           list below for its current state.
         </p>
       )}

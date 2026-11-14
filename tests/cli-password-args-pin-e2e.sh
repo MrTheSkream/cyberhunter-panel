@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# cli-password-args-pin-e2e.sh — s441
+# cli-password-args-pin-e2e.sh - s441
 #
 # ONE PROPERTY: an operator-chosen database password never has to be typed
 # as a bare CLI argument.
@@ -8,7 +8,7 @@
 # clap `--password <VALUE>` flag (CWE-214): the value lands in shell history
 # and stays visible to any local user via `ps`/`/proc/<pid>/cmdline` for the
 # life of the process. `iac.rs`'s own password print is a DIFFERENT case
-# (a server-GENERATED password, printed after the fact — nothing prior ever
+# (a server-GENERATED password, printed after the fact - nothing prior ever
 # existed to leak); these two took a HUMAN-CHOSEN secret in as an argument,
 # the inverse shape.
 #
@@ -17,15 +17,15 @@
 # back to an interactive masked prompt (via `rpassword`, which reads
 # /dev/tty directly so it isn't confused by stdin redirection) when neither
 # flag is given. `--password` still works for scripts that already use it
-# — this closes the door on it being the ONLY way, not on it existing.
+# - this closes the door on it being the ONLY way, not on it existing.
 #
 # §A `password` is optional (`Option<String>`) on both commands, not a bare
-#    required `String` — the shape that forced argv exposure.
+#    required `String` - the shape that forced argv exposure.
 # §B `--password-stdin` exists on both and conflicts with `--password`
 #    (clap `conflicts_with`, so a caller can't send contradictory input).
 # §C the shared `resolve_password` helper exists and implements all three
 #    tiers: explicit value, stdin line, interactive prompt.
-# §D both command functions actually CALL `resolve_password` — position:
+# §D both command functions actually CALL `resolve_password` - position:
 #    before the password is embedded in the outgoing request body, so the
 #    resolved (not raw) value is what gets sent.
 # §E the CLI crate depends on `rpassword` for the masked prompt.
@@ -36,7 +36,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
 echo
 echo "=================================================="
-echo "  CLI password args — source pins (s441)"
+echo "  CLI password args - source pins (s441)"
 echo "=================================================="
 echo
 
@@ -66,7 +66,7 @@ fnbody() {
   ' <<< "$1"
 }
 
-# An `enum NAME { ... }` body, bounded on its own braces — scopes the
+# An `enum NAME { ... }` body, bounded on its own braces - scopes the
 # variant search below so a same-named variant on a DIFFERENT enum earlier
 # in the file (SitesCmd::Create precedes DbCmd::Create) can't be matched by
 # accident.
@@ -81,9 +81,9 @@ enumbody() {
   ' <<< "$1"
 }
 
-# clap struct-variant bodies are not `fn NAME(...)` — bound instead on the
+# clap struct-variant bodies are not `fn NAME(...)` - bound instead on the
 # variant's OWN name and its opening/closing braces. Call on an enumbody
-# result, never on a whole-file body — see enumbody's own comment.
+# result, never on a whole-file body - see enumbody's own comment.
 variantbody() {
   awk -v v="$2" '
     index($0, v " {") && !started { started=1 }
@@ -136,13 +136,13 @@ echo "── §A --password is optional on both commands ──"
 if has "$DB_CREATE_VARIANT" 'password:\s*Option<String>'; then
   ok "A1 DbCmd::Create's password field is Option<String>"
 else
-  bad "A1 DbCmd::Create's password is not Option<String> — still a forced argv value"
+  bad "A1 DbCmd::Create's password is not Option<String> - still a forced argv value"
 fi
 
 if has "$BACKUP_DBCREATE_VARIANT" 'password:\s*Option<String>'; then
   ok "A2 BackupCmd::DbCreate's password field is Option<String>"
 else
-  bad "A2 BackupCmd::DbCreate's password is not Option<String> — still a forced argv value"
+  bad "A2 BackupCmd::DbCreate's password is not Option<String> - still a forced argv value"
 fi
 
 # ── §B --password-stdin exists and conflicts with --password ────────────
@@ -157,7 +157,7 @@ fi
 if has "$DB_CREATE_VARIANT" 'conflicts_with\s*=\s*"password_stdin"'; then
   ok "B2 DbCmd::Create's --password conflicts_with --password-stdin"
 else
-  bad "B2 no conflicts_with guard — a caller could pass both flags with silently ambiguous precedence"
+  bad "B2 no conflicts_with guard - a caller could pass both flags with silently ambiguous precedence"
 fi
 
 if has "$BACKUP_DBCREATE_VARIANT" 'password_stdin:\s*bool'; then
@@ -178,13 +178,13 @@ echo "── §C resolve_password: explicit value, stdin, interactive prompt ─
 if [ -n "$RESOLVE_BODY" ]; then
   ok "C1 resolve_password exists"
 else
-  bad "C1 resolve_password is missing — every arm below is measuring nothing"
+  bad "C1 resolve_password is missing - every arm below is measuring nothing"
 fi
 
 if has "$RESOLVE_BODY" 'if let Some\(p\) = password'; then
   ok "C2 an explicit --password value is honored first (backward compatible)"
 else
-  bad "C2 no explicit-value tier — existing scripts using --password would break"
+  bad "C2 no explicit-value tier - existing scripts using --password would break"
 fi
 
 if has "$RESOLVE_BODY" 'password_stdin' && has "$RESOLVE_BODY" 'read_line'; then
@@ -196,13 +196,13 @@ fi
 if has "$RESOLVE_BODY" 'rpassword::prompt_password'; then
   ok "C4 the fallback tier is an interactive masked prompt"
 else
-  bad "C4 no interactive prompt fallback — a caller with neither flag would get... what?"
+  bad "C4 no interactive prompt fallback - a caller with neither flag would get... what?"
 fi
 
 if before "$RESOLVE_BODY" "password_stdin" "rpassword::prompt_password"; then
   ok "C5 stdin is tried before falling through to the interactive prompt"
 else
-  bad "C5 resolution order is wrong — the prompt could fire even with --password-stdin set"
+  bad "C5 resolution order is wrong - the prompt could fire even with --password-stdin set"
 fi
 
 # ── §D both commands actually CALL resolve_password ──────────────────────
@@ -211,13 +211,13 @@ echo "── §D cmd_db_create / cmd_db_backup_create resolve before sending ─
 if has "$CMD_DB_CREATE_BODY" 'resolve_password'; then
   ok "D1 cmd_db_create calls resolve_password"
 else
-  bad "D1 cmd_db_create never calls resolve_password — the Option<String> plumbing is decorative"
+  bad "D1 cmd_db_create never calls resolve_password - the Option<String> plumbing is decorative"
 fi
 
 if before "$CMD_DB_CREATE_BODY" "resolve_password" 'json!({'; then
   ok "D2 resolve_password runs before the request body is built"
 else
-  bad "D2 resolve_password runs after (or the request body doesn't wait for it) — position wrong"
+  bad "D2 resolve_password runs after (or the request body doesn't wait for it) - position wrong"
 fi
 
 if has "$CMD_DB_BACKUP_CREATE_BODY" 'resolve_password'; then
@@ -229,7 +229,7 @@ fi
 if before "$CMD_DB_BACKUP_CREATE_BODY" "resolve_password" 'json!({'; then
   ok "D4 resolve_password runs before the request body is built"
 else
-  bad "D4 resolve_password runs after (or the request body doesn't wait for it) — position wrong"
+  bad "D4 resolve_password runs after (or the request body doesn't wait for it) - position wrong"
 fi
 
 # ── §E the CLI crate actually depends on rpassword ───────────────────────
@@ -238,7 +238,7 @@ echo "── §E Cargo.toml declares the prompt dependency ──"
 if grep -qE '^rpassword\s*=' panel/cli/Cargo.toml; then
   ok "E1 panel/cli/Cargo.toml depends on rpassword"
 else
-  bad "E1 no rpassword dependency in panel/cli/Cargo.toml — C4 above would not even compile"
+  bad "E1 no rpassword dependency in panel/cli/Cargo.toml - C4 above would not even compile"
 fi
 
 # ── §F docs reflect the new, safer default ────────────────────────────────

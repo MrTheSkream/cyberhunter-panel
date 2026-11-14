@@ -1,24 +1,24 @@
 #!/usr/bin/env bash
-# Regression pins for s381 — the notification centre that could not take you
+# Regression pins for s381 - the notification centre that could not take you
 # anywhere, and the badges that could not be told apart.
 #
 #   N1  `panel_notifications.link` shipped with the notification centre in March.
 #       The migration creates the column, `notify_panel` binds it, the list
-#       endpoint SELECTs it, the frontend TYPES it at `link: string | null` — and
+#       endpoint SELECTs it, the frontend TYPES it at `link: string | null` - and
 #       the render never touched it. `git log -S'n.link' -- panel/frontend/src`
 #       is EMPTY across the whole repository history, so the field was written,
 #       transported and typed for five months without being read once. Half the
 #       producers were passing a real destination the entire time.
 #
-#   N2  The busiest producer on a live panel — "Login from new IP", 25 of 78 rows
-#       on the demo — did not go through `notify_panel` at all. It was a raw
+#   N2  The busiest producer on a live panel - "Login from new IP", 25 of 78 rows
+#       on the demo - did not go through `notify_panel` at all. It was a raw
 #       INSERT with its own column list, and the two columns it omitted were
 #       `link` (so that class could never become clickable) and the `NOTIF_TX`
 #       broadcast (so that class never arrived without a reload). A raw INSERT
 #       into a table with defaults succeeds whatever you leave out.
 #
 #   N3  The unread badge saturated at `> 9 ? "9+"` while the open-incident badge
-#       two rows away was uncapped — so a "9+" meaning 29 sat on the same screen
+#       two rows away was uncapped - so a "9+" meaning 29 sat on the same screen
 #       as a "9" meaning 9. Five render sites across four layout files, each with
 #       its own copy of the ternary.
 #
@@ -78,15 +78,15 @@ if [ "$COLS" = "PARSE-FAILED" ] || [ -z "$COLS" ]; then
 else
   NCOLS=$(echo "$COLS" | wc -w)
   if [ "$NCOLS" -lt 6 ]; then
-    bad "N1 derived only $NCOLS columns — the parse is wrong, not the code ($COLS)"
+    bad "N1 derived only $NCOLS columns - the parse is wrong, not the code ($COLS)"
   else
     ok "N1 derived $NCOLS columns from the list endpoint: $COLS"
   fi
 
   # Waived, with the reason each is not read by name in the render.
-  #   id       — the React key and every action's argument, used as `n.id`
+  #   id       - the React key and every action's argument, used as `n.id`
   #              (it IS read; listed here only because it is also the key)
-  #   read_at  — read as `n.read_at` in the styling branches
+  #   read_at  - read as `n.read_at` in the styling branches
   # Nothing else may be waived without adding it here and saying why.
   MISSING=""
   for c in $COLS; do
@@ -104,25 +104,25 @@ else
   # possibly render proves the matcher is looking at the page and not at a
   # constant true.
   if /usr/bin/grep -q "n\.definitely_not_a_column" "$PAGE"; then
-    bad "N1 positive control matched a column that does not exist — the matcher is broken"
+    bad "N1 positive control matched a column that does not exist - the matcher is broken"
   else
     ok "N1 positive control: an absent column is correctly reported absent"
   fi
 fi
 
 # The specific field this suite is named for, keyed on the render rather than on
-# the type declaration — `link: string | null` was present the whole time it was
+# the type declaration - `link: string | null` was present the whole time it was
 # broken, so a check for the TYPE would have been green throughout.
 if /usr/bin/grep -q 'to={n\.link}' "$PAGE"; then
   ok "N1 the notification title is a <Link to={n.link}>"
 else
-  bad "N1 nothing navigates to n.link — the field is transported and dropped again"
+  bad "N1 nothing navigates to n.link - the field is transported and dropped again"
 fi
 
 if /usr/bin/grep -q 'isSafeLink(n\.link)' "$PAGE" && /usr/bin/grep -q 'startsWith("//")' "$PAGE"; then
   ok "N1 link values are shape-checked before being followed"
 else
-  bad "N1 the link guard is gone — `link` is bare TEXT with no CHECK constraint"
+  bad "N1 the link guard is gone - `link` is bare TEXT with no CHECK constraint"
 fi
 
 echo
@@ -132,7 +132,7 @@ WRITERS=$(/usr/bin/grep -rn "INSERT INTO panel_notifications" "$BACKEND" --inclu
 IN_SVC=$(/usr/bin/grep -c "INSERT INTO panel_notifications" "$SVC")
 
 if [ "$WRITERS" -eq 0 ]; then
-  bad "N2 found no writers at all — the pattern is wrong, not the code"
+  bad "N2 found no writers at all - the pattern is wrong, not the code"
 elif [ "$WRITERS" -eq "$IN_SVC" ]; then
   ok "N2 all $WRITERS INSERT sites live in the notifications service"
 else
@@ -225,7 +225,7 @@ ALLOWED=$(echo "$LINKS" | sed -n 's/.*ALLOWED=\([0-9]*\).*/\1/p')
 NMISS=$(echo "$LINKS" | /usr/bin/grep -c "^MISSING" || true)
 
 if [ -z "${TOTAL:-}" ] || [ "${TOTAL:-0}" -lt 20 ]; then
-  bad "N3 found only ${TOTAL:-0} notify_panel call sites — the parse is wrong, not the code"
+  bad "N3 found only ${TOTAL:-0} notify_panel call sites - the parse is wrong, not the code"
 else
   ok "N3 parsed $TOTAL notify_panel call sites"
   if [ "$NMISS" -eq 0 ]; then
@@ -238,7 +238,7 @@ else
   if [ "$ALLOWED" -eq 1 ]; then
     ok "N3 the one reasoned exception still matches its call site"
   else
-    bad "N3 the allow-list matched $ALLOWED call sites, expected exactly 1 — it has gone stale"
+    bad "N3 the allow-list matched $ALLOWED call sites, expected exactly 1 - it has gone stale"
   fi
 fi
 
@@ -289,7 +289,7 @@ else
   SEEN=$(echo "$ROUTES" | sed -n 's/^SEEN=\([0-9]*\)/\1/p')
   NBAD=$(echo "$ROUTES" | /usr/bin/grep -c "^UNRESOLVED" || true)
   if [ "${SEEN:-0}" -lt 10 ]; then
-    bad "N4 found only ${SEEN:-0} link literals — the parse is wrong, not the code"
+    bad "N4 found only ${SEEN:-0} link literals - the parse is wrong, not the code"
   elif [ "$NBAD" -eq 0 ]; then
     ok "N4 all $SEEN link literals resolve against the SPA router"
   else
@@ -368,7 +368,7 @@ else
   NCHK=$(echo "$GATED" | sed -n 's/^CHECKED=\([0-9]*\)/\1/p')
   NRISK=$(echo "$GATED" | /usr/bin/grep -c "^ROLE-RISK" || true)
   if [ "${NCHK:-0}" -lt 10 ]; then
-    bad "N4b inspected only ${NCHK:-0} links — the parse is wrong, not the code"
+    bad "N4b inspected only ${NCHK:-0} links - the parse is wrong, not the code"
   elif [ "$NRISK" -eq 0 ]; then
     ok "N4b none of the $NCHK links sends a possibly-non-admin recipient at an admin-only screen"
   else
@@ -379,8 +379,8 @@ fi
 echo
 echo "── 4c. a status control leads to the tab that shows its own subject ──"
 
-# The Dashboard's health pill said "System Issues Detected" — raised by firing
-# alerts — and linked to a bare `/monitoring`, which resolves to the MONITORS
+# The Dashboard's health pill said "System Issues Detected" - raised by firing
+# alerts - and linked to a bare `/monitoring`, which resolves to the MONITORS
 # tab. On an install with no monitors configured that is an empty screen while
 # alerts are firing. The page already knew better: `REC_ACTION_ROUTES.alerts` is
 # `/monitoring?tab=alerts` and three other links on the same screen use it, and
@@ -395,7 +395,7 @@ else
   BARE=$(/usr/bin/grep -cE 'to="/monitoring"' "$DASH" || true)
   TABBED=$(/usr/bin/grep -cE 'monitoring\?tab=' "$DASH" || true)
   if [ "$TABBED" -lt 3 ]; then
-    bad "N4c only $TABBED tabbed monitoring links on the dashboard — the pattern is wrong, not the code"
+    bad "N4c only $TABBED tabbed monitoring links on the dashboard - the pattern is wrong, not the code"
   elif [ "$BARE" -eq 0 ]; then
     ok "N4c every dashboard link into monitoring names its tab ($TABBED of them)"
   else
@@ -404,11 +404,11 @@ else
 fi
 
 # And the pill's destination must be derived from the same condition as its
-# label, not fixed — otherwise the two drift apart silently again.
+# label, not fixed - otherwise the two drift apart silently again.
 if /usr/bin/grep -q 'to={overallStatus.to}' "$DASH"; then
   ok "N4c the health pill's destination follows the state that produced its label"
 else
-  bad "N4c the health pill links to a fixed path again — its label and its target can disagree"
+  bad "N4c the health pill links to a fixed path again - its label and its target can disagree"
 fi
 
 echo
@@ -417,7 +417,7 @@ echo "── 4d. a ?tab= link must point at a page that reads the parameter ─�
 # The failure this prevents is a link that LOOKS fixed. Writing
 # `/settings?tab=channels` against a page that never calls `useSearchParams` is a
 # no-op: the operator lands on the default tab exactly as before, and the URL now
-# claims otherwise. Both sides derived — the link targets from the tree, the
+# claims otherwise. Both sides derived - the link targets from the tree, the
 # param-reading pages from their own source.
 TABLINKS=$(python3 - panel/frontend/src <<'PY'
 import os, re, sys
@@ -453,12 +453,12 @@ for t, users in sorted(targets.items()):
 PY
 )
 if echo "$TABLINKS" | /usr/bin/grep -q "NO-TABLINKS"; then
-  bad "N4d found no ?tab= links at all — the pattern is wrong, not the code"
+  bad "N4d found no ?tab= links at all - the pattern is wrong, not the code"
 else
   NT=$(echo "$TABLINKS" | sed -n 's/^TARGETS=\([0-9]*\)/\1/p')
   NIG=$(echo "$TABLINKS" | /usr/bin/grep -cE "^(IGNORES|NOPAGE|NOFILE)" || true)
   if [ "${NT:-0}" -lt 3 ]; then
-    bad "N4d only ${NT:-0} deep-link targets — the parse is wrong, not the code"
+    bad "N4d only ${NT:-0} deep-link targets - the parse is wrong, not the code"
   elif [ "$NIG" -eq 0 ]; then
     ok "N4d all $NT ?tab= targets are pages that read the parameter"
   else
@@ -510,7 +510,7 @@ else
   NSEEN=$(echo "$ANCHORS" | sed -n 's/^SEEN=\([0-9]*\)/\1/p')
   NREL=$(echo "$ANCHORS" | /usr/bin/grep -c "^RELOAD" || true)
   if [ "${NSEEN:-0}" -lt 5 ]; then
-    bad "N4e inspected only ${NSEEN:-0} anchors — the parse is wrong, not the code"
+    bad "N4e inspected only ${NSEEN:-0} anchors - the parse is wrong, not the code"
   elif [ "$NREL" -eq 0 ]; then
     ok "N4e none of the $NSEEN internal anchors full-reloads an in-app route"
   else
@@ -535,7 +535,7 @@ fi
 if /usr/bin/grep -q 'export function badgeCount' "$HOOK"; then
   ok "N5 badgeCount is the single definition of the cap"
 else
-  bad "N5 badgeCount is gone — every layout will grow its own cap again"
+  bad "N5 badgeCount is gone - every layout will grow its own cap again"
 fi
 
 # A saturated badge is only honest if the exact figure is reachable. Every bell
@@ -543,7 +543,7 @@ fi
 BELLS=$(/usr/bin/grep -rc 'to="/notifications"' panel/frontend/src/components/*.tsx | awk -F: '{s+=$2} END {print s}')
 TITLED=$(/usr/bin/grep -rc 'unread notification\${' panel/frontend/src/components/*.tsx | awk -F: '{s+=$2} END {print s}')
 if [ "${BELLS:-0}" -eq 0 ]; then
-  bad "N5 found no bell links — the pattern is wrong, not the code"
+  bad "N5 found no bell links - the pattern is wrong, not the code"
 elif [ "${BELLS:-0}" -eq "${TITLED:-0}" ]; then
   ok "N5 all $BELLS bells state the exact unread count on hover"
 else
@@ -555,7 +555,7 @@ if [ "$(/usr/bin/grep -rc 'firing alert\${' panel/frontend/src/components/*.tsx 
    && [ "$(/usr/bin/grep -rc 'open incident\${' panel/frontend/src/components/*.tsx | awk -F: '{s+=$2} END {print s}')" -ge 4 ]; then
   ok "N5 firing-alert and open-incident badges are labelled apart"
 else
-  bad "N5 the two Monitoring counts are unlabelled again — they read as one quantity"
+  bad "N5 the two Monitoring counts are unlabelled again - they read as one quantity"
 fi
 
 echo
@@ -564,7 +564,7 @@ echo "── 6. the page is live, and the icon exists ──"
 if /usr/bin/grep -q 'new EventSource("/api/notifications/stream")' "$PAGE"; then
   ok "N6 the notifications page subscribes to the stream"
 else
-  bad "N6 the page is a mount-time fetch again — arrivals need a reload"
+  bad "N6 the page is a mount-time fetch again - arrivals need a reload"
 fi
 
 # The stream is only useful to a list if the payload can BE a list row.
@@ -572,7 +572,7 @@ for field in '"id": id' '"created_at": created_at' '"read_at"'; do
   if /usr/bin/grep -qF "$field" "$SVC"; then
     ok "N6 the SSE payload carries $field"
   else
-    bad "N6 the SSE payload dropped $field — a client cannot render what arrives"
+    bad "N6 the SSE payload dropped $field - a client cannot render what arrives"
   fi
 done
 
@@ -609,7 +609,7 @@ else
   NNAMES=$(echo "$ICONMISS" | sed -n 's/^NAMES=\([0-9]*\)/\1/p')
   NNOICON=$(echo "$ICONMISS" | /usr/bin/grep -c "^NOICON" || true)
   if [ "${NNAMES:-0}" -lt 10 ]; then
-    bad "N6 found only ${NNAMES:-0} nav icon names — the parse is wrong, not the code"
+    bad "N6 found only ${NNAMES:-0} nav icon names - the parse is wrong, not the code"
   elif [ "$NNOICON" -eq 0 ]; then
     ok "N6 all $NNAMES nav icon names exist in all three icon sets"
   else
@@ -628,9 +628,9 @@ echo "── 7. the guide describes this product ──"
 if ! /usr/bin/grep -qi "dropdown" "$GUIDE" && /usr/bin/grep -qi "bell" "$GUIDE"; then
   ok "N7 the guide promises no dropdown (control: it still describes the bell)"
 elif ! /usr/bin/grep -qi "bell" "$GUIDE"; then
-  bad "N7 positive control failed — the guide does not mention the bell at all"
+  bad "N7 positive control failed - the guide does not mention the bell at all"
 else
-  bad "N7 the guide's dropdown claim is back — the bell is a plain Link in all layouts"
+  bad "N7 the guide's dropdown claim is back - the bell is a plain Link in all layouts"
 fi
 
 if /usr/bin/grep -q "99+" "$GUIDE" && /usr/bin/grep -q "n > 99" "$HOOK"; then
@@ -696,7 +696,7 @@ for pair in "panel/backend/src/services/security_hardening.rs:alert_lockdown" \
   if /usr/bin/grep -qE "notifications::notify_panel\(" "$f"; then
     ok "N8 $(basename "$f") reaches the notification feed (${anchor})"
   else
-    bad "N8 $(basename "$f") delivers only to external channels — silent on a stock install"
+    bad "N8 $(basename "$f") delivers only to external channels - silent on a stock install"
   fi
 done
 

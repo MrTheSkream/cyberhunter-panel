@@ -6,7 +6,7 @@
 #    (panel/agent/src/services/command_filter.rs) and the backend's
 #    is_safe_shell_command (panel/backend/src/routes/mod.rs, shared by cron,
 #    pre_build_cmd, post_deploy_cmd) only rejected "; " (semicolon+space) and
-#    verb-anchored "|sh"/"|bash"/"| sh"/"| bash" — a bare `;` or bare `|` with
+#    verb-anchored "|sh"/"|bash"/"| sh"/"| bash" - a bare `;` or bare `|` with
 #    no trailing space/verb ("id;whoami", "id|whoami") passed both filters
 #    cleanly. The command reaches `crontab -u root -` (root's real crontab)
 #    and POST /crons/run executes it via `bash -c` immediately, as the agent
@@ -14,7 +14,7 @@
 #    SITE_CALLER_PREDICATE, not just an admin. Verified live with real PoC
 #    strings by both the finder and an independent skeptic before the fix
 #    landed. Fix: reject any bare `;`, and reject any run of `|` whose length
-#    isn't exactly 2 — `&&`/`||` remain explicitly allowed (the whole reason
+#    isn't exactly 2 - `&&`/`||` remain explicitly allowed (the whole reason
 #    this isn't a blanket metacharacter ban). Mutation-tested: the paired Rust
 #    unit tests (command_filter.rs, routes/mod.rs) were confirmed red against
 #    the pre-fix logic before being confirmed green against the fix.
@@ -23,14 +23,14 @@
 #    HOST (CRITICAL). The v2.179.0 docker-socket-proxy sidecar correctly
 #    restricts WHAT Dozzle can ask the Docker daemon (deny-by-default ACL,
 #    CONTAINERS=1/EVENTS=1/INFO=1 only) but nothing gated WHO could reach
-#    Dozzle itself. Deploying the template with a domain — the panel's own
-#    advertised one-click, DNS-automated primary use case — produced a fully
+#    Dozzle itself. Deploying the template with a domain - the panel's own
+#    advertised one-click, DNS-automated primary use case - produced a fully
 #    public page that lists and inspects every container on the shared Docker
 #    host, including plaintext env vars (DB passwords, JWT secrets, ...) for
 #    every OTHER project sharing the box. Proven with real evidence from this
 #    box's own running containers during the audit. Dozzle's own real auth
 #    (verified against its own docs, not guessed) needs either a mounted
-#    users.yml with a bcrypt hash inside, or forward-proxy headers — no
+#    users.yml with a bcrypt hash inside, or forward-proxy headers - no
 #    pure-env-var auth exists, so the fix cannot be "add a required env var
 #    to the template." Fixed by forcing nginx auth_basic on the domain at
 #    deploy time for any TEMPLATE_SIDECAR-backed app, reusing the same
@@ -41,7 +41,7 @@
 # 3. THE #1 FIX WAS ITSELF INCOMPLETE (s430 dockpanel-fanout completeness
 #    critic, CRITICAL, found HOURS after the fix above shipped). `;` and `|`
 #    were closed but the third POSIX chaining operator, bare `&`, was never
-#    checked by either function — "id&whoami" passed both gates clean, with
+#    checked by either function - "id&whoami" passed both gates clean, with
 #    the identical reachability (non-admin site owner -> save cron -> run now
 #    -> `bash -c` as the agent). Proven by compiling and executing standalone
 #    copies of both functions outside the repo, with the `;`/`|` REJECT

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# expected-stop-pin-e2e.sh — s391 / v2.144.0
+# expected-stop-pin-e2e.sh - s391 / v2.144.0
 #
 # Pins the fix for an EXPECTED container stop publishing a CRITICAL incident on
 # the operator's PUBLIC status page.
@@ -9,16 +9,16 @@
 #       defect: `alert_runbook_defaults.rs` has always listed container_down
 #       under "Info" and the runbook attached to every one of those
 #       notifications says "we don't page on it", while the engine raised it at
-#       "critical" — which is the exact string the incident branch gates on. The
+#       "critical" - which is the exact string the incident branch gates on. The
 #       arm derives BOTH sides and compares them, so it fails whichever one drifts.
 #   §B  the suppression sits at the CHECK, never in the fire funnel. The
 #       `alert_state` row is stamped 'firing' immediately above the fire and the
 #       branch is guarded by `!= Some("firing")`, so a funnel-level skip would
 #       stamp a row claiming a page that never went out and then suppress every
-#       future container_down for that name — the tombstone this engine's own
+#       future container_down for that name - the tombstone this engine's own
 #       comment records as having run for four months.
 #   §C  the expectation is cleared from OBSERVATION, ABOVE the state ladder and
-#       on `not exited/dead` — never inside the recovery arm, which is
+#       on `not exited/dead` - never inside the recovery arm, which is
 #       `running && health != unhealthy` and sits UNDER the unhealthy arm. A
 #       container that comes back up with a failing healthcheck (the ordinary
 #       case for something stopped because it was misbehaving) never reaches
@@ -26,10 +26,10 @@
 #       when it finally died.
 #   §D  the clear cannot touch the auto-sleep clock. `wake_container` writes
 #       is_sleeping/last_woken_at/last_activity_at together, and that statement
-#       is the obvious one to copy — but the engine runs every 120s against every
+#       is the obvious one to copy - but the engine runs every 120s against every
 #       running container, so copying it would bump `last_activity_at` for ever
 #       and silently disable auto-sleep, whose idle test is that column alone.
-#   §E  every deliberate stop path records, and every start path clears —
+#   §E  every deliberate stop path records, and every start path clears -
 #       including the STACK path, where one click stops N containers.
 #   §F  the caller's container id is CANONICALISED before it is used as a key.
 #       `is_valid_container_id` accepts any 1-64 hex string and Docker resolves a
@@ -41,7 +41,7 @@
 #
 # Pure source analysis: no box, no network, no build.
 #
-# NO PIPES INTO `grep -q` — under `set -o pipefail` grep -q closes the pipe on
+# NO PIPES INTO `grep -q` - under `set -o pipefail` grep -q closes the pipe on
 # its first match and the arm goes red on correct code. Every arm uses a
 # here-string.
 
@@ -69,7 +69,7 @@ done
 # Comments out, CODE INTACT. Copied from the FIXED stripper (lesson #136): the
 # naive s{/\*.*?\*/}{}gs deletes real code because `/*` occurs inside string
 # literals. Every arm below reads a stripped subject, so the explanatory prose in
-# these files — which necessarily quotes the very shapes being pinned — cannot
+# these files - which necessarily quotes the very shapes being pinned - cannot
 # satisfy an arm (the s386 trap, which shipped a suite 43/43 green over the
 # headline defect restored).
 code() {
@@ -96,14 +96,14 @@ fnbody() {
 }
 
 # Whitespace-squeezed, so rustfmt reflowing a call across lines cannot retire an
-# arm (lesson #585/#638 — it has happened twice).
+# arm (lesson #585/#638 - it has happened twice).
 flat() { tr -d ' \n' <<< "$1"; }
 
 # Brace depth immediately BEFORE the first occurrence of fixed-string $2 in
-# body $1 (relative to where $1 itself starts — this file's fnbody() already
+# body $1 (relative to where $1 itself starts - this file's fnbody() already
 # skips the signature line, so a top-level statement sits at depth 0). A
 # text-presence check alone cannot tell live code from the identical text
-# sitting inside a dead branch (`if false { ... }`) — both contain the same
+# sitting inside a dead branch (`if false { ... }`) - both contain the same
 # text in the same relative order. This can: the extra `{` from a wrapper
 # pushes everything inside it one level deeper. Prints -1 if $2 is absent.
 depth_before() {
@@ -140,17 +140,17 @@ if EG=$(subj "$ENGINE"); then
   if [ -n "$DECLARED" ]; then
     ok "A1-control the declared severity was parsed out of alert_runbook_defaults: '$DECLARED'"
   else
-    bad "A1-control the declared severity was parsed out of alert_runbook_defaults — parsed nothing"
+    bad "A1-control the declared severity was parsed out of alert_runbook_defaults - parsed nothing"
   fi
   if [ -n "$FIRED" ]; then
     ok "A2-control the fired severity was parsed out of the engine: '$FIRED'"
   else
-    bad "A2-control the fired severity was parsed out of the engine — parsed nothing"
+    bad "A2-control the fired severity was parsed out of the engine - parsed nothing"
   fi
   if [ -n "$DECLARED" ] && [ "$DECLARED" = "$FIRED" ]; then
     ok "A3 container_down is fired at the severity the product declares ($FIRED)"
   else
-    bad "A3 container_down is fired at the severity the product declares — declared '$DECLARED', fired '$FIRED'"
+    bad "A3 container_down is fired at the severity the product declares - declared '$DECLARED', fired '$FIRED'"
   fi
 
   # The incident branch gates on this exact string, so the regression has a name.
@@ -167,7 +167,7 @@ if EG=$(subj "$ENGINE"); then
   if grep -qF 'try_fire_alert(' <<< "$FWR"; then
     ok "B1-control the fire funnel was extracted and is non-empty"
     if grep -qF 'expected' <<< "$FWR"; then
-      bad "B2 the expectation is NOT consulted at the fire — it is, and every alert_state stamp beside a fire then claims a page that never went out"
+      bad "B2 the expectation is NOT consulted at the fire - it is, and every alert_state stamp beside a fire then claims a page that never went out"
     else
       ok "B2 the expectation is not consulted at the fire"
     fi
@@ -178,7 +178,7 @@ if EG=$(subj "$ENGINE"); then
   # The skip must precede the alert_state stamp, or the row is written 'firing'
   # while nothing is sent and the key is deaf for ever. Ordering by line number
   # with BOTH anchors asserted present (lesson #582).
-  # Anchored on the SKIP ITSELF — the predicate guarding a bare `continue` — and
+  # Anchored on the SKIP ITSELF - the predicate guarding a bare `continue` - and
   # not on "the last occurrence of the predicate". The first cut used the latter
   # and passed over its own mutation: deleting the skip left the CLEAR guard as
   # the last match, which is also above the stamp (#626, an arm that inspects the
@@ -187,7 +187,7 @@ if EG=$(subj "$ENGINE"); then
   if [ "$NSKIP" -eq 1 ]; then
     ok "B3a the exited arm carries exactly one unconditional skip"
   else
-    bad "B3a the exited arm carries exactly one unconditional skip — found $NSKIP"
+    bad "B3a the exited arm carries exactly one unconditional skip - found $NSKIP"
   fi
   # The skip's line = the first predicate use AFTER the ladder opens, so this
   # cannot silently fall back onto the clear guard above it.
@@ -222,7 +222,7 @@ if EG=$(subj "$ENGINE"); then
   if [ "$NCLEAR" -eq 1 ]; then
     ok "C3 exactly one clear site in the health check"
   else
-    bad "C3 exactly one clear site in the health check — found $NCLEAR"
+    bad "C3 exactly one clear site in the health check - found $NCLEAR"
   fi
 else
   for a in A0 A1 A2 A3 A4 B1 B2 B3 C1 C2 C3; do bad "$a $ENGINE is readable"; done
@@ -242,7 +242,7 @@ if SV=$(subj "$SVC"); then
     if [ -z "$BUMPS" ]; then
       ok "D2 the clear writes none of the auto-sleep columns"
     else
-      bad "D2 the clear writes none of the auto-sleep columns — found:$BUMPS"
+      bad "D2 the clear writes none of the auto-sleep columns - found:$BUMPS"
     fi
   else
     bad "D1-control the clear statement was extracted"
@@ -299,20 +299,20 @@ fi
 if ST=$(subj "$STACKS"); then
   SA=$(flat "$(fnbody "$ST" stack_action)")
   if grep -qF 'expected_stops::record(' <<< "$SA" && grep -qF 'expected_stops::clear(' <<< "$SA"; then
-    ok "E4 the stack path both records and clears — one click stops N containers"
+    ok "E4 the stack path both records and clears - one click stops N containers"
   else
-    bad "E4 the stack path both records and clears — one click stops N containers"
+    bad "E4 the stack path both records and clears - one click stops N containers"
   fi
 else
   bad "E4 $STACKS is readable"
 fi
 
-# s449: a NEW class of door, per this suite's own instruction above — the 3
+# s449: a NEW class of door, per this suite's own instruction above - the 3
 # recreate handlers (update_app, update_image, update_env) now record too, but
 # with the OPPOSITE ordering from E3/E7b's "record only after the stop
 # succeeded": these interrupt a container ON PURPOSE via the agent's own
 # remove-then-create, so the healer must be blind to that gap from the moment
-# it OPENS, not after — record before the call, clear unconditionally once it
+# it OPENS, not after - record before the call, clear unconditionally once it
 # returns (success or failure), or a refused/failed recreate leaves a
 # container that never actually stopped marked expected-stopped forever.
 # [[project_dockpanel_tech_debt_p185]] carry G.
@@ -343,13 +343,13 @@ if AP=$(subj "$APPS"); then
       ok "E8 $fn records before the recreate call and clears after it (record $RECPOS < call $CALLPOS < clear $CLEARPOS)"
       E8_OK=$((E8_OK + 1))
     else
-      bad "E8 $fn ordering wrong (record '$RECPOS', call '$CALLPOS' via anchor '$ANCHOR', clear '$CLEARPOS') — recording after the call would mark a still-running container; clearing before it would un-suppress the healer mid-recreate"
+      bad "E8 $fn ordering wrong (record '$RECPOS', call '$CALLPOS' via anchor '$ANCHOR', clear '$CLEARPOS') - recording after the call would mark a still-running container; clearing before it would un-suppress the healer mid-recreate"
     fi
   done
   if [ "$E8_OK" -eq 3 ]; then
     ok "E8-summary all 3 recreate doors record-before/clear-after around their agent call"
   else
-    bad "E8-summary only $E8_OK/3 recreate doors correctly ordered — the auto-healer can revive a container mid-migrate"
+    bad "E8-summary only $E8_OK/3 recreate doors correctly ordered - the auto-healer can revive a container mid-migrate"
   fi
 else
   bad "E8 $APPS is readable"
@@ -364,19 +364,19 @@ fi
 # door changes NO observable behaviour today. `/apps` keeps only containers with
 # `dockpanel.app.template` and a git container has none, so neither the healer
 # nor the alert engine can see one. E7 pins a door that is correct and currently
-# inert — which is worth pinning, because the day `/apps` includes git
+# inert - which is worth pinning, because the day `/apps` includes git
 # containers the pin is what stops the door regressing unnoticed. Every
 # NEW deliberate stop path owes an arm here in the same commit. A derived census
 # was attempted and is NOT available: the three doors post the agent call in
 # three different shapes (a computed `agent_path`, an inline `format!`, a
-# literal), and only ONE of the three modules persists a status column at all —
+# literal), and only ONE of the three modules persists a status column at all -
 # so any repo-wide grep would report a confident, false, all-clear.
 if GD=$(subj "$GIT"); then
   GB=$(fnbody "$GD" "stop")
   # FLOOR the subject: an fnbody whose pattern stops matching yields an EMPTY
   # string, under which every `grep -q` below fails OPEN in the wrong direction.
   if [ "$(wc -l <<< "$GB")" -lt 8 ]; then
-    bad "E7 git_deploys::stop body resolved ($(wc -l <<< "$GB") lines — subject lost)"
+    bad "E7 git_deploys::stop body resolved ($(wc -l <<< "$GB") lines - subject lost)"
   else
     GBF=$(flat "$GB")
     if grep -qF 'expected_stops::record(' <<< "$GBF"; then
@@ -398,7 +398,7 @@ if GD=$(subj "$GIT"); then
 
   GS=$(fnbody "$GD" "start")
   if [ "$(wc -l <<< "$GS")" -lt 8 ]; then
-    bad "E7c git_deploys::start body resolved ($(wc -l <<< "$GS") lines — subject lost)"
+    bad "E7c git_deploys::start body resolved ($(wc -l <<< "$GS") lines - subject lost)"
   elif grep -qF 'expected_stops::clear(' <<< "$(flat "$GS")"; then
     ok "E7c git_deploys::start clears the expectation"
   else
@@ -406,7 +406,7 @@ if GD=$(subj "$GIT"); then
   fi
 
   # The KEY is the whole fix. The stored name is bare; the healer matches the
-  # agent's container name. A record under the wrong key is silently inert — it
+  # agent's container name. A record under the wrong key is silently inert - it
   # writes a row nothing ever reads, which looks exactly like working.
   #
   # ⛔ SCOPED TO THE HELPER'S OWN BODY, and this arm was FILE-scoped when first
@@ -416,7 +416,7 @@ if GD=$(subj "$GIT"); then
   # live in this file. A whole-file `has` here is unfalsifiable.
   KB=$(fnbody "$GD" "expected_stop_key")
   if [ "$(wc -l <<< "$KB")" -lt 2 ]; then
-    bad "E7d expected_stop_key body resolved ($(wc -l <<< "$KB") lines — subject lost)"
+    bad "E7d expected_stop_key body resolved ($(wc -l <<< "$KB") lines - subject lost)"
   elif grep -qF 'format!("dockpanel-git-{name}")' <<< "$(flat "$KB")"; then
     ok "E7d the recorded key carries the agent's dockpanel-git- prefix"
   else
@@ -425,7 +425,7 @@ if GD=$(subj "$GIT"); then
 
   # ...and that `stop()` actually routes its key through that helper, rather
   # than spelling a bare name inline. E7d alone would pass with the helper
-  # correct and unused — the #732 shape this whole session exists to not repeat.
+  # correct and unused - the #732 shape this whole session exists to not repeat.
   if grep -qF 'expected_stop_key(&config.name)' <<< "$(flat "$GB")"; then
     ok "E7e git_deploys::stop derives its key through expected_stop_key"
   else
@@ -443,7 +443,7 @@ if HL=$(subj "$HEALER"); then
     bad "E5 the auto-sleep leg records the expectation"
   fi
   # The restart leg must READ it, or the panel restarts the operator's own Stop
-  # within 120s — silently, now that the spurious alert is gone.
+  # within 120s - silently, now that the spurious alert is gone.
   if grep -qF 'expected_stopped.contains(name)' <<< "$HF"; then
     ok "E6 the auto-heal restart leg skips a container stopped on purpose"
   else
@@ -478,12 +478,12 @@ if AP=$(subj "$APPS"); then
   if [ "$NCALLS" -ge 5 ]; then
     ok "F2-control found $NCALLS record/clear call sites to inspect"
   else
-    bad "F2-control found $NCALLS record/clear call sites to inspect — too few, the extractor is not matching"
+    bad "F2-control found $NCALLS record/clear call sites to inspect - too few, the extractor is not matching"
   fi
   if [ "$RAWKEY" -eq 0 ]; then
     ok "F3 no writer keys on the raw path parameter"
   else
-    bad "F3 no writer keys on the raw path parameter — $RAWKEY call site(s) do"
+    bad "F3 no writer keys on the raw path parameter - $RAWKEY call site(s) do"
   fi
 fi
 
@@ -493,9 +493,9 @@ echo "== §G  the suppression is membership and nothing broader =="
 if EG=$(subj "$ENGINE"); then
   NPRED=$(grep -oF 'expected_stopped.contains(' <<< "$(flat "$EG")" | wc -l)
   if [ "$NPRED" -eq 2 ]; then
-    ok "G1 exactly two uses of the predicate — one clear guard, one skip"
+    ok "G1 exactly two uses of the predicate - one clear guard, one skip"
   else
-    bad "G1 exactly two uses of the predicate — one clear guard, one skip — found $NPRED"
+    bad "G1 exactly two uses of the predicate - one clear guard, one skip - found $NPRED"
   fi
 fi
 
@@ -515,7 +515,7 @@ if MG=$(sqlsubj "$MIG"); then
     bad "H2 rows die with their server"
   fi
   if grep -qF 'INSERTINTOcontainer_expected_stops' <<< "$MGF"; then
-    bad "H3 the migration does NOT backfill — it does, which would silence containers that are down right now"
+    bad "H3 the migration does NOT backfill - it does, which would silence containers that are down right now"
   else
     ok "H3 the migration does not backfill"
   fi
@@ -543,7 +543,7 @@ echo "== §J  a REMOVED container's expectation dies with it =="
 
 # §C clears from OBSERVING a container alive, so it can only ever reach one that
 # still exists. A REMOVED container is never observed again in any state, so its
-# row outlives it and the NEXT container of that name inherits the silence —
+# row outlives it and the NEXT container of that name inherits the silence -
 # `container_down` skipped, the auto-heal restart leg skipped, and the Apps page
 # calling it "stopped on purpose" and naming whoever stopped the container that
 # is gone. Remove-and-redeploy under the same name is the supported way to
@@ -552,7 +552,7 @@ echo "== §J  a REMOVED container's expectation dies with it =="
 # Two mechanisms, and they cover different failures. The DOORS clear exactly and
 # with no window, which is the only thing that helps when a container is removed
 # and replaced inside one 120s sweep. The engine's SWEEP is the only thing that
-# can see a removal the panel did not perform, or a door added later — which is
+# can see a removal the panel did not perform, or a door added later - which is
 # how this defect got here, since §E's list of doors is hardcoded and removal was
 # never in it.
 #
@@ -577,7 +577,7 @@ if SV=$(subj "$SVC"); then
 
     # ⛔ THE INVERSION GUARD, and it is the whole reason this arm exists.
     # `container_name <> ALL('{}')` is TRUE for every row, so a sweep handed an
-    # empty listing deletes every expectation on the host — and the next sweep
+    # empty listing deletes every expectation on the host - and the next sweep
     # then fires container_down for every container the operator deliberately
     # stopped, which is the exact defect v2.144.0 shipped this table to remove.
     # An empty listing is the one observation that cannot tell "nothing is here"
@@ -585,7 +585,7 @@ if SV=$(subj "$SVC"); then
     if grep -qF 'ifobserved.is_empty(){return;}' <<< "$ABSF"; then
       ok "J2 the sweep refuses an EMPTY observation"
     else
-      bad "J2 the sweep refuses an EMPTY observation — an empty listing would clear the whole host"
+      bad "J2 the sweep refuses an EMPTY observation - an empty listing would clear the whole host"
     fi
 
     # Same race `clear_if_older_than` carries: one snapshot, walked with awaited
@@ -605,7 +605,7 @@ if SV=$(subj "$SVC"); then
     if [ -z "$BUMPS" ]; then
       ok "J4 the sweep writes none of the auto-sleep columns"
     else
-      bad "J4 the sweep writes none of the auto-sleep columns — found:$BUMPS"
+      bad "J4 the sweep writes none of the auto-sleep columns - found:$BUMPS"
     fi
   else
     for a in J1-control J2 J3 J4; do bad "$a clear_absent extracted from $SVC"; done
@@ -621,17 +621,17 @@ if EG=$(subj "$ENGINE"); then
   if [ "$NABS" -eq 1 ]; then
     ok "J5 the engine runs the absence sweep exactly once"
   else
-    bad "J5 the engine runs the absence sweep exactly once — found $NABS"
+    bad "J5 the engine runs the absence sweep exactly once - found $NABS"
   fi
 
   # ONE observation, read by both sweeps. A second binding of `observed` would
   # let the expectation sweep be fed a filtered subset while the arm above still
-  # counted one call — and every name missing from that subset would be deleted.
+  # counted one call - and every name missing from that subset would be deleted.
   NOBS=$(grep -oF 'letobserved:' <<< "$CH2F" | wc -l)
   if [ "$NOBS" -eq 1 ]; then
     ok "J6 the host's listing is bound once and both sweeps read that one binding"
   else
-    bad "J6 the host's listing is bound once and both sweeps read that one binding — found $NOBS"
+    bad "J6 the host's listing is bound once and both sweeps read that one binding - found $NOBS"
   fi
 else
   for a in J5 J6; do bad "$a $ENGINE is readable"; done
@@ -659,10 +659,10 @@ if ST=$(subj "$STACKS"); then
     if [ "$SDOORS" -eq "$SCLEARS" ]; then
       ok "J8 every stack removal door forgets the expectations ($SCLEARS/$SDOORS)"
     else
-      bad "J8 every stack removal door forgets the expectations ($SCLEARS/$SDOORS) — missing:$SMISSING"
+      bad "J8 every stack removal door forgets the expectations ($SCLEARS/$SDOORS) - missing:$SMISSING"
     fi
   else
-    bad "J7-control found $SDOORS stack removal doors — too few, the extractor is not matching"
+    bad "J7-control found $SDOORS stack removal doors - too few, the extractor is not matching"
   fi
 else
   for a in J7-control J8; do bad "$a $STACKS is readable"; done
@@ -689,15 +689,15 @@ if AP=$(subj "$APPS"); then
     if [ "$ADOORS" -eq "$ACLEARS" ]; then
       ok "J10 every app removal door forgets the expectation ($ACLEARS/$ADOORS)"
     else
-      bad "J10 every app removal door forgets the expectation ($ACLEARS/$ADOORS) — missing:$AMISSING"
+      bad "J10 every app removal door forgets the expectation ($ACLEARS/$ADOORS) - missing:$AMISSING"
     fi
   else
-    bad "J9-control found $ADOORS app removal doors — too few, the extractor is not matching"
+    bad "J9-control found $ADOORS app removal doors - too few, the extractor is not matching"
   fi
 
   # ORDERING, not presence. The name has to be read while the container still
-  # exists — the agent's removal response carries the freed domain, never the
-  # name — and the row must not be cleared until the removal has succeeded, or a
+  # exists - the agent's removal response carries the freed domain, never the
+  # name - and the row must not be cleared until the removal has succeeded, or a
   # refusal would un-suppress a container that is still deliberately stopped.
   RB=$(fnbody "$AP" remove_app)
   RES=$(grep -n 'resolve_container_name' <<< "$RB" | head -1 | cut -d: -f1)
@@ -717,13 +717,13 @@ echo "== §K  container_sleep_config survives the SAME recreate this file's own 
 # This file's own migration (MIG, 20260822000000_container_expected_stops.sql,
 # §1 "THE KEY") documents that update_app/change_container_image/update_env
 # "all stop, remove and re-create the container, which mints a NEW id and
-# keeps the name" — and fixed container_expected_stops by keying on
+# keeps the name" - and fixed container_expected_stops by keying on
 # (server_id, container_name) instead of container_id BECAUSE of exactly this.
 # container_sleep_config is still keyed on container_id alone (no change to
 # that table's schema), so it needed the OTHER half of the same fix: re-point
 # the existing row at the new id when a recreate happens, or the row goes
 # permanently unreachable and auto-sleep silently stops working with no error
-# and no UI indication — the live bug tracked in tech_debt p4 since s238.
+# and no UI indication - the live bug tracked in tech_debt p4 since s238.
 
 if AP=$(subj "$APPS"); then
   RK=$(fnbody "$AP" rekey_sleep_config)
@@ -732,32 +732,32 @@ if AP=$(subj "$APPS"); then
   if [ -n "$RK" ]; then
     ok "K0-control rekey_sleep_config extracted, $(wc -l <<< "$RK") lines"
   else
-    bad "K0-control could not extract rekey_sleep_config — every arm below is vacuous"
+    bad "K0-control could not extract rekey_sleep_config - every arm below is vacuous"
   fi
 
-  # K1 — the UPDATE sets container_id from the NEW value and matches on the OLD
+  # K1 - the UPDATE sets container_id from the NEW value and matches on the OLD
   # one, in that placeholder order ($1=new, $2=old). Checked as one flattened
   # string so rustfmt reflowing the query across lines cannot retire this arm.
   if grep -qF 'UPDATEcontainer_sleep_configSETcontainer_id=$1WHEREcontainer_id=$2' <<< "$RKF"; then
     ok "K1 rekey_sleep_config's UPDATE sets container_id from \$1 (new) and matches \$2 (old)"
   else
-    bad "K1 rekey_sleep_config's UPDATE does not match the expected SET \$1 / WHERE \$2 shape — re-read it, the bind order may have been swapped"
+    bad "K1 rekey_sleep_config's UPDATE does not match the expected SET \$1 / WHERE \$2 shape - re-read it, the bind order may have been swapped"
   fi
 
-  # K2 — the bind CALLS agree with K1's placeholder order: new_container_id
+  # K2 - the bind CALLS agree with K1's placeholder order: new_container_id
   # bound first (-> $1), old_container_id bound second (-> $2). A swap here
   # would compile, run, and silently re-key every row to the OLD id instead of
-  # the new one — the exact inverse of the fix.
+  # the new one - the exact inverse of the fix.
   if grep -qF '.bind(new_container_id).bind(old_container_id)' <<< "$RKF"; then
     ok "K2 bind order is new_container_id then old_container_id, matching \$1/\$2"
   else
-    bad "K2 bind order does not match .bind(new_container_id).bind(old_container_id) — \$1/\$2 would receive the wrong values even if K1 is green"
+    bad "K2 bind order does not match .bind(new_container_id).bind(old_container_id) - \$1/\$2 would receive the wrong values even if K1 is green"
   fi
 
-  # K3 — every recreate call site actually invokes the re-key, reading the
+  # K3 - every recreate call site actually invokes the re-key, reading the
   # NEW id from the agent's own response rather than assuming one. Discovered
   # by membership (which handlers call the three recreate agent routes), not
-  # by a fixed count — matching this file's own J-block methodology.
+  # by a fixed count - matching this file's own J-block methodology.
   RECREATE_FNS="update_app update_image update_env"
   CALLED=""
   LIVE=""
@@ -767,24 +767,24 @@ if AP=$(subj "$APPS"); then
     if grep -qF 'rekey_sleep_config(' <<< "$bf" && grep -qF 'result.get("container_id")' <<< "$bf"; then
       CALLED="$CALLED $f"
 
-      # K4 (per-handler) — LIVENESS. Text presence (above) cannot tell a real
-      # call from the identical text sitting inside a dead branch — both
+      # K4 (per-handler) - LIVENESS. Text presence (above) cannot tell a real
+      # call from the identical text sitting inside a dead branch - both
       # contain the same text in the same relative order.
       #
       # ⚠ A first draft of this arm compared the call's depth against its OWN
-      # guarding if-let's depth (call == if-let + 1) — verified BY MUTATION to
+      # guarding if-let's depth (call == if-let + 1) - verified BY MUTATION to
       # be insufficient: wrapping the if-let AND the call TOGETHER in an outer
       # `if false { ... }` shifts both depths by the same +1, so the relative
       # difference between them never changes and the mutation stays green.
       # Fixed by anchoring the if-let itself against its own known-correct
-      # ABSOLUTE depth — a per-function baseline, since this file's fnbody()
+      # ABSOLUTE depth - a per-function baseline, since this file's fnbody()
       # includes the (often multi-line) signature's own closing `{` in the
       # extraction. Neither the if-let nor the call can be wrapped in
       # anything extra now, and the call can't be pulled out of the if-let
       # that guards it while the if-let itself stays put.
       #
       # s447: update_image/update_env moved from depth 1 to depth 2 (call:
-      # 2 to 3) — [[project_dockpanel_tech_debt_p185]] §A wrapped both
+      # 2 to 3) - [[project_dockpanel_tech_debt_p185]] §A wrapped both
       # bodies in `tokio::spawn(async move { ... })` so a dropped browser
       # connection can no longer cancel the recreate mid-flight, adding one
       # brace level to everything inside, this if-let included. update_app
@@ -807,15 +807,15 @@ if AP=$(subj "$APPS"); then
   if [ "$N_CALLED" -eq 3 ]; then
     ok "K3 all 3 recreate handlers (update_app, update_image, update_env) call rekey_sleep_config with the agent's returned container_id"
   else
-    bad "K3 only $N_CALLED/3 recreate handlers call rekey_sleep_config (found:${CALLED:- none}) — a container recreated through the missing handler(s) still orphans its sleep config"
+    bad "K3 only $N_CALLED/3 recreate handlers call rekey_sleep_config (found:${CALLED:- none}) - a container recreated through the missing handler(s) still orphans its sleep config"
   fi
 
   LIVE=$(echo $LIVE)
   N_LIVE=$(wc -w <<< "$LIVE")
   if [ "$N_LIVE" -eq 3 ]; then
-    ok "K4 all 3 rekey_sleep_config calls sit exactly one brace deeper than the if-let that guards them — live, not wrapped in extra dead code"
+    ok "K4 all 3 rekey_sleep_config calls sit exactly one brace deeper than the if-let that guards them - live, not wrapped in extra dead code"
   else
-    bad "K4 only $N_LIVE/3 rekey_sleep_config calls sit exactly one brace deeper than their guarding if-let (found:${LIVE:- none}) — one or more may be wrapped in an extra dead/conditional branch while text-only K3 still reports it present"
+    bad "K4 only $N_LIVE/3 rekey_sleep_config calls sit exactly one brace deeper than their guarding if-let (found:${LIVE:- none}) - one or more may be wrapped in an extra dead/conditional branch while text-only K3 still reports it present"
   fi
 else
   for a in K0-control K1 K2 K3 K4; do bad "$a $APPS is readable"; done

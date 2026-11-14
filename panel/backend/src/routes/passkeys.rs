@@ -159,18 +159,18 @@ fn generate_challenge() -> Vec<u8> {
 /// Extract the RP ID for WebAuthn.
 ///
 /// ⚠ SECURITY (s435, closing the s429 finding): prefers server-side BASE_URL
-/// config (trusted) — but when it's unset (a legitimate, common
+/// config (trusted) - but when it's unset (a legitimate, common
 /// configuration: `config.rs` deliberately defaults it to empty for
 /// "IP-based access", not a misconfiguration to guard against), this falls
 /// back to the client-supplied `Origin` header. That fallback is honest to
 /// say out loud: it does NOT, by itself, "prevent RP ID manipulation by
-/// attackers" — the comment here used to claim exactly that, which s429's
+/// attackers" - the comment here used to claim exactly that, which s429's
 /// completeness critic correctly flagged as overstating what the code does.
 /// What actually prevents exploitation is downstream and unconditional,
 /// regardless of how `rp_id`/`rp_origin` were derived: `register_complete`/
-/// `auth_complete` compare the CLIENT's signed `clientDataJSON.origin` —
+/// `auth_complete` compare the CLIENT's signed `clientDataJSON.origin` -
 /// which a browser sets from the page's real origin, not from any header,
-/// and which is covered by the authenticator's own signature — against
+/// and which is covered by the authenticator's own signature - against
 /// whatever this function returned. An attacker who can only forge HTTP
 /// headers (not actually serve a page at a spoofed origin) fails that
 /// comparison every time, which is why this was assessed non-exploitable
@@ -178,8 +178,8 @@ fn generate_challenge() -> Vec<u8> {
 ///
 /// What DOES fail closed now, and didn't before: if a request has NEITHER
 /// an `Origin` NOR a `Host` header, there is no signal left to derive
-/// anything from — no legitimate browser-driven WebAuthn ceremony omits
-/// both — so this refuses outright instead of falling back to a hardcoded
+/// anything from - no legitimate browser-driven WebAuthn ceremony omits
+/// both - so this refuses outright instead of falling back to a hardcoded
 /// `"localhost"` that satisfied nothing but let the ceremony proceed anyway.
 fn get_rp_id_from_headers(headers: &axum::http::HeaderMap, state: &AppState) -> Result<String, ApiError> {
     // Prefer server-side BASE_URL (trusted, not client-controlled)
@@ -202,12 +202,12 @@ fn get_rp_id_from_headers(headers: &axum::http::HeaderMap, state: &AppState) -> 
     if let Some(host) = headers.get("host").and_then(|v| v.to_str().ok()) {
         return Ok(host.split(':').next().unwrap_or(host).to_string());
     }
-    Err(err(StatusCode::BAD_REQUEST, "Cannot determine relying party — request has neither an Origin nor a Host header"))
+    Err(err(StatusCode::BAD_REQUEST, "Cannot determine relying party - request has neither an Origin nor a Host header"))
 }
 
 /// Extract the origin URL for WebAuthn's `clientDataJSON.origin` comparison.
 /// Same trust model and the same s435 fail-closed fix as
-/// [`get_rp_id_from_headers`] — read that function's doc for the full account.
+/// [`get_rp_id_from_headers`] - read that function's doc for the full account.
 fn get_rp_origin_from_headers(headers: &axum::http::HeaderMap, state: &AppState) -> Result<String, ApiError> {
     // Prefer server-side BASE_URL (trusted)
     if !state.config.base_url.is_empty() {
@@ -220,7 +220,7 @@ fn get_rp_origin_from_headers(headers: &axum::http::HeaderMap, state: &AppState)
     if let Some(host) = headers.get("host").and_then(|v| v.to_str().ok()) {
         return Ok(format!("https://{}", host.split(':').next().unwrap_or(host)));
     }
-    Err(err(StatusCode::BAD_REQUEST, "Cannot determine relying party — request has neither an Origin nor a Host header"))
+    Err(err(StatusCode::BAD_REQUEST, "Cannot determine relying party - request has neither an Origin nor a Host header"))
 }
 
 /// Parse the COSE public key from attestation authData.
@@ -330,7 +330,7 @@ fn parse_cose_p256_key(cbor_bytes: &[u8]) -> Result<VerifyingKey, String> {
 /// WebAuthn L2 §7.2 applies the comparison when *either* side is non-zero. This
 /// panel tested both with `&&` from `adce010` until v2.86.0, which exempted the
 /// one shape that matters: a stored counter above zero presented with **zero**.
-/// That is the cheapest possible forgery — a cloner who cannot match the real
+/// That is the cheapest possible forgery - a cloner who cannot match the real
 /// device's count sends 0 and is waved through, and the accepted assertion then
 /// writes 0 back, so the real device's next login looks like a fresh increment.
 /// Authenticators with no counter (synced passkeys, notably) report zero on both
@@ -345,7 +345,7 @@ pub fn counter_regressed(stored: i64, new: i64) -> bool {
 
 // ─── Registration Endpoints ────────────────────────────────────
 
-/// POST /api/auth/passkey/register/begin — Start passkey registration ceremony.
+/// POST /api/auth/passkey/register/begin - Start passkey registration ceremony.
 ///
 /// Guarded by [`require_enrolment_proof`]: a session alone is not enough to
 /// plant a credential that outlives every reset this panel offers. The proof is
@@ -353,7 +353,7 @@ pub fn counter_regressed(stored: i64, new: i64) -> bool {
 /// place a registration challenge is ever constructed, and asking again after
 /// the browser's own WebAuthn dialog would prompt the user twice for one act.
 ///
-/// The body is optional by design — the first request carries no proof, and the
+/// The body is optional by design - the first request carries no proof, and the
 /// refusal it earns is what tells the card which fields to collect. A bare
 /// `Json<T>` would reject a request with no `Content-Type` with a 415 raised
 /// before this handler runs, carrying no code the client could branch on.
@@ -442,7 +442,7 @@ pub async fn register_begin(
 
     let options = PublicKeyCredentialCreationOptions {
         rp: RelyingParty {
-            name: "DockPanel".to_string(),
+            name: "CyberHunter - Panel".to_string(),
             id: rp_id,
         },
         user: PublicKeyUser {
@@ -468,7 +468,7 @@ pub async fn register_begin(
     Ok(Json(serde_json::json!({ "publicKey": options })))
 }
 
-/// POST /api/auth/passkey/register/complete — Finish passkey registration.
+/// POST /api/auth/passkey/register/complete - Finish passkey registration.
 pub async fn register_complete(
     State(state): State<AppState>,
     headers: axum::http::HeaderMap,
@@ -543,7 +543,7 @@ pub async fn register_complete(
     //
     // ⚠ The bound is 37, not 32, and the difference is a panic. `authData` is
     // rpIdHash(32) ‖ flags(1) ‖ signCount(4), so admitting a 32-byte buffer here
-    // lets the very next line index `[32]` out of bounds — and the payload is
+    // lets the very next line index `[32]` out of bounds - and the payload is
     // attacker-chosen, because SHA256(rp_id) is public. The twin in
     // `auth_complete` has always used 37; the asymmetry between the two doors
     // WAS the bug. Keep them identical.
@@ -573,7 +573,7 @@ pub async fn register_complete(
 
     // Whether THIS ceremony's authenticator performed user verification (PIN,
     // fingerprint, face) rather than merely user presence (a touch). Recorded
-    // once, here, because UV is a property of the ceremony — nothing else
+    // once, here, because UV is a property of the ceremony - nothing else
     // this row holds can answer it later. `auth_complete` re-checks this bit
     // on every future login for this credential, but ONLY if it's `true`
     // here: see the migration and `auth_complete` for the grandfathering
@@ -626,7 +626,7 @@ pub async fn register_complete(
     // Tell the OWNER, not the admins. A planted credential is durable mainly
     // because it is silent: the activity log is not a surface anyone watches,
     // and no reset removes the row once it exists. `None` here would notify
-    // every administrator — that is, everyone except the person affected.
+    // every administrator - that is, everyone except the person affected.
     crate::services::notifications::notify_panel(
         &state.db,
         Some(claims.sub),
@@ -652,7 +652,7 @@ pub async fn register_complete(
 
 // ─── Authentication Endpoints ──────────────────────────────────
 
-/// POST /api/auth/passkey/auth/begin — Start passkey authentication ceremony.
+/// POST /api/auth/passkey/auth/begin - Start passkey authentication ceremony.
 pub async fn auth_begin(
     State(state): State<AppState>,
     headers: axum::http::HeaderMap,
@@ -685,7 +685,7 @@ pub async fn auth_begin(
     Ok(Json(serde_json::json!({ "publicKey": options })))
 }
 
-/// POST /api/auth/passkey/auth/complete — Finish passkey authentication, issue JWT.
+/// POST /api/auth/passkey/auth/complete - Finish passkey authentication, issue JWT.
 pub async fn auth_complete(
     State(state): State<AppState>,
     headers: axum::http::HeaderMap,
@@ -740,8 +740,8 @@ pub async fn auth_complete(
     // The challenge must be one THIS door issued. No attack is known through the
     // gap this closes, and the reasoning is worth keeping so nobody re-opens it
     // as dead weight: a registration challenge carries a user binding, but this
-    // door never reads it — the account comes from `credential_id` → the
-    // `passkeys` row below — so presenting one buys its holder exactly the
+    // door never reads it - the account comes from `credential_id` → the
+    // `passkeys` row below - so presenting one buys its holder exactly the
     // session they could already mint. What made it worth closing is symmetry.
     // `register_complete` has rejected the wrong variant since the feature
     // landed; only this side trusted the store's key alone. A third variant
@@ -793,7 +793,7 @@ pub async fn auth_complete(
     }
 
     // Read the signature counter. The regression test it feeds runs AFTER the
-    // signature is verified — see the block below for why that order is the
+    // signature is verified - see the block below for why that order is the
     // whole point.
     let new_count = u32::from_be_bytes([
         auth_data_bytes[33], auth_data_bytes[34],
@@ -831,7 +831,7 @@ pub async fn auth_complete(
     // requirement from forged, unauthenticated assertions.
     //
     // `uv_capable` is read from the credential's OWN registration ceremony
-    // (`register_complete`), never assumed — a credential registered before
+    // (`register_complete`), never assumed - a credential registered before
     // this column existed, or one whose authenticator never demonstrated a
     // PIN/biometric check at enrolment, has `uv_capable = false` and is left
     // exactly as possession-only as it always was. This is the grandfathering
@@ -868,13 +868,13 @@ pub async fn auth_complete(
         return Err(err(StatusCode::UNAUTHORIZED, "This passkey requires verification (PIN, fingerprint, or face) that wasn't provided"));
     }
 
-    // Check sign counter (anti-cloning) — deliberately AFTER the signature, which
+    // Check sign counter (anti-cloning) - deliberately AFTER the signature, which
     // is where WebAuthn L2 §7.2 puts it and what makes this refusal mean anything.
     //
     // Above the verify, the branch fired on forged `authData` carrying a garbage
     // signature. Everything it needed was public: `auth_begin` hands out
     // challenges to anyone, `rpIdHash` is SHA256 of a name printed in the URL bar,
-    // and the UP bit is a constant — leaving only the credential id, which a
+    // and the UP bit is a constant - leaving only the credential id, which a
     // passive observer of one login has. So the single refusal in this file that
     // says "clone" was reachable by a stranger, and it returned WITHOUT recording
     // an attempt (unlike both siblings above), making it an unthrottled probe.
@@ -960,7 +960,7 @@ pub async fn auth_complete(
     }
 
     // Passkey login skips the separate TOTP step (the passkey IS the second
-    // factor) — but as of `uv_capable`, that claim is now enforced rather than
+    // factor) - but as of `uv_capable`, that claim is now enforced rather than
     // assumed: a credential that has proven it can perform user verification
     // must present it again on every login (the check above), and only a
     // possession-only credential (never proven UV-capable) still logs in on
@@ -1005,7 +1005,7 @@ pub async fn auth_complete(
 
 // ─── Passkey Management ────────────────────────────────────────
 
-/// GET /api/auth/passkeys — List the authenticated user's passkeys.
+/// GET /api/auth/passkeys - List the authenticated user's passkeys.
 pub async fn list_passkeys(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -1033,7 +1033,7 @@ pub async fn list_passkeys(
     Ok(Json(serde_json::json!({ "passkeys": items })))
 }
 
-/// DELETE /api/auth/passkeys/{id} — Remove a passkey.
+/// DELETE /api/auth/passkeys/{id} - Remove a passkey.
 pub async fn delete_passkey(
     State(state): State<AppState>,
     headers: axum::http::HeaderMap,
@@ -1065,7 +1065,7 @@ pub async fn delete_passkey(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// PUT /api/auth/passkeys/{id} — Rename a passkey.
+/// PUT /api/auth/passkeys/{id} - Rename a passkey.
 pub async fn rename_passkey(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -1099,7 +1099,7 @@ pub async fn rename_passkey(
 
 // ─── Tests ─────────────────────────────────────────────────────────────
 //
-// This file had no tests at all until v2.86.0 — origin, rpIdHash, user-presence,
+// This file had no tests at all until v2.86.0 - origin, rpIdHash, user-presence,
 // the counter and the signature were five live checks with zero assertions
 // anywhere in the repository. What follows covers the parts that are pure
 // functions of their input; the properties that live inside the axum handlers
@@ -1114,12 +1114,12 @@ mod tests {
     // ── counter_regressed: the whole truth table ────────────────────────
     //
     // Written as a table rather than as separate asserts so a future edit to the
-    // predicate cannot quietly satisfy some rows and drop others — every
+    // predicate cannot quietly satisfy some rows and drop others - every
     // (stored, new) class is named here with the reason it holds.
 
     #[test]
     fn counter_never_incremented_is_not_a_clone() {
-        // Authenticators without a counter — synced passkeys are the common case —
+        // Authenticators without a counter - synced passkeys are the common case -
         // report zero forever. Flagging them would break the majority of real
         // credentials, which is why the rule is not a bare `new <= stored`.
         assert!(!counter_regressed(0, 0));
@@ -1142,7 +1142,7 @@ mod tests {
     #[test]
     fn zero_presented_against_a_live_counter_is_a_clone() {
         // THE REGRESSION THIS RELEASE CLOSES. The old `&&` form exempted every
-        // one of these, so the cheapest forgery — send 0, match nothing — was
+        // one of these, so the cheapest forgery - send 0, match nothing - was
         // waved through, and the accepted assertion wrote 0 back.
         assert!(counter_regressed(1, 0));
         assert!(counter_regressed(42, 0));
@@ -1216,7 +1216,7 @@ mod tests {
 
     // ── parse_cose_p256_key ─────────────────────────────────────────────
 
-    /// The standard P-256 base point — a known-valid (x, y) that needs no RNG.
+    /// The standard P-256 base point - a known-valid (x, y) that needs no RNG.
     const P256_GX: [u8; 32] = [
         0x6B, 0x17, 0xD1, 0xF2, 0xE1, 0x2C, 0x42, 0x47, 0xF8, 0xBC, 0xE6, 0xE5,
         0x63, 0xA4, 0x40, 0xF2, 0x77, 0x03, 0x7D, 0x81, 0x2D, 0xEB, 0x33, 0xA0,
@@ -1270,7 +1270,7 @@ mod tests {
 
     #[test]
     fn a_point_not_on_the_curve_is_rejected() {
-        // Correct lengths, valid CBOR, but not a curve point — the check that
+        // Correct lengths, valid CBOR, but not a curve point - the check that
         // stops a caller storing a key no signature could ever verify against.
         assert!(parse_cose_p256_key(&cose_key(&[0xAAu8; 32], &[0xBBu8; 32])).is_err());
     }

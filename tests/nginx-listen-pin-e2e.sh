@@ -21,7 +21,7 @@ TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 
 echo "── F1: the BASE_URL repair must not be shadowed by DATABASE_URL ──"
 # setup.sh writes DATABASE_URL as the FIRST line of every api.env, and that
-# string CONTAINS "BASE_URL" — an unanchored grep matched on every install
+# string CONTAINS "BASE_URL" - an unanchored grep matched on every install
 # that has ever existed, so the repair below it never ran once.
 cat > "$TMP/api.env" <<'EOF'
 DATABASE_URL=postgresql://dockpanel:pw@127.0.0.1:5450/dockpanel
@@ -58,7 +58,7 @@ server {
     ssl_certificate /etc/letsencrypt/live/panel.example.com/fullchain.pem; # managed by Certbot
 }
 EOF
-# The old repair's REWRITE targeted `listen <something>:443 ssl;` — it needs a
+# The old repair's REWRITE targeted `listen <something>:443 ssl;` - it needs a
 # colon before the port, so certbot's `listen 443 ssl;` slipped past it. (Its
 # grep did fire, but only on the [::]:443 line, which is why this went unseen.)
 cp "$TMP/panel.conf" "$TMP/old.conf"
@@ -85,7 +85,7 @@ echo "── the scripts actually wire it up ──"
 check "setup.sh defines normalize_panel_listen"  "$(grep -c '^normalize_panel_listen()' "$SETUP")" "1"
 check "setup.sh calls it after certbot succeeds" "$(grep -c '^        normalize_panel_listen$' "$SETUP")" "1"
 
-# F4: a reload cannot move an already-bound 0.0.0.0:443 listener to <ip>:443 —
+# F4: a reload cannot move an already-bound 0.0.0.0:443 listener to <ip>:443 -
 # nginx inherits the old socket and the rewrite silently no-ops. Proven on a
 # live box: reload left the panel broken, restart fixed it.
 if grep -q 'systemctl restart nginx' "$SETUP"; then R=yes; else R=no; fi

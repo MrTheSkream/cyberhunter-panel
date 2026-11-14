@@ -18,7 +18,7 @@ use crate::AppState;
 /// Extension webhook destinations go through the ONE shared SSRF guard, same as every
 /// other outbound URL. This used to be a second, hand-rolled copy with a strictly weaker
 /// classifier (no CGNAT / ULA / fe80 / IPv4-mapped / NAT64, and the same userinfo-spoof
-/// bug — `http://public:x@169.254.169.254/` read `public` as the host and passed) while
+/// bug - `http://public:x@169.254.169.254/` read `public` as the host and passed) while
 /// the send-time re-validation in `services/extensions.rs` already used the shared helper.
 /// That split accepted a spoofed URL at write time and then silently dropped every
 /// delivery. Delegating keeps the `webhook_url`-worded error the callers surface.
@@ -103,7 +103,7 @@ pub struct UpdateExtensionRequest {
 }
 
 // ---------------------------------------------------------------------------
-// GET /api/extensions — List all extensions (admin only).
+// GET /api/extensions - List all extensions (admin only).
 // ---------------------------------------------------------------------------
 
 pub async fn list(
@@ -124,7 +124,7 @@ pub async fn list(
 }
 
 // ---------------------------------------------------------------------------
-// POST /api/extensions — Create a new extension (admin only).
+// POST /api/extensions - Create a new extension (admin only).
 // Returns the API key + webhook secret ONCE.
 // ---------------------------------------------------------------------------
 
@@ -229,13 +229,13 @@ pub async fn create(
             "api_key": api_key,
             "api_key_prefix": api_key_prefix,
             "webhook_secret": webhook_secret,
-            "message": "Save these credentials — they won't be shown again.",
+            "message": "Save these credentials - they won't be shown again.",
         })),
     ))
 }
 
 // ---------------------------------------------------------------------------
-// PUT /api/extensions/{id} — Update an extension (admin only).
+// PUT /api/extensions/{id} - Update an extension (admin only).
 // ---------------------------------------------------------------------------
 
 pub async fn update(
@@ -354,7 +354,7 @@ pub async fn update(
 }
 
 // ---------------------------------------------------------------------------
-// DELETE /api/extensions/{id} — Delete an extension (admin only).
+// DELETE /api/extensions/{id} - Delete an extension (admin only).
 // ---------------------------------------------------------------------------
 
 pub async fn remove(
@@ -423,7 +423,7 @@ pub async fn remove(
 }
 
 // ---------------------------------------------------------------------------
-// POST /api/extensions/{id}/test — Send a test event to an extension's webhook.
+// POST /api/extensions/{id}/test - Send a test event to an extension's webhook.
 // ---------------------------------------------------------------------------
 
 pub async fn test_webhook(
@@ -453,7 +453,7 @@ pub async fn test_webhook(
         "timestamp": timestamp,
         "delivery_id": delivery_id,
         "data": {
-            "message": "This is a test event from DockPanel.",
+            "message": "This is a test event from CyberHunter - Panel.",
             "extension": name,
             "triggered_by": claims.email,
         },
@@ -469,11 +469,11 @@ pub async fn test_webhook(
             hex::encode(mac.finalize().into_bytes())
         }
         Err(_) => {
-            return Err(err(StatusCode::INTERNAL_SERVER_ERROR, "HMAC key is invalid — rotate the webhook secret"));
+            return Err(err(StatusCode::INTERNAL_SERVER_ERROR, "HMAC key is invalid - rotate the webhook secret"));
         }
     };
 
-    // SSRF re-validation at send time, PINNED to the address it approves —
+    // SSRF re-validation at send time, PINNED to the address it approves -
     // parity with the delivery path in `services::extensions` and with
     // `webhook_gateway`.
     //
@@ -482,11 +482,11 @@ pub async fn test_webhook(
     // to the caller in the JSON below, so a stored `webhook_url` that
     // 3xx-redirects to an internal address was a read oracle rather than a
     // blind probe. The ad-hoc client set only a timeout, so reqwest's default
-    // `Policy::limited(10)` applied and the redirect was followed — and its
+    // `Policy::limited(10)` applied and the redirect was followed - and its
     // `.unwrap_or_default()` fell back to a plain default client, which would
     // have re-opened the hole even if a policy had been set on the builder.
     // `webhook_url` is vetted when it is WRITTEN, which is not the same
-    // instant as when it is resolved — and a shared client's own resolver
+    // instant as when it is resolved - and a shared client's own resolver
     // would re-resolve it a second, independent time even with the check
     // above run moments before.
     let (host, port) = crate::helpers::url_authority(&webhook_url).map_err(|e| {
@@ -557,7 +557,7 @@ pub async fn test_webhook(
 }
 
 // ---------------------------------------------------------------------------
-// POST /api/extensions/{id}/rotate-secret — Rotate webhook secret.
+// POST /api/extensions/{id}/rotate-secret - Rotate webhook secret.
 // ---------------------------------------------------------------------------
 
 pub async fn rotate_secret(
@@ -624,7 +624,7 @@ pub async fn rotate_secret(
 }
 
 // ---------------------------------------------------------------------------
-// GET /api/extensions/{id}/events — List recent events for an extension.
+// GET /api/extensions/{id}/events - List recent events for an extension.
 // ---------------------------------------------------------------------------
 
 pub async fn events(

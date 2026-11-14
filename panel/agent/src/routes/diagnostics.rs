@@ -14,7 +14,7 @@ fn err(status: StatusCode, msg: &str) -> ApiErr {
     (status, Json(serde_json::json!({ "error": msg })))
 }
 
-/// GET /diagnostics — Run all diagnostic checks.
+/// GET /diagnostics - Run all diagnostic checks.
 async fn run_diagnostics() -> Json<diagnostics::DiagnosticReport> {
     Json(diagnostics::run_diagnostics().await)
 }
@@ -24,7 +24,7 @@ struct FixRequest {
     fix_id: String,
 }
 
-/// POST /diagnostics/fix — Apply a one-click fix.
+/// POST /diagnostics/fix - Apply a one-click fix.
 async fn apply_fix(
     Json(body): Json<FixRequest>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
@@ -39,7 +39,7 @@ async fn apply_fix(
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))
 }
 
-/// GET /diagnostics/recommendations — Auto-optimization recommendations.
+/// GET /diagnostics/recommendations - Auto-optimization recommendations.
 async fn recommendations() -> Json<serde_json::Value> {
     use crate::safe_cmd::safe_command;
 

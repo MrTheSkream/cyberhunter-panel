@@ -36,7 +36,7 @@ pub struct Backup {
 ///
 /// One line over [`crate::helpers::site_domain_for_caller`], which is shared with
 /// the five other modules that each carried their own copy of this query. The
-/// rules — including why only the admin arm is scoped by server — live there.
+/// rules - including why only the admin arm is scoped by server - live there.
 async fn get_site_domain(state: &AppState, site_id: Uuid, claims: &Claims) -> Result<String, ApiError> {
     crate::helpers::site_domain_for_caller(state, site_id, claims).await
 }
@@ -64,7 +64,7 @@ pub(crate) async fn site_databases(state: &AppState, site_id: Uuid) -> SiteDatab
     site_database_specs(&state.db, &state.config.jwt_secret, site_id).await
 }
 
-/// The same resolution, reachable from the schedulers — which hold a pool and a
+/// The same resolution, reachable from the schedulers - which hold a pool and a
 /// secret rather than an `AppState`.
 ///
 /// EVERY path that creates a site backup must go through this. A manual backup
@@ -95,7 +95,7 @@ pub async fn site_database_specs(
         // Mirror the get_db_info guard (v2.19.0 H1): a row with an EMPTY
         // container_id has no confirmed container of its own, and resolving it
         // by the non-unique name `dockpanel-db-{name}` could reach a container
-        // that is not this tenant's. Never dump one — but never drop it
+        // that is not this tenant's. Never dump one - but never drop it
         // silently either; it is counted as expected and reported.
         if container_id.as_deref().unwrap_or("").is_empty() {
             unavailable.push((
@@ -122,7 +122,7 @@ pub async fn site_database_specs(
     SiteDatabases { specs, unavailable }
 }
 
-/// POST /api/sites/{id}/backups — Create a backup (async with SSE).
+/// POST /api/sites/{id}/backups - Create a backup (async with SSE).
 pub async fn create(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -189,17 +189,17 @@ pub async fn create(
                 // archive just the same, so they belong in the same report.
                 failed.extend(db_unavailable.iter().map(|(n, why)| format!("{n}: {why}")));
 
-                // Feature 13: Backup integrity chain — compute hash and link to previous
+                // Feature 13: Backup integrity chain - compute hash and link to previous
                 let sha256_hash = result.get("sha256").and_then(|v| v.as_str()).unwrap_or("").to_string();
                 // `::<_, Option<String>>` is load-bearing: sha256_hash is NULLABLE, so
                 // decoding it as a bare String turns the ordinary "predecessor has no
-                // hash" case into a decode ERROR — which this arm then reported as
+                // hash" case into a decode ERROR - which this arm then reported as
                 // `DB error fetching previous backup hash`, blaming the database for a
                 // column that was simply empty. Same annotation at the six sibling sites.
                 //
                 // ⚠ Do not drop it now that the unattended writers fill the column in
-                // (#114). The reason this comment used to give — "the scheduled writers
-                // leave it NULL" — is gone; the annotation is not. Every row written
+                // (#114). The reason this comment used to give - "the scheduled writers
+                // leave it NULL" - is gone; the annotation is not. Every row written
                 // before v2.118.0 still has a NULL hash and it is the NEWEST of those
                 // this query hits first, and a failed `sha256sum` on the agent still
                 // writes NULL today.
@@ -232,7 +232,7 @@ pub async fn create(
                 // step green over that failure is the one thing this live log
                 // must not do.
                 //
-                // Deliberately NOT an early return — the tail of this task removes
+                // Deliberately NOT an early return - the tail of this task removes
                 // the log from the shared map, and returning here would leak both
                 // it and its owner row until the hourly prune.
                 if let Err(e) = recorded {
@@ -245,7 +245,7 @@ pub async fn create(
                 emit("backup", "Creating backup", "done", None);
 
                 // Say what is actually in the archive. A backup missing a
-                // database the site has is NOT a clean success — the whole point
+                // database the site has is NOT a clean success - the whole point
                 // of this path is that the user can tell before they need it.
                 if db_expected == 0 {
                     emit("databases", "No databases attached to this site", "done", None);
@@ -262,7 +262,7 @@ pub async fn create(
                     emit("complete", "Backup created", "done", Some(filename.clone()));
                 } else {
                     emit("complete", &format!(
-                        "Backup created WITHOUT {} of {} database(s) — restoring it will not bring their content back",
+                        "Backup created WITHOUT {} of {} database(s) - restoring it will not bring their content back",
                         failed.len(), db_expected
                     ), "error", Some(filename.clone()));
                 }
@@ -301,7 +301,7 @@ pub async fn create(
     }))))
 }
 
-/// GET /api/sites/{id}/backups — List backups.
+/// GET /api/sites/{id}/backups - List backups.
 pub async fn list(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -326,7 +326,7 @@ pub async fn list(
     Ok(Json(backups))
 }
 
-/// POST /api/sites/{id}/backups/{backup_id}/restore — Restore a backup (async with SSE).
+/// POST /api/sites/{id}/backups/{backup_id}/restore - Restore a backup (async with SSE).
 pub async fn restore(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -385,11 +385,11 @@ pub async fn restore(
         // Tell the operator BEFORE the destructive step what this archive can
         // and cannot give back. An archive made before v2.34.0 has no database
         // in it, and a site restored from one comes back with its old files and
-        // its current content — which is exactly the surprise this ship exists
+        // its current content - which is exactly the surprise this ship exists
         // to remove.
         if site_has_dbs && !archive_has_dbs {
             emit("databases", "This backup contains files only", "error", Some(
-                "It was made before DockPanel included databases in site backups, or its database dump failed. \
+                "It was made before CyberHunter - Panel included databases in site backups, or its database dump failed. \
                  Your site's database will NOT be restored and its content will stay as it is now. \
                  Restore the database separately from the Databases page if that is what you need."
                     .to_string(),
@@ -401,7 +401,7 @@ pub async fn restore(
         let agent_path = format!("/backups/{}/restore/{}", domain_clone, filename);
 
         // The agent answers 500 with a structured report when it restored the
-        // files but could not load a database — the body is the useful part.
+        // files but could not load a database - the body is the useful part.
         let outcome = match agent.post(&agent_path, Some(agent_body)).await {
             Ok(v) => Ok(v),
             Err(crate::services::agent::AgentError::Status(_, body)) => {
@@ -436,7 +436,7 @@ pub async fn restore(
                          The site is now running restored files against its previous database content.",
                         failed.len(), failed.join("; ")
                     )));
-                    emit("complete", "Restore failed — files restored, database not", "error", None);
+                    emit("complete", "Restore failed - files restored, database not", "error", None);
                     tracing::error!(
                         "Restore incomplete for {domain_clone}: files_restored={files_restored}, database failures: {}",
                         failed.join("; ")
@@ -527,7 +527,7 @@ pub async fn restore(
     }))))
 }
 
-/// DELETE /api/sites/{id}/backups/{backup_id} — Delete a backup.
+/// DELETE /api/sites/{id}/backups/{backup_id} - Delete a backup.
 pub async fn remove(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,

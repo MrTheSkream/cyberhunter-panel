@@ -1,6 +1,6 @@
 # Notifications Guide
 
-DockPanel keeps an in-app notification feed — the bell in the panel chrome and
+CyberHunter - Panel keeps an in-app notification feed - the bell in the panel chrome and
 the **Notifications** screen behind it. Notifications arrive in real time over
 Server-Sent Events (SSE), carry a link to whatever they are about, and can be
 filtered, marked read and deleted.
@@ -17,7 +17,7 @@ Notifications screen is built from. The categories the panel raises today:
 
 | Category | Raised when |
 |---|---|
-| `alert` | A threshold alert fires or resolves — disk, CPU, memory, a server going offline, a service stopping, a container crash-looping |
+| `alert` | A threshold alert fires or resolves - disk, CPU, memory, a server going offline, a service stopping, a container crash-looping |
 | `monitor` | An uptime monitor goes down, comes back up, or misses a heartbeat |
 | `security` | A login from an address not seen before, a canary file being touched, an emergency lockdown, a password reset, a completed security scan |
 | `deploy` | A deploy finishes, fails, or succeeds while the site answers 5xx; a Git deploy, rollback or auto-rollback |
@@ -39,10 +39,10 @@ exact count. Clicking it opens the **Notifications** screen.
 On that screen:
 
 - **A notification's title is a link** when the panel knows where the event
-  happened — a failed deploy opens the site, a firing alert opens the Alerts
+  happened - a failed deploy opens the site, a firing alert opens the Alerts
   tab, a canary trip opens the security audit log. Following the link marks the
-  notification read. Notifications with nowhere sensible to go — a *site
-  deleted*, whose subject no longer exists — render as plain text.
+  notification read. Notifications with nowhere sensible to go - a *site
+  deleted*, whose subject no longer exists - render as plain text.
 - **Filter** by unread, or by any category the feed actually contains. The
   filter row is built from your own notifications, so a category appears there
   the first time it is raised.
@@ -52,7 +52,7 @@ On that screen:
 - **Load older** pages back through the feed 50 at a time.
 
 New notifications appear at the top of the list as they happen, without a
-refresh — the screen is on the same SSE stream as the bell.
+refresh - the screen is on the same SSE stream as the bell.
 
 ### Retention
 
@@ -64,7 +64,7 @@ never pruned.
 
 ## Notification preferences
 
-The in-panel feed has no per-type preferences — every notification the panel
+The in-panel feed has no per-type preferences - every notification the panel
 raises appears in it.
 
 What *is* configurable is which alert types are sent to your **external**
@@ -85,6 +85,6 @@ curl -N -H "Authorization: Bearer $TOKEN" \
   https://panel.example.com/api/notifications/stream
 ```
 
-Each event's `data:` is the complete notification object — `id`, `title`,
-`message`, `severity`, `category`, `link`, `read_at` and `created_at` — so a
+Each event's `data:` is the complete notification object - `id`, `title`,
+`message`, `severity`, `category`, `link`, `read_at` and `created_at` - so a
 client can render an arriving notification without asking for it again.

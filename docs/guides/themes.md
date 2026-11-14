@@ -1,6 +1,6 @@
 # Themes & Layouts Guide
 
-DockPanel ships with 6 built-in themes and multiple layout options. Every theme works with every layout.
+CyberHunter - Panel ships with 6 built-in themes and multiple layout options. Every theme works with every layout.
 
 ## Available Themes
 
@@ -63,7 +63,7 @@ Status indicators (online, offline, degraded) use consistent color coding across
 
 ## White-Labeling
 
-DockPanel supports custom branding:
+CyberHunter - Panel supports custom branding:
 
 1. Go to **Settings** > **Branding**
 2. Set:

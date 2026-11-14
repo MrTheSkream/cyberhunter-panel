@@ -4,7 +4,7 @@ import { api } from "../api";
 // The guidance layer's renderer.
 //
 // One component, keyed on CONSEQUENCE rather than on how confident the check is
-// (brief §3A.1). The backend decides the tier — `services/prerequisites.rs` —
+// (brief §3A.1). The backend decides the tier - `services/prerequisites.rs` -
 // and this only chooses how loudly to say it:
 //
 //   satisfied            → a quiet confirmation line
@@ -13,7 +13,7 @@ import { api } from "../api";
 //   unsatisfied blocking → a red callout, caller gates its control
 //
 // The rule is "block only when it would actually fail; warn when it probably
-// will; explain passively otherwise." Nothing here decides that — it renders it.
+// will; explain passively otherwise." Nothing here decides that - it renders it.
 
 export type PrereqState = "satisfied" | "unsatisfied" | "unknown";
 export type PrereqSeverity = "blocking" | "warning" | "info";
@@ -34,7 +34,7 @@ export interface DnsRecordHint {
  * The concrete fix for an unmet prerequisite, tagged by `kind`.
  *
  * A closed set of SHAPES, not prose: every arm is something this renderer can
- * turn into an action — copy this, fill this in, go here — rather than a sentence
+ * turn into an action - copy this, fill this in, go here - rather than a sentence
  * the user has to translate into one.
  */
 export type Remediation =
@@ -94,7 +94,7 @@ function CopyButton({ value, label }: { value: string; label: string }) {
  * The exact record to create, values filled in, every field copyable.
  *
  * Per brief §3A.3 this is deliberately the record itself rather than a
- * description of one — the user should be able to retype it into their DNS
+ * description of one - the user should be able to retype it into their DNS
  * provider without deciding anything.
  */
 export function DnsRecordCard({ record }: { record: DnsRecordHint }) {
@@ -105,7 +105,7 @@ export function DnsRecordCard({ record }: { record: DnsRecordHint }) {
     { label: "TTL", value: record.ttl },
   ];
 
-  // When a record's published state was checked, say so on the card itself —
+  // When a record's published state was checked, say so on the card itself -
   // in a set of five, "which one is missing" is the entire question.
   const checked = record.present === true || record.present === false;
 
@@ -134,7 +134,7 @@ export function DnsRecordCard({ record }: { record: DnsRecordHint }) {
         ))}
       </div>
       <p className="px-3 py-2 text-[10px] text-dark-300 border-t border-dark-600">
-        Some DNS providers want the full name instead of the host part — in that case use{" "}
+        Some DNS providers want the full name instead of the host part - in that case use{" "}
         <span className="font-mono text-dark-100">{record.fqdn}</span>.
       </p>
     </div>
@@ -290,7 +290,7 @@ export function PrereqCallout({
  * cancel-aware, because a slow lookup for a half-typed domain must never
  * overwrite the verdict for the finished one.
  *
- * `autoPoll` re-checks on an interval while the prerequisite is unmet — the
+ * `autoPoll` re-checks on an interval while the prerequisite is unmet - the
  * brief's propagation case (§3A.3: "do not present a not-yet-visible record as
  * an error; say we will keep checking"). It is what lets a blocking gate open by
  * itself the moment DNS goes live, instead of making the user guess when to
@@ -315,7 +315,7 @@ export function useDnsPrereq(domain: string, opts?: { debounceMs?: number; autoP
       // Ignore a response that a newer request has already superseded.
       if (seq === requestSeq.current) setPrereq(r);
     } catch {
-      // A failed preflight must never present as a failed prerequisite — the
+      // A failed preflight must never present as a failed prerequisite - the
       // user's DNS may be perfect and our check merely unavailable.
       if (seq === requestSeq.current) setPrereq(null);
     } finally {
@@ -345,7 +345,7 @@ export function useDnsPrereq(domain: string, opts?: { debounceMs?: number; autoP
  * and cancel-aware via a request sequence, so a slow lookup for a half-filled
  * form can never overwrite the verdict for the finished one.
  *
- * `path` of `null` disables the hook entirely — what a closed dialog wants.
+ * `path` of `null` disables the hook entirely - what a closed dialog wants.
  */
 export function usePrereqs(path: string | null, opts?: { debounceMs?: number; autoPoll?: boolean }) {
   const { debounceMs = 500, autoPoll = false } = opts ?? {};
@@ -391,7 +391,7 @@ export function usePrereqs(path: string | null, opts?: { debounceMs?: number; au
  * Render a set of prerequisites, loudest first.
  *
  * Only actionable results are shown by default. A surface with four checks would
- * otherwise print four paragraphs of "this is fine" — which buries the one that
+ * otherwise print four paragraphs of "this is fine" - which buries the one that
  * isn't, and is the same mistake as rendering an error 1400 lines from its
  * button.
  */

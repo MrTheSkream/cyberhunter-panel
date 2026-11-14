@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Regression pins for the s377 ship — the credential promise the project publishes.
+# Regression pins for the s377 ship - the credential promise the project publishes.
 #
 # `SECURITY.md` and `README.md` both state, without qualification, that every
 # stored credential is encrypted at rest with AES-256-GCM. Three columns were
 # not: `cdn_zones.api_key`, `git_deploys.github_token` and `servers.agent_token`
-# — the last one named in cleartext by `auto_healer`'s own comment about what a
+# - the last one named in cleartext by `auto_healer`'s own comment about what a
 # panel database dump carries. The claim was false on the project's front page,
 # and no test could see it, because nothing compared the published sentence with
 # the columns.
@@ -18,7 +18,7 @@
 # of these three credentials funnels through exactly one function
 # (`helpers::cf_headers`, `cdn::bunny_headers`, `git_deploys::set_github_status`,
 # `AgentRegistry::for_server`), so no read site can forget to decrypt. Arms that
-# count CALL sites rather than the helper's own name are used throughout —
+# count CALL sites rather than the helper's own name are used throughout -
 # a name search is satisfied by the declaration itself, which is how a severed
 # filter came back green at s376 (#592).
 set -uo pipefail
@@ -26,7 +26,7 @@ cd "$(dirname "$0")/.." || exit 1
 
 PASS=0; FAIL=0
 ok()  { printf '\033[32m✓\033[0m %s\n' "$1"; PASS=$((PASS+1)); }
-bad() { printf '\033[31m✗\033[0m %s — %s\n' "$1" "$2"; FAIL=$((FAIL+1)); }
+bad() { printf '\033[31m✗\033[0m %s - %s\n' "$1" "$2"; FAIL=$((FAIL+1)); }
 eq()  { [ "$2" = "$3" ] && ok "$1" || bad "$1" "expected '$3', got '$2'"; }
 
 # ugrep's --ignore-files shim honours .gitignore, so every count below uses the
@@ -51,14 +51,14 @@ done
 for pair in "$CDN:400" "$GITD:3000" "$SERVERS:400" "$AGENT:1200"; do
   f=${pair%:*}; floor=${pair##*:}
   n=$($G -c '' "$f")
-  [ "$n" -gt "$floor" ] && ok "S0 subject extracted — $f is $n lines" \
-    || bad "S0 subject extracted" "$f is only $n lines (floor $floor) — arms over it examine nothing"
+  [ "$n" -gt "$floor" ] && ok "S0 subject extracted - $f is $n lines" \
+    || bad "S0 subject extracted" "$f is only $n lines (floor $floor) - arms over it examine nothing"
 done
 
 echo "── A. cdn_zones.api_key ────────────────────────────────────────────────"
 
 # A1: the WRITER binds the ciphertext variable, not the request field. Keyed on
-# the bind, not on the presence of `encrypt_credential` anywhere in the file —
+# the bind, not on the presence of `encrypt_credential` anywhere in the file -
 # the call could exist and the bind still carry `body.api_key`.
 eq "A1 the create writer binds the encrypted value" \
    "$($G -c '\.bind(&api_key_enc)' "$CDN")" "1"
@@ -66,7 +66,7 @@ API_KEY_PLAIN=$($G -c '\.bind(body\.api_key' "$CDN")
 if [ "$API_KEY_PLAIN" = "0" ]; then
   ok "A1b no writer binds the plaintext api_key"
 else
-  bad "A1b no writer binds the plaintext api_key" "found $API_KEY_PLAIN — the column would hold cleartext"
+  bad "A1b no writer binds the plaintext api_key" "found $API_KEY_PLAIN - the column would hold cleartext"
 fi
 eq "A1-control the same bind shape DOES match another column in this file" \
    "$([ "$($G -c '\.bind(body\.domain\.trim())' "$CDN")" -ge 1 ] && echo yes || echo no)" "yes"
@@ -88,7 +88,7 @@ GH_PLAIN=$($G -cE '\.bind\((&body\.github_token|body\.github_token\.as_deref\(\)
 if [ "$GH_PLAIN" = "0" ]; then
   ok "B1b no writer binds the plaintext github_token"
 else
-  bad "B1b no writer binds the plaintext github_token" "found $GH_PLAIN — the column would hold cleartext"
+  bad "B1b no writer binds the plaintext github_token" "found $GH_PLAIN - the column would hold cleartext"
 fi
 
 # B2: the sentinel guard. Every handler now returns the masked row, so a client
@@ -109,7 +109,7 @@ AGENT_SEES_TOKEN=$($G -rc 'github_token' panel/agent/src 2>/dev/null | $G -cv ':
 if [ "${AGENT_SEES_TOKEN:-0}" = "0" ]; then
   ok "B3b the github token never leaves the backend"
 else
-  bad "B3b the github token never leaves the backend" "the agent tree references it — the sink is not the only reader"
+  bad "B3b the github token never leaves the backend" "the agent tree references it - the sink is not the only reader"
 fi
 eq "B3-control the agent tree IS being read (a token name that does appear there)" \
    "$([ "$($G -rc 'agent.token' panel/agent/src 2>/dev/null | $G -cv ':0$')" -ge 1 ] && echo yes || echo no)" "yes"
@@ -124,11 +124,11 @@ eq "C1c both ensure_local_server writers bind the encrypted value" \
    "$($G -c '\.bind(&agent_token_enc)' "$AGENT")" "2"
 
 # C2: the ONLY consumer of the stored dial-out token. The inbound direction is
-# authenticated by `agent_token_hash` and is untouched by this ship — asserted
+# authenticated by `agent_token_hash` and is untouched by this ship - asserted
 # here so a future reader does not "helpfully" encrypt the hash too.
 eq "C2 for_server decrypts before dialling" \
    "$($G -c 'decrypt_credential_or_legacy(' "$AGENT")" "1"
-# TWO reads of the field since v2.145.0 — `for_server` opens a stored dial-out
+# TWO reads of the field since v2.145.0 - `for_server` opens a stored dial-out
 # token, and the accessor hands the same key to the UNATTENDED renewal loops so
 # they can open the Cloudflare token that issued a DNS-01 certificate. Both are
 # struct-field reads, which is what this arm is about; an `std::env::var` here
@@ -151,7 +151,7 @@ eq "C3 the dial-out decrypt is the legacy-tolerant variant" \
 # `decrypt_credential_from_env`, which reads JWT_SECRET from the process
 # environment, while every WRITER encrypts with `state.config.jwt_secret`. Those
 # must be the same value or every read returns ciphertext where a credential
-# belongs — silently, since the legacy fallback returns the input verbatim. They
+# belongs - silently, since the legacy fallback returns the input verbatim. They
 # are the same by construction, and this arm is what keeps them so: `Config`
 # takes the field straight from the variable and the process refuses to start
 # without it. `cf_headers` has depended on this since before the ship; two more
@@ -169,7 +169,7 @@ MASKS=$($G -c 'mask_github_token(' "$GITD")
 # masks = one call per returning handler, plus the definition
 eq "D1 every GitDeploy-returning handler masks" "$MASKS" "$((RETURNS + 1))"
 [ "$RETURNS" -ge 4 ] && ok "D1-control the handler population is $RETURNS, not empty" \
-  || bad "D1-control the handler population" "found $RETURNS — the signature grep matched nothing"
+  || bad "D1-control the handler population" "found $RETURNS - the signature grep matched nothing"
 
 echo "── E. The published sentence and the columns are one edit ──────────────"
 
@@ -197,7 +197,7 @@ eq "E2b each new column's module names it in COVERED_MODULES" \
 
 # E3: the module list is DERIVED from the crate, not typed. Pinned because the
 # earlier cut walked a two-element literal and asserted that literal against
-# itself — a tautology a mutation walked straight through.
+# itself - a tautology a mutation walked straight through.
 eq "E3 the writer census walks the crate root, not a directory list" \
    "$($G -c 'join("src");' "$REENC")" "1"
 eq "E3b it descends" "$($G -c 'stack.push(path);' "$REENC")" "1"
@@ -208,11 +208,11 @@ echo "── F. The re-encryption sweep does not lose a race, or its own history
 # UPDATE below was keyed on id alone, no transaction/lock/CAS, so a normal
 # write (a password reset, a token rotation, a settings save) landing between
 # the sweep's SELECT and its UPDATE got silently reverted to the STALE value
-# the sweep read — worst on `databases` (the panel's stored password stops
+# the sweep read - worst on `databases` (the panel's stored password stops
 # matching the live DB) and `servers` (the panel loses its own dial-out token).
 # It also found the vault arm bumping `secrets.version` on EVERY successful
-# re-key with no paired `secret_versions` row — not race-dependent, deterministic
-# on every non-racing run — desyncing the two the same way `routes::secrets`'
+# re-key with no paired `secret_versions` row - not race-dependent, deterministic
+# on every non-racing run - desyncing the two the same way `routes::secrets`'
 # real edit path never does.
 
 eq "F1 reencrypt_column's UPDATE is CAS-guarded on the value it read" \
@@ -224,7 +224,7 @@ eq "F3 reencrypt_destinations's UPDATE is CAS-guarded" \
 eq "F4 reencrypt_vault_secrets's UPDATE is CAS-guarded" \
    "$($G -c 'WHERE id::text = \$2 AND encrypted_value = \$3' "$REENC")" "1"
 
-# F5/F6: the guard is CHECKED, not merely present — a CAS clause nobody reads
+# F5/F6: the guard is CHECKED, not merely present - a CAS clause nobody reads
 # the result of protects nothing. Four sweep functions, four counts each.
 eq "F5 every sweep function checks rows_affected before counting a rewrite" \
    "$($G -c 'rows_affected() > 0' "$REENC")" "4"
@@ -236,13 +236,13 @@ if [ "$VERSION_BUMP" = "0" ]; then
   ok "F7 reencrypt_vault_secrets no longer bumps secrets.version on every re-key"
 else
   bad "F7 reencrypt_vault_secrets no longer bumps secrets.version on every re-key" \
-      "found $VERSION_BUMP occurrence(s) — re-keying desyncs version from secret_versions again"
+      "found $VERSION_BUMP occurrence(s) - re-keying desyncs version from secret_versions again"
 fi
 
 echo "── G. The two duplicated, unenforced secret-key lists ───────────────────"
 #
 # Both currently matched their source of truth, but neither had a test tying
-# them together — the exact severed-pair shape this file's own header says the
+# them together - the exact severed-pair shape this file's own header says the
 # module-level COVERED_MODULES registry already got burned by once, unfixed
 # one layer down. `DESTINATION_SECRET_KEYS` is now a direct import (single
 # source of truth, nothing left to drift); `SENSITIVE_SETTINGS_SQL`'s literal
@@ -255,7 +255,7 @@ if [ "$DUP" = "0" ]; then
   ok "G1b no hand-duplicated DESTINATION_SECRET_KEYS literal remains in credential_reencrypt.rs"
 else
   bad "G1b no hand-duplicated DESTINATION_SECRET_KEYS literal remains" \
-      "found $DUP — the two lists can drift again"
+      "found $DUP - the two lists can drift again"
 fi
 eq "G1c CONFIG_SENSITIVE_KEYS is pub(crate) so credential_reencrypt can import it" \
    "$($G -cF 'pub(crate) const CONFIG_SENSITIVE_KEYS' "$BACKUP_DEST")" "1"

@@ -253,7 +253,7 @@ function GpuHistoryChart({ gpuIndex, gpuName }: { gpuIndex: number; gpuName: str
     <div className="bg-dark-800 rounded-lg border border-dark-600 p-5">
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-xs text-dark-400 font-mono uppercase tracking-wider">
-          GPU {gpuIndex} History — {gpuName}
+          GPU {gpuIndex} History - {gpuName}
         </h3>
         <div className="flex gap-1">
           {(["utilization", "vram_pct", "temperature", "power"] as const).map(m => (

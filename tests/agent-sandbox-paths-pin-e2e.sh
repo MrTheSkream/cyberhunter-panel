@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 #
-# Regression pin for the agent's systemd sandbox — the enumeration miss that has
+# Regression pin for the agent's systemd sandbox - the enumeration miss that has
 # now shipped three times.
 #
 # The agent runs under `ProtectSystem=strict`, so every path it writes must be
 # listed in `ReadWritePaths=`. When one is missing the write fails at the KERNEL
-# with `Read-only file system (os error 30)` — no permission error, no clue in
+# with `Read-only file system (os error 30)` - no permission error, no clue in
 # the feature's own code, and until v2.48.2 the panel rendered it as "Agent
 # offline". The feature simply does not work, on every install, forever.
 #
@@ -14,25 +14,25 @@
 #   /var/spool/cron   missing from the unit while setup.sh pre-created it, so
 #                     every cron written through the panel failed (s268).
 #   /etc/ssh          missing entirely, so disable-root-login, disable-password
-#                     and change-port ALL failed — found by a reporter on #92,
+#                     and change-port ALL failed - found by a reporter on #92,
 #                     reproduced on a fresh Ubuntu 24.04 box (s288).
 #
 # Three instances of one class, each found by a user rather than by us, so this
 # stops being a comment and becomes a check.
 #
-# HOW THE SUBJECTS ARE FOUND. Not from a list — a list grows by one line each
+# HOW THE SUBJECTS ARE FOUND. Not from a list - a list grows by one line each
 # time someone is bitten, and the next path added to the codebase is not on it
 # (lesson #100). Instead: every function in the agent that performs a Rust
 # filesystem WRITE is located, and every absolute /etc, /var or /opt literal
 # ANYWHERE IN THAT FUNCTION is treated as a candidate. Scoping to the function
-# rather than the write line matters — `modify_sshd_config` writes through a
+# rather than the write line matters - `modify_sshd_config` writes through a
 # `format!`ed temp path, so a line-scoped grep sees no literal at all and would
 # have missed the very bug this pin exists for.
 #
 # EXEMPTIONS ARE JUSTIFIED, NOT ASSUMED. A candidate the agent does not actually
 # write is exempted below WITH ITS REASON. That list is not the subject list: new
 # paths are still discovered, and an unclassified one FAILS. Fail-closed is the
-# point — a path nobody has thought about is exactly the bug.
+# point - a path nobody has thought about is exactly the bug.
 #
 # Pure source analysis: no box, no network, no build.
 
@@ -74,7 +74,7 @@ is_exempt() {
 #
 # Match ANY cfg predicate containing `test`, not the literal `#[cfg(test)]`:
 # files.rs guards its module with `#[cfg(all(test, unix))]`, and a pattern that
-# knows only one spelling silently lets that whole module back in — which is how
+# knows only one spelling silently lets that whole module back in - which is how
 # the three attack-target paths above reached this pin's output on its first run.
 code_of() { awk '/^#\[cfg\(.*\<test\>.*\)\]/ { exit } { print }' "$1"; }
 
@@ -83,7 +83,7 @@ echo "§1 the unit still declares a sandbox at all"
 if grep -q '^ProtectSystem=strict' "$UNIT"; then
   ok "ProtectSystem=strict"
 else
-  bad "ProtectSystem is no longer strict — this pin, and the sandbox, mean nothing"
+  bad "ProtectSystem is no longer strict - this pin, and the sandbox, mean nothing"
 fi
 
 RWP=$(sed -n 's/^ReadWritePaths=//p' "$UNIT" | tr ' ' '\n' | sed 's/^-//' | grep '^/' || true)
@@ -91,7 +91,7 @@ RWP_N=$(printf '%s\n' "$RWP" | grep -c . || true)
 if [ "$RWP_N" -ge 20 ]; then
   ok "ReadWritePaths declares $RWP_N paths"
 else
-  bad "only $RWP_N ReadWritePaths entries parsed — the pattern is broken, not the unit (#100)"
+  bad "only $RWP_N ReadWritePaths entries parsed - the pattern is broken, not the unit (#100)"
 fi
 
 echo
@@ -105,7 +105,7 @@ for p in /etc/letsencrypt /etc/apt /etc/fail2ban /etc/powerdns /etc/modsecurity 
          /etc/cloudflared /etc/postfix /etc/dovecot /var/spool/postfix /var/spool/cron \
          /var/vmail /var/cache/nginx /etc/ufw /var/lib/ufw /etc/php /etc/ssh; do
   if grep -q -- "-$p" "$UNIT"; then :; else
-    bad "$p is listed without the '-' prefix — one absent directory stops the agent starting"
+    bad "$p is listed without the '-' prefix - one absent directory stops the agent starting"
     MISSING_DASH=1
   fi
 done
@@ -118,7 +118,7 @@ for p in /etc/apt /var/spool/cron /etc/ssh; do
   if printf '%s\n' "$RWP" | grep -cx -- "$p" >/dev/null; then
     ok "$p"
   else
-    bad "$p is gone from ReadWritePaths — this exact removal has already shipped as a bug once"
+    bad "$p is gone from ReadWritePaths - this exact removal has already shipped as a bug once"
   fi
 done
 
@@ -137,12 +137,12 @@ CANDIDATES=$(
     '
   done | grep '^/' | sort -u
 )
-# s370 — THE BLIND SPOT THAT LET /etc/msmtprc THROUGH. The discovery above reads
+# s370 - THE BLIND SPOT THAT LET /etc/msmtprc THROUGH. The discovery above reads
 # path literals that appear INSIDE the writing function, so a path held in a
 # `const` at the top of the file is invisible to it: `smtp.rs` wrote
 # `fs::write(MSMTP_CONFIG, …)` where `const MSMTP_CONFIG = "/etc/msmtprc"`, a bare
-# file under a read-only `/etc`, and this section — whose entire job is that
-# class — reported a clean sweep for four months. Resolve same-file consts and
+# file under a read-only `/etc`, and this section - whose entire job is that
+# class - reported a clean sweep for four months. Resolve same-file consts and
 # feed them through the SAME coverage check.
 CONST_CANDIDATES=$(
   for f in $(grep -rlE "$WRITE_RE" --include='*.rs' "$AGENT_SRC" 2>/dev/null); do
@@ -155,7 +155,7 @@ CONST_CANDIDATES=$(
           # only if that const is actually handed to a write in this file.
           # HERE-STRING, never a pipe: under `set -o pipefail` a `grep -q` closes
           # the pipe on its first match and the writer takes SIGPIPE, so the arm
-          # goes red on correct code — which is what pipefail-sigpipe-pin-e2e.sh
+          # goes red on correct code - which is what pipefail-sigpipe-pin-e2e.sh
           # forbids, and what it caught in the first cut of this very block.
           if grep -qE "(fs::(write|copy|rename)|File::create|\.open)\([[:space:]]*&?${cname}\b" <<< "$src"; then
             printf '%s\n' "$cpath"
@@ -167,7 +167,7 @@ CONST_N=$(printf '%s\n' "$CONST_CANDIDATES" | grep -c . || true)
 if [ "$CONST_N" -ge 1 ]; then
   ok "$CONST_N const-held write path(s) resolved and folded into the coverage check"
 else
-  bad "no const-held write paths resolved — the s370 blind spot is back and this arm is measuring nothing"
+  bad "no const-held write paths resolved - the s370 blind spot is back and this arm is measuring nothing"
 fi
 CANDIDATES=$(printf '%s\n%s\n' "$CANDIDATES" "$CONST_CANDIDATES" | grep '^/' | sort -u)
 
@@ -176,7 +176,7 @@ CAND_N=$(printf '%s\n' "$CANDIDATES" | grep -c . || true)
 if [ "$CAND_N" -ge 25 ]; then
   ok "$CAND_N write-path literals discovered across the agent"
 else
-  bad "only $CAND_N candidates discovered — the discovery is broken, and a broken pattern must not read as a clean sweep (#100)"
+  bad "only $CAND_N candidates discovered - the discovery is broken, and a broken pattern must not read as a clean sweep (#100)"
 fi
 
 UNCOVERED=0
@@ -188,7 +188,7 @@ while read -r p; do
     case "$p" in "$r"|"$r"/*) covered=yes; break ;; esac
   done
   if [ "$covered" = no ]; then
-    bad "$p is written by the agent and is NOT under any ReadWritePaths entry — it will fail with 'Read-only file system' on every install"
+    bad "$p is written by the agent and is NOT under any ReadWritePaths entry - it will fail with 'Read-only file system' on every install"
     UNCOVERED=1
   fi
 done <<< "$CANDIDATES"
@@ -204,7 +204,7 @@ for s in scripts/setup.sh scripts/update.sh; do
   if grep -q "s/\^ReadWritePaths=//p" "$s"; then
     ok "$(basename "$s") derives the path list from the unit"
   else
-    bad "$(basename "$s") no longer parses ReadWritePaths from the unit — the mirrors will drift again"
+    bad "$(basename "$s") no longer parses ReadWritePaths from the unit - the mirrors will drift again"
   fi
 done
 

@@ -58,7 +58,7 @@ export default function SecretsManager() {
   // Vault form
   const [showVaultForm, setShowVaultForm] = useState(false);
   const [vaultForm, setVaultForm] = useState({ name: "", description: "", site_id: "" });
-  // Auto-inject is decided ENTIRELY by which site a vault is linked to — the deploy
+  // Auto-inject is decided ENTIRELY by which site a vault is linked to - the deploy
   // injector selects secrets whose vault carries the site being deployed. Without a
   // way to set that link, every "Auto-inject" tick on this page was inert, so the
   // picker below is what makes the checkbox mean anything.
@@ -79,7 +79,7 @@ export default function SecretsManager() {
   useEffect(() => { loadVaults(); }, []);
   useEffect(() => { if (selectedVault) loadSecrets(); }, [selectedVault, reveal]);
   useEffect(() => {
-    // Failing to load the site list must not break the page — a vault with no link is
+    // Failing to load the site list must not break the page - a vault with no link is
     // still a usable vault, so the picker degrades to "(not linked)" rather than
     // blocking vault management behind an unrelated endpoint.
     api.get<{ id: string; domain: string }[]>("/sites")
@@ -143,7 +143,7 @@ export default function SecretsManager() {
       await api.put(`/secrets/vaults/${editingVault}`, {
         name: editVaultForm.name || undefined,
         description: editVaultForm.description || undefined,
-        // Always sent, and null when the picker is on "(not linked)" — the handler
+        // Always sent, and null when the picker is on "(not linked)" - the handler
         // reads an absent key as "leave it alone" and an explicit null as "unlink",
         // so this is what lets a link be removed as well as set.
         site_id: editVaultForm.site_id || null,
@@ -299,7 +299,7 @@ export default function SecretsManager() {
                     <p className="text-xs font-mono text-dark-400">
                       {v.site_id
                         ? (siteOptions.find(s => s.id === v.site_id)?.domain ?? "linked site")
-                        : "not linked — will not inject"}
+                        : "not linked - will not inject"}
                     </p>
                   </div>
                   <div className="flex gap-1 opacity-0 group-hover:opacity-100">

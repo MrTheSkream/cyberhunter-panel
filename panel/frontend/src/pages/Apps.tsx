@@ -10,7 +10,7 @@ import { timeAgo } from "../utils/format";
 
 /// What the agent substitutes for an environment value it will not show. The
 /// edit dialog is seeded from that response, so this is what an untouched
-/// sensitive field posts back — the agent reads it as "unchanged" and keeps the
+/// sensitive field posts back - the agent reads it as "unchanged" and keeps the
 /// stored value.
 const ENV_MASK = "********";
 
@@ -95,7 +95,7 @@ interface StackInfo {
 }
 
 interface ComposeService {
-  /// The compose service key — what sibling services resolve on the stack network.
+  /// The compose service key - what sibling services resolve on the stack network.
   key: string;
   /// The Docker container name, scoped by stack.
   name: string;
@@ -375,7 +375,7 @@ export default function Apps() {
   //
   // An app with a domain links to that domain. One published on a bare port has
   // no name to link to, so the host has to come from the machine the container
-  // runs on — and that is `ServerContext`'s active server, because this page's
+  // runs on - and that is `ServerContext`'s active server, because this page's
   // list is fetched under `X-Server-Id` and is therefore already scoped to it.
   // NOT `window.location`: on a fleet the panel and the container are different
   // machines, and substituting the panel's own host is precisely how a link ends
@@ -384,7 +384,7 @@ export default function Apps() {
   // with a nicer font.
   //
   // The local server is the one case where the panel's own hostname IS the right
-  // answer — the panel is served from that box — and it is also the case where
+  // answer - the panel is served from that box - and it is also the case where
   // `ip_address` is legitimately null, so it is resolved first rather than
   // treated as a missing address. A REMOTE server with no recorded address gets
   // no link at all, mirroring `agent_for_site_server`'s rule on the server side:
@@ -442,13 +442,13 @@ export default function Apps() {
   /**
    * Fill a required secret with a strong random value.
    *
-   * `crypto.getRandomValues` — not `crypto.subtle` — because it is available in
+   * `crypto.getRandomValues` - not `crypto.subtle` - because it is available in
    * insecure contexts too, and the documented install lands the operator on plain
    * HTTP (audit finding F8). A generator that silently did nothing over HTTP would
    * be worse than none.
    */
   const generateSecret = (name: string) => {
-    // Ambiguous glyphs (0/O, 1/l/I) omitted — these get read off a screen and
+    // Ambiguous glyphs (0/O, 1/l/I) omitted - these get read off a screen and
     // retyped into a config file more often than anyone would like.
     const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
     // Reject bytes past the largest whole multiple of the alphabet, so every
@@ -532,7 +532,7 @@ export default function Apps() {
   const [composeChecks, setComposeChecks] = useState<ComposeValidation | null>(null);
 
   // Stack edit state. `PUT /api/stacks/{id}` (redeploy with domain/TLS
-  // replanning, rollback on failure) had zero frontend caller until s414 —
+  // replanning, rollback on failure) had zero frontend caller until s414 -
   // the field set mirrors the create modal above (minus name, which is
   // immutable) since GET /api/stacks/{id} already returns everything needed
   // to prefill it.
@@ -569,7 +569,7 @@ export default function Apps() {
   const [healthTimeout, setHealthTimeout] = useState("");
   const [healthRetries, setHealthRetries] = useState("");
 
-  // Compose view state (Feature #11 — packages tab)
+  // Compose view state (Feature #11 - packages tab)
   const [composeView, setComposeView] = useState<"compose" | "packages">("compose");
 
   // Image update check state
@@ -582,7 +582,7 @@ export default function Apps() {
   const [stackActionLoading, setStackActionLoading] = useState<string | null>(null);
   const [stackRemoveArmed, setStackRemoveArmed] = useState<string | null>(null);
 
-  // Image vulnerability scan results — keyed by image ref. Hydrated once
+  // Image vulnerability scan results - keyed by image ref. Hydrated once
   // alongside templates/apps; updated on per-app rescan.
   const [scanFindings, setScanFindings] = useState<Record<string, ScanFinding>>({});
   const [scanDrawerImage, setScanDrawerImage] = useState<string | null>(null);
@@ -635,8 +635,8 @@ export default function Apps() {
   const downloadSbom = async (appName: string, image: string, forceRegenerate = false) => {
     setSbomLoading(appName);
     try {
-      // A GET here serves the already-stored document instantly — no syft
-      // run — via download_app_sbom. Only fall back to the generating POST
+      // A GET here serves the already-stored document instantly - no syft
+      // run - via download_app_sbom. Only fall back to the generating POST
       // when there's no cached SBOM yet (404) or the caller explicitly asked
       // to regenerate. Previously this always POSTed, forcing a 180-240s
       // syft run on every click even when a fresh SBOM already existed.
@@ -670,7 +670,7 @@ export default function Apps() {
       setMessage({ text: `SBOM downloaded for ${image}`, type: "success" });
     } catch (e) {
       const msg = (e as Error).message || "unknown";
-      const hint = msg.includes("not installed") ? " — install syft from Settings → Services → SBOM" : "";
+      const hint = msg.includes("not installed") ? " - install syft from Settings → Services → SBOM" : "";
       setMessage({ text: `SBOM failed: ${msg}${hint}`, type: "error" });
     } finally {
       setSbomLoading(null);
@@ -764,7 +764,7 @@ export default function Apps() {
       // Inside the dialog, next to the button that was pressed. The page-level
       // `message` banner renders ~700 lines above this modal and is covered by
       // the modal's own overlay, so a deploy refusal shown there is a refusal the
-      // user never sees — the exact defect audit finding F1 turned out to be.
+      // user never sees - the exact defect audit finding F1 turned out to be.
       setDeployError(e instanceof Error ? e.message : "Deploy failed");
       setDeploying(false);
     }
@@ -858,7 +858,7 @@ export default function Apps() {
 
   const handleEnvSave = async () => {
     if (!envTarget) return;
-    // A blank key is an added row the operator never filled in — dropping it is
+    // A blank key is an added row the operator never filled in - dropping it is
     // what "Add variable then change your mind" has to mean.
     const rows = envEditRows.filter(r => r.key.trim() !== "");
     const names = rows.map(r => r.key.trim());
@@ -881,12 +881,12 @@ export default function Apps() {
       loadApps();
     } catch (e) {
       // This recreate can legitimately take up to 15 minutes (large images,
-      // slow uplinks), well past a proxy's own origin timeout — a network-level
+      // slow uplinks), well past a proxy's own origin timeout - a network-level
       // failure (not an ApiError, so the backend never got to answer) means the
       // connection was cut, not that the update failed. The server keeps
       // running it in the background regardless.
       const text = !(e instanceof ApiError)
-        ? "Connection lost while saving — the update continues in the background. Refresh in a minute before retrying."
+        ? "Connection lost while saving - the update continues in the background. Refresh in a minute before retrying."
         : e instanceof Error ? e.message : "Failed to update env vars";
       setMessage({ text, type: "error" });
     } finally {
@@ -922,7 +922,7 @@ export default function Apps() {
       const info = await api.get<{ has_bash: boolean; has_sh: boolean }>(`/apps/${containerId}/shell-info`);
       setShellInfo(info);
     } catch {
-      // Probe failed — fall back to letting the user try anyway.
+      // Probe failed - fall back to letting the user try anyway.
       setShellInfo(null);
     } finally {
       setShellInfoLoading(false);
@@ -1009,7 +1009,7 @@ export default function Apps() {
       // A registry that never answered scores `update_available: false`, exactly like
       // an image that is genuinely current, so the count alone cannot tell "nothing to
       // do" from "nothing could be asked". Reporting the second as success is how an
-      // operator walks away from unpatched images believing the fleet is up to date —
+      // operator walks away from unpatched images believing the fleet is up to date -
       // and it needs nothing on the box to be broken: an anonymous registry rate limit,
       // a private registry, a deleted tag or a DNS blip all land here. The per-row
       // badges below already carry each reason; the summary has to stop contradicting
@@ -1022,7 +1022,7 @@ export default function Apps() {
           ? `${n} update${plural(n)} available` +
             (unchecked > 0 ? ` · ${unchecked} image${plural(unchecked)} could not be reached` : "")
           : unchecked > 0
-            ? `No updates found, but ${unchecked} image${plural(unchecked)} could not be reached — see the badge on each row`
+            ? `No updates found, but ${unchecked} image${plural(unchecked)} could not be reached - see the badge on each row`
             : "All containers are up to date",
         type: n > 0 || unchecked > 0 ? "warning" : "success",
       });
@@ -1071,20 +1071,20 @@ export default function Apps() {
       const services = await api.post<ComposeService[]>("/apps/compose/parse", { yaml: composeYaml });
       setComposeParsed(services);
       // The panel has had a compose validator since v2.15 and no screen ever
-      // called it — including the arm that says "no restart policy", which is
+      // called it - including the arm that says "no restart policy", which is
       // exactly what turned one failed boot into a permanently dead service.
       try {
         setComposeChecks(await api.post<ComposeValidation>("/apps/compose/validate", { yaml: composeYaml }));
       } catch {
-        // Advisory only — never block a preview on it.
+        // Advisory only - never block a preview on it.
       }
     } catch (e) {
       setComposeError(e instanceof Error ? e.message : "Failed to parse YAML");
     }
   };
 
-  // The TLS half of the compose form, reset in one place — on success, Cancel
-  // and Escape alike — so a reopened dialog never carries a previous alias, and
+  // The TLS half of the compose form, reset in one place - on success, Cancel
+  // and Escape alike - so a reopened dialog never carries a previous alias, and
   // the registry list is asked again (a certificate registered in another tab
   // is otherwise invisible for the life of the page).
   const resetComposeTls = () => {
@@ -1115,7 +1115,7 @@ export default function Apps() {
       const failed = result.deploy_result.services.filter(s => s.status === "failed");
       // Refresh either way. A partial failure leaves real containers running
       // behind this dialog, and the list underneath used to stay stale until a
-      // full page reload — so a second Deploy click made a second stack.
+      // full page reload - so a second Deploy click made a second stack.
       loadApps();
       if (failed.length > 0) {
         setComposeError(
@@ -1131,9 +1131,9 @@ export default function Apps() {
         setComposeDomain("");
         resetComposeTls();
         const proxyNote = result.deploy_result.proxy_warning
-          ? ` — but the domain could not be set up: ${result.deploy_result.proxy_warning}`
+          ? ` - but the domain could not be set up: ${result.deploy_result.proxy_warning}`
           : result.deploy_result.ssl_warning
-            ? ` — served over HTTP for now: ${result.deploy_result.ssl_warning}`
+            ? ` - served over HTTP for now: ${result.deploy_result.ssl_warning}`
             : "";
         setMessage({
           text: `Stack "${stackName}" deployed with ${result.deploy_result.services.length} service(s)${proxyNote}`,
@@ -1143,7 +1143,7 @@ export default function Apps() {
     } catch (e) {
       // A refusal can arrive AFTER the stack exists: a registered certificate
       // that did not reach the vhost answers 502 with the containers running
-      // and the row kept, so the list must show it — or a second Deploy click
+      // and the row kept, so the list must show it - or a second Deploy click
       // makes a second stack under the same name.
       loadApps();
       setComposeError(e instanceof Error ? e.message : "Deploy failed");
@@ -1212,7 +1212,7 @@ export default function Apps() {
       loadApps();
     } catch (e) {
       // A redeploy that fails rolls the stack back to its previous, saved YAML
-      // (the handler's own contract) — the error names why, and the dialog
+      // (the handler's own contract) - the error names why, and the dialog
       // stays open so the operator can fix the YAML and retry rather than
       // lose what they typed.
       setEditError(e instanceof Error ? e.message : "Update failed");
@@ -1395,7 +1395,7 @@ volumes:
       description: "Monitor domain names over RDAP, track their history, and catch them when they expire (GitHub #50)",
       services: 4,
       yaml: `# HTTP_SECURE_COOKIE is "false" so the first login works over plain HTTP.
-# Once this is behind a domain with SSL, set it to "true" — the session cookie
+# Once this is behind a domain with SSL, set it to "true" - the session cookie
 # is a 7-day JWT and without it the cookie is sent unprotected.
 services:
   domainwatchdog:
@@ -1555,7 +1555,7 @@ volumes:
         </div>
       )}
 
-      {/* Stopped on purpose — not a crash, and deliberately not styled as one */}
+      {/* Stopped on purpose - not a crash, and deliberately not styled as one */}
       {intentionallyStopped.length > 0 && (
         <div className="bg-dark-800/60 border border-dark-600 rounded-lg p-4 mb-4">
           <div className="flex items-center gap-2">
@@ -1563,7 +1563,7 @@ volumes:
               <path strokeLinecap="round" strokeLinejoin="round" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
             <span className="text-sm text-dark-200 font-medium">
-              {intentionallyStopped.length} container(s) stopped on purpose — not alerting
+              {intentionallyStopped.length} container(s) stopped on purpose - not alerting
             </span>
           </div>
           <div className="mt-2 space-y-1">
@@ -1573,7 +1573,7 @@ volumes:
                   {a.name}{" "}
                   <span className="text-dark-300">
                     ({stopReasonLabel(a.expected_stop_reason)}
-                    {a.expected_stop_by ? ` — ${a.expected_stop_by}` : ""})
+                    {a.expected_stop_by ? ` - ${a.expected_stop_by}` : ""})
                   </span>
                 </span>
                 <button
@@ -1723,7 +1723,7 @@ volumes:
                           <tr key={svc.container_id} className="text-sm">
                             <td className="py-1.5 font-mono text-dark-100">{svc.name}</td>
                             <td className="py-1.5 text-dark-300 text-xs font-mono hidden sm:table-cell">{svc.image}</td>
-                            <td className="py-1.5 text-dark-200 font-mono">{svc.port || "\u2014"}</td>
+                            <td className="py-1.5 text-dark-200 font-mono">{svc.port || "-"}</td>
                             <td className="py-1.5">
                               <span className={`text-xs font-medium ${svc.status === "running" ? "text-rust-400" : "text-dark-400"}`}>
                                 {svc.status}
@@ -1731,7 +1731,7 @@ volumes:
                             </td>
                             {/* A stack service had no Logs button anywhere, so a
                                 crashed one could not be diagnosed from the panel
-                                at all \u2014 which is why bug reports about stacks
+                                at all - which is why bug reports about stacks
                                 arrive with no detail in them. */}
                             <td className="py-1.5 text-right">
                               <button
@@ -1810,7 +1810,7 @@ volumes:
                         {/* The agent reports why a version check failed and the
                             panel used to drop it, so an app whose tag had been
                             deleted from the registry looked exactly like one that
-                            was up to date — no badge, ordinary Update button. */}
+                            was up to date - no badge, ordinary Update button. */}
                         {updateInfo[app.container_id]?.check_error && (
                           <span
                             className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-warn-500/15 text-warn-400"
@@ -1824,8 +1824,8 @@ volumes:
                           const f = scanFindings[app.image];
                           const label = scanSeverityLabel(f);
                           const aria = f
-                            ? `Open vulnerability scan for ${app.image} — ${label}, last scanned ${timeAgo(f.scanned_at)}`
-                            : `Open vulnerability scan for ${app.image} — not yet scanned`;
+                            ? `Open vulnerability scan for ${app.image} - ${label}, last scanned ${timeAgo(f.scanned_at)}`
+                            : `Open vulnerability scan for ${app.image} - not yet scanned`;
                           return (
                             <button
                               type="button"
@@ -1861,12 +1861,12 @@ volumes:
                       {app.domain ? (
                         <a href={`${app.ssl ? "https" : "http"}://${app.domain}`} target="_blank" rel="noopener noreferrer" className="text-rust-400 hover:underline font-mono">{app.domain}</a>
                       ) : (
-                        <span className="text-dark-300">{"\u2014"}</span>
+                        <span className="text-dark-300">{"-"}</span>
                       )}
                     </td>
                     {/*
                       A published port is reachable, so make it reachable. Only
-                      when the app has no domain \u2014 one that does already links
+                      when the app has no domain - one that does already links
                       from the column before this, and two links to the same app
                       is noise. Always plain http: `app.ssl` describes whether
                       the SERVER terminates TLS for that domain's vhost, which
@@ -1887,7 +1887,7 @@ volumes:
                           {app.port}
                         </a>
                       ) : (
-                        app.port || "\u2014"
+                        app.port || "-"
                       )}
                     </td>
                     <td className="px-5 py-4 hidden lg:table-cell">
@@ -1905,7 +1905,7 @@ volumes:
                           {app.health}
                         </span>
                       ) : (
-                        <span className="text-dark-300 text-xs">{"\u2014"}</span>
+                        <span className="text-dark-300 text-xs">{"-"}</span>
                       )}
                     </td>
                     <td className="px-5 py-4">
@@ -2300,7 +2300,7 @@ volumes:
                     </h3>
                     {tmpl.gpu_recommended && (
                       <span
-                        title="GPU recommended — passthrough will be auto-enabled on deploy"
+                        title="GPU recommended - passthrough will be auto-enabled on deploy"
                         className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-rust-500/15 text-rust-400 border border-rust-500/30"
                       >
                         GPU
@@ -2358,7 +2358,7 @@ volumes:
 
               <div>
                 <label className="block text-sm font-medium text-dark-100 mb-1">
-                  Domain <span className="text-dark-300 font-normal">(optional — auto reverse proxy)</span>
+                  Domain <span className="text-dark-300 font-normal">(optional - auto reverse proxy)</span>
                 </label>
                 <input
                   type="text"
@@ -2378,12 +2378,12 @@ volumes:
                   <p className="mt-1 text-xs text-dark-300">
                     {externalTls
                       ? "No certificate will be requested, and this app will be served and linked over plain HTTP."
-                      : "Leave unticked to get a Let's Encrypt certificate. Tick it if something in front of this server already handles HTTPS — this server never sees ports 80 and 443, so the certificate request cannot succeed."}
+                      : "Leave unticked to get a Let's Encrypt certificate. Tick it if something in front of this server already handles HTTPS - this server never sees ports 80 and 443, so the certificate request cannot succeed."}
                   </p>
                   {!externalTls && (
                     <div className="mt-3">
                       <label className="block text-sm font-medium text-dark-100 mb-1">
-                        SSL Email <span className="text-dark-300 font-normal">(optional — Let's Encrypt)</span>
+                        SSL Email <span className="text-dark-300 font-normal">(optional - Let's Encrypt)</span>
                       </label>
                       <input
                         type="email"
@@ -2452,7 +2452,7 @@ volumes:
                 </label>
                 {gpuEnabled && availableGpus.length === 0 && (
                   <p className="mt-1 ml-6 text-xs text-warn-400">
-                    No NVIDIA GPUs detected on this host. Deploy will still set GPU passthrough — verify NVIDIA Container Toolkit is installed.
+                    No NVIDIA GPUs detected on this host. Deploy will still set GPU passthrough - verify NVIDIA Container Toolkit is installed.
                   </p>
                 )}
                 {gpuEnabled && availableGpus.length > 1 && (
@@ -2594,7 +2594,7 @@ volumes:
                             one the default IS what gets used. */}
                         {v.domain_derived && appDomain.trim() !== "" && (
                           <p className="text-[10px] text-accent-400 mt-0.5">
-                            Set automatically from {appDomain.trim()} — change it only to override.
+                            Set automatically from {appDomain.trim()} - change it only to override.
                           </p>
                         )}
                         {selected.id === "vllm" && v.name === "MODEL" && (
@@ -2619,7 +2619,7 @@ volumes:
             </div>
 
             {/* The prerequisites render HERE, immediately above the button they
-                gate — lesson #80a: a message 1400 lines from its control is
+                gate - lesson #80a: a message 1400 lines from its control is
                 indistinguishable from no message. */}
             <PrereqList
               checks={deployChecks}
@@ -2757,7 +2757,7 @@ volumes:
                 </button>
                 {/* The container is the only store of an app's environment, so
                     a value the read masked comes back as the mask and means
-                    "leave this one alone" — the server resolves it. Removing a
+                    "leave this one alone" - the server resolves it. Removing a
                     row removes the variable. */}
                 <p className="text-[11px] text-dark-400 pt-1">
                   Saving recreates the container. Values shown as
@@ -2842,7 +2842,7 @@ volumes:
             </div>
             {shellInfo && !shellInfo.has_bash && !shellInfo.has_sh && (
               <div className="px-4 py-2 border-t border-dark-600 bg-danger-500/10 text-danger-400 text-xs">
-                No shell available in this image — neither bash nor sh could be found.
+                No shell available in this image - neither bash nor sh could be found.
               </div>
             )}
             <div className="px-4 py-3 border-t border-dark-600 flex gap-2 items-center">
@@ -3020,9 +3020,9 @@ volumes:
                       onClick={() => { setPruneArmed(false); handlePruneImages(); }}
                       disabled={imagePruning}
                       className="px-3 py-1.5 text-xs font-medium bg-danger-500 text-white rounded disabled:opacity-50"
-                      title="Removes dangling (untagged) images host-wide — irreversible. Rollback and snapshot images stay tagged, so they're kept."
+                      title="Removes dangling (untagged) images host-wide - irreversible. Rollback and snapshot images stay tagged, so they're kept."
                     >
-                      {imagePruning ? "Pruning..." : "Confirm — prune dangling images"}
+                      {imagePruning ? "Pruning..." : "Confirm - prune dangling images"}
                     </button>
                     <button
                       onClick={() => setPruneArmed(false)}
@@ -3037,7 +3037,7 @@ volumes:
                     onClick={() => setPruneArmed(true)}
                     disabled={imagePruning}
                     className="px-3 py-1.5 text-xs font-medium bg-warn-500/10 text-warn-400 rounded hover:bg-warn-500/20 disabled:opacity-50"
-                    title="Removes dangling (untagged) images host-wide — irreversible. Rollback and snapshot images stay tagged, so they're kept."
+                    title="Removes dangling (untagged) images host-wide - irreversible. Rollback and snapshot images stay tagged, so they're kept."
                   >
                     {imagePruning ? "Pruning..." : "Prune Unused"}
                   </button>
@@ -3142,7 +3142,7 @@ volumes:
                         // Replace placeholder passwords with random ones for security.
                         // `getRandomValues`, not `randomUUID`: the latter is
                         // secure-context-only, and the installer's cert-failed
-                        // branch leaves the operator on plain http:// — where
+                        // branch leaves the operator on plain http:// - where
                         // this onClick would throw and the card would silently
                         // do nothing. Same reasoning as the generator above.
                         const randPw = () => {
@@ -3206,7 +3206,7 @@ volumes:
                   onChange={(e) => {
                     setComposeDomain(e.target.value);
                     // A TLS choice is meaningless without a domain, and the
-                    // backend refuses a mode other than none for one — so
+                    // backend refuses a mode other than none for one - so
                     // emptying the box takes the choice with it rather than
                     // leaving a hidden "acme" behind a disabled select.
                     if (!e.target.value.trim()) {
@@ -3251,7 +3251,7 @@ volumes:
                   }}
                   className="w-full px-3 py-2 bg-dark-800 border border-dark-500 rounded-lg text-sm text-dark-100 focus:ring-2 focus:ring-accent-500 focus:border-accent-500 disabled:opacity-50"
                 >
-                  <option value="none">No HTTPS — plain HTTP, or TLS terminated upstream</option>
+                  <option value="none">No HTTPS - plain HTTP, or TLS terminated upstream</option>
                   <option value="acme">Let's Encrypt certificate</option>
                   <option value="provided">Registered certificate</option>
                 </select>
@@ -3285,7 +3285,7 @@ volumes:
                       </option>
                       {(registeredCerts ?? []).map((c) => (
                         <option key={c.id} value={c.alias}>
-                          {c.alias}{c.dns_names.length > 0 ? ` — ${c.dns_names.join(", ")}` : ""}
+                          {c.alias}{c.dns_names.length > 0 ? ` - ${c.dns_names.join(", ")}` : ""}
                         </option>
                       ))}
                     </select>
@@ -3450,7 +3450,7 @@ volumes:
         </div>
       )}
 
-      {/* Edit stack — reuses the create modal's field set (minus name, which
+      {/* Edit stack - reuses the create modal's field set (minus name, which
           PUT /api/stacks/{id} keeps immutable) since GET already returns
           everything needed to prefill it. */}
       {editingStack && (
@@ -3462,7 +3462,7 @@ volumes:
         >
           <div className="bg-dark-800 rounded-lg shadow-xl p-6 w-full max-w-2xl max-h-[85vh] overflow-y-auto dp-modal">
             <h3 id="edit-stack-dialog-title" className="text-xs font-medium text-dark-300 uppercase font-mono tracking-widest mb-4">
-              Edit Stack — {editingStack.name}
+              Edit Stack - {editingStack.name}
             </h3>
 
             {editError && (
@@ -3512,7 +3512,7 @@ volumes:
                   }}
                   className="w-full px-3 py-2 bg-dark-800 border border-dark-500 rounded-lg text-sm text-dark-100 focus:ring-2 focus:ring-accent-500 focus:border-accent-500 disabled:opacity-50"
                 >
-                  <option value="none">No HTTPS — plain HTTP, or TLS terminated upstream</option>
+                  <option value="none">No HTTPS - plain HTTP, or TLS terminated upstream</option>
                   <option value="acme">Let's Encrypt certificate</option>
                   <option value="provided">Registered certificate</option>
                 </select>
@@ -3539,7 +3539,7 @@ volumes:
                       </option>
                       {(registeredCerts ?? []).map((c) => (
                         <option key={c.id} value={c.alias}>
-                          {c.alias}{c.dns_names.length > 0 ? ` — ${c.dns_names.join(", ")}` : ""}
+                          {c.alias}{c.dns_names.length > 0 ? ` - ${c.dns_names.join(", ")}` : ""}
                         </option>
                       ))}
                     </select>
@@ -3721,7 +3721,7 @@ volumes:
                                 </td>
                                 <td className="px-3 py-2 text-dark-200">{v.package}</td>
                                 <td className="px-3 py-2 text-dark-300 font-mono">{v.installed_version}</td>
-                                <td className="px-3 py-2 text-dark-200 font-mono">{v.fixed_version || "—"}</td>
+                                <td className="px-3 py-2 text-dark-200 font-mono">{v.fixed_version || "-"}</td>
                               </tr>
                             );
                           })}
@@ -3836,7 +3836,7 @@ function OllamaModels({ containerId, onClose }: { containerId: string; onClose: 
       setPullResult({ type: "success", msg: `Removed ${name}` });
       loadModels();
     } catch (e) {
-      // s237 audit: was `catch { /* ignore */ }` — a failed delete surfaced nothing.
+      // s237 audit: was `catch { /* ignore */ }` - a failed delete surfaced nothing.
       setPullResult({ type: "error", msg: e instanceof Error ? e.message : "Failed to remove model" });
     }
     finally { setDeleting(null); }

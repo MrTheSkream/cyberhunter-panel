@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 #
-# Regression pin for "a rename takes the backups with it" — s389.
+# Regression pin for "a rename takes the backups with it" - s389.
 #
 # THE DEFECT. Renaming a site migrated the webroot, the vhost, the parked vhost,
 # the certificates, the nginx logs, the PHP-FPM pools, the fail2ban jail and the
-# redirect configs — ten numbered steps — and left every backup tree behind under
+# redirect configs - ten numbered steps - and left every backup tree behind under
 # the old name. That is worse than a disk leak, because the panel's own table
 # stores a filename and NO path: every reader rebuilds the directory from the
 # LIVE domain. So the instant a rename completed, every archive the site had
@@ -17,7 +17,7 @@
 # of guard that is easy to delete for looking over-cautious:
 #
 #   * A destination that already holds files is refused BEFORE anything moves.
-#     Not hypothetical — every completed site delete manufactures one, because
+#     Not hypothetical - every completed site delete manufactures one, because
 #     the panel writes a pre-delete archive and records no row for it while the
 #     cascade takes the rows that would have named it.
 #   * A site with backups will not rename onto an agent too old to carry them,
@@ -38,7 +38,7 @@ cd "$(dirname "$0")/.."
 
 PASS=0; FAIL=0
 ok()  { printf '\033[32m✓\033[0m %s\n' "$1"; PASS=$((PASS+1)); }
-bad() { printf '\033[31m✗\033[0m %s — %s\n' "$1" "$2"; FAIL=$((FAIL+1)); }
+bad() { printf '\033[31m✗\033[0m %s - %s\n' "$1" "$2"; FAIL=$((FAIL+1)); }
 eq()  { [ "$2" = "$3" ] && ok "$1" || bad "$1" "expected '$3', got '$2'"; }
 has() { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "missing: $3" ;; esac; }
 hasnt(){ case "$2" in *"$3"*) bad "$1" "present but must not be: $3" ;; *) ok "$1" ;; esac; }
@@ -47,7 +47,7 @@ before() { # $1 label, $2 subject, $3 earlier, $4 later
   a=$(printf '%s' "$2" | $G -boF -- "$3" | head -1 | cut -d: -f1)
   b=$(printf '%s' "$2" | $G -boF -- "$4" | head -1 | cut -d: -f1)
   if [ -z "$a" ] || [ -z "$b" ]; then
-    bad "$1" "could not locate both landmarks (earlier='${a:-none}' later='${b:-none}') — the arm measured nothing"
+    bad "$1" "could not locate both landmarks (earlier='${a:-none}' later='${b:-none}') - the arm measured nothing"
   elif [ "$a" -lt "$b" ]; then
     ok "$1"
   else
@@ -105,13 +105,13 @@ for pair in "F_TREES:200" "F_OCC:100" "F_UNDO:200" "F_RENAME:5000" \
             "F_PURGE:600"; do
   v=${pair%:*}; min=${pair##*:}
   n=$(printf '%s' "${!v}" | wc -c)
-  [ "$n" -ge "$min" ] || { bad "SETUP" "$v resolved $n chars, expected >= $min — the pattern stopped matching"; exit 1; }
+  [ "$n" -ge "$min" ] || { bad "SETUP" "$v resolved $n chars, expected >= $min - the pattern stopped matching"; exit 1; }
 done
 
 echo "── §A  the two domain-keyed trees are named in ONE place"
 has "A1 the archive root"      "$F_TREES" 'letroot="/var/backups/dockpanel";'
 has "A2 the wordpress snapshots" "$F_TREES" 'wp-snapshots/{old_domain}'
-# Two per tree — an old path and a new one — so two trees is four. Counted
+# Two per tree - an old path and a new one - so two trees is four. Counted
 # rather than merely present: adding a third tree without teaching the undo and
 # the refusals about it is the way this grows a hole.
 eq  "A3 two trees, each with an old and a new path" "$(occ "$F_TREES" 'format!("{root}/')" 4
@@ -132,7 +132,7 @@ has "C2 a collision is refused"               "$F_RENAME" 'dir_is_occupied(new_t
 # Anchored on the `if` and the opening brace, so the whole condition is pinned
 # rather than a substring of it. A substring arm is satisfied by
 # `if false && <the same condition>`, which disables the refusal while leaving
-# every literal in place — found by mutation, not by reading.
+# every literal in place - found by mutation, not by reading.
 has "C3 only when there is something to move" "$F_RENAME" 'ifstd::path::Path::new(old_tree).exists()&&dir_is_occupied(new_tree){'
 # ⛔ The precondition is worthless below the first move: by then the cheap
 # refusal is gone and the webroot has already changed name.
@@ -143,7 +143,7 @@ has "C6 and only NotFound counts as free"     "$F_OCC" 'ErrorKind::NotFound=>fal
 
 echo "── §D  the rollback is symmetric"
 # 1 definition + 3 call sites: the carry's own failure, and BOTH nginx -t
-# branches. Counted, not merely present — deleting one call leaves the other two.
+# branches. Counted, not merely present - deleting one call leaves the other two.
 eq  "D1 the undo is wired at every abort"     "$(occ "$F_ANGINX" 'undo_backup_carry(')" 4
 has "D2 it puts trees back most-recent-first" "$F_UNDO" 'carried.iter().rev()'
 has "D3 and never silently"                   "$F_UNDO" 'tracing::error!('
@@ -156,13 +156,13 @@ has "E2 the gate reads the agent's own answer, not a column that is NULL on the 
 has "E3 the refusal is gated on the site having backups" "$F_BRENAME" 'SELECTCOUNT(*)FROMbackupsWHEREsite_id=$1'
 has "E4 the rows are re-prefixed to match the moved files" "$F_BRENAME" 'UPDATEbackupsSETfilename=$1||substring(filenamefrom$3)'
 # ⛔ The agent answers this endpoint with a bare ARRAY. Reading a `backups` key
-# would make the check report "nothing left behind" for every input it can see —
+# would make the check report "nothing left behind" for every input it can see -
 # an assertion that cannot fail is worse than no assertion.
 has "E5 the leftover check reads the array the agent actually sends" "$F_BRENAME" 'v.as_array()'
 hasnt "E6 not a key that is never there"      "$F_BRENAME" 'v.get("backups")'
 # ⛔ FROZEN ON PURPOSE, and this is the only thing standing between the gate and a
-# routine release bump. `BACKUP_CARRY_MIN_AGENT` is a historical fact — the release
-# in which the carry shipped — and it happens to equal the version of that release,
+# routine release bump. `BACKUP_CARRY_MIN_AGENT` is a historical fact - the release
+# in which the carry shipped - and it happens to equal the version of that release,
 # so it looks exactly like the ten other places a version bump rewrites. Sed it
 # forward and the panel starts refusing renames on agents that carry backups
 # perfectly well, with no other symptom. It moves only if the carry itself changes.
@@ -182,7 +182,7 @@ hasnt "F6 and not only when it succeeded"     "$F_SCHED" '.bind(ifuploaded_remot
 
 echo "── §G  a local-only archive does not read as a fresh backup"
 # The row unit F adds would otherwise silence three staleness readers, which is
-# a narrowing of an existing alarm — the site whose destination is down is
+# a narrowing of an existing alarm - the site whose destination is down is
 # exactly the one they exist to name.
 has "G1 the dashboard tile"       "$F_DASH" '(b.destination_idISNULLORb.uploaded)'
 has "G2 the backup-health list"   "$F_ORCH" '(b.destination_idISNULLORb.uploaded)'

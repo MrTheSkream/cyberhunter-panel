@@ -14,7 +14,7 @@ pub mod status;
 /// controlling terminal.
 ///
 /// A bare `--password VALUE` lands in shell history and stays visible to any
-/// local user via `ps`/`/proc/<pid>/cmdline` for the life of the process —
+/// local user via `ps`/`/proc/<pid>/cmdline` for the life of the process -
 /// this exists so that door is opt-in rather than the only one.
 pub fn resolve_password(
     password: Option<String>,

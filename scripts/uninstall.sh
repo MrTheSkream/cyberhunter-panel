@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# DockPanel Uninstaller
-# Removes DockPanel completely from the server.
+# CyberHunter - Panel Uninstaller
+# Removes CyberHunter - Panel completely from the server.
 #
 set -euo pipefail
 
@@ -17,7 +17,7 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 echo ""
-echo -e "${YELLOW}${BOLD}DockPanel Uninstaller${NC}"
+echo -e "${YELLOW}${BOLD}CyberHunter - Panel Uninstaller${NC}"
 echo ""
 echo "This will remove:"
 echo "  - Agent and API binaries and systemd services"
@@ -104,7 +104,7 @@ rm -f /etc/tmpfiles.d/dockpanel.conf
 rm -f /etc/needrestart/conf.d/99-dockpanel.conf
 rm -f /etc/apt/apt.conf.d/99-dockpanel-lock-wait.conf
 
-# Remove DockPanel crontab entries
+# Remove CyberHunter - Panel crontab entries
 (crontab -l 2>/dev/null | grep -v "dockpanel" | crontab -) 2>/dev/null || true
 
 # Remove source (if installed to /opt/dockpanel by install.sh)
@@ -114,6 +114,6 @@ if [ -d /opt/dockpanel ]; then
 fi
 
 echo ""
-echo -e "${GREEN}${BOLD}DockPanel removed.${NC}"
+echo -e "${GREEN}${BOLD}CyberHunter - Panel removed.${NC}"
 echo -e "Note: Docker, Nginx, and Node.js were NOT uninstalled (they may be used by other services)."
 echo ""

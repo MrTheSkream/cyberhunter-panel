@@ -9,11 +9,11 @@
 3. Select the site to back up
 4. Click **Create**
 
-The backup contains the site's directory — its files — **and a dump of every database attached to
+The backup contains the site's directory - its files - **and a dump of every database attached to
 the site**. It is saved as a single compressed tarball in `/var/backups/dockpanel/`.
 
-For a CMS such as WordPress, almost everything you think of as "the site" — posts, pages,
-comments, users, settings — lives in the database rather than in the files, so a backup that
+For a CMS such as WordPress, almost everything you think of as "the site" - posts, pages,
+comments, users, settings - lives in the database rather than in the files, so a backup that
 holds only files cannot bring the site back. Since v2.34.0 both halves travel in the same archive
 and are restored together.
 
@@ -32,7 +32,7 @@ The site's Nginx configuration is not in the tarball; the panel rewrites it from
 .dockpanel-backup/db/*.sql.gz    one compressed dump per database
 ```
 
-The `.dockpanel-backup` directory is DockPanel's own; it is extracted separately during a restore
+The `.dockpanel-backup` directory is CyberHunter - Panel's own; it is extracted separately during a restore
 and never lands in your document root.
 
 A database that could not be dumped is **not** silently skipped: the backup reports which ones are
@@ -59,7 +59,7 @@ Creating backup for example.com...
 ```
 
 > **CLI backups are files only.** The CLI authenticates to the agent, and the agent has no access
-> to the panel's database records — it cannot know which databases belong to a site or hold their
+> to the panel's database records - it cannot know which databases belong to a site or hold their
 > credentials. Only the panel can assemble a complete backup.
 
 ### List Backups
@@ -93,7 +93,7 @@ Scheduled backups run in the background. The backup scheduler checks for pending
 
 ## Configure S3 / Remote Destination
 
-Store backups off-server for disaster recovery. DockPanel supports any S3-compatible storage (AWS S3, Backblaze B2, MinIO, Wasabi, DigitalOcean Spaces, etc.).
+Store backups off-server for disaster recovery. CyberHunter - Panel supports any S3-compatible storage (AWS S3, Backblaze B2, MinIO, Wasabi, DigitalOcean Spaces, etc.).
 
 1. Go to **Backup Manager** > **Destinations**
 2. Click **Add Destination**
@@ -106,13 +106,13 @@ Store backups off-server for disaster recovery. DockPanel supports any S3-compat
    - **Secret Key**: Your secret access key
    - **Region**: `us-west-001` (varies by provider)
 4. Click **Create Destination**. Credentials are encrypted before they are stored.
-5. Click **Test** on the saved destination to verify access — nothing is checked at
+5. Click **Test** on the saved destination to verify access - nothing is checked at
    save time, and the test runs against the stored credentials.
 
 Use **Edit** to change a destination later. Secret fields come back masked as
 `********`; leave them as they are to keep the stored credential, or type a new
 value to rotate it. The transport (S3 or SFTP) cannot be changed on an existing
-destination — delete it and add a new one instead.
+destination - delete it and add a new one instead.
 
 Once a destination is configured, edit your backup schedule and select it as the remote destination. Backups will be uploaded after creation.
 
@@ -137,7 +137,7 @@ Once a destination is configured, edit your backup schedule and select it as the
 
 The restore replaces the site's files with the backup contents, then loads each database dump the
 archive carries **over the live database**, dropping and recreating its tables. The current state
-is not automatically backed up before a restore — create a manual backup first if you want a
+is not automatically backed up before a restore - create a manual backup first if you want a
 safety net.
 
 Files are restored first and databases last. A database load that fails rolls back, so the live
@@ -148,7 +148,7 @@ Two outcomes are reported honestly rather than as a success:
 - **The archive has no database** (it was made before v2.34.0, or its dump failed) and the site
   has one. You are told before the restore starts that the content will not come back.
 - **The files were restored but a database could not be.** This is called out as a failure, not a
-  success with a footnote — the site is at that point running restored files against its previous
+  success with a footnote - the site is at that point running restored files against its previous
   content, and you need to know that.
 
 ### From the CLI
@@ -165,7 +165,7 @@ Restoring example.com from example.com_2026-03-20_143022.tar.gz...
   Content: files only (this archive holds no database)
 ```
 
-> **The CLI can restore databases too — if a panel API key is configured.** `backup restore`
+> **The CLI can restore databases too - if a panel API key is configured.** `backup restore`
 > prefers a panel-API-authenticated path (`Settings → API Keys`, saved to
 > `/etc/dockpanel/backend.token`) that restores both files and databases through the same route
 > the panel UI's own Restore button uses. Without a configured key, it falls back to the older
@@ -187,13 +187,13 @@ Click the delete icon next to any backup in the list.
 
 ## Database Backups
 
-DockPanel runs an automatic daily database backup cron job for the panel's own PostgreSQL database:
+CyberHunter - Panel runs an automatic daily database backup cron job for the panel's own PostgreSQL database:
 
 - **Schedule**: Daily at 2:00 AM
 - **Retention**: 7 days (older backups are automatically deleted)
 - **Location**: `/var/backups/dockpanel/`
 
-This is separate from site backups, and it covers the panel's own database only — not your
+This is separate from site backups, and it covers the panel's own database only - not your
 sites'. A site's database (its MySQL or PostgreSQL container) is not captured by either one, so
 back it up with the manual step below or from the **Databases** page.
 

@@ -6,10 +6,10 @@ use serde::Deserialize;
 use crate::backend_client;
 
 /// v1's ~40-tool read-only catalogue (session 1 shipped 3 to prove the
-/// pipeline end to end; this session fills in the rest — see the design doc
+/// pipeline end to end; this session fills in the rest - see the design doc
 /// `/home/ovidiu/dockpanel-mcp-design.md` §3, §7). Every tool is a thin GET
 /// proxy onto the existing REST API: no new business logic, no new response
-/// shapes — the panel API's own JSON is passed through as-is. Zero mutating
+/// shapes - the panel API's own JSON is passed through as-is. Zero mutating
 /// or destructive tools (the Coolify sequencing, forced by the
 /// audit-attribution fix this crate's own migration shipped alongside
 /// session 1, before any write-capable tool could exist safely).
@@ -18,7 +18,7 @@ pub struct DockPanelMcp;
 
 // `Result<String, String>` (rather than a plain `String` with an "Error: ..."
 // prefix folded into the Ok text) so `#[tool]`'s generated code sets the MCP
-// response's `isError: true` on failure — verified against a live handshake:
+// response's `isError: true` on failure - verified against a live handshake:
 // a plain `String` return reports `isError: false` even when the text says
 // "Error: ...", which a well-behaved MCP client's branch-on-isError logic
 // would silently treat as success.
@@ -30,7 +30,7 @@ async fn get_json(path: &str) -> Result<String, String> {
 
 /// Build a `"?k=v&k2=v2"` query suffix from optional values, URL-encoding
 /// each one. Empty string when every pair is `None`. Shared by every tool
-/// with more than one optional filter — the alternative (each tool
+/// with more than one optional filter - the alternative (each tool
 /// hand-rolling the same `Vec<String>` + `.join("&")` dance) was already
 /// duplicated 8+ times over before this existed.
 fn query_suffix(pairs: &[(&str, Option<String>)]) -> String {
@@ -178,7 +178,7 @@ pub struct IncidentListParams {
 impl DockPanelMcp {
     // ── Sites & apps ────────────────────────────────────────────────────
 
-    #[tool(description = "List every site hosted on this DockPanel instance (domain, runtime, status).")]
+    #[tool(description = "List every site hosted on this CyberHunter - Panel instance (domain, runtime, status).")]
     async fn list_sites(&self) -> Result<String, String> {
         get_json("/api/sites").await
     }
@@ -218,7 +218,7 @@ impl DockPanelMcp {
         get_json(&format!("/api/sites/{}/crons{suffix}", urlencoding::encode(&site_id))).await
     }
 
-    #[tool(description = "List backups for one site (metadata only — file listing, not the backup contents; use the panel UI to restore).")]
+    #[tool(description = "List backups for one site (metadata only - file listing, not the backup contents; use the panel UI to restore).")]
     async fn list_site_backups(
         &self,
         Parameters(SiteScopedPaginationParams { site_id, limit, offset }): Parameters<SiteScopedPaginationParams>,
@@ -243,7 +243,7 @@ impl DockPanelMcp {
         get_json(&format!("/api/databases{suffix}")).await
     }
 
-    #[tool(description = "List the tables in one database, with row counts (schema only — never returns credentials or row contents).")]
+    #[tool(description = "List the tables in one database, with row counts (schema only - never returns credentials or row contents).")]
     async fn get_database_tables(
         &self,
         Parameters(DatabaseIdParams { database_id }): Parameters<DatabaseIdParams>,
@@ -253,7 +253,7 @@ impl DockPanelMcp {
 
     // ── Servers & fleet ─────────────────────────────────────────────────
 
-    #[tool(description = "List every server registered to this DockPanel fleet (hostname, region, agent status).")]
+    #[tool(description = "List every server registered to this CyberHunter - Panel fleet (hostname, region, agent status).")]
     async fn list_servers(&self) -> Result<String, String> {
         get_json("/api/servers").await
     }
@@ -291,7 +291,7 @@ impl DockPanelMcp {
         get_json(&format!("/api/monitors/{}/uptime", urlencoding::encode(&monitor_id))).await
     }
 
-    #[tool(description = "Read the public status page (component statuses, active incidents) — the same data unauthenticated visitors see.")]
+    #[tool(description = "Read the public status page (component statuses, active incidents) - the same data unauthenticated visitors see.")]
     async fn get_status_page(&self) -> Result<String, String> {
         get_json("/api/status-page/public").await
     }
@@ -305,7 +305,7 @@ impl DockPanelMcp {
         get_json(&format!("/api/alerts{suffix}")).await
     }
 
-    #[tool(description = "Get a rolled-up count of alerts by severity — the number a dashboard badge would show.")]
+    #[tool(description = "Get a rolled-up count of alerts by severity - the number a dashboard badge would show.")]
     async fn get_alerts_summary(&self) -> Result<String, String> {
         get_json("/api/alerts/summary").await
     }
@@ -341,7 +341,7 @@ impl DockPanelMcp {
     }
 
     #[tool(
-        description = "Read the immutable security audit log — logins, lockdowns, key rotations, \
+        description = "Read the immutable security audit log - logins, lockdowns, key rotations, \
                         and (once a mutating tool exists) MCP-originated actions. High-value for an \
                         agent to self-check what it has already done in this session. Requires an \
                         admin-scoped key."
@@ -385,7 +385,7 @@ impl DockPanelMcp {
         get_json("/api/backup-orchestrator/health").await
     }
 
-    #[tool(description = "List database backups across the fleet (metadata only — size, timestamp, status; not the dump contents).")]
+    #[tool(description = "List database backups across the fleet (metadata only - size, timestamp, status; not the dump contents).")]
     async fn list_db_backups(
         &self,
         Parameters(PaginationParams { limit, offset }): Parameters<PaginationParams>,
@@ -417,7 +417,7 @@ impl DockPanelMcp {
         get_json(&format!("/api/logs{suffix}")).await
     }
 
-    #[tool(description = "Get the panel's own recorded activity feed (who did what, across every resource type) — broader than the security audit log, which covers security-relevant events only.")]
+    #[tool(description = "Get the panel's own recorded activity feed (who did what, across every resource type) - broader than the security audit log, which covers security-relevant events only.")]
     async fn list_activity(
         &self,
         Parameters(ActivityListParams { limit, offset, action }): Parameters<ActivityListParams>,
@@ -437,7 +437,7 @@ impl DockPanelMcp {
         get_json("/api/update/status").await
     }
 
-    #[tool(description = "List configured outbound webhook endpoints (URL, event subscriptions) — configuration only, never the inbound webhook receiver URLs third parties call into.")]
+    #[tool(description = "List configured outbound webhook endpoints (URL, event subscriptions) - configuration only, never the inbound webhook receiver URLs third parties call into.")]
     async fn list_webhook_endpoints(&self) -> Result<String, String> {
         get_json("/api/webhook-gateway/endpoints").await
     }
@@ -481,15 +481,15 @@ impl ServerHandler for DockPanelMcp {
     fn get_info(&self) -> ServerInfo {
         // `Implementation::from_build_env()` (what `ServerInfo::new` fills this
         // field with by default) expands `env!()` inside rmcp's OWN compiled
-        // source, so it reports rmcp's crate name/version, not ours — confirmed
+        // source, so it reports rmcp's crate name/version, not ours - confirmed
         // by an actual handshake, not assumed. Set it explicitly from this
         // crate's own build env instead.
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("dockpanel-mcp", env!("CARGO_PKG_VERSION")))
             .with_instructions(
-                "Read-only introspection tools for a DockPanel-managed server fleet. Every call \
+                "Read-only introspection tools for a CyberHunter - Panel-managed server fleet. Every call \
                  is attributed in the panel's own audit log to the API key configured for this \
-                 MCP server. v1 has no mutating or destructive tools — everything here only \
+                 MCP server. v1 has no mutating or destructive tools - everything here only \
                  reads state.",
             )
     }

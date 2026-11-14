@@ -3,14 +3,14 @@
 //! Three questions, answered once here so the vhost, the DNS writers, the DNS
 //! checks and the mail sync cannot disagree:
 //!
-//! * **Bind address of a site** — `sites.ip_id`, else the primary address. The
+//! * **Bind address of a site** - `sites.ip_id`, else the primary address. The
 //!   backend cannot know the primary address (its idea of the local box's address
 //!   comes from ipify), so "primary" is sent to the agent as the literal
 //!   [`PRIMARY`] and the agent resolves it.
-//! * **Send address of a mail domain** — `mail_domains.send_ip_id` (forced), else
-//!   the address of the same-named site on the same server, else primary — the
+//! * **Send address of a mail domain** - `mail_domains.send_ip_id` (forced), else
+//!   the address of the same-named site on the same server, else primary - the
 //!   HestiaCP behaviour, where a mail domain follows its web domain's address.
-//! * **Address to publish in DNS** — the declared row's `public_ip` (NAT), else its
+//! * **Address to publish in DNS** - the declared row's `public_ip` (NAT), else its
 //!   `ip`, else [`crate::helpers::public_ip_for_server`] for the primary address.
 //!
 //! The precedence lives in the pure functions below; the async ones only load rows.
@@ -42,7 +42,7 @@ impl DeclaredIp {
             .to_string()
     }
 
-    /// The HELO name for mail sent from this address — its PTR, if one was read.
+    /// The HELO name for mail sent from this address - its PTR, if one was read.
     pub fn helo(&self) -> Option<String> {
         self.ptr
             .as_deref()
@@ -140,7 +140,7 @@ pub fn mail_dns_addresses(
     (a, spf)
 }
 
-/// Whether resolving these needs the server's primary public address at all —
+/// Whether resolving these needs the server's primary public address at all -
 /// so callers skip the (possibly outbound) [`crate::helpers::public_ip_for_server`]
 /// lookup when every address is declared.
 pub fn needs_primary_address(same_domain_site: Option<Option<&DeclaredIp>>, send: &SendIp) -> bool {
@@ -157,7 +157,7 @@ pub async fn declared_ip(db: &sqlx::PgPool, id: Uuid) -> Result<Option<DeclaredI
         .await
 }
 
-/// One declared address by id, only if it belongs to `server_id` — the check
+/// One declared address by id, only if it belongs to `server_id` - the check
 /// every write that attaches an address to an object makes (§3: the address must
 /// be on the object's own server).
 pub async fn declared_ip_on_server(
@@ -175,7 +175,7 @@ pub async fn declared_ip_on_server(
 /// The `bind_ip` to put in this site's vhost body.
 ///
 /// `None` only when the lookup itself failed: the caller then omits the key and
-/// the agent keeps the address already written in the vhost — which is the safe
+/// the agent keeps the address already written in the vhost - which is the safe
 /// direction. Sending [`PRIMARY`] on a failed read would move the site.
 pub async fn nginx_bind_ip(db: &sqlx::PgPool, site: &Site) -> Option<String> {
     let Some(ip_id) = site.ip_id else {
@@ -185,11 +185,11 @@ pub async fn nginx_bind_ip(db: &sqlx::PgPool, site: &Site) -> Option<String> {
         Ok(Some(row)) => Some(bind_ip_value(Some(&row.ip))),
         Ok(None) => {
             // Unreachable while the FK holds.
-            tracing::warn!("Site {}: ip_id {ip_id} names no server_ips row — leaving the vhost's address as it is", site.domain);
+            tracing::warn!("Site {}: ip_id {ip_id} names no server_ips row - leaving the vhost's address as it is", site.domain);
             None
         }
         Err(e) => {
-            tracing::warn!("Site {}: could not read its address ({e}) — leaving the vhost's address as it is", site.domain);
+            tracing::warn!("Site {}: could not read its address ({e}) - leaving the vhost's address as it is", site.domain);
             None
         }
     }
@@ -334,7 +334,7 @@ pub async fn mail_ip_rows_by_ids(
 }
 
 /// `(A @, SPF ip4:)` for a mail domain, by name on its server. Either is `None`
-/// when the address it needs cannot be resolved — callers already treat that as
+/// when the address it needs cannot be resolved - callers already treat that as
 /// "unknown" (reads) or "refuse" (writes).
 pub async fn mail_dns_addresses_for(
     db: &sqlx::PgPool,
@@ -368,7 +368,7 @@ pub async fn mail_dns_addresses_for(
 }
 
 /// The mail-sync fields for one domain: `(send_ip, helo)`. Both null when the
-/// domain sends from the primary address — including a forced address that the
+/// domain sends from the primary address - including a forced address that the
 /// agent reports as its primary, which needs no dedicated transport.
 pub fn sync_send_fields(send: &SendIp, agent_primary: Option<&str>) -> (Option<String>, Option<String>) {
     match &send.ip {

@@ -25,13 +25,13 @@ fn backup_dir(db_name: &str) -> PathBuf {
 /// general-purpose route validator in another module: that validator exists to
 /// keep shell arguments safe and can reasonably be widened for a reason that has
 /// nothing to do with this, and the blast radius here is a directory that gets
-/// removed. So the purge owns its charset, and the charset admits no dot at all —
+/// removed. So the purge owns its charset, and the charset admits no dot at all -
 /// `.` and `..` cannot be SPELLED, rather than being spelled and then refused.
 ///
 /// ⚠ Deliberately a SUPERSET of the shared validator, never a narrowing: same
 /// characters plus no rule about the first one, same length. A name that door
 /// accepts, this one accepts. Making it narrower is how a dump door quietly stops
-/// answering for some database nobody thought about — an imported one, most
+/// answering for some database nobody thought about - an imported one, most
 /// likely, since a migration does not go through the panel's own create form.
 pub fn is_db_dir_name(name: &str) -> bool {
     !name.is_empty()
@@ -44,20 +44,20 @@ pub fn is_db_dir_name(name: &str) -> bool {
 /// Names this module MINTED, as opposed to names it merely accepts.
 ///
 /// ⚠ The distinction is the whole safety of the purge, and the obvious predicate
-/// gets it wrong. The one guarding the import door is an EXTENSION test — it says
+/// gets it wrong. The one guarding the import door is an EXTENSION test - it says
 /// whether a file can be read as a dump, which is exactly what an operator's
 /// hand-placed `dump.sql.gz` is designed to satisfy. Deleting on that basis would
 /// take the staged import the product's own screen tells them to put here, and
 /// the set of files it would take is a superset of the set it would keep.
 ///
 /// So this asks the narrower question: does the name have the shape this module
-/// writes — the database's own name, a timestamp, and an extension it mints? A
+/// writes - the database's own name, a timestamp, and an extension it mints? A
 /// file the operator named survives, and the directory survives with it.
 fn is_minted_dump_name(db_name: &str, name: &str) -> bool {
     let Some(rest) = name.strip_prefix(&format!("{db_name}-")) else {
         return false;
     };
-    // `{db_name}-%Y%m%d-%H%M%S.<ext>` — 15 characters of timestamp, then the
+    // `{db_name}-%Y%m%d-%H%M%S.<ext>` - 15 characters of timestamp, then the
     // extension, optionally followed by the encryption suffix.
     let Some((stamp, ext)) = rest.split_once('.') else {
         return false;
@@ -73,22 +73,22 @@ fn is_minted_dump_name(db_name: &str, name: &str) -> bool {
 /// Remove a database's dump directory, once nothing owns it any more.
 ///
 /// Deleting a database has always taken its container and its rows and left the
-/// dumps behind — unreferenced, unreachable through any list, and counted by no
+/// dumps behind - unreferenced, unreachable through any list, and counted by no
 /// retention policy, because retention only ever unlinks paths named by rows
 /// that still exist. They are simply there, and on a box that recycles
 /// database names they accumulate for the life of the machine.
 ///
 /// ⛔ The caller decides WHETHER, not this function. A dump directory is keyed by
 /// database NAME alone while the name is unique only per site, so two live
-/// databases on two different sites share one directory — purging on the first
+/// databases on two different sites share one directory - purging on the first
 /// delete would destroy the survivor's backups. That check needs the database,
 /// so it lives in the panel; what lives here is the refusal to do anything
 /// surprising once asked.
 ///
 /// Deliberately not a recursive delete. It unlinks the files this module knows
 /// how to write and then removes the directory only if that emptied it, so a
-/// directory holding anything else — an operator's staged import, a file some
-/// future version writes — survives with its contents, and no future bug in the
+/// directory holding anything else - an operator's staged import, a file some
+/// future version writes - survives with its contents, and no future bug in the
 /// name guard can escalate into erasing a tree.
 pub async fn purge_dir(db_name: &str) -> Result<PurgeReport, String> {
     if !is_db_dir_name(db_name) {
@@ -235,7 +235,7 @@ pub async fn dump_mysql(
         std::time::Duration::from_secs(600),
         async {
             // wait_with_output (not wait): docker_child's stderr is piped above but was
-            // never otherwise drained — mariadb-dump writing past the pipe buffer (many
+            // never otherwise drained - mariadb-dump writing past the pipe buffer (many
             // routines/triggers, or NOTICE-level chatter) would block on write(2) and hang
             // the dump until this outer timeout, same bug class as the missing kill_on_drop.
             let docker_output = docker_child.wait_with_output().await
@@ -354,7 +354,7 @@ pub async fn dump_postgres(
         std::time::Duration::from_secs(600),
         async {
             // wait_with_output (not wait): docker_child's stderr is piped above but was
-            // never otherwise drained — pg_dump writing past the pipe buffer (many
+            // never otherwise drained - pg_dump writing past the pipe buffer (many
             // objects, or NOTICE-level chatter) would block on write(2) and hang the
             // dump until this outer timeout, same bug class as the missing kill_on_drop.
             let docker_output = docker_child.wait_with_output().await
@@ -421,7 +421,7 @@ pub async fn dump_mongo(
     let _filepath_str = filepath.to_str().ok_or("Invalid path encoding")?;
 
     // mongodump --archive --gzip streams the archive on stdout. Stream it straight to the
-    // dump file rather than buffering the ENTIRE archive in the agent's RAM via .output() —
+    // dump file rather than buffering the ENTIRE archive in the agent's RAM via .output() -
     // a multi-GB Mongo DB would OOM-kill the shared root agent (a tenant-triggerable
     // cross-tenant DoS). The mysql/pg dump paths already stream via fd pipes; do the same
     // here. stderr is still captured for the failure message; stdout goes to the file fd.
@@ -456,7 +456,7 @@ pub async fn dump_mongo(
     .await;
 
     // On timeout the mongodump child is dropped (kill_on_drop=true) and killed, but the
-    // partially-streamed dump file remains on disk — remove it so it can't later surface as a
+    // partially-streamed dump file remains on disk - remove it so it can't later surface as a
     // "restorable" backup (the old .output() path never created a file until after success, so
     // this cleanup is new-code-specific). Clean up on a normal dump error too.
     let output = match output {
@@ -534,7 +534,7 @@ pub async fn restore_mysql(
             // (database.rs, backup_drill.rs, backup_verify.rs) already invokes
             // `mariadb`; this one did not, so restoring a MySQL/MariaDB dump
             // failed on every install with "executable file not found" while
-            // the DUMP half — which correctly calls `mariadb-dump` — worked.
+            // the DUMP half - which correctly calls `mariadb-dump` - worked.
             "mariadb", "-u", user, db_name,
         ])
         .stdin(gunzip_stdout.into_owned_fd().map_err(|_| "Failed to get fd")?)
@@ -547,7 +547,7 @@ pub async fn restore_mysql(
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(600),
         async {
-            // Fail the restore if decompression did not complete cleanly — a truncated
+            // Fail the restore if decompression did not complete cleanly - a truncated
             // .gz that ends on a statement boundary otherwise imports partially and the
             // mysql client exits 0 (EOF-as-success).
             let gunzip_status = gunzip_child.wait().await
@@ -560,7 +560,7 @@ pub async fn restore_mysql(
             if !docker_output.status.success() {
                 let stderr = String::from_utf8_lossy(&docker_output.stderr);
                 let stderr = stderr.trim();
-                // Never report a bare "restore failed:" with nothing after it —
+                // Never report a bare "restore failed:" with nothing after it -
                 // a failure with no reason is unactionable, and this path can
                 // fail with empty stderr (e.g. the client binary is missing and
                 // the runtime writes nothing we captured).
@@ -634,7 +634,7 @@ pub async fn restore_postgres(
         std::time::Duration::from_secs(600),
         async {
             // A truncated/corrupt .gz makes gunzip exit non-zero while psql sees a clean
-            // EOF at a statement boundary and exits 0 — the classic EOF-as-success trap.
+            // EOF at a statement boundary and exits 0 - the classic EOF-as-success trap.
             // Fail the restore if decompression did not complete cleanly.
             let gunzip_status = gunzip_child.wait().await
                 .map_err(|e| format!("gunzip wait error: {e}"))?;
@@ -672,7 +672,7 @@ pub async fn restore_mongo(
     }
 
     // Stream the archive from disk to mongorestore's stdin instead of reading the ENTIRE
-    // file into RAM (tokio::fs::read) — a multi-GB archive would OOM the shared root agent
+    // file into RAM (tokio::fs::read) - a multi-GB archive would OOM the shared root agent
     // (same cross-tenant DoS class as the dump path). tokio::io::copy pipes in bounded chunks.
     let mut file = tokio::fs::File::open(filepath).await
         .map_err(|e| format!("Failed to open backup file: {e}"))?;
@@ -740,8 +740,8 @@ pub fn list_db_backups(db_name: &str) -> Result<Vec<BackupInfo>, String> {
         // to `continue` here, which is why an operator could copy a dump into this
         // directory, see an empty list, and have nowhere to learn why.
         //
-        // The test is `is_safe_filename` itself — the same predicate `get_backup_path`
-        // enforces — so this listing cannot offer a name the opener would refuse. That
+        // The test is `is_safe_filename` itself - the same predicate `get_backup_path`
+        // enforces - so this listing cannot offer a name the opener would refuse. That
         // matters for more than tidiness: a filename with a space passes every check the
         // panel makes and then fails when it is put on a request line, which produced a
         // failure the panel could not describe.
@@ -784,14 +784,14 @@ pub fn list_db_backups(db_name: &str) -> Result<Vec<BackupInfo>, String> {
 /// What to tell an operator about a file that is in the directory but is not a backup
 /// this agent can open.
 ///
-/// A dump that is not gzipped is by far the likeliest thing to find here — plain
+/// A dump that is not gzipped is by far the likeliest thing to find here - plain
 /// `mysqldump > dump.sql` produces one, and it is exactly what someone reaching for
 /// database import already has. `restore_mysql` and `restore_postgres` pipe through
 /// `gunzip -c` unconditionally (and never capture gunzip's stderr), so the honest answer
 /// is to compress it rather than to widen the gate and find out at the end of a pipe.
 ///
 /// The second case is subtler and cost a real diagnosis: a name that LOOKS fine but
-/// carries a character `is_safe_filename` refuses — a space, most often, because
+/// carries a character `is_safe_filename` refuses - a space, most often, because
 /// `scp "my dump.sql.gz" …` is a natural thing to type. Such a name used to be listed
 /// as importable and then failed while the HTTP request line was being built, which is
 /// about as far from the operator's action as a failure can happen.
@@ -809,13 +809,13 @@ fn unusable_reason(db_name: &str, name: &str) -> String {
     if ext_ok {
         // The extension is right, so it was the charset that failed.
         format!(
-            "The name contains a character backups cannot use — spaces most often. \
+            "The name contains a character backups cannot use - spaces most often. \
              Rename it with: mv '{full}' {BACKUP_DIR}/{db_name}/{}",
             sanitise_suggestion(name)
         )
     } else if name.ends_with(".sql") || name.ends_with(".archive") || name.ends_with(".dump") {
         format!(
-            "Not compressed. Backups are read as .sql.gz — compress it in place with: gzip {full}"
+            "Not compressed. Backups are read as .sql.gz - compress it in place with: gzip {full}"
         )
     } else if name.ends_with(".zip") {
         format!(
@@ -832,7 +832,7 @@ fn unusable_reason(db_name: &str, name: &str) -> String {
 
 /// A pasteable replacement for a name the charset refuses.
 ///
-/// Only ever embedded in advice — nothing opens the result — but it is built with the
+/// Only ever embedded in advice - nothing opens the result - but it is built with the
 /// same charset `is_safe_filename` enforces, so following the advice actually works.
 fn sanitise_suggestion(name: &str) -> String {
     name.chars()
@@ -898,7 +898,7 @@ mod tests {
     #[test]
     fn dump_dir_name_never_refuses_what_the_shared_validator_accepts() {
         // ⭐ THE PROPERTY THAT MATTERS: superset, never narrower. The purge owning
-        // its charset is only safe if no name loses a door by the swap — and the
+        // its charset is only safe if no name loses a door by the swap - and the
         // length cap is where that nearly went wrong, since the two differed by
         // one and nothing in a database IMPORT applies the create form's limit.
         for n in ["wp_main", "db-legacy", "a", &"x".repeat(64)] {
@@ -912,7 +912,7 @@ mod tests {
 
     #[test]
     fn dump_dir_name_cannot_spell_a_traversal_at_all() {
-        // Not "blocks traversal" — cannot express it. A purge resolves this name
+        // Not "blocks traversal" - cannot express it. A purge resolves this name
         // to a directory it then removes, so the charset admitting no dot and no
         // separator is the property that matters, not a list of refusals.
         assert!(!is_db_dir_name("."));
@@ -930,7 +930,7 @@ mod tests {
         // ⭐ THE ASSERTION THAT KEEPS THE PROMISE. The product's own screen tells
         // operators to place an import here by hand, and the extension test that
         // guards the import door would have called that file a dump and deleted
-        // it — the exact opposite of what the purge documents about itself.
+        // it - the exact opposite of what the purge documents about itself.
         assert!(is_minted_dump_name("wp", "wp-20260821-140302.sql.gz"));
         assert!(is_minted_dump_name("wp", "wp-20260821-140302.sql.gz.enc"));
         assert!(is_minted_dump_name("wp", "wp-20260821-140302.archive.gz"));
@@ -986,7 +986,7 @@ mod tests {
         assert!(is_safe_filename("db-20260722-120000.archive.gz.enc"));
     }
 
-    /// The listing must offer exactly what `get_backup_path` will open — no more, or
+    /// The listing must offer exactly what `get_backup_path` will open - no more, or
     /// it advertises a file the opener refuses; no less, or a real backup disappears.
     #[test]
     fn the_listing_offers_exactly_what_the_opener_accepts() {
@@ -1006,7 +1006,7 @@ mod tests {
     /// ⛔ The bug this predicate was widened to catch. `scp "my dump.sql.gz" …` is a
     /// natural thing to type, and the name it produces has the right extension. It used
     /// to be listed as importable and then failed while the HTTP request line was being
-    /// built — a failure with no explanation available anywhere near the operator.
+    /// built - a failure with no explanation available anywhere near the operator.
     #[test]
     fn a_name_with_a_space_is_reported_rather_than_offered() {
         let name = "my dump.sql.gz";
@@ -1043,7 +1043,7 @@ mod tests {
 
         let other = unusable_reason("wordpress", "notes.txt");
         assert!(other.contains(".sql.gz"), "must name the accepted form: {other}");
-        // ⚠ It must NOT claim .enc forms are importable — the panel refuses those, and
+        // ⚠ It must NOT claim .enc forms are importable - the panel refuses those, and
         // two sentences on one screen disagreeing is worse than either alone.
         assert!(!other.contains(".enc"), "must not advertise .enc as importable: {other}");
     }

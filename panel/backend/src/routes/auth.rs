@@ -22,7 +22,7 @@ use crate::error::{internal_error, err, ApiError};
 /// stored hash to verify against, so that "no such account" and "this account
 /// signs in with an identity provider" cost what a real verification costs.
 ///
-/// Module-level rather than a local so a test can assert it actually parses —
+/// Module-level rather than a local so a test can assert it actually parses -
 /// the branches that use it call `.expect()`, and the whole point of those
 /// branches is that they must not be the ones that fail.
 const DUMMY_PASSWORD_HASH: &str =
@@ -59,7 +59,7 @@ pub struct LoginRequest {
     pub password: String,
 }
 
-/// GET /api/auth/setup-status — Check if setup is needed (no users exist).
+/// GET /api/auth/setup-status - Check if setup is needed (no users exist).
 pub async fn setup_status(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
@@ -71,7 +71,7 @@ pub async fn setup_status(
     Ok(Json(serde_json::json!({ "needs_setup": count.0 == 0 })))
 }
 
-/// POST /api/auth/setup — Create the initial admin user. Only works when no users exist.
+/// POST /api/auth/setup - Create the initial admin user. Only works when no users exist.
 pub async fn setup(
     State(state): State<AppState>,
     Json(body): Json<SetupRequest>,
@@ -109,13 +109,13 @@ pub async fn setup(
     // `email_verified` is TRUE here, and that is the whole difference between this
     // door and `register`. This is the bootstrap door: it runs once, only while the
     // table is empty, for the person who already has the box. It issues no
-    // `email_token` and sends no mail — so unlike a registration, there is no
+    // `email_token` and sends no mail - so unlike a registration, there is no
     // ceremony to complete and nobody to complete it against.
     //
     // Leaving it FALSE made the first administrator of every install a latent
     // lockout. `login` (:268) refuses an unverified account whenever `smtp_host` is
-    // merely NON-EMPTY, so the gate armed the moment the operator configured mail —
-    // against their own account — and BOTH exits needed the mail that was being
+    // merely NON-EMPTY, so the gate armed the moment the operator configured mail -
+    // against their own account - and BOTH exits needed the mail that was being
     // configured. The token door (:833) matches `WHERE email_token = $1`, and this
     // user has no token at all, so that door does not exist for them; the only other
     // writer is `reset_password`, which needs the forgot-password message. Reported
@@ -160,14 +160,14 @@ pub async fn setup(
     ))
 }
 
-/// POST /api/auth/login — Authenticate and return JWT in HttpOnly cookie.
+/// POST /api/auth/login - Authenticate and return JWT in HttpOnly cookie.
 pub async fn login(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(body): Json<LoginRequest>,
 ) -> Result<(StatusCode, [(header::HeaderName, String); 1], Json<serde_json::Value>), ApiError> {
     // Extract client IP for rate limiting.
-    // Use X-Real-IP (set by nginx from $remote_addr — trustworthy) and fall back
+    // Use X-Real-IP (set by nginx from $remote_addr - trustworthy) and fall back
     // to the peer address.  Do NOT trust X-Forwarded-For as it can be forged by
     // the client, allowing rate-limit bypass.
     let ip = headers
@@ -190,7 +190,7 @@ pub async fn login(
         }
     }
 
-    // GAP 68: IP whitelist check — block login from non-whitelisted IPs
+    // GAP 68: IP whitelist check - block login from non-whitelisted IPs
     enforce_panel_ip_allowlist(&state.db, &headers).await?;
 
     let user_opt: Option<User> = sqlx::query_as("SELECT * FROM users WHERE email = $1")
@@ -204,14 +204,14 @@ pub async fn login(
     let user = match user_opt {
         Some(u) => {
             // An account created through an identity provider has no password
-            // at all — `oauth.rs` stores the empty string — and an empty string
+            // at all - `oauth.rs` stores the empty string - and an empty string
             // is not a PHC string, so parsing it fails. Answering that with a
             // 500 made this door an oracle: a non-existent address and a
             // password account both answered 401, and the ONE class that
             // answered anything else was "this address exists and signs in with
             // SSO". Worse, the `?` returned above the two lines below it, so
             // the probe was neither counted against the rate limit nor written
-            // to the activity log the login-audit surface reads — an
+            // to the activity log the login-audit surface reads - an
             // unauthenticated, unthrottled, unlogged enumeration channel.
             //
             // Having no password is failing to present one, so it is answered
@@ -257,7 +257,7 @@ pub async fn login(
             // This is the branch that matters for detection and it is the one that
             // was never recorded. It used to pass the nil uuid, which
             // `fk_activity_logs_user` rejects, so the insert failed and the warning
-            // was swallowed — for every release this endpoint has existed. The
+            // was swallowed - for every release this endpoint has existed. The
             // wrong-password-for-a-real-account branch above names a real user and
             // therefore landed, so the panel recorded the one failure mode that is
             // NOT enumeration and dropped the one that is: credential stuffing and
@@ -276,7 +276,7 @@ pub async fn login(
         }
     };
 
-    // Success — clear rate limit for this IP
+    // Success - clear rate limit for this IP
     {
         let mut attempts = state.login_attempts.lock().unwrap_or_else(|e| e.into_inner());
         attempts.remove(&ip);
@@ -391,7 +391,7 @@ pub async fn login(
                 // "Have we seen this address before?" has to be asked of a
                 // record that outlives the answer. It used to count
                 // `user_sessions`, which the retention sweep truncates at 24
-                // hours (`auto_healer.rs`, "expired user sessions (>24h)") — so
+                // hours (`auto_healer.rs`, "expired user sessions (>24h)") - so
                 // every address became new again the day after it was last used
                 // and alerted for ever. On this panel that produced 25 identical
                 // "Login from new IP" notifications from 5 distinct addresses,
@@ -461,7 +461,7 @@ pub async fn login(
 /// True when this request arrived over HTTPS, either directly or via a reverse
 /// proxy that set X-Forwarded-Proto. Browsers reject Secure cookies on plain
 /// HTTP, so set Secure only when the connection is actually encrypted.
-/// Fixes #47 — HTTP-on-IP installs were stuck in a login bounce because the
+/// Fixes #47 - HTTP-on-IP installs were stuck in a login bounce because the
 /// previous logic set Secure whenever BASE_URL was empty.
 pub fn request_is_https(headers: &HeaderMap) -> bool {
     headers
@@ -477,7 +477,7 @@ pub(crate) fn cookie_secure_flag(headers: &HeaderMap) -> &'static str {
     // BASE_URL=https://<domain> when a domain is supplied, but the panel vhost
     // is served over plain HTTP until TLS is added. The old base_url=https
     // branch then forced a Secure cookie the browser silently dropped on the
-    // HTTP response, bouncing the very first login (#71 — the case the #47 fix
+    // HTTP response, bouncing the very first login (#71 - the case the #47 fix
     // left open). request_is_https is authoritative because the API only ever
     // listens on 127.0.0.1 behind nginx, so the scheme can only come from the
     // proxy header.
@@ -506,7 +506,7 @@ fn issue_session(
 /// passkey and OAuth doors answering from anywhere. Both of those issue exactly the
 /// same session cookie as the password door.
 ///
-/// Fails CLOSED when the proxy sends no `X-Real-IP` — an allowlist that cannot
+/// Fails CLOSED when the proxy sends no `X-Real-IP` - an allowlist that cannot
 /// identify the caller must not admit them (`helpers::panel_ip_allowed`).
 pub async fn enforce_panel_ip_allowlist(
     db: &sqlx::PgPool,
@@ -519,7 +519,7 @@ pub async fn enforce_panel_ip_allowlist(
     if let Some((ips,)) = whitelist {
         if !ips.trim().is_empty() {
             // Until v2.46.0 this compared the header to each entry as a STRING, so
-            // the CIDR ranges the docs promise never matched anything — an operator
+            // the CIDR ranges the docs promise never matched anything - an operator
             // who entered one locked themselves out instead of restricting access.
             let client_ip = headers.get("x-real-ip").and_then(|v| v.to_str().ok()).unwrap_or("");
             if !crate::helpers::panel_ip_allowed(&ips, client_ip) {
@@ -572,7 +572,7 @@ fn record_login_attempt(
 }
 
 /// Revoke ALL active sessions for a user: delete their `user_sessions` rows and
-/// blacklist every associated JWT `jti` — both in the in-memory blacklist (which
+/// blacklist every associated JWT `jti` - both in the in-memory blacklist (which
 /// `AuthUser` actually consults) AND the persistent `token_blacklist` table (so the
 /// revocation survives a restart). This is the ONLY correct way to cut off a
 /// still-valid token, because `AuthUser` authorizes from the stateless JWT and never
@@ -606,7 +606,7 @@ pub async fn revoke_all_user_sessions(state: &AppState, user_id: uuid::Uuid) {
     }
 }
 
-/// POST /api/auth/logout — Clear the auth cookie and blacklist the token JTI.
+/// POST /api/auth/logout - Clear the auth cookie and blacklist the token JTI.
 pub async fn logout(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -638,7 +638,7 @@ pub async fn logout(
     )
 }
 
-/// GET /api/auth/me — Return current authenticated user.
+/// GET /api/auth/me - Return current authenticated user.
 pub async fn me(AuthUser(claims): AuthUser) -> Json<serde_json::Value> {
     Json(serde_json::json!({
         "id": claims.sub,
@@ -655,7 +655,7 @@ pub struct RegisterRequest {
     pub password: String,
 }
 
-/// POST /api/auth/register — Self-registration (creates unverified user account).
+/// POST /api/auth/register - Self-registration (creates unverified user account).
 pub async fn register(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -707,7 +707,7 @@ pub async fn register(
         return Err(err(StatusCode::BAD_REQUEST, "Password must be at least 8 characters"));
     }
 
-    // Check email uniqueness — return generic success to prevent account enumeration
+    // Check email uniqueness - return generic success to prevent account enumeration
     let existing: Option<(uuid::Uuid,)> =
         sqlx::query_as("SELECT id FROM users WHERE email = $1")
             .bind(&body.email)
@@ -751,11 +751,11 @@ pub async fn register(
         }
     })?;
 
-    // Use the configured BASE_URL — never derive from request headers (attacker-controlled)
+    // Use the configured BASE_URL - never derive from request headers (attacker-controlled)
     let base_url = state.config.base_url.clone();
 
     // Send verification email
-    // Check if SMTP is configured — if not, auto-verify (self-hosted convenience)
+    // Check if SMTP is configured - if not, auto-verify (self-hosted convenience)
     let smtp_configured = {
         let row: Option<(String,)> = sqlx::query_as(
             "SELECT value FROM settings WHERE key = 'smtp_host'",
@@ -768,8 +768,8 @@ pub async fn register(
     };
 
     if !smtp_configured {
-        // No SMTP configured — auto-verify for self-hosted convenience
-        tracing::info!("SMTP not configured — auto-verifying {}", body.email);
+        // No SMTP configured - auto-verify for self-hosted convenience
+        tracing::info!("SMTP not configured - auto-verifying {}", body.email);
         sqlx::query(
             "UPDATE users SET email_verified = TRUE, email_token = NULL, updated_at = NOW() WHERE id = $1",
         )
@@ -784,7 +784,7 @@ pub async fn register(
             }
             Err(e) => {
                 tracing::warn!("Failed to send verification email to {}: {e}", body.email);
-                // Don't auto-verify — user must retry or admin must verify manually
+                // Don't auto-verify - user must retry or admin must verify manually
             }
         }
     }
@@ -862,7 +862,7 @@ pub struct VerifyEmailRequest {
     pub token: String,
 }
 
-/// POST /api/auth/verify-email — Verify email with token.
+/// POST /api/auth/verify-email - Verify email with token.
 pub async fn verify_email(
     State(state): State<AppState>,
     Json(body): Json<VerifyEmailRequest>,
@@ -890,7 +890,7 @@ pub struct ForgotPasswordRequest {
     pub email: String,
 }
 
-/// POST /api/auth/forgot-password — Request password reset email.
+/// POST /api/auth/forgot-password - Request password reset email.
 pub async fn forgot_password(
     State(state): State<AppState>,
     _headers: HeaderMap,
@@ -930,14 +930,14 @@ pub async fn forgot_password(
     };
 
     // A suspended account gets no reset token. Every other door already refuses
-    // one — login (:228), the JWT middleware (auth.rs:105), 2FA (:1184),
-    // passkeys and OAuth — and this was the single entry point with no role test
+    // one - login (:228), the JWT middleware (auth.rs:105), 2FA (:1184),
+    // passkeys and OAuth - and this was the single entry point with no role test
     // at all, so a reset issued here could never be used for anything anyway.
     //
     // ⚠ Return the SAME success body, never an error. The handler above answers
     // identically for every address on purpose, to defeat account enumeration; a
     // refusal here would turn it into an oracle that additionally discloses
-    // WHICH addresses are suspended — a worse leak than the one being closed,
+    // WHICH addresses are suspended - a worse leak than the one being closed,
     // handed to an unauthenticated caller.
     if user.role == "suspended" {
         return Ok(Json(success_msg));
@@ -956,7 +956,7 @@ pub async fn forgot_password(
     .await
     .map_err(|e| internal_error("forgot password", e))?;
 
-    // Use the configured BASE_URL — never derive from request headers (attacker-controlled)
+    // Use the configured BASE_URL - never derive from request headers (attacker-controlled)
     let base_url = state.config.base_url.clone();
 
     if let Err(e) = email::send_reset_email(&state.db, &body.email, &token, &base_url).await {
@@ -972,7 +972,7 @@ pub struct ResetPasswordRequest {
     pub password: String,
 }
 
-/// POST /api/auth/reset-password — Reset password with token.
+/// POST /api/auth/reset-password - Reset password with token.
 pub async fn reset_password(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1019,7 +1019,7 @@ pub async fn reset_password(
 
     // The same refusal as `forgot_password`, for a token minted before the
     // account was suspended. Answers with the sentence an unknown token gets, so
-    // it stays silent about why — the response shape is the disclosure here, and
+    // it stays silent about why - the response shape is the disclosure here, and
     // this endpoint has no enumeration defence of its own to lean on.
     if user.role == "suspended" {
         return Err(err(StatusCode::BAD_REQUEST, "Invalid or expired reset token"));
@@ -1090,7 +1090,7 @@ struct TwoFaClaims {
 
 /// Generate 10 recovery codes (16 chars each, hex).
 ///
-/// ⚠ These were 4 bytes — **32 bits** — and they are stored as an UNSALTED
+/// ⚠ These were 4 bytes - **32 bits** - and they are stored as an UNSALTED
 /// SHA-256 (`hash_token`), which is a fast hash. A 32-bit preimage space under a
 /// fast hash is exhaustible on ordinary hardware in seconds, so anyone holding a
 /// copy of the `users` table (a leaked backup, a read on a restored snapshot)
@@ -1104,8 +1104,8 @@ struct TwoFaClaims {
 /// not the other, and a migration cannot re-hash values it cannot read. Length is
 /// the lever that works without invalidating anybody's set.
 ///
-/// Older 8-character codes keep working — `try_recovery_code` compares hashes and
-/// never looks at length — and the field that accepts them takes both widths.
+/// Older 8-character codes keep working - `try_recovery_code` compares hashes and
+/// never looks at length - and the field that accepts them takes both widths.
 fn generate_recovery_codes() -> Vec<String> {
     use rand::Rng;
     let mut rng = rand::rng();
@@ -1117,14 +1117,14 @@ fn generate_recovery_codes() -> Vec<String> {
         .collect()
 }
 
-/// The 2FA challenge limiter — 5 attempts per 5 minutes, keyed on the user.
+/// The 2FA challenge limiter - 5 attempts per 5 minutes, keyed on the user.
 ///
 /// This lived inline inside `twofa_verify` and nowhere else, so it guarded the
 /// login door and only the login door. `twofa_disable` checks the SAME 6-digit
 /// code against the SAME secret in order to make the change that switches the
 /// factor OFF, and it could be guessed without limit: `check_current` runs with
 /// a skew of 1, so 3 codes out of 10^6 are live at any instant, and nothing sits
-/// above the handler either — the router layers only CORS, timeout and tracing
+/// above the handler either - the router layers only CORS, timeout and tracing
 /// (`main.rs`), and the `/api/` block `setup.sh` writes for the panel vhost
 /// carries no `limit_req`. The door that mints a session was rate-limited
 /// because a 6-digit code is guessable; the door that removes the requirement
@@ -1177,7 +1177,7 @@ fn twofa_rate_limit_clear(state: &AppState, user_id: uuid::Uuid) {
 const REAUTH_MAX_SESSION_AGE_SECS: i64 = 300;
 
 /// Proof presented when enrolling a new authenticator. Both fields are optional
-/// because the *first* request carries neither — that request IS the challenge,
+/// because the *first* request carries neither - that request IS the challenge,
 /// and the refusal it earns is what tells the client which fields to collect.
 #[derive(Deserialize, Default)]
 pub struct EnrolmentProof {
@@ -1217,17 +1217,17 @@ fn reauth_required(msg: &str, methods: &[&str], provider: Option<&str>) -> ApiEr
 /// **Why any one factor, and not the strongest.** The branches below are
 /// non-exclusive on purpose. The security-hardening guide tells a sole
 /// administrator who has lost both authenticator and recovery codes to register
-/// a passkey — that is the documented way back. Demanding a TOTP code here
+/// a passkey - that is the documented way back. Demanding a TOTP code here
 /// would refuse exactly those accounts at exactly the door that repairs them,
 /// which is the mistake `twofa_disable` above already had to be corrected for.
-/// Against the threat actually being closed — a hijacker holding a session
-/// cookie and neither the password nor the authenticator — a password is just
+/// Against the threat actually being closed - a hijacker holding a session
+/// cookie and neither the password nor the authenticator - a password is just
 /// as unanswerable as a code.
 ///
 /// **Why a freshness fallback rather than a refusal.** An account created
 /// through an identity provider has an empty password hash by construction and
 /// may hold no authenticator, so it can present nothing at all. Refusing it
-/// would bar those accounts from passkeys permanently — a subtraction wearing a
+/// would bar those accounts from passkeys permanently - a subtraction wearing a
 /// safeguard's clothes. It falls back to session age instead, which is a real
 /// but weaker bound: it stops a cookie replayed from another machine and buys
 /// little against script injection on the panel's own origin. Stated plainly so
@@ -1290,7 +1290,7 @@ pub async fn require_enrolment_proof(
                         1,
                         30,
                         secret,
-                        Some("DockPanel".to_string()),
+                        Some("CyberHunter - Panel".to_string()),
                         user.email.clone(),
                     ) {
                         passed = totp.check_current(candidate).unwrap_or(false);
@@ -1349,7 +1349,7 @@ fn recovery_codes_remaining(stored: &Option<String>) -> usize {
         .unwrap_or(0)
 }
 
-/// POST /api/auth/2fa/setup — Generate TOTP secret and return QR code.
+/// POST /api/auth/2fa/setup - Generate TOTP secret and return QR code.
 pub async fn twofa_setup(
     AuthUser(claims): AuthUser,
     State(state): State<AppState>,
@@ -1375,7 +1375,7 @@ pub async fn twofa_setup(
         1,
         30,
         secret.to_bytes().map_err(|e| internal_error("2FA setup", e))?,
-        Some("DockPanel".to_string()),
+        Some("CyberHunter - Panel".to_string()),
         user.email.clone(),
     )
     .map_err(|e| internal_error("2FA setup", e))?;
@@ -1413,7 +1413,7 @@ pub struct TwoFaVerifyRequest {
     pub code: String,
 }
 
-/// POST /api/auth/2fa/enable — Verify a TOTP code and enable 2FA.
+/// POST /api/auth/2fa/enable - Verify a TOTP code and enable 2FA.
 pub async fn twofa_enable(
     AuthUser(claims): AuthUser,
     State(state): State<AppState>,
@@ -1441,7 +1441,7 @@ pub async fn twofa_enable(
         .to_bytes()
         .map_err(|e| internal_error("2FA enable", e))?;
 
-    let totp = TOTP::new(Algorithm::SHA1, 6, 1, 30, secret, Some("DockPanel".to_string()), user.email.clone())
+    let totp = TOTP::new(Algorithm::SHA1, 6, 1, 30, secret, Some("CyberHunter - Panel".to_string()), user.email.clone())
         .map_err(|e| internal_error("2FA enable", e))?;
 
     if !totp.check_current(&body.code).map_err(|e| internal_error("2FA enable", e))? {
@@ -1490,7 +1490,7 @@ pub struct TwoFaLoginRequest {
     pub code: String,
 }
 
-/// POST /api/auth/2fa/verify — Complete login with TOTP code.
+/// POST /api/auth/2fa/verify - Complete login with TOTP code.
 pub async fn twofa_verify(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1522,7 +1522,7 @@ pub async fn twofa_verify(
         .await
         .map_err(|e| internal_error("2FA verify", e))?;
 
-    // Block suspended accounts at 2FA redemption too — closes the window where a
+    // Block suspended accounts at 2FA redemption too - closes the window where a
     // temp token was minted just before suspension.
     if user.role == "suspended" {
         return Err(err(StatusCode::FORBIDDEN, "Account suspended"));
@@ -1556,7 +1556,7 @@ pub async fn twofa_verify(
         .to_bytes()
         .map_err(|e| internal_error("2FA verify", e))?;
 
-    let totp = TOTP::new(Algorithm::SHA1, 6, 1, 30, secret, Some("DockPanel".to_string()), user.email.clone())
+    let totp = TOTP::new(Algorithm::SHA1, 6, 1, 30, secret, Some("CyberHunter - Panel".to_string()), user.email.clone())
         .map_err(|e| internal_error("2FA verify", e))?;
 
     let code_valid = totp.check_current(&body.code)
@@ -1571,7 +1571,7 @@ pub async fn twofa_verify(
         }
     }
 
-    // Successful verification — clear rate limit
+    // Successful verification - clear rate limit
     twofa_rate_limit_clear(&state, user_id);
 
     let (_token, cookie, jti) = issue_session(&state, &user, &headers)?;
@@ -1655,7 +1655,7 @@ pub struct TwoFaDisableRequest {
     pub code: String,
 }
 
-/// POST /api/auth/2fa/disable — Disable 2FA (requires a current TOTP code OR a
+/// POST /api/auth/2fa/disable - Disable 2FA (requires a current TOTP code OR a
 /// recovery code; the latter is the only route back for a lost authenticator).
 pub async fn twofa_disable(
     AuthUser(claims): AuthUser,
@@ -1675,7 +1675,7 @@ pub async fn twofa_disable(
 
     // Same limiter as the login door. This route verifies the same 6-digit code
     // against the same secret, and what it does on success is REMOVE the factor,
-    // so it is the more attractive of the two to guess at — see
+    // so it is the more attractive of the two to guess at - see
     // `twofa_rate_limit_check`.
     twofa_rate_limit_check(&state, claims.sub)?;
 
@@ -1690,7 +1690,7 @@ pub async fn twofa_disable(
         .to_bytes()
         .map_err(|e| internal_error("2FA disable", e))?;
 
-    let totp = TOTP::new(Algorithm::SHA1, 6, 1, 30, secret, Some("DockPanel".to_string()), user.email.clone())
+    let totp = TOTP::new(Algorithm::SHA1, 6, 1, 30, secret, Some("CyberHunter - Panel".to_string()), user.email.clone())
         .map_err(|e| internal_error("2FA disable", e))?;
 
     // A current TOTP code OR one of the recovery codes, exactly like the login
@@ -1699,7 +1699,7 @@ pub async fn twofa_disable(
     // Accepting only `check_current` made losing the authenticator app a dead
     // end: the recovery codes let you IN (`try_recovery_code` below is the same
     // helper the login flow calls), and then nothing you held could ever turn
-    // 2FA off or re-enrol a new device — while the panel offers no admin-side
+    // 2FA off or re-enrol a new device - while the panel offers no admin-side
     // 2FA reset either. The codes exist to be the fallback; refusing them at the
     // one door that repairs the account is a lockout wearing a safeguard's
     // clothes. This became urgent when enrolment moved to `/account`, where
@@ -1742,20 +1742,20 @@ pub struct TwoFaRegenerateRequest {
     pub code: String,
 }
 
-/// POST /api/auth/2fa/recovery-codes — Issue a fresh set of recovery codes.
+/// POST /api/auth/2fa/recovery-codes - Issue a fresh set of recovery codes.
 ///
 /// Recovery codes were written exactly once, at enrolment, and consumed one at a
 /// time: after ten recovery logins the fallback was silently gone, and there was
 /// no way to mint more short of disabling 2FA and enrolling again. Worse, every
-/// account that enrolled before v2.83.0 holds ten codes it was NEVER SHOWN — the
+/// account that enrolled before v2.83.0 holds ten codes it was NEVER SHOWN - the
 /// block that draws them sat inside the branch the enable handler cleared in the
-/// same breath — so those accounts have a fallback on paper and none in fact.
+/// same breath - so those accounts have a fallback on paper and none in fact.
 /// This is the door that repairs them WITHOUT losing the enrolment, and it is
 /// why the route accepts a live TOTP code: someone who still has their
 /// authenticator can fix themselves, today, with no administrator involved.
 ///
 /// A recovery code is accepted too, for the same reason `twofa_disable` accepts
-/// one — it is the same authority, and this is the gentler of the two things it
+/// one - it is the same authority, and this is the gentler of the two things it
 /// already permits. Rate-limited on the shared 2FA limiter.
 pub async fn twofa_regenerate_recovery_codes(
     AuthUser(claims): AuthUser,
@@ -1772,7 +1772,7 @@ pub async fn twofa_regenerate_recovery_codes(
     if !user.totp_enabled {
         return Err(err(
             StatusCode::BAD_REQUEST,
-            "2FA is not enabled — recovery codes are issued when you enrol",
+            "2FA is not enabled - recovery codes are issued when you enrol",
         ));
     }
 
@@ -1788,7 +1788,7 @@ pub async fn twofa_regenerate_recovery_codes(
     let secret = Secret::Encoded(secret_b32)
         .to_bytes()
         .map_err(|e| internal_error("2FA recovery codes", e))?;
-    let totp = TOTP::new(Algorithm::SHA1, 6, 1, 30, secret, Some("DockPanel".to_string()), user.email.clone())
+    let totp = TOTP::new(Algorithm::SHA1, 6, 1, 30, secret, Some("CyberHunter - Panel".to_string()), user.email.clone())
         .map_err(|e| internal_error("2FA recovery codes", e))?;
 
     let code_valid = totp
@@ -1803,8 +1803,8 @@ pub async fn twofa_regenerate_recovery_codes(
     }
     twofa_rate_limit_clear(&state, claims.sub);
 
-    // Replaces the whole set, so any code still outstanding — including one just
-    // spent getting in here — stops working. That is the point: the old set is
+    // Replaces the whole set, so any code still outstanding - including one just
+    // spent getting in here - stops working. That is the point: the old set is
     // the one the user could not read.
     let codes = generate_recovery_codes();
     let hashed_codes: Vec<String> = codes.iter().map(|c| hash_token(c)).collect();
@@ -1835,14 +1835,14 @@ pub async fn twofa_regenerate_recovery_codes(
     })))
 }
 
-/// GET /api/auth/2fa/status — Check if 2FA is enabled for the current user.
+/// GET /api/auth/2fa/status - Check if 2FA is enabled for the current user.
 pub async fn twofa_status(
     AuthUser(claims): AuthUser,
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     // `recovery_codes` rides along so the page can say how many are LEFT. They are
     // consumed one per recovery login and were never counted anywhere the user
-    // could see, so an account could arrive at zero — no fallback at all — while
+    // could see, so an account could arrive at zero - no fallback at all - while
     // its 2FA card still read "2FA is enabled" and nothing else.
     let row: (bool, Option<String>) =
         sqlx::query_as("SELECT totp_enabled, recovery_codes FROM users WHERE id = $1")
@@ -1853,7 +1853,7 @@ pub async fn twofa_status(
 
     // `enforced` rides along here because this is the only 2FA read a NON-ADMIN can
     // make. The layout's "Two-factor authentication is required" banner asked
-    // `GET /api/settings` for it — an `AdminUser` route — and swallowed the 403 in
+    // `GET /api/settings` for it - an `AdminUser` route - and swallowed the 403 in
     // an empty catch, so `twoFaEnforced` stayed at its `useState(false)` for every
     // non-admin and the banner could only ever render for the one role that does
     // not need telling. The operator flipped "Require 2FA for all users" and the
@@ -1867,10 +1867,10 @@ pub async fn twofa_status(
     // objection no longer holds. What holds now is the hazard list nobody has
     // costed: OAuth-provisioned accounts that have no password to fall back on,
     // the bootstrap admin, and callers that are not browsers. Enforcement is a
-    // product decision, not a missing line — and until it is taken, `enforce_2fa`
+    // product decision, not a missing line - and until it is taken, `enforce_2fa`
     // does not refuse anything (`login` sets a `twofa_required` flag on the
     // response body and issues the session cookie regardless).
-    // `settings.value` is `TEXT NOT NULL`, so the row is either present or absent —
+    // `settings.value` is `TEXT NOT NULL`, so the row is either present or absent -
     // an absent key means the operator never turned it on.
     let enforced: Option<(String,)> =
         sqlx::query_as("SELECT value FROM settings WHERE key = 'enforce_2fa'")
@@ -1887,7 +1887,7 @@ pub async fn twofa_status(
 
 // ─── Password Change & Session Revocation ───────────────────────────────
 
-/// POST /api/auth/change-password — Change own password.
+/// POST /api/auth/change-password - Change own password.
 pub async fn change_password(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -1912,7 +1912,7 @@ pub async fn change_password(
 
     let hash = user.ok_or_else(|| err(StatusCode::NOT_FOUND, "User not found"))?.0;
 
-    // OAuth users have no password hash — they must use their OAuth provider
+    // OAuth users have no password hash - they must use their OAuth provider
     if hash.is_empty() {
         return Err(err(StatusCode::BAD_REQUEST, "OAuth users cannot change passwords. Use your OAuth provider instead."));
     }
@@ -1975,7 +1975,7 @@ pub async fn change_password(
     Ok(Json(serde_json::json!({ "ok": true, "message": "Password changed successfully" })))
 }
 
-/// POST /api/auth/revoke-all — Revoke all active sessions (forces re-login for everyone).
+/// POST /api/auth/revoke-all - Revoke all active sessions (forces re-login for everyone).
 /// Admin-only: only admins can force everyone to re-login.
 pub async fn revoke_all_sessions(
     State(state): State<AppState>,
@@ -1983,7 +1983,7 @@ pub async fn revoke_all_sessions(
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let now = chrono::Utc::now();
-    // Store a timestamp marker — auth middleware checks this to invalidate older tokens
+    // Store a timestamp marker - auth middleware checks this to invalidate older tokens
     sqlx::query(
         "INSERT INTO settings (key, value, updated_at) VALUES ('sessions_revoked_at', $1, NOW()) \
          ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()",
@@ -2014,7 +2014,7 @@ pub async fn revoke_all_sessions(
 
 // ─── Session Management ─────────────────────────────────────────────────────
 
-/// GET /api/auth/sessions — List active sessions for the current user.
+/// GET /api/auth/sessions - List active sessions for the current user.
 pub async fn list_sessions(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -2053,7 +2053,7 @@ pub async fn list_sessions(
     Ok(Json(serde_json::json!({ "sessions": result })))
 }
 
-/// DELETE /api/auth/sessions/{id} — Revoke a specific session.
+/// DELETE /api/auth/sessions/{id} - Revoke a specific session.
 pub async fn revoke_session(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -2092,7 +2092,7 @@ pub async fn revoke_session(
     }
 }
 
-/// GET /api/auth/export-my-data — Export all personal data (GDPR)
+/// GET /api/auth/export-my-data - Export all personal data (GDPR)
 pub async fn export_my_data(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -2139,7 +2139,7 @@ mod login_credential_tests {
 
     /// The mechanism behind the OAuth-only 500. `oauth.rs` creates accounts
     /// with an empty `password_hash`, and an empty string is not a PHC string,
-    /// so the login handler's parse fails — which it used to answer with a 500,
+    /// so the login handler's parse fails - which it used to answer with a 500,
     /// making the door an enumeration oracle for identity-provider accounts.
     #[test]
     fn an_empty_password_hash_cannot_be_parsed() {

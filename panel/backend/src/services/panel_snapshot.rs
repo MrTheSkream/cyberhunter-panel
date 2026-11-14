@@ -1,10 +1,10 @@
 //! Phase 4 W4: persistent panel snapshots.
 //!
 //! Builds tar.gz triplets containing:
-//!   binaries/   — agent + api + cli binary copies
-//!   db/         — gzipped pg_dump of the DockPanel database
-//!   etc/        — copy of /etc/dockpanel
-//!   metadata.json — provenance (from_version, trigger, operator)
+//!   binaries/   - agent + api + cli binary copies
+//!   db/         - gzipped pg_dump of the CyberHunter - Panel database
+//!   etc/        - copy of /etc/dockpanel
+//!   metadata.json - provenance (from_version, trigger, operator)
 //!
 //! Stored in `/var/backups/dockpanel/snapshots/`. The orchestrator creates
 //! one BEFORE invoking `update.sh`; the resulting file outlives the
@@ -179,7 +179,7 @@ pub async fn create_snapshot(
     .await;
 
     if let Err(e) = row_result {
-        // DB row didn't land — remove the file so we don't leak orphans.
+        // DB row didn't land - remove the file so we don't leak orphans.
         let _ = tokio::fs::remove_file(&final_path).await;
         return Err(SnapshotError::Db(e));
     }
@@ -229,7 +229,7 @@ async fn build_snapshot_inner(
     //
     // `set -o pipefail` is load-bearing, not style. The exit status of
     // `pg_dump | gzip` is gzip's, and gzip cheerfully compresses a truncated
-    // stream and exits 0 — so without it a pg_dump that died halfway (or never
+    // stream and exits 0 - so without it a pg_dump that died halfway (or never
     // connected) produced a short dump, this check passed, and the snapshot was
     // stored with a perfectly valid sha256 over perfectly incomplete contents.
     // A backup that cannot be restored is worse than no backup, because the
@@ -258,7 +258,7 @@ async fn build_snapshot_inner(
     let dump_tail = Command::new("bash")
         .arg("-c")
         .arg(format!(
-            // Wider than the marker's current position on purpose — see the same
+            // Wider than the marker's current position on purpose - see the same
             // check in restore-snapshot.sh. A trailing `\unrestrict` line added by
             // PostgreSQL's August-2025 minors left the marker 5 lines from the end
             // with zero margin; one more trailer and every snapshot would be
@@ -271,14 +271,14 @@ async fn build_snapshot_inner(
     if !String::from_utf8_lossy(&dump_tail.stdout).contains("PostgreSQL database dump complete") {
         return Err(SnapshotError::Subprocess {
             cmd: "pg_dump".into(),
-            stderr: "database dump is incomplete (completion marker absent) — \
+            stderr: "database dump is incomplete (completion marker absent) - \
                      refusing to store a snapshot that could not be restored"
                 .into(),
         });
     }
 
     // Copy /etc/dockpanel into staging. The tree is small (api.env, ssl/,
-    // a handful of small text files) — recursive cp via tar piped is
+    // a handful of small text files) - recursive cp via tar piped is
     // simplest and preserves permissions cleanly.
     let etc_status = Command::new("sh")
         .arg("-c")
@@ -336,14 +336,14 @@ async fn build_snapshot_inner(
 
     // Tighten BEFORE the rename, so the tarball is never observable at the
     // final path with a permissive mode. It carries api.env (JWT_SECRET, DB
-    // password), agent.token and the agent TLS key — tar created it 0644.
+    // password), agent.token and the agent TLS key - tar created it 0644.
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o600))?;
     }
 
-    // Atomic rename — the tar.gz only becomes "real" once this succeeds.
+    // Atomic rename - the tar.gz only becomes "real" once this succeeds.
     tokio::fs::rename(&tmp_path, &final_path).await?;
 
     Ok((size_bytes, sha256, from_version))
@@ -364,7 +364,7 @@ const RESTORE_SCRIPT_PATH: &str = "/var/lib/dockpanel/restore-snapshot.sh";
 
 /// Validate a snapshot and hand the restore to a detached, PID1-owned process.
 ///
-/// Returns as soon as the restore has been *started* — it cannot be awaited,
+/// Returns as soon as the restore has been *started* - it cannot be awaited,
 /// because the very first thing it does is stop the api process this code runs
 /// in. Everything that can be checked cheaply (row exists, file present, sha256
 /// matches) is checked HERE, synchronously, so the operator gets a real 4xx
@@ -389,7 +389,7 @@ pub async fn spawn_restore(pool: &PgPool, snapshot_id: Uuid) -> Result<(), Snaps
         return Err(SnapshotError::FileMissing(file_path));
     }
 
-    // Verify before we hand off. The script re-verifies (it must — it is the one
+    // Verify before we hand off. The script re-verifies (it must - it is the one
     // that acts), but failing here turns a corrupt snapshot into a synchronous
     // error the operator sees immediately instead of a result file they have to
     // go looking for.
@@ -418,7 +418,7 @@ pub async fn spawn_restore(pool: &PgPool, snapshot_id: Uuid) -> Result<(), Snaps
     // A PID1-owned transient SERVICE, not a scope and not a bare child: this
     // process is about to stop dockpanel-api.service, and dockpanel-api.service
     // is KillMode=control-group, so anything still inside that cgroup dies with
-    // it. `--scope` is not a substitute — it is created in the caller's context
+    // it. `--scope` is not a substitute - it is created in the caller's context
     // and dies with the invoking session (lesson #47).
     let status = Command::new("systemd-run")
         .args([
@@ -457,7 +457,7 @@ pub async fn spawn_restore(pool: &PgPool, snapshot_id: Uuid) -> Result<(), Snaps
 /// The verdict written by the last detached restore, if any.
 ///
 /// The restore stops and restarts the api, so its outcome cannot be returned
-/// through the request that started it — this file is how the operator finds out
+/// through the request that started it - this file is how the operator finds out
 /// what happened, and it is written on EVERY exit path including aborts.
 pub async fn last_restore_result() -> Option<serde_json::Value> {
     let raw = tokio::fs::read_to_string(RESTORE_RESULT_PATH).await.ok()?;
@@ -474,7 +474,7 @@ pub async fn list_snapshots(pool: &PgPool) -> Result<Vec<PanelSnapshot>, Snapsho
     Ok(rows)
 }
 
-/// Delete one snapshot — removes file then DB row. File-first so the row
+/// Delete one snapshot - removes file then DB row. File-first so the row
 /// always reflects on-disk reality (no row-without-file states linger).
 pub async fn delete_snapshot(pool: &PgPool, snapshot_id: Uuid) -> Result<(), SnapshotError> {
     let row: Option<PanelSnapshot> =
@@ -511,7 +511,7 @@ pub async fn retention_sweep(pool: &PgPool) -> Result<u32, SnapshotError> {
             if let Err(e) = tokio::fs::remove_file(&snap.file_path).await {
                 if e.kind() != std::io::ErrorKind::NotFound {
                     tracing::warn!(
-                        "retention sweep: failed to delete {}: {e} — keeping row",
+                        "retention sweep: failed to delete {}: {e} - keeping row",
                         &snap.file_path
                     );
                     continue;
@@ -547,7 +547,7 @@ async fn ensure_dirs() -> Result<(), SnapshotError> {
     // A panel snapshot bundles /etc/dockpanel: api.env (JWT_SECRET + the
     // Postgres password), agent.token, and the agent's TLS private key. The
     // directories defaulted to 0755 and the tarballs to 0644, so on a box with
-    // any untrusted local user — the normal case for a hosting panel — the
+    // any untrusted local user - the normal case for a hosting panel - the
     // panel's signing secret was world-readable, and anyone who read it could
     // mint an admin JWT. Lock the directories down here and each tarball at
     // creation; harden retroactively so boxes that already took snapshots under
@@ -582,7 +582,7 @@ async fn check_free_disk(path: &str, required: u64) -> Result<(), SnapshotError>
     {
         Ok(o) => o,
         Err(e) => {
-            tracing::warn!("df failed: {e} — skipping free-disk check");
+            tracing::warn!("df failed: {e} - skipping free-disk check");
             return Ok(());
         }
     };
@@ -597,7 +597,7 @@ async fn check_free_disk(path: &str, required: u64) -> Result<(), SnapshotError>
         }),
         Some(_) => Ok(()),
         None => {
-            tracing::warn!("df output unparseable — skipping free-disk check");
+            tracing::warn!("df output unparseable - skipping free-disk check");
             Ok(())
         }
     }
@@ -694,7 +694,7 @@ mod tests {
 
     #[tokio::test]
     async fn check_free_disk_passes_with_low_requirement() {
-        // 1 byte requirement against any path that exists — should pass.
+        // 1 byte requirement against any path that exists - should pass.
         let res = check_free_disk("/tmp", 1).await;
         assert!(res.is_ok(), "expected free-disk check to pass: {res:?}");
     }
@@ -702,7 +702,7 @@ mod tests {
     /// The database stage must be atomic and must stop on the first error.
     ///
     /// Without both of these, a restore stream that is cut short applies the
-    /// dump's leading DROP block, skips the rest, and exits 0 — measured on a
+    /// dump's leading DROP block, skips the rest, and exits 0 - measured on a
     /// lab box as 92 tables reduced to 1 while the caller recorded success.
     /// With both, the same truncated stream exits non-zero and leaves all 92
     /// tables intact. This test exists so that neither flag can be dropped
@@ -742,7 +742,7 @@ mod tests {
     /// The teardown carries the schema's owner and ACL back with it. The dump
     /// contains no GRANT/REVOKE and no CREATE SCHEMA, so a bare recreate would
     /// hand `public` to the restoring role and silently drop PUBLIC's USAGE
-    /// grant — changing the database's permissions on every rollback.
+    /// grant - changing the database's permissions on every rollback.
     #[test]
     fn restore_script_preserves_schema_ownership_and_grants() {
         assert!(
@@ -759,7 +759,7 @@ mod tests {
     ///
     /// A live producer in front of psql is the original defect in a new costume:
     /// if it dies mid-stream psql sees a clean EOF, and `--single-transaction`
-    /// then COMMITS whatever arrived — with the teardown that means a dropped
+    /// then COMMITS whatever arrived - with the teardown that means a dropped
     /// schema plus half a dump, while the pipeline's non-zero status makes the
     /// script report "nothing changed". This was written as a pipe first and
     /// caught in review; the pin is here so it cannot come back.
@@ -807,7 +807,7 @@ mod tests {
     }
 
     /// One transaction, not two. The teardown and the dump must commit or roll
-    /// back together — a separate psql for the DROP would leave a dropped schema
+    /// back together - a separate psql for the DROP would leave a dropped schema
     /// behind if the dump then failed, turning a safe failure into total loss.
     ///
     /// Counts only executable lines: this file explains itself at length, and a
@@ -834,7 +834,7 @@ mod tests {
         assert!(RESTORE_SCRIPT.contains("systemd-run"));
         assert!(
             !RESTORE_SCRIPT.contains("--scope"),
-            "a scope dies with the caller's session — this must be a transient service"
+            "a scope dies with the caller's session - this must be a transient service"
         );
     }
 
@@ -887,7 +887,7 @@ mod tests {
     /// transaction has committed and BEFORE the binaries are swapped back. The
     /// exit trap restarted `dockpanel-api` unconditionally, so a failure in
     /// either one restarted the still-installed NEWER api against a database
-    /// that had just been reverted — and that api migrated it forward again,
+    /// that had just been reverted - and that api migrated it forward again,
     /// quietly undoing the rollback while the result file said FAILED.
     ///
     /// Two independent guarantees, both required:
@@ -909,7 +909,7 @@ mod tests {
             trap.contains("rollback_would_be_undone"),
             "the exit trap must consult the window before restarting the api"
         );
-        // The agent may still come back — it holds no database. The api may not.
+        // The agent may still come back - it holds no database. The api may not.
         let restarts_api = trap
             .lines()
             .filter(|l| !l.trim_start().starts_with('#'))
@@ -917,7 +917,7 @@ mod tests {
             .count();
         assert_eq!(
             restarts_api, 1,
-            "the api must be restarted from exactly one branch of the trap — the \
+            "the api must be restarted from exactly one branch of the trap - the \
              one that has established the database and the binaries still agree"
         );
     }
@@ -971,7 +971,7 @@ mod tests {
 
     #[tokio::test]
     async fn check_free_disk_refuses_when_requirement_exceeds_partition() {
-        // 100 PiB on /tmp — should refuse (or fall through on weird envs).
+        // 100 PiB on /tmp - should refuse (or fall through on weird envs).
         let res = check_free_disk("/tmp", u64::MAX / 2).await;
         match res {
             Err(SnapshotError::InsufficientDisk { .. }) => {}

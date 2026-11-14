@@ -4,7 +4,7 @@ A GPU's video memory is above the configured threshold (default 90%). Out-of-mem
 
 ## Why this fired
 
-`nvidia-smi --query-gpu=memory.used,memory.total` reported VRAM used / total > threshold. Unlike CPU memory, GPU OOM does not invoke a kill — the workload itself raises a CUDA error and dies (or in inference servers, fails the request and continues).
+`nvidia-smi --query-gpu=memory.used,memory.total` reported VRAM used / total > threshold. Unlike CPU memory, GPU OOM does not invoke a kill - the workload itself raises a CUDA error and dies (or in inference servers, fails the request and continues).
 
 ## First check
 
@@ -22,7 +22,7 @@ A GPU's video memory is above the configured threshold (default 90%). Out-of-mem
 - Batch size set higher than VRAM headroom permits
 - Multiple model instances loaded "for warmup" but never unloaded
 - Cached KV blocks accumulating without eviction (LLM serving)
-- Memory fragmentation — `nvidia-smi --gpu-reset` requires draining first
+- Memory fragmentation - `nvidia-smi --gpu-reset` requires draining first
 
 ## Escalation
 

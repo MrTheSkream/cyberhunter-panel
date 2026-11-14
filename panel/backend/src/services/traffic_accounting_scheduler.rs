@@ -4,7 +4,7 @@
 //! auto-recovers) a site against its own `bandwidth_quota_mb`.
 //!
 //! Runs independently per site, so one unreachable agent or one slow parse
-//! never blocks the rest of the fleet — same shape as `deploy_scheduler` /
+//! never blocks the rest of the fleet - same shape as `deploy_scheduler` /
 //! `drill_scheduler`.
 
 use sqlx::PgPool;
@@ -172,7 +172,7 @@ async fn collect_one(pool: &PgPool, agents: &AgentRegistry, site: &TrafficSite, 
         }
         None => {
             // Quota was raised to "unlimited" while the site was still marked
-            // bandwidth-suspended — lift it now rather than leaving it disabled
+            // bandwidth-suspended - lift it now rather than leaving it disabled
             // for a limit that no longer exists.
             if site.bandwidth_suspended_at.is_some() {
                 recover_from_suspension(pool, &agent, site, "quota removed").await;
@@ -208,7 +208,7 @@ async fn suspend_for_quota(
 
     let used_mb = used_bytes / 1024 / 1024;
     tracing::warn!(
-        "Traffic accounting: auto-suspended {} — {used_mb} MB used of {quota_mb} MB quota",
+        "Traffic accounting: auto-suspended {} - {used_mb} MB used of {quota_mb} MB quota",
         site.domain
     );
     crate::services::activity::log_activity_system(

@@ -1,9 +1,9 @@
 /**
- * Every figure this site publishes about DockPanel, in one place.
+ * Every figure this site publishes about CyberHunter - Panel, in one place.
  *
  * The reason this file exists: s271 audited every number on the landing page
  * and corrected six of them, and s272 found three more still wrong in the same
- * file — including two entries of the same FAQ list that gave different answers
+ * file - including two entries of the same FAQ list that gave different answers
  * for the same measurement, three lines apart. Hand-auditing a page of numbers
  * does not converge, because the thing that rots is not any single figure, it
  * is having the figure written down in more than one place.
@@ -17,7 +17,7 @@
  * `tests/docs-claims-pin-e2e.sh` fails the build if this file and that table
  * ever disagree, so edit the register first.
  *
- * MB means MiB (2^20 bytes) — the unit `ls -lh`, `free -h` and `docker stats`
+ * MB means MiB (2^20 bytes) - the unit `ls -lh`, `free -h` and `docker stats`
  * print. The page used to quote binary sizes in that convention and memory
  * figures in decimal, which is its own quiet way of being wrong.
  */
@@ -36,7 +36,7 @@ export const measurements = {
    * Resident set on a live box, by cgroup accounting
    * (`systemctl show -p MemoryCurrent`), measured 2026-07-27.
    *
-   * No CI job can reproduce these — a GitHub runner has no DockPanel install —
+   * No CI job can reproduce these - a GitHub runner has no CyberHunter - Panel install -
    * so they expire instead: the scheduled check fails once the register's date
    * is older than its budget. A measurement nobody has retaken is a claim.
    */

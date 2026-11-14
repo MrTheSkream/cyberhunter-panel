@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression pins for s379 — the published documentation that described a
+# Regression pins for s379 - the published documentation that described a
 # different product.
 #
 # Every defect below was live at 200 on docs.dockpanel.dev when it was found.
@@ -9,14 +9,14 @@
 #   P1  `docs/api-reference.md` carried NINE rows naming a path or a method the
 #       router does not register, so a reader following the reference got 404 or
 #       405. Four of them (`/vol-backups`) named a path segment that has never
-#       existed — the real one is `/volume-backup(s)`. Meanwhile
+#       existed - the real one is `/volume-backup(s)`. Meanwhile
 #       `docs/guides/backup-orchestrator.md` and `docs/guides/status-page.md`
 #       carried the CORRECT tables, so two published surfaces contradicted each
 #       other and the reference was the wrong one.
 #       This is a REPEAT: `routes/mod.rs` already carries a comment, above the
 #       status-page unsubscribe route, recording that the handler doc, the guide
 #       prose and the guide's API table had all published DELETE while the route
-#       accepted POST only — "every reader who followed the documentation got a
+#       accepted POST only - "every reader who followed the documentation got a
 #       405". That time the ROUTE was widened to match the docs. Nothing was
 #       added to stop the next one, so there was a next one.
 #   P2  `docs/guides/themes.md` advertised six themes by names the panel does
@@ -34,7 +34,7 @@
 # The shape of the fix is the point: P1 is not a list of nine corrections, it is
 # a DERIVED check. It parses the router for the registered (method, path) set
 # and the reference for the documented one, and fails on any documented row the
-# router does not serve — so row ten is caught by the same arm, without anyone
+# router does not serve - so row ten is caught by the same arm, without anyone
 # noticing it.
 #
 # Pure source analysis: no box, no network, no build.
@@ -72,7 +72,7 @@ STRAY=$(grep -rl --include=*.rs '\.route(' panel/backend/src | grep -v 'routes/m
 if [ "$STRAY" -eq 0 ]; then
   ok "routes/mod.rs is the only file registering routes, so parsing it is complete"
 else
-  bad "routes are registered outside routes/mod.rs in $STRAY file(s) — this suite's parse is now partial"
+  bad "routes are registered outside routes/mod.rs in $STRAY file(s) - this suite's parse is now partial"
 fi
 
 ROUTE_REPORT=$(python3 - "$ROUTER" "$APIREF" <<'PY'
@@ -80,7 +80,7 @@ import re, sys
 router_path, doc_path = sys.argv[1], sys.argv[2]
 mod = open(router_path).read()
 
-# .route("<path>", get(..).post(..)) — the handler chain can span lines, so scan a
+# .route("<path>", get(..).post(..)) - the handler chain can span lines, so scan a
 # bounded window forward and stop at the next .route( so we never absorb a sibling.
 routes = {}
 for m in re.finditer(r'\.route\(\s*"([^"]+)"\s*,', mod):
@@ -119,10 +119,10 @@ for ln, meth, path in rows:
         continue          # SPA paths and external URLs are not this arm's subject
     n = norm(path)
     if n not in registered:
-        bad.append(f"{doc_path}:{ln} {meth} {path} — no such path in the router")
+        bad.append(f"{doc_path}:{ln} {meth} {path} - no such path in the router")
     elif meth not in registered[n]:
         have = ",".join(sorted(registered[n]))
-        bad.append(f"{doc_path}:{ln} {meth} {path} — 405, router registers {have}")
+        bad.append(f"{doc_path}:{ln} {meth} {path} - 405, router registers {have}")
 
 print(f"ENUM-OK {len(routes)} routes / {len(rows)} documented rows")
 for b in bad:
@@ -138,7 +138,7 @@ if [ "$ENUM_FAILED" -eq 1 ]; then
   bad "route/reference enumeration failed: $(printf '%s' "$ROUTE_REPORT" | grep '^ENUM-FAIL')"
 else
   ENUM=$(printf '%s' "$ROUTE_REPORT" | grep '^ENUM-OK')
-  ok "enumeration is non-empty and plausible — ${ENUM#ENUM-OK }"
+  ok "enumeration is non-empty and plausible - ${ENUM#ENUM-OK }"
   MISMATCHES=$(printf '%s' "$ROUTE_REPORT" | grep -c '^MISMATCH')
   if [ "$MISMATCHES" -eq 0 ]; then
     ok "every documented /api row resolves to a registered route AND method"
@@ -152,13 +152,13 @@ echo
 echo "── 2. the themes guide names the themes the panel ships ──"
 
 # Derive the shipped ids from the cycle order, which is the list the header
-# button walks — not from a hand-kept copy in this file.
+# button walks - not from a hand-kept copy in this file.
 SHIPPED=$(grep -oE 'const themeOrder = \[[^]]*\]' "$LAYOUT" | grep -oE '"[a-z-]+"' | tr -d '"')
 SHIPPED_N=$(printf '%s\n' "$SHIPPED" | grep -c .)
 if [ "$SHIPPED_N" -ge 4 ]; then
   ok "themeOrder enumerates $SHIPPED_N shipped themes"
 else
-  bad "could not read themeOrder from $LAYOUT (got $SHIPPED_N) — the arms below cannot be trusted"
+  bad "could not read themeOrder from $LAYOUT (got $SHIPPED_N) - the arms below cannot be trusted"
 fi
 
 # The retired names. These are the exact strings the guide published for months
@@ -175,12 +175,12 @@ done
 if grep -qF "Midnight" "$THEMES"; then
   [ "$RETIRED_HITS" -eq 0 ] && ok "themes.md advertises no retired theme name (control: \"Midnight\" still matches)"
 else
-  bad "positive control failed — \"Midnight\" not found in $THEMES, so the absence checks above prove nothing"
+  bad "positive control failed - \"Midnight\" not found in $THEMES, so the absence checks above prove nothing"
 fi
 
 # Every theme and layout the guide puts in its table must be one the panel
 # actually ships, compared on the DISPLAYED NAME. The id cannot be derived from
-# the name by slugging — the panel shows "Clean Light" for the id `clean` — so
+# the name by slugging - the panel shows "Clean Light" for the id `clean` - so
 # take the names from the same literal the Settings picker renders.
 #
 # Read line by line: a `for` over command substitution word-splits "Clean Dark"
@@ -190,13 +190,13 @@ SHIPPED_NAMES_N=$(printf '%s\n' "$SHIPPED_NAMES" | grep -c .)
 if [ "$SHIPPED_NAMES_N" -ge 6 ]; then
   ok "Settings.tsx enumerates $SHIPPED_NAMES_N shipped theme/layout names"
 else
-  bad "could not read theme/layout names from $SETTINGS (got $SHIPPED_NAMES_N) — the arm below cannot be trusted"
+  bad "could not read theme/layout names from $SETTINGS (got $SHIPPED_NAMES_N) - the arm below cannot be trusted"
 fi
 
 MISNAMED=0
 while IFS= read -r label; do
   [ -n "$label" ] || continue
-  # here-string, not a pipe — see the note above on grep -q under pipefail
+  # here-string, not a pipe - see the note above on grep -q under pipefail
   if ! grep -qxF "$label" <<<"$SHIPPED_NAMES"; then
     MISNAMED=$((MISNAMED+1))
     bad "themes.md names \"$label\", which the panel does not ship as a theme or layout"
@@ -229,7 +229,7 @@ CLI_FN=$(grep -rc 'fn ' panel/cli/src/main.rs | awk -F: '{print $NF}')
 if [ "${CLI_FN:-0}" -ge 1 ]; then
   ok "CLI crate is readable (control: main.rs matches 'fn ')"
 else
-  bad "positive control failed — cannot read panel/cli/src/main.rs, so the arm below proves nothing"
+  bad "positive control failed - cannot read panel/cli/src/main.rs, so the arm below proves nothing"
 fi
 DOC_CLI=$(grep -c 'dockpanel secrets' "$SECRETS")
 if [ "$DOC_CLI" -eq 0 ]; then
@@ -245,7 +245,7 @@ fi
 if grep -qF 'inject/{site_id}' "$SECRETS"; then
   ok "secrets.md documents the inject endpoint with its site segment"
 else
-  bad "secrets.md documents an inject endpoint without /{site_id} — the router has no such route"
+  bad "secrets.md documents an inject endpoint without /{site_id} - the router has no such route"
 fi
 
 # There is no rollback handler in routes/secrets.rs; the version list returns
@@ -268,7 +268,7 @@ SUBS_CONTROL=$(grep -rl 'status-page' panel/frontend/src 2>/dev/null | wc -l)
 if [ "$SUBS_CONTROL" -ge 1 ]; then
   ok "frontend is greppable for status-page callers (control: $SUBS_CONTROL file(s))"
 else
-  bad "positive control failed — no status-page reference anywhere in the frontend"
+  bad "positive control failed - no status-page reference anywhere in the frontend"
 fi
 if [ "$SUBS_DOC" -eq 0 ] || [ "$SUBS_CALLERS" -gt 0 ]; then
   ok "no guide sends the operator to a Subscribers screen the panel does not render"

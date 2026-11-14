@@ -5,7 +5,7 @@
 //! `EscalationStep.route` discriminated string into the set of user IDs
 //! whose `alert_rules` channels should receive a page.
 //!
-//! Both helpers are read-only — they never mutate state. Channel fanout
+//! Both helpers are read-only - they never mutate state. Channel fanout
 //! and the actual notification dispatch live in
 //! `services::notifications`.
 
@@ -17,7 +17,7 @@ use uuid::Uuid;
 ///
 /// Returns `None` when the schedule doesn't exist, has no members, or
 /// the row is otherwise unusable. Callers should treat that as
-/// "no on-call user — fall through to other route shapes."
+/// "no on-call user - fall through to other route shapes."
 ///
 /// Math: `idx = ((at - anchor_at).days / cadence_days) mod members.len`.
 /// `anchor_at` in the future folds back to `members[0]` (negative
@@ -53,11 +53,11 @@ pub async fn resolve_on_call_user(
 /// Translate a route discriminator string into the set of user IDs whose
 /// `alert_rules` channels should receive the page.
 ///
-/// - `"on_call_schedule:<uuid>"` — current on-call user at NOW().
-/// - `"user:<uuid>"` — exactly that user.
-/// - `"all_channels"` — empty vec. Caller falls back to the alert's owner.
-/// - `"webhook:<url>"` — empty vec. Caller handles webhook directly.
-/// - anything else — empty vec, debug-logged.
+/// - `"on_call_schedule:<uuid>"` - current on-call user at NOW().
+/// - `"user:<uuid>"` - exactly that user.
+/// - `"all_channels"` - empty vec. Caller falls back to the alert's owner.
+/// - `"webhook:<url>"` - empty vec. Caller handles webhook directly.
+/// - anything else - empty vec, debug-logged.
 pub async fn route_to_user_ids(pool: &PgPool, route: &str) -> Vec<Uuid> {
     if let Some(uuid_str) = route.strip_prefix("on_call_schedule:") {
         let Ok(sched_id) = Uuid::parse_str(uuid_str) else {
@@ -89,7 +89,7 @@ mod tests {
     use super::*;
     use chrono::Duration;
 
-    // Pure-math tests for the rotation index — no DB needed.
+    // Pure-math tests for the rotation index - no DB needed.
     // resolve_on_call_user wraps these in a SELECT.
 
     fn rotation_index(elapsed_days: i64, cadence_days: i64, member_count: usize) -> usize {

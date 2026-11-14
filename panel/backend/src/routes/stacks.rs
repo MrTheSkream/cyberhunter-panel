@@ -19,7 +19,7 @@ use super::tls_certificates::{
 
 /// The row plus the alias of the certificate it references, if any. A LEFT JOIN
 /// because most stacks reference none, and the alias is what the API and the
-/// deploy body speak — the id never leaves the panel.
+/// deploy body speak - the id never leaves the panel.
 const STACK_SELECT: &str = "SELECT s.id, s.user_id, s.server_id, s.name, s.yaml, s.service_count, \
                             s.domain, s.ssl_email, s.tls_mode, s.tls_certificate_id, \
                             c.alias AS tls_certificate, s.created_at, s.updated_at \
@@ -33,8 +33,8 @@ const TLS_MODES: [&str; 3] = ["none", "acme", "provided"];
 
 /// The mode a stack is in, from what the row says.
 ///
-/// The stored value wins. A NULL is a row written by an older binary — before
-/// the column existed, or after a rollback — and for such a row the address is
+/// The stored value wins. A NULL is a row written by an older binary - before
+/// the column existed, or after a rollback - and for such a row the address is
 /// the mode, exactly as the agent has always inferred it: a non-blank
 /// `ssl_email` means Let's Encrypt, anything else means plain HTTP.
 pub(crate) fn effective_tls_mode(tls_mode: Option<&str>, ssl_email: Option<&str>) -> &'static str {
@@ -52,7 +52,7 @@ pub(crate) fn effective_tls_mode(tls_mode: Option<&str>, ssl_email: Option<&str>
 }
 
 /// A requested mode, normalised, or a 400 for a word outside the vocabulary.
-/// `None` in means "the client did not say" — the caller decides what that
+/// `None` in means "the client did not say" - the caller decides what that
 /// means (derived from the address on create, the stored mode on update).
 ///
 /// `pub(crate)` since s414: reused by `routes::docker_apps::deploy` for
@@ -79,20 +79,20 @@ pub(crate) fn requested_tls_mode(raw: Option<&str>) -> Result<Option<&'static st
 /// Everything the panel decides about a stack's TLS before touching the agent.
 pub(crate) struct TlsPlan {
     pub(crate) mode: &'static str,
-    /// The address that will be STORED, in every mode — an edit that says
+    /// The address that will be STORED, in every mode - an edit that says
     /// nothing about the address keeps it, and a stack switched to `none` and
     /// back to `acme` finds it again. What the agent is SENT is decided by
     /// `deploy_email`, which withholds it outside acme mode.
     ssl_email: Option<String>,
     /// The alias, provided mode only.
     pub(crate) alias: Option<String>,
-    /// The registry row, provided mode only — resolved AND checked for coverage.
+    /// The registry row, provided mode only - resolved AND checked for coverage.
     certificate_id: Option<Uuid>,
 }
 
 impl TlsPlan {
     /// The address the AGENT is handed. Only an ACME order needs one, and an
-    /// agent older than the stored mode still infers the mode FROM the address —
+    /// agent older than the stored mode still infers the mode FROM the address -
     /// so a stack whose stored mode is `none` or `provided` is sent none, or that
     /// agent would order the certificate the operator switched off.
     pub(crate) fn deploy_email(&self) -> Option<&str> {
@@ -105,16 +105,16 @@ impl TlsPlan {
 }
 
 /// Turn a mode, an address and an alias into a plan, refusing every combination
-/// that cannot be served — before any row is written or any container touched.
+/// that cannot be served - before any row is written or any container touched.
 ///
 /// Provided mode is the door that reaches the agent: the alias must name a row
 /// on this server (400), the agent must be new enough to honour the mode at all
-/// (412, fail-closed), and the certificate must actually cover the domain — the
+/// (412, fail-closed), and the certificate must actually cover the domain - the
 /// agent's `cert_covers_domain` answers that, and its refusal passes through
 /// unchanged. This is binding point 3 of #104: SAN validation at claim time.
 ///
 /// `pub(crate)` since s414: reused by `routes::docker_apps::deploy` (template
-/// apps) so a template deploy can request `provided` mode too — the agent's
+/// apps) so a template deploy can request `provided` mode too - the agent's
 /// own `/apps/deploy` has accepted `tls_mode`/`tls_certificate` since
 /// `TlsIntent` was built, but nothing on the panel side ever sent them.
 pub(crate) async fn plan_tls(
@@ -176,7 +176,7 @@ pub(crate) async fn plan_tls(
 ///
 /// The agent never fails a deploy over its vhost: a refused or broken TLS leg
 /// is a warning inside a 200 with the containers running. For Let's Encrypt
-/// that is the right shape — the certificate can be ordered later. For a
+/// that is the right shape - the certificate can be ordered later. For a
 /// registered certificate it is the outage this feature exists to prevent, so
 /// the caller turns this into a 502 that names the cause.
 fn provided_tls_refusal(deploy_result: &serde_json::Value) -> Option<String> {
@@ -184,7 +184,7 @@ fn provided_tls_refusal(deploy_result: &serde_json::Value) -> Option<String> {
         return None;
     }
     // The agent puts the reason in `proxy_warning` and sets `tls_refused`
-    // beside it as a FLAG — a boolean, never the sentence. Reading the flag as
+    // beside it as a FLAG - a boolean, never the sentence. Reading the flag as
     // the sentence answered every refusal with the fallback below.
     let sentence = deploy_result
         .get("proxy_warning")
@@ -204,8 +204,8 @@ pub struct Stack {
     /// caller's `ServerScope` is a UI selection plus a local-agent fallback; it says which
     /// machine the operator is looking at, never which machine the stack is on.
     ///
-    /// `NOT NULL` in the schema — `20260319000000_multi_server.sql` backfills every row and
-    /// only then sets the constraint — so unlike `sites.server_id`, which predates the fleet
+    /// `NOT NULL` in the schema - `20260319000000_multi_server.sql` backfills every row and
+    /// only then sets the constraint - so unlike `sites.server_id`, which predates the fleet
     /// work and stayed optional, this is a plain `Uuid`. It gets wrapped in `Some` at the one
     /// place it meets the shared helper, rather than the type carrying a state the column
     /// cannot hold.
@@ -269,8 +269,8 @@ pub struct UpdateStackRequest {
 
 /// Did anything in the stack actually come up?
 ///
-/// The agent reports per-service outcomes inside a 200 — `deploy_compose`
-/// returns a result, never an `Err` — so a caller that only checks the HTTP
+/// The agent reports per-service outcomes inside a 200 - `deploy_compose`
+/// returns a result, never an `Err` - so a caller that only checks the HTTP
 /// status believes a stack deployed when none of it did.
 pub(crate) fn deployed_service_states(
     deploy_result: &serde_json::Value,
@@ -314,7 +314,7 @@ async fn claim_stack_domain(
     Ok(Some(claimed))
 }
 
-/// GET /api/stacks — List all stacks for the current user.
+/// GET /api/stacks - List all stacks for the current user.
 pub async fn list(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -376,7 +376,7 @@ pub async fn list(
     Ok(Json(serde_json::json!(result)))
 }
 
-/// GET /api/stacks/{id} — Get stack details with live service status.
+/// GET /api/stacks/{id} - Get stack details with live service status.
 ///
 /// Takes no `ServerScope`. Unlike `list`, which is a per-server inventory and is meant to be
 /// scoped by the caller, this reads one known row and must follow that row to its host.
@@ -397,7 +397,7 @@ pub async fn get_one(
 
     // `/apps` is one machine's container inventory, and the filter below matches on the
     // `stack_id` label, which only exists on the host that deployed it. Asked of any other
-    // host the list comes back with no match at all — and because a missing container is
+    // host the list comes back with no match at all - and because a missing container is
     // indistinguishable here from a stopped one, the endpoint answered `running: 0,
     // services: []` for a stack that was up. That is the shape of an outage, arrived at
     // without one, and an operator who acts on it stops or removes a healthy stack.
@@ -445,7 +445,7 @@ pub async fn get_one(
     })))
 }
 
-/// POST /api/stacks — Create and deploy a new stack.
+/// POST /api/stacks - Create and deploy a new stack.
 pub async fn create(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -465,7 +465,7 @@ pub async fn create(
     // The container-escape validator guarded `POST /api/apps/compose/deploy` and
     // nothing else, so the endpoint the UI actually posts to skipped it. The
     // agent re-rejects each of these itself, which is why it was never
-    // exploitable — but a defence that only one of two doors performs is one
+    // exploitable - but a defence that only one of two doors performs is one
     // refactor away from being no defence.
     super::validate_compose_yaml(&body.yaml).map_err(|e| err(StatusCode::BAD_REQUEST, e))?;
 
@@ -493,8 +493,8 @@ pub async fn create(
     )
     .await?;
 
-    // Everything TLS is settled — including the agent's own answer to "does
-    // this certificate cover this domain" — before a row exists or a container
+    // Everything TLS is settled - including the agent's own answer to "does
+    // this certificate cover this domain" - before a row exists or a container
     // is created, so a refusal leaves nothing to clean up.
     let tls = plan_tls(
         &state.db,
@@ -607,7 +607,7 @@ pub async fn create(
     )
     .await;
 
-    // The containers are up and the row is kept — but a registered certificate
+    // The containers are up and the row is kept - but a registered certificate
     // that did not reach the vhost is not a warning, it is the domain serving
     // plain HTTP behind HSTS. Say so, with the agent's reason, and leave the
     // stack in place so the operator can fix the cause and redeploy.
@@ -640,7 +640,7 @@ pub async fn create(
     ))
 }
 
-/// POST /api/stacks/{id}/start — Start all services in a stack.
+/// POST /api/stacks/{id}/start - Start all services in a stack.
 ///
 /// No `ServerScope` on any of the three verbs below: `stack_action` resolves the host from
 /// the row it authorises, so there is nothing left for the caller's selection to decide.
@@ -652,7 +652,7 @@ pub async fn start(
     stack_action(&state, &claims, id, "start").await
 }
 
-/// POST /api/stacks/{id}/stop — Stop all services in a stack.
+/// POST /api/stacks/{id}/stop - Stop all services in a stack.
 pub async fn stop(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -661,7 +661,7 @@ pub async fn stop(
     stack_action(&state, &claims, id, "stop").await
 }
 
-/// POST /api/stacks/{id}/restart — Restart all services in a stack.
+/// POST /api/stacks/{id}/restart - Restart all services in a stack.
 pub async fn restart(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -670,7 +670,7 @@ pub async fn restart(
     stack_action(&state, &claims, id, "restart").await
 }
 
-/// DELETE /api/stacks/{id} — Remove all services and delete the stack.
+/// DELETE /api/stacks/{id} - Remove all services and delete the stack.
 pub async fn remove(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -703,17 +703,17 @@ pub async fn remove(
     )
     .await?;
 
-    // A stack's own database (if any — GH #64: standalone DB provisioning) MUST be torn
+    // A stack's own database (if any - GH #64: standalone DB provisioning) MUST be torn
     // down BEFORE `/apps/stack/action` (remove) below, not after: that call's own remove
     // branch tears down the stack's Docker network as its LAST step
     // (`compose::remove_stack_network`), and Docker refuses to remove a network that
     // still has an attached endpoint. A database container joins that SAME network
     // (`create_database`'s own doc comment), so removing it after the network step runs
-    // leaves the network silently orphaned — live-caught: the network survived past a
+    // leaves the network silently orphaned - live-caught: the network survived past a
     // stack delete on this exact box until this ordering fix. The container also is NOT
     // among the containers `/apps/stack/action` removes on its own: it carries
     // `dockpanel.db.*` labels rather than `dockpanel.app.*`, so it is not in
-    // `list_deployed_apps()` at all — the same "operator manages exactly one thing"
+    // `list_deployed_apps()` at all - the same "operator manages exactly one thing"
     // exclusion `app_sidecar.rs`'s sidecar containers use. The `databases` row is left to
     // `stack_id`'s ON DELETE CASCADE below (a cascaded row delete never touches the live
     // container, which is exactly why the container needs this explicit step). Best-effort,
@@ -749,7 +749,7 @@ pub async fn remove(
     // Forget the expectation for every container the agent reports gone.
     //
     // The stack row is about to be deleted; the expectation is not tied to it.
-    // It is keyed on (server_id, container_name) and would outlive the stack —
+    // It is keyed on (server_id, container_name) and would outlive the stack -
     // and the next container to claim that name would inherit the silence, with
     // nothing able to clear it, because a removed container is never observed
     // again. `stack_action` below already does exactly this for its own
@@ -809,9 +809,9 @@ pub async fn remove(
     })))
 }
 
-/// PUT /api/stacks/{id} — Update stack by removing old containers and redeploying.
+/// PUT /api/stacks/{id} - Update stack by removing old containers and redeploying.
 ///
-/// The stored YAML is the only copy of a stack's definition — there is no
+/// The stored YAML is the only copy of a stack's definition - there is no
 /// history table for `docker_stacks` the way there is for git deploys and
 /// secrets. It used to be overwritten *after* the redeploy and unconditionally,
 /// and since the agent reports per-service failure inside a 200, a redeploy
@@ -832,7 +832,7 @@ pub async fn update(
     }
     super::validate_compose_yaml(&body.yaml).map_err(|e| err(StatusCode::BAD_REQUEST, e))?;
 
-    // Keep what we are about to replace — and read the host off the same row while we are
+    // Keep what we are about to replace - and read the host off the same row while we are
     // here. `name` comes along only so a refusal below can say which stack it refused.
     // The TLS columns come along because an edit that says nothing about TLS keeps
     // them, and the alias is read through the join because the request speaks aliases.
@@ -890,8 +890,8 @@ pub async fn update(
         .map(str::to_string)
         .or(previous_alias.clone());
 
-    // Everything from here down — the claim, the parse, the teardown, the redeploy and the
-    // restore-on-failure — is one machine's work, and the row says which machine. Taking it
+    // Everything from here down - the claim, the parse, the teardown, the redeploy and the
+    // restore-on-failure - is one machine's work, and the row says which machine. Taking it
     // from the caller's request instead let an edit tear the stack down on one host and
     // stand it up on another.
     //
@@ -899,7 +899,7 @@ pub async fn update(
     // thing it describes and nothing afterwards notices. The row keeps naming the old host
     // while the containers, vhost and certificate now live on the new one. `remove` resolves
     // correctly from the row, so the next delete goes to the old host, finds nothing, reports
-    // success, and drops the record — leaving the real containers running on a machine no
+    // success, and drops the record - leaving the real containers running on a machine no
     // handler can reach any more, holding a domain and a certificate nothing will renew.
     let agent = crate::helpers::agent_for_site_server(
         &state,
@@ -910,7 +910,7 @@ pub async fn update(
 
     // An edit can introduce images the stack was not running before, so it is a
     // deploy as far as the gate is concerned. Judged against the stack's OWN
-    // host — the same row that decided which agent to talk to — and before the
+    // host - the same row that decided which agent to talk to - and before the
     // teardown below, so a refusal leaves the running stack untouched.
     let images = super::compose_images(&body.yaml);
     crate::routes::docker_apps::enforce_allowed_images(&state.db, claims.sub, &images).await?;
@@ -930,7 +930,7 @@ pub async fn update(
     // The server id passed here is the stack's, not the caller's, and that matters
     // independently of which agent runs the deploy: `ensure_claimable` asks a specific host
     // whether the name is free *there*, and domains are unique per server. Asking the caller's
-    // host answered a question about a different box — waving through a name already serving
+    // host answered a question about a different box - waving through a name already serving
     // on the real one, or refusing a name that was free.
     let domain = claim_stack_domain(
         &state,
@@ -951,7 +951,7 @@ pub async fn update(
     };
 
     // Same gate and coverage check as create, against the stack's own host, and
-    // BEFORE the teardown below — a refusal must leave the running stack alone.
+    // BEFORE the teardown below - a refusal must leave the running stack alone.
     let tls = plan_tls(
         &state.db,
         &agent,
@@ -976,7 +976,7 @@ pub async fn update(
     let service_count = parsed.as_array().map(|a| a.len() as i32).unwrap_or(0);
 
     // Remove old containers. The vhost only comes down when the domain is
-    // actually changing — tearing it down on every edit would drop the site for
+    // actually changing - tearing it down on every edit would drop the site for
     // as long as the redeploy takes.
     let vacating = previous_domain.as_deref().filter(|d| Some(*d) != domain.as_deref());
     let removed = agent
@@ -994,7 +994,7 @@ pub async fn update(
     // absence sweep cannot help here: the container is gone and replaced inside
     // one 120-second tick, so it is never observed missing. If a replacement
     // fails to start it would inherit the old container's expectation and be
-    // silenced — the one shape this door can produce and the sweep cannot see.
+    // silenced - the one shape this door can produce and the sweep cannot see.
     if let Ok(ref body) = removed {
         if let Some(results) = body.get("results").and_then(|v| v.as_array()) {
             for r in results {
@@ -1058,7 +1058,7 @@ pub async fn update(
         return Err(err(
             StatusCode::BAD_GATEWAY,
             &format!(
-                "No service in the new definition stayed running — the previous stack was \
+                "No service in the new definition stayed running - the previous stack was \
                  redeployed and the saved YAML is unchanged. {}",
                 errors.join(" | ")
             ),
@@ -1066,11 +1066,11 @@ pub async fn update(
     }
 
     // Only now is the new definition the one worth keeping. The TLS columns are
-    // written from the plan, which already folded "absent means keep" in Rust —
+    // written from the plan, which already folded "absent means keep" in Rust -
     // no COALESCE, so the statement says exactly what the row will hold.
     // `ssl_expiry` describes the certificate serving THIS ROW'S DOMAIN in ACME
     // mode. Both of those can change here, and when either does the recorded date
-    // stops being about anything this row still owns — a stack moved to a new
+    // stops being about anything this row still owns - a stack moved to a new
     // domain would keep publishing the old domain's countdown, and one switched to
     // `provided` or `none` would keep publishing a date for a certificate the
     // panel no longer renews. NULL is this column's word for "not recorded", so
@@ -1079,7 +1079,7 @@ pub async fn update(
     //
     // ⛔ Kept, deliberately, when neither changed. Blanking on every edit would
     // make an ordinary YAML change erase the one answer the offline view has.
-    // `vacating` is already the file's spelling of "the domain moved" — reusing it
+    // `vacating` is already the file's spelling of "the domain moved" - reusing it
     // keeps one definition rather than a second that can drift from it.
     let keeps_expiry = tls.mode == "acme" && vacating.is_none();
 
@@ -1143,7 +1143,7 @@ pub async fn update(
 
 /// Put the stack back the way it was after a failed edit.
 ///
-/// Best effort — if this also fails the operator still has the stored YAML,
+/// Best effort - if this also fails the operator still has the stored YAML,
 /// which is the whole point of not having overwritten it yet.
 ///
 /// Carries the previous TLS mode and alias too: a restore that sent only the
@@ -1205,7 +1205,7 @@ async fn restore_previous(
 /// Internal helper for start/stop/restart stack actions.
 ///
 /// Takes no agent, deliberately. This is the shared seam for all three verbs, and the
-/// ownership check it already performs is the same lookup that names the host — so asking
+/// ownership check it already performs is the same lookup that names the host - so asking
 /// the row one more column makes the guard and the resolver a single query, and no caller
 /// can supply a handle that disagrees with what was just authorised. Patching the three
 /// call sites instead would have left the next action verb free to reintroduce the bug.
@@ -1214,7 +1214,7 @@ async fn restore_previous(
 /// the caller may act on the stack and said nothing about where the stack is. The action
 /// then went to the header-named host. `/apps/stack/action` matches containers by the
 /// `stack_id` label, which exists only on the host that deployed them, so on the wrong host
-/// a stop or restart matched nothing and returned a perfectly successful 200 — the operator
+/// a stop or restart matched nothing and returned a perfectly successful 200 - the operator
 /// sees the verb succeed while the containers keep running untouched somewhere else.
 async fn stack_action(
     state: &AppState,
@@ -1259,14 +1259,14 @@ async fn stack_action(
     //
     // Compose services carry `dockpanel.managed=true` and
     // `dockpanel.app.template=compose`, which is exactly what the agent's
-    // `/apps` listing filters on — so every service in a stopped stack is a
+    // `/apps` listing filters on - so every service in a stopped stack is a
     // full `container_down` subject. One click on a five-service stack produced
     // five criticals, correlated into ONE public incident titled after whichever
     // container lost the race.
     //
     // The agent answers with a per-container `results[]` carrying the name and
     // the outcome, so the expectation is recorded per container and only for the
-    // ones that actually stopped — no second round trip, and a service that
+    // ones that actually stopped - no second round trip, and a service that
     // failed to stop is still allowed to alert.
     if let Some(results) = result.get("results").and_then(|v| v.as_array()) {
         for r in results {
@@ -1299,13 +1299,13 @@ async fn stack_action(
 }
 
 
-/// POST /api/stacks/{id}/renew-ssl — reissue a Compose stack's ACME certificate
+/// POST /api/stacks/{id}/renew-ssl - reissue a Compose stack's ACME certificate
 /// on the operator's say-so.
 ///
 /// The Certificates page has always shown a stack's certificate and never been
 /// able to do anything about it: both of its controls address a SITE, and a stack
 /// has no `sites` row, so the row rendered "Not managed here" over a certificate
-/// this product had issued and — since v2.161.0 — renews on a schedule. That
+/// this product had issued and - since v2.161.0 - renews on a schedule. That
 /// sentence was wrong twice over, and this is the control that makes the page
 /// able to say something true.
 ///
@@ -1347,8 +1347,8 @@ pub async fn renew_ssl(
         return Err(err(
             StatusCode::UNPROCESSABLE_ENTITY,
             &format!(
-                "{domain} is served in '{mode}' mode, not ACME. DockPanel reissues only the \
-                 Let's Encrypt certificates it obtains itself — a registered certificate is \
+                "{domain} is served in '{mode}' mode, not ACME. CyberHunter - Panel reissues only the \
+                 Let's Encrypt certificates it obtains itself - a registered certificate is \
                  replaced from the Certificates page, and a stack with no TLS has nothing to \
                  renew."
             ),
@@ -1375,7 +1375,7 @@ pub async fn renew_ssl(
         return Err(err(
             StatusCode::UNPROCESSABLE_ENTITY,
             &format!(
-                "The certificate on {domain} was not issued by DockPanel (issuer: {issuer}). \
+                "The certificate on {domain} was not issued by CyberHunter - Panel (issuer: {issuer}). \
                  Reissuing would replace it with a Let's Encrypt certificate. Renew it wherever \
                  it was issued, or install a replacement under Certificates."
             ),
@@ -1446,7 +1446,7 @@ mod tests {
     use super::*;
 
     /// The stored value wins; a NULL row (older binary, rollback) is read the way
-    /// the agent always inferred it — a non-blank address means Let's Encrypt.
+    /// the agent always inferred it - a non-blank address means Let's Encrypt.
     #[test]
     fn effective_tls_mode_prefers_the_stored_value() {
         assert_eq!(effective_tls_mode(Some("none"), Some("ops@example.com")), "none");

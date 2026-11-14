@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# update-connection-resilience-pin-e2e.sh — s447
+# update-connection-resilience-pin-e2e.sh - s447
 #
 # Pins the docker_apps.rs finding named in [[project_dockpanel_tech_debt_p185]]
 # §A: Update / change-image / edit-env recreate a container between
 # `remove_container` and `create_container`, and until this fix every one of
-# those calls ran INLINE on the request's own connection task — agent-side
+# those calls ran INLINE on the request's own connection task - agent-side
 # (`update`, `update_env`, `change_image` in panel/agent/src/routes/docker_apps.rs)
 # AND, for two of the three doors, backend-side too
 # (`update_env`/`update_image` in panel/backend/src/routes/docker_apps.rs;
@@ -13,7 +13,7 @@
 # calls are allowed) cancelled the in-flight future mid-recreate: the app
 # container vanishes, only its bind-mounted data survives.
 #
-# Fix: wrap each call in `tokio::spawn(...).await` — the spawned task
+# Fix: wrap each call in `tokio::spawn(...).await` - the spawned task
 # outlives a dropped connection because it is scheduled onto the runtime
 # independently of the future that's awaiting its JoinHandle.
 #
@@ -26,7 +26,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
 echo
 echo "=================================================="
-echo "  docker_apps.rs recreate doors — connection resilience (s447)"
+echo "  docker_apps.rs recreate doors - connection resilience (s447)"
 echo "=================================================="
 echo
 
@@ -81,7 +81,7 @@ for FN in update update_env change_image; do
   elif has "$BODY" 'tokio::spawn'; then
     ok "B:$FN spawns its recreate call onto its own task"
   else
-    bad "B:$FN still awaits the recreate call inline — a dropped connection cancels it mid-recreate"
+    bad "B:$FN still awaits the recreate call inline - a dropped connection cancels it mid-recreate"
   fi
 done
 
@@ -94,7 +94,7 @@ for FN in update_app update_env update_image; do
   elif has "$BODY" 'tokio::spawn'; then
     ok "C:$FN spawns its long agent call onto its own task"
   else
-    bad "C:$FN still awaits the agent call inline — a browser disconnect cancels the backend leg mid-recreate"
+    bad "C:$FN still awaits the agent call inline - a browser disconnect cancels the backend leg mid-recreate"
   fi
 done
 

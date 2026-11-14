@@ -30,7 +30,7 @@ pub struct StatusResponse {
     /// Verdict of the most recent snapshot restore, if one has ever run.
     ///
     /// A restore stops and restarts this process, so its outcome cannot be
-    /// returned through the request that started it — the restore writes a
+    /// returned through the request that started it - the restore writes a
     /// result file and it is surfaced here. Always present after a restore,
     /// including one that aborted partway, so a failed rollback can never look
     /// like no rollback.
@@ -41,7 +41,7 @@ pub struct StatusResponse {
     /// Same reason as `last_restore`: a successful update kills this process, so
     /// the outcome cannot come back through the request that started it. It is
     /// also the ONLY channel for an update that failed *before* the api was
-    /// stopped — nothing restarts, so nothing else ever reports it.
+    /// stopped - nothing restarts, so nothing else ever reports it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_panel_update: Option<serde_json::Value>,
 }
@@ -90,19 +90,19 @@ pub struct ApplyResponse {
 /// Split out of the handler so the rules are unit-testable without a database.
 /// The direction rule is the one the comment above [`apply_update`] always
 /// claimed and never enforced: matching the advertised row is not enough,
-/// because the row can name a release OLDER than the running panel — the
+/// because the row can name a release OLDER than the running panel - the
 /// operator upgraded by hand and the advertisement had not been reconciled yet.
 /// `update.sh` installs whatever tag it is handed, in either direction, so
 /// applying such a row silently regressed the panel by several releases.
 fn reject_apply_target(target_clean: &str, advertised: &str, current: &str) -> Option<String> {
     if advertised.is_empty() {
         return Some(
-            "no update is currently available — run /api/update/manual-check first".to_string(),
+            "no update is currently available - run /api/update/manual-check first".to_string(),
         );
     }
     if advertised.trim_start_matches('v') != target_clean {
         return Some(
-            "target_version does not match the advertised update — refresh and retry".to_string(),
+            "target_version does not match the advertised update - refresh and retry".to_string(),
         );
     }
     if !telemetry_collector::is_newer_release(target_clean, current) {
@@ -190,7 +190,7 @@ pub async fn manual_check(
     .await
     .map_err(|e| internal_error("manual check", e))?;
     // The poll above clears a row it has overtaken, but it also returns early
-    // when GitHub is unreachable — and then the untouched row would come back
+    // when GitHub is unreachable - and then the untouched row would come back
     // as this check's own finding, telling the operator who doubted the banner
     // that a live check had just confirmed it.
     let available_version = advertised
@@ -375,7 +375,7 @@ pub async fn apply_fleet(
     }
 
     // v2.216.0 audit fix: `include_panel` used to reach `start_panel_update` with
-    // only the shape check above — none of `apply_update`'s direction/advertised-
+    // only the shape check above - none of `apply_update`'s direction/advertised-
     // match guard (`reject_apply_target`), so this path could downgrade the panel
     // to any syntactically-valid version, not merely a stale-advertised one. The
     // panel side still snapshots first (rollback-recoverable), but the request
@@ -404,7 +404,7 @@ pub async fn apply_fleet(
     if plan.is_empty() {
         return Err(err(
             StatusCode::BAD_REQUEST,
-            "no reachable servers needing update — fleet plan is empty",
+            "no reachable servers needing update - fleet plan is empty",
         ));
     }
 
@@ -425,7 +425,7 @@ pub async fn apply_fleet(
     let target = body.target_version.clone();
     let halt = body.halt_on_failure;
     // Passing the handle is what makes the operator's "include this panel"
-    // checkbox do anything — it was persisted and read by nobody until s232.
+    // checkbox do anything - it was persisted and read by nobody until s232.
     let panel_handle = body
         .include_panel
         .then(|| state.panel_update_state.clone());

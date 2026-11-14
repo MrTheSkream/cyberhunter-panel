@@ -8,7 +8,7 @@ mod tests {
     /// parallel threads of a single process, so without this lock one test's
     /// `remove_var` lands between another's `set_var` and its assertion. That
     /// is precisely how `base_url_from_env` failed a CI run while passing every
-    /// time it was run on its own — the worst shape of flake, because it
+    /// time it was run on its own - the worst shape of flake, because it
     /// implicates whatever commit happened to be under it.
     ///
     /// The guard is recovered from poisoning: one failing test should report
@@ -106,7 +106,7 @@ impl Config {
             .map(|s| s.split(',').map(|o| o.trim().to_string()).filter(|o| !o.is_empty()).collect::<Vec<_>>())
             .unwrap_or_else(|| {
                 if base_url.is_empty() {
-                    // No BASE_URL set — allow all origins (typical for IP-based access)
+                    // No BASE_URL set - allow all origins (typical for IP-based access)
                     vec![]
                 } else {
                     vec![base_url.clone()]

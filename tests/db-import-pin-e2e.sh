@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# Regression pins for the s385 ship — the database-import door, and the two
+# Regression pins for the s385 ship - the database-import door, and the two
 # silences either side of it.
 #
 # Issue #121 asked for two things. v2.137.0 answered the upload half; this is
 # the other one: "there is currently no database import feature". There wasn't
-# a door — but the machinery behind it had been built and hardened for the
+# a door - but the machinery behind it had been built and hardened for the
 # migration wizard, so what shipped is a door, not an importer:
 #
 #   * THE INTAKE PATTERN IS THE WIZARD'S, NOT THE FILE MANAGER'S. A dump travels
 #     base64-in-JSON through two axum services capped at 2 MiB each, so uploads
 #     top out near 1.5 MB and no real dump fits. The operator places the file and
-#     the panel takes a NAME — never a free-text path, so there is no
+#     the panel takes a NAME - never a free-text path, so there is no
 #     arbitrary-file-to-DB-exec surface to guard: every name the operator can
 #     pick came out of a listing of one per-database directory the agent pins.
 #   * A TIMEOUT IS NOT A FAILURE, AND MUST NOT BE REPORTED AS ONE. The agent
@@ -18,19 +18,19 @@
 #     300s. A handler that waited 600 would be killed by its own server and
 #     answer a bodyless 504. §C pins the constant BELOW the server's ceiling by
 #     deriving BOTH numbers from source, and §D pins that the timeout arm exists
-#     at all — without it `agent_error` maps the timeout to an incident id, which
+#     at all - without it `agent_error` maps the timeout to an incident id, which
 #     is #121's defect wearing a different hat.
 #   * THE LISTING NOW REPORTS WHAT IT CANNOT USE. It used to `continue` past any
 #     file that was not .sql.gz, so an operator who copied `dump.sql` into the
 #     directory saw an empty list and had nowhere to learn why. That is lesson
-#     #647 — a limitation the product will not speak at the moment it bites is,
+#     #647 - a limitation the product will not speak at the moment it bites is,
 #     from the operator's chair, an undocumented one.
 #
 # §G is this session's other find and is a genuine class arm: `warning-500` and
 # `ok-500` were used in three places and defined nowhere, so a one-shot API-token
 # warning and the "this device" marker on the session-revocation screen rendered
-# with no colour at all. Both sides of that arm are derived from source — the
-# palette from index.css, the usage from the SPA — so mutating either goes red.
+# with no colour at all. Both sides of that arm are derived from source - the
+# palette from index.css, the usage from the SPA - so mutating either goes red.
 #
 # Every arm is static analysis over source text: offline and deterministic, so it
 # judges a MUTATED tree the same way on an air-gapped runner (lesson #641).
@@ -39,7 +39,7 @@ cd "$(dirname "$0")/.." || exit 1
 
 PASS=0; FAIL=0
 ok()  { printf '\033[32m✓\033[0m %s\n' "$1"; PASS=$((PASS+1)); }
-bad() { printf '\033[31m✗\033[0m %s — %s\n' "$1" "$2"; FAIL=$((FAIL+1)); }
+bad() { printf '\033[31m✗\033[0m %s - %s\n' "$1" "$2"; FAIL=$((FAIL+1)); }
 eq()  { [ "$2" = "$3" ] && ok "$1" || bad "$1" "expected '$3', got '$2'"; }
 
 # ugrep's --ignore-files shim honours .gitignore, so every count below uses the
@@ -98,7 +98,7 @@ if flat "$DBS" | $G -q '"/db-backups/{name}/restore/{filename}"'; then
   ok "B1 the panel composes the agent's existing restore route"
 else
   bad "B1 the panel composes the agent's existing restore route" \
-      "no /db-backups/{name}/restore/{filename} — a second import path would need its own review"
+      "no /db-backups/{name}/restore/{filename} - a second import path would need its own review"
 fi
 
 # ⛔ The security arm. `is_safe_filename` is what `get_backup_path` opens a file
@@ -111,7 +111,7 @@ GATE_EXTS=$(printf '%s' "$GATE" | $G -oP 'ends_with\("\K[^"]+' || true)
 GATE_N=$(printf '%s\n' "$GATE_EXTS" | $G -c . || true)
 [ "$GATE_N" -ge 4 ] && ok "B2a the filename gate was located and lists $GATE_N accepted forms" \
   || bad "B2a the filename gate was located and lists $GATE_N accepted forms" \
-         "extraction failed — B2b below would pass against nothing"
+         "extraction failed - B2b below would pass against nothing"
 # Every accepted form must be a gzipped one, because `restore_mysql` pipes the
 # file through `gunzip -c` unconditionally and never captures gunzip's stderr.
 # Admitting a plain .sql here would fail at the far end of a pipe with the
@@ -125,7 +125,7 @@ eq "B3 no second importer was added to the agent's database router" \
    "$(flat "$ADBROUTE" | $G -c '"/databases/import"')" "0"
 
 # ⛔ THE LAYERING, and it is load-bearing in both directions. The AGENT answers only
-# "is this a backup file at all" — if it also decided importability, every encrypted
+# "is this a backup file at all" - if it also decided importability, every encrypted
 # backup would be labelled broken in `dockpanel backup db-list`, which is a BACKUP
 # listing. Whether a backup can enter a given database depends on the engine and on
 # encryption, which only the PANEL knows. Both halves pinned so neither drifts back.
@@ -142,7 +142,7 @@ eq "B4c the panel decides importability, as a pure function" \
 LISTED=$(perl -0777 -ne '$c++ while /import_blocked_reason\(&?filename,\s*&?engine\)/gs; END{print $c+0}' "$DBS")
 [ "$LISTED" -ge 2 ] && ok "B4d the same rule is used by BOTH the listing and the door ($LISTED call sites)" \
   || bad "B4d the same rule is used by BOTH the listing and the door ($LISTED call sites)" \
-         "fewer than 2 call sites — annotate-only leaves the door open to a direct POST"
+         "fewer than 2 call sites - annotate-only leaves the door open to a direct POST"
 
 # An encrypted panel backup is refused by the agent for want of a key every single time,
 # so offering it would be a control that cannot succeed.
@@ -150,14 +150,14 @@ if flat "$DBS" | $G -q 'filename.ends_with(".enc")'; then
   ok "B4e encrypted panel backups are refused at the door"
 else
   bad "B4e encrypted panel backups are refused at the door" \
-      "no .enc branch — the agent answers 400 'Encryption key required' for every one"
+      "no .enc branch - the agent answers 400 'Encryption key required' for every one"
 fi
 # .archive.gz is MongoDB's format; fed to psql it fails deep inside the pipe.
 if flat "$DBS" | $G -q 'filename.ends_with(".archive.gz")&&!is_mongo'; then
   ok "B4f a MongoDB archive is refused for a SQL engine"
 else
   bad "B4f a MongoDB archive is refused for a SQL engine" \
-      "no engine check — a BSON stream would be piped into psql and fail on content"
+      "no engine check - a BSON stream would be piped into psql and fail on content"
 fi
 
 echo "── C. The wait is bounded BELOW the server's own ceiling ─────────────────────"
@@ -174,13 +174,13 @@ if [ -n "$BUDGET" ] && [ -n "$CEILING" ]; then
   ok "C2 both budgets were derived from source (agent wait ${BUDGET}s, server ceiling ${CEILING}s)"
 else
   bad "C2 both budgets were derived from source" \
-      "derivation failed — budget='$BUDGET' ceiling='$CEILING'; the comparison below would be vacuous"
+      "derivation failed - budget='$BUDGET' ceiling='$CEILING'; the comparison below would be vacuous"
 fi
 if [ -n "$BUDGET" ] && [ -n "$CEILING" ] && [ "$BUDGET" -lt "$CEILING" ]; then
   ok "C3 the panel stops waiting before its own server kills the request"
 else
   bad "C3 the panel stops waiting before its own server kills the request" \
-      "wait ${BUDGET}s is not below the ${CEILING}s TimeoutLayer — the handler's own message can never reach the operator"
+      "wait ${BUDGET}s is not below the ${CEILING}s TimeoutLayer - the handler's own message can never reach the operator"
 fi
 
 # Both database-restore call sites, including the one that was already wrong: a 60s
@@ -190,7 +190,7 @@ fi
 n=$(perl -0777 -ne '$c++ while /\.post_long\(&agent_path, Some\(agent_body\), budget \+ 60\)/gs; END{print $c+0}' "$DBS")
 [ "$n" -ge 1 ] && ok "C4 databases.rs (import) dispatches on the shared restore budget" \
   || bad "C4 databases.rs (import) dispatches on the shared restore budget" \
-         "no post_long(..., budget + 60) — a bare .post caps this at 60s on both transports"
+         "no post_long(..., budget + 60) - a bare .post caps this at 60s on both transports"
 n=$(perl -0777 -ne '$c++ while /\.post_long\(&agent_path, Some\(body\), crate::services::agent::DB_RESTORE_TIMEOUT_SECS\)/gs; END{print $c+0}' "$ORCH")
 [ "$n" -ge 1 ] && ok "C4b backup_orchestrator.rs (restore_db_backup) waits on the shared restore budget" \
   || bad "C4b backup_orchestrator.rs (restore_db_backup) waits on the shared restore budget" \
@@ -206,14 +206,14 @@ echo "── D. A timeout is reported as a timeout, not as a failure ───�
 # an adversarial read caught. It matched `Err(AgentError::Request(_))` and called that
 # "the timeout". It is not: the local client also mints Request for a URI that would not
 # build and for a connection dropped mid-flight, and the REMOTE client never mints it for
-# a timeout at all — it maps every failure, timeouts included, to Connection. So the arm
+# a timeout at all - it maps every failure, timeouts included, to Connection. So the arm
 # was dead code on every fleet install, and locally it announced "still running" about
 # work that had never been sent. Taking the timeout HERE makes Elapsed unambiguous on
 # both transports.
 n=$(perl -0777 -ne '$c++ while /tokio::time::timeout\(std::time::Duration::from_secs\(budget\),\s*call\)/gs; END{print $c+0}' "$DBS")
 [ "$n" -ge 1 ] && ok "D1 the import times itself, so a timeout is unambiguous on both transports" \
   || bad "D1 the import times itself, so a timeout is unambiguous on both transports" \
-         "no tokio::time::timeout around the agent call — the verdict would be read off an ambiguous error variant"
+         "no tokio::time::timeout around the agent call - the verdict would be read off an ambiguous error variant"
 
 # The inner budget must be LARGER, or the inner clock fires first and we are back to
 # reading someone else's error variant.
@@ -238,17 +238,17 @@ fi
 eq "D3 the timeout answers 504, not a generic failure" \
    "$(flat "$DBS" | $G -c 'err(StatusCode::GATEWAY_TIMEOUT,')" "1"
 
-# The SPA must not paint it red either — "still running" and "did not happen" are
+# The SPA must not paint it red either - "still running" and "did not happen" are
 # different facts and the operator acts differently on each. 524 is Cloudflare's cut at
 # 100s, which arrives as an HTML body api.ts cannot read, so it needs naming explicitly.
 if flat "$PAGE" | $G -q 'e.status===504||e.status===524'; then
   ok "D4 the SPA tells 'still running' apart from 'failed', including behind Cloudflare"
 else
   bad "D4 the SPA tells 'still running' apart from 'failed', including behind Cloudflare" \
-      "no 504/524 branch — a timeout renders in the error channel and reads as a failed import"
+      "no 504/524 branch - a timeout renders in the error channel and reads as a failed import"
 fi
 
-# ⛔ A restore fails on the CONTENT of the file the caller named — truncated, not
+# ⛔ A restore fails on the CONTENT of the file the caller named - truncated, not
 # gzipped, wrong engine, SQL the database rejects. Those are caller-fixable answers, and
 # the panel preserves an agent's sentence only for 4xx. Answering 5xx turned psql's
 # "relation already exists" into an incident id on BOTH callers of that route.
@@ -274,7 +274,7 @@ if perl -0777 -ne 'exit(/skip_serializing_if\s*=\s*"Option::is_none"\s*\)\]\s*pu
   ok "E3 the new field is omitted when absent, so sibling responses are unchanged"
 else
   bad "E3 the new field is omitted when absent, so sibling responses are unchanged" \
-      "no skip_serializing_if on `unsupported` — site and volume backup JSON changes for everyone"
+      "no skip_serializing_if on `unsupported` - site and volume backup JSON changes for everyone"
 fi
 
 if flat "$ABACKUP" | $G -q 'gzip{full}'; then
@@ -293,10 +293,10 @@ else
       "the .enc reason does not point at Backup Manager, so the file reads as a dead end"
 fi
 
-# The agent's fallback sentence must not advertise a form the panel refuses — two
+# The agent's fallback sentence must not advertise a form the panel refuses - two
 # sentences on one screen contradicting each other is worse than either alone.
 # ⚠ -F, because an unescaped '.' in this pattern is a wildcard and matched the very
-# mutation this arm exists to catch — the arm passed against the defect (#532's family:
+# mutation this arm exists to catch - the arm passed against the defect (#532's family:
 # the instrument's own syntax is a hypothesis too).
 eq "E4c the agent's fallback does not claim .enc is importable" \
    "$($G -Fc 'and their .enc forms' "$ABACKUP" || true)" "0"
@@ -304,13 +304,13 @@ eq "E4c the agent's fallback does not claim .enc is importable" \
 # Both surfaces that render the listing. A reason produced and not displayed is
 # the same defect one layer up.
 if flat "$PAGE" | $G -q '{d.unsupported||d.import_blocked}'; then
-  ok "E5 the SPA renders BOTH verdicts — not a backup, and cannot go in this database"
+  ok "E5 the SPA renders BOTH verdicts - not a backup, and cannot go in this database"
 else
   bad "E5 the SPA renders BOTH verdicts" "a reason is produced and the page drops it"
 fi
 
 # ⛔ The empty state is a positive claim about a directory. Rendering it after a FAILED
-# read fabricates that claim from a read that never happened — the exact ambiguity the
+# read fabricates that claim from a read that never happened - the exact ambiguity the
 # component was written to remove, reintroduced one level up.
 if flat "$PAGE" | $G -q '{!loading&&!error&&importable.length===0'; then
   ok "E5b the empty state stays silent when the listing could not be read"
@@ -352,7 +352,7 @@ echo "── H. The tenancy boundary this door would otherwise cross ───�
 #   1. The dump directory is keyed by DATABASE NAME (`/var/backups/dockpanel/databases/
 #      {name}`), not by id or owner.
 #   2. Deleting a database removes its container and CASCADE-deletes its
-#      `database_backups` rows — but NOTHING removes the dumps from disk, so they become
+#      `database_backups` rows - but NOTHING removes the dumps from disk, so they become
 #      orphans no row references and no retention sweep can reach.
 #   3. `databases.name` is unique only per SITE: the global constraint was dropped in
 #      `20260312000000_data_integrity.sql`. So a second tenant may take a freed name.
@@ -364,7 +364,7 @@ echo "── H. The tenancy boundary this door would otherwise cross ───�
 for fn in dumps import; do
   BODY=$(perl -0777 -ne "print \$1 if /pub async fn $fn\\((.*?)\\n\\}\\n/s" "$DBS")
   if [ -z "$BODY" ]; then
-    bad "H1 the $fn handler body was located" "extraction failed — H2 would pass vacuously"
+    bad "H1 the $fn handler body was located" "extraction failed - H2 would pass vacuously"
   else
     ok "H1 the $fn handler body was located"
     case "$BODY" in
@@ -372,7 +372,7 @@ for fn in dumps import; do
         ok "H2 $fn is admin-gated, so a reused database name cannot expose a former tenant's dumps" ;;
       *)
         bad "H2 $fn is admin-gated" \
-            "no require_admin — a tenant taking a freed database name would list and import its previous holder's unencrypted dumps" ;;
+            "no require_admin - a tenant taking a freed database name would list and import its previous holder's unencrypted dumps" ;;
     esac
   fi
 done
@@ -387,7 +387,7 @@ else
 fi
 
 # ⛔ A filename with a space has the right extension and passes every obvious check, then
-# breaks while the HTTP request line is BUILT — a failure the panel could describe only
+# breaks while the HTTP request line is BUILT - a failure the panel could describe only
 # as a transport error. Refused here, where the answer can still be about the file.
 IMPORT_BODY=$(perl -0777 -ne 'print $1 if /pub async fn import\((.*?)\n\}\n/s' "$DBS")
 case "$IMPORT_BODY" in
@@ -398,7 +398,7 @@ case "$IMPORT_BODY" in
 esac
 
 # A fired event nobody can subscribe to reaches nobody. The subscription list is a fixed
-# array of checkboxes — there is no free-text field — so an event missing from it is
+# array of checkboxes - there is no free-text field - so an event missing from it is
 # unreachable through any control.
 eq "H5 the import event is subscribable through the Extensions UI" \
    "$($G -c '"database.imported"' panel/frontend/src/pages/Extensions.tsx)" "1"
@@ -408,7 +408,7 @@ eq "H5 the import event is subscribable through the Extensions UI" \
 case "$IMPORT_BODY" in
   *log_activity_on_server*) ok "H6 the audit row records the machine the import ran on" ;;
   *) bad "H6 the audit row records the machine the import ran on" \
-         "log_activity leaves server_id NULL — two same-named databases on a fleet are indistinguishable" ;;
+         "log_activity leaves server_id NULL - two same-named databases on a fleet are indistinguishable" ;;
 esac
 
 echo "── G. Every colour the SPA asks for is a colour the theme defines ────────────"
@@ -417,14 +417,14 @@ echo "── G. Every colour the SPA asks for is a colour the theme defines ─�
 # and `ok-500` were used in Settings.tsx and AccountSecurity.tsx and defined
 # nowhere, so a one-shot API-token warning and the "this device" marker on the
 # session-revocation screen rendered with no colour at all. Tailwind emits
-# nothing for an undefined token and says nothing about it — the source looks
+# nothing for an undefined token and says nothing about it - the source looks
 # styled and the pixel is not, which is unreviewable by reading either side
 # alone. Both halves are derived: the palette from the stylesheet, the usage from
 # the pages, so mutating either one turns this red.
 PALETTE=$($G -oP '(?<=--color-)[a-z]+(?=-\d)' "$CSS" | sort -u)
 PALETTE_N=$(printf '%s\n' "$PALETTE" | $G -c . || true)
 [ "$PALETTE_N" -ge 4 ] && ok "G1 derived $PALETTE_N colour families from the theme" \
-  || bad "G1 derived $PALETTE_N colour families from the theme" "too few — G2 below would pass vacuously"
+  || bad "G1 derived $PALETTE_N colour families from the theme" "too few - G2 below would pass vacuously"
 
 USED=$(find "$SPA" \( -name '*.ts' -o -name '*.tsx' \) -print0 | sort -z | xargs -0 cat |
   $G -ohP '(?<![\w-])(?:bg|text|border|ring|from|to|via|divide|outline|decoration|shadow|fill|stroke|accent|caret)-[a-z]+-(?:50|\d00)(?![\w-])' |

@@ -1,4 +1,4 @@
-# DockPanel personnalisé — document de reprise
+# CyberHunter - Panel personnalisé - document de reprise
 
 Rédigé le 2026-11-14 sur le VPS OVH (où le code a été analysé). À donner tel quel à Claude
 sur la nouvelle machine (celle avec Hyper-V) pour reprendre le travail.
@@ -6,25 +6,25 @@ sur la nouvelle machine (celle avec Hyper-V) pour reprendre le travail.
 ## Objectif
 
 Fork **personnel** (usage strictement privé, pas de clients) de
-[ovexro/dockpanel](https://github.com/ovexro/dockpanel) — panel serveur Rust (API + agent root)
-\+ React, AGPL v3 — pour remplacer HestiaCP. Ajouter les fonctionnalités HestiaCP utilisées
-qui manquent dans DockPanel. Version analysée : **v2.242.1**, commit `514d9ea`.
+[ovexro/dockpanel](https://github.com/ovexro/dockpanel) - panel serveur Rust (API + agent root)
+\+ React, AGPL v3 - pour remplacer HestiaCP. Ajouter les fonctionnalités HestiaCP utilisées
+qui manquent dans CyberHunter - Panel. Version analysée : **v2.242.1**, commit `514d9ea`.
 
 ## Contraintes
 
-- L'agent DockPanel tourne **en root sur l'hôte** (useradd, vhosts nginx, systemd, UFW, sshd).
+- L'agent CyberHunter - Panel tourne **en root sur l'hôte** (useradd, vhosts nginx, systemd, UFW, sshd).
   Upstream ne teste que sur de vrais serveurs, pas en conteneur → tester dans une **VM Hyper-V
   Ubuntu 24.04** avec snapshot avant chaque essai.
 - Upstream publie très souvent (138 migrations déjà) → garder les ajouts **additifs**
   (nouvelles migrations, nouvelles colonnes nullables, nouveaux modules/variables de template)
   pour que les rebases restent faisables. Travailler sur une branche, remote `upstream` = GitHub.
 
-## Ce que DockPanel a DÉJÀ (ne pas refaire)
+## Ce que CyberHunter - Panel a DÉJÀ (ne pas refaire)
 
 - Mail : redirections (`forward_to`), catch-all, répondeur (`autoresponder_*`), quotas de boîte,
-  SpamAssassin (spamd), rate limit, DKIM — `panel/backend/src/routes/mail.rs`.
-- SFTP chrooté par site avec uid/gid propre — `panel/agent/src/services/sftp_accounts.rs`.
-- PHP-FPM par site (8.1–8.5), mais seul `memory_limit` est réglable — `nginx.rs` ~l.880-900.
+  SpamAssassin (spamd), rate limit, DKIM - `panel/backend/src/routes/mail.rs`.
+- SFTP chrooté par site avec uid/gid propre - `panel/agent/src/services/sftp_accounts.rs`.
+- PHP-FPM par site (8.1–8.5), mais seul `memory_limit` est réglable - `nginx.rs` ~l.880-900.
 - Quotas bande passante par site, quotas revendeur (`max_sites`…), 2FA, sauvegardes distantes.
 - Import HestiaCP : **stub beta** (`agent/src/services/migration.rs` `parse_hestiacp`), sites + BDD
   seulement, pas les mails.
@@ -54,7 +54,7 @@ Proposition :
 2. Passer l'IP du site dans le contexte Tera à la place de l'IP détectée globale.
 3. Si NAT : nginx écoute sur l'IP **privée**, DNS/SPF utilisent l'IP **publique**.
 4. DNS (`routes/dns.rs`) : les enregistrements A créés automatiquement prennent l'IP du site.
-5. Mail : IP d'envoi par domaine dans Postfix — `sender_dependent_default_transport_maps` + un
+5. Mail : IP d'envoi par domaine dans Postfix - `sender_dependent_default_transport_maps` + un
    transport `smtp` par IP dans `master.cf` avec `-o smtp_bind_address=` et `smtp_helo_name`
    (+ SPF/PTR cohérents).
 6. Vérifier le chemin ACME HTTP-01 (`ssl.rs`) : rien ne doit supposer l'IP détectée.
@@ -88,6 +88,6 @@ configuration du cluster DNS (serveurs esclaves).
 ## Premières étapes sur la nouvelle machine
 
 1. Cloner le dépôt complet (pas `--depth 1`) et créer le fork sur GitHub, branche `custom`.
-2. Créer la VM, installer DockPanel upstream avec le script officiel, vérifier qu'il marche tel quel.
+2. Créer la VM, installer CyberHunter - Panel upstream avec le script officiel, vérifier qu'il marche tel quel.
 3. Récupérer les infos IP de HestiaCP (ci-dessus), valider la conception multi-IP.
 4. Implémenter la fonctionnalité 1, la tester sur la VM, puis enchaîner.

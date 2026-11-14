@@ -35,7 +35,7 @@ function backupContents(b: Backup): { label: string; complete: boolean; title: s
       label: "Files only",
       complete: false,
       title:
-        "This archive holds the site's files but NO database — restoring it will not bring back posts, pages, users or settings.",
+        "This archive holds the site's files but NO database - restoring it will not bring back posts, pages, users or settings.",
     };
   }
   if (b.databases_included < b.databases_expected) {
@@ -55,8 +55,8 @@ function backupContents(b: Backup): { label: string; complete: boolean; title: s
 /** The sentence the operator reads BEFORE the restore is spawned.
  *
  *  `backupContents(b).title` is deliberately NOT reused here. Its reassuring
- *  branch keys on `databases_expected` — what the site had *when the backup
- *  ran* — while the backend decides on a live `SELECT ... FROM databases WHERE
+ *  branch keys on `databases_expected` - what the site had *when the backup
+ *  ran* - while the backend decides on a live `SELECT ... FROM databases WHERE
  *  site_id = $1`. A site that gained a database since would be told "no
  *  database was attached" over exactly the case the restore then reports as an
  *  error. `.label` is safe because it states a fact about the archive alone. */
@@ -102,7 +102,7 @@ export default function Backups() {
   const [restoring, setRestoring] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   // A restore drops and recreates every database in the archive over the live
-  // one and replaces the site's files, with no automatic safety net — and the
+  // one and replaces the site's files, with no automatic safety net - and the
   // guide documents a "Confirm the restore" step. Its own row already arms the
   // strictly smaller Delete; this is the same two-step, on the bigger control.
   const [restoreTarget, setRestoreTarget] = useState<string | null>(null);
@@ -240,12 +240,12 @@ export default function Backups() {
           <p className="text-sm text-dark-200 mt-1 font-mono">{site?.domain}</p>
           {/* What an archive holds differs per archive: anything made before
               v2.34.0 is files only. Stating the general rule here and the actual
-              contents per row is deliberate — someone who reads "Backup" as "my
+              contents per row is deliberate - someone who reads "Backup" as "my
               site is safe" otherwise finds out at the worst possible moment. */}
           <p className="text-xs text-dark-300 mt-2 max-w-xl">
             A backup contains this site&apos;s <strong className="text-dark-200">files and its
             databases</strong>, so restoring one brings back its content too. The Contains column
-            shows what each archive actually holds &mdash; backups made before DockPanel included
+            shows what each archive actually holds - backups made before CyberHunter - Panel included
             databases are marked <strong className="text-dark-200">Files only</strong>.
           </p>
         </div>
@@ -350,7 +350,7 @@ export default function Backups() {
                     <p className="text-xs text-warn-500 mt-1">
                       {/* Backup Manager is administrator-only, so a client is told who
                           can act rather than handed a door that bounces them back. */}
-                      No destinations yet —{" "}
+                      No destinations yet -{" "}
                       {isAdmin ? (
                         <Link to="/backup-orchestrator?tab=destinations" className="underline hover:text-warn-400">
                           add one in Backup Manager

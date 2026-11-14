@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# lockdown-door-census-pin-e2e.sh — s356 / v2.110.0
+# lockdown-door-census-pin-e2e.sh - s356 / v2.110.0
 #
 # Pins the fix for a lockdown that was enforced on some of the doors it names,
 # and reported on the page as though it were enforced on all of them.
@@ -7,8 +7,8 @@
 #   §A  every panel handler that proxies to an agent COMMAND-EXECUTION endpoint
 #       consults the lockdown. The panel has two surfaces that hand an operator a
 #       live shell; until v2.110.0 the lockdown closed one. The Terminal page is
-#       refused at three doors, while the Apps console — which posts a string the
-#       agent runs as `docker exec <id> sh -c <cmd>` — read no lockdown state and
+#       refused at three doors, while the Apps console - which posts a string the
+#       agent runs as `docker exec <id> sh -c <cmd>` - read no lockdown state and
 #       COULD NOT HAVE: `State` was bound as `_state`, so the handler was
 #       structurally incapable of asking. Meanwhile the security endpoint
 #       reported terminals as blocked to the page.
@@ -23,21 +23,21 @@
 #       alert shipped without its runbook link.
 #
 # THE ARMS ARE A CENSUS, NOT A SPOT CHECK. §A and §B ENUMERATE their subjects
-# from the source and judge each one, so a door added later is judged too — a
+# from the source and judge each one, so a door added later is judged too - a
 # suite naming today's three handlers would go green on tomorrow's fourth. Each
 # enumeration is asserted non-empty AND against its expected size before it is
 # trusted (lesson #143: an arm that enumerates its own subjects can examine zero
 # of them and print green).
 #
 # ⚠ EVERY ARM READS COMMENT-STRIPPED SOURCE, and this suite is why that rule
-# exists (lesson #469 — a census keyed on a hazard counts its own documentation).
+# exists (lesson #469 - a census keyed on a hazard counts its own documentation).
 # `services/domain_claim.rs` carries a doc comment reading "the four `INSERT INTO
 # sites` sites", which is textually identical to the thing §B counts. Counted raw,
 # §B finds five doors in four files and reports a defect in a comment.
 #
 # Pure source analysis: no box, no network, no build.
 #
-# MUTATION-TESTED at HEAD — 10 mutations, 10 kills, EACH BY THE ARM IT NAMES,
+# MUTATION-TESTED at HEAD - 10 mutations, 10 kills, EACH BY THE ARM IT NAMES,
 # with the control asserted to print a real summary first (an empty one is not a
 # pass, lesson #461) and every tree restored byte-identical by sha256:
 #   exec_command's State bound back to `_state` (the defect as it shipped) -> A2
@@ -53,17 +53,17 @@
 #
 # ⚠ A2 EARNS ITS PLACE and the mutation run is how that was established. The
 # first mutation reverts ONLY the `State` binding, leaving the call to the
-# predicate byte-identical — so A1, which looks like the arm that owns this
+# predicate byte-identical - so A1, which looks like the arm that owns this
 # defect, stays GREEN. A source pin cannot compile the file; without A2 the exact
 # shape this suite exists to prevent would have reproduced under a green §A.
 #
 # ⚠ The harness itself failed first, and uniformly: it reported 0 kills on 10
 # mutations that had all gone red, because these suites print the mark and the
 # arm label with an ANSI reset BETWEEN them, so `grep '✗ A1'` never matches
-# (lesson #144). A uniform result is a result about the harness, not the pins —
+# (lesson #144). A uniform result is a result about the harness, not the pins -
 # strip ANSI before reading any suite's output.
 #
-# NO PIPES INTO `grep -q` — under `set -o pipefail` grep -q closes the pipe on its
+# NO PIPES INTO `grep -q` - under `set -o pipefail` grep -q closes the pipe on its
 # first match and the arm goes red on correct code (lesson #414). Every arm uses a
 # here-string.
 
@@ -90,7 +90,7 @@ done
 # Comments out, CODE INTACT. Copied from the FIXED stripper (lesson #136): the
 # naive s{/\*.*?\*/}{}gs deletes real code because `/*` occurs inside string
 # literals, and a truncated subject makes an ABSENCE arm pass on code the
-# stripper merely removed — failure in the reassuring direction.
+# stripper merely removed - failure in the reassuring direction.
 code() {
   perl -0777 -pe '
     s{\{/\*.*?\*/\}}{}gs;
@@ -141,7 +141,7 @@ if A=$(subj "$APPS"); then
   if [ "$DOOR_N" -eq 2 ]; then
     ok "A0 enumeration found $DOOR_N execution doors in $(basename $APPS): $(tr '\n' ' ' <<< "$EXEC_DOORS")"
   else
-    bad "A0 expected 2 execution doors, enumerated $DOOR_N — a door was added or renamed, judge it: $(tr '\n' ' ' <<< "$EXEC_DOORS")"
+    bad "A0 expected 2 execution doors, enumerated $DOOR_N - a door was added or renamed, judge it: $(tr '\n' ' ' <<< "$EXEC_DOORS")"
   fi
 
   # Judge EVERY enumerated door, not a named pair.
@@ -157,7 +157,7 @@ if A=$(subj "$APPS"); then
 
     # The handler must be ABLE to ask. An underscore-bound State compiles, reads
     # as a deliberate "this handler needs no database", and is the exact form in
-    # which this defect shipped — so a future edit that reverts the binding puts
+    # which this defect shipped - so a future edit that reverts the binding puts
     # the door back structurally, and the arm above would go red for a reason
     # that looks like a missing call rather than a missing capability.
     SIG=$(awk -v n="$fn" '$0 ~ "fn " n "\\(" {f=1} f {print} f && /^\) ->/ {exit}' <<< "$A")
@@ -234,7 +234,7 @@ while read -r entry; do
 done <<< "$SITE_DOORS"
 
 # The per-hour ceiling: three of the four, and the fourth is an exclusion that is
-# WRITTEN DOWN rather than merely true (lesson #426 — an exclusion you did not
+# WRITTEN DOWN rather than merely true (lesson #426 - an exclusion you did not
 # record is revocable by any feature). A bulk import is an operator asking for
 # many sites from a source they named; a ceiling of three would break the
 # feature rather than guard it.

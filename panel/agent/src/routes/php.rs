@@ -12,7 +12,7 @@ use super::AppState;
 /// Allowed PHP versions (distro repos, deb.sury.org, or ondrej/php PPA).
 const ALLOWED_VERSIONS: &[&str] = &["8.1", "8.2", "8.3", "8.4", "8.5"];
 
-/// PHP extensions to install with each version — each is installed only if
+/// PHP extensions to install with each version - each is installed only if
 /// this apt source actually has a candidate for it. Newer PHP releases build
 /// some of these in (8.5 absorbed opcache), so a fixed all-or-nothing list
 /// would fail the entire transaction over one obsolete package name.
@@ -49,7 +49,7 @@ struct InstallResponse {
 /// Check if a PHP-FPM version is installed.
 ///
 /// On RPM boxes there is one `php-fpm` package rather than one per version, so
-/// `services::pkg::is_installed` collapses every `php{v}-fpm` onto it — a
+/// `services::pkg::is_installed` collapses every `php{v}-fpm` onto it - a
 /// `true` there means "some PHP-FPM is installed", which is the wrong question
 /// for a page that lists five versions.
 ///
@@ -66,7 +66,7 @@ async fn is_installed(version: &str) -> bool {
 /// Check if a PHP-FPM socket file exists for THIS version.
 ///
 /// Delegates to [`crate::services::pkg::resolve_php_fpm_socket`], the shared
-/// resolver that also backs `nginx.rs::put_site()` — so this route and site
+/// resolver that also backs `nginx.rs::put_site()` - so this route and site
 /// creation can never again disagree about which family's socket is real.
 async fn socket_exists(version: &str) -> bool {
     crate::services::pkg::resolve_php_fpm_socket(version).await.is_some()
@@ -83,7 +83,7 @@ async fn is_fpm_running(version: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// GET /php/versions — List all PHP versions with install/running status.
+/// GET /php/versions - List all PHP versions with install/running status.
 async fn list_versions() -> Json<PhpListResponse> {
     let mut versions = Vec::new();
 
@@ -101,7 +101,7 @@ async fn list_versions() -> Json<PhpListResponse> {
             installed,
             fpm_running,
             // Falls back to the Debian-shaped guess when nothing real was found yet
-            // (not installed, or FPM hasn't opened its socket) — same as before.
+            // (not installed, or FPM hasn't opened its socket) - same as before.
             socket: real_socket.unwrap_or_else(|| format!("/run/php/php{v}-fpm.sock")),
         });
     }
@@ -112,7 +112,7 @@ async fn list_versions() -> Json<PhpListResponse> {
 /// Install a PHP version on the RHEL family by selecting its module stream.
 ///
 /// The version is chosen BEFORE the install, because `dnf install php-fpm` with
-/// no stream enabled resolves to the non-modular base package — PHP 8.0 on
+/// no stream enabled resolves to the non-modular base package - PHP 8.0 on
 /// Rocky 9, older than every stream the box offers and long end-of-life, with
 /// nothing in the UI to say so.
 async fn install_version_rpm(
@@ -172,7 +172,7 @@ async fn start_fpm(version: &str) {
 /// Report on what an install actually achieved, judged by the thing that matters.
 ///
 /// Every caller of this route wants a PHP site to work afterwards, and the only
-/// fact that decides that is whether the FPM socket exists — packages installed
+/// fact that decides that is whether the FPM socket exists - packages installed
 /// and units enabled are means, not the end. So the verdict waits briefly for
 /// the socket and then says what it found. The window is short because
 /// `systemctl enable --now` has already returned by this point; it covers FPM
@@ -206,7 +206,7 @@ async fn settle(version: &str, what_happened: &str) -> InstallResponse {
     }
 }
 
-/// POST /php/install — Install a PHP version with common extensions.
+/// POST /php/install - Install a PHP version with common extensions.
 async fn install_version(
     Json(body): Json<InstallRequest>,
 ) -> Result<Json<InstallResponse>, (StatusCode, Json<InstallResponse>)> {
@@ -223,14 +223,14 @@ async fn install_version(
         ));
     }
 
-    // Already installed — but that is not the question anyone is asking.
+    // Already installed - but that is not the question anyone is asking.
     //
     // `is_installed` reads the PACKAGE database, while everything downstream of
     // an install cares about the SOCKET: `nginx.rs` refuses to write a PHP vhost
     // when `/run/php/php{v}-fpm.sock` is missing, and that guard is what sends
     // people here in the first place. A box whose php8.3-fpm unit is installed
     // and stopped satisfied this branch, so the install reported success and the
-    // very next action — the switch that prompted it — failed again with the
+    // very next action - the switch that prompted it - failed again with the
     // same message. Start the unit and let the socket answer.
     if is_installed(version).await {
         start_fpm(version).await;
@@ -238,8 +238,8 @@ async fn install_version(
     }
 
     // The RHEL family selects a PHP version by enabling a module stream, not by
-    // installing a versioned package, so everything below this point — the
-    // apt-cache probe, deb.sury.org, ppa:ondrej/php — is Debian machinery.
+    // installing a versioned package, so everything below this point - the
+    // apt-cache probe, deb.sury.org, ppa:ondrej/php - is Debian machinery.
     // This whole file had NO family guard before s266, so on a RHEL box every
     // handler here failed with a raw "Failed to find executable apt-get": the
     // same defect s265 fixed in the service installers and did not reach here.
@@ -253,7 +253,7 @@ async fn install_version(
                     message: format!(
                         "PHP {version} is not offered by this system's package repositories. \
                          Available versions here: {}. (Other versions would need the third-party \
-                         remi repository, which DockPanel does not configure.)",
+                         remi repository, which CyberHunter - Panel does not configure.)",
                         streams.join(", ")
                     ),
                     version: version.to_string(),
@@ -267,7 +267,7 @@ async fn install_version(
     // and Ubuntu 24.04 the requested version may already be in the default
     // repo. If not, configure a 3rd-party repo: deb.sury.org for Debian,
     // ppa:ondrej/php for Ubuntu. (Pre-v2.8.16 used Ondrej PPA for both,
-    // which doesn't work on Debian — packages aren't built for trixie.)
+    // which doesn't work on Debian - packages aren't built for trixie.)
     let pkg_available = safe_command("bash")
         .args(["-c", &format!("apt-cache show php{version}-fpm 2>/dev/null | grep -q '^Package:'")])
         .output()
@@ -287,11 +287,11 @@ async fn install_version(
         let codename = parse("VERSION_CODENAME");
 
         // Each repo script: (1) pre-checks that the 3rd-party repo actually
-        // publishes for this release — brand-new distro releases lag behind
+        // publishes for this release - brand-new distro releases lag behind
         // (ppa:ondrej/php had no Ubuntu 26.04 builds at that release's
         // launch); (2) verifies the requested version exists after adding.
         // Failing either way exits non-zero, and the failure branch below
-        // REMOVES the added source — a dead source left behind breaks every
+        // REMOVES the added source - a dead source left behind breaks every
         // later `apt-get update` on the box with a 404.
         let repo_cmd = if os_id == "debian" && !codename.is_empty() {
             tracing::info!("Adding deb.sury.org repo for Debian ({codename})...");
@@ -367,7 +367,7 @@ async fn install_version(
     }
 
     // Core first (must succeed), then every extension this apt source has a
-    // real candidate for. `apt-cache show` is not enough — a package can
+    // real candidate for. `apt-cache show` is not enough - a package can
     // keep a stanza while its Candidate is "(none)" (php-opcache on Ubuntu
     // 26.04, where OPcache became built-in) and one dead name fails the
     // whole apt transaction.
@@ -390,7 +390,7 @@ async fn install_version(
     // plain `.output()`) is load-bearing here: on expiry it also stops the
     // transient systemd unit the privileged apt transaction actually runs
     // in, which a caller-side timeout alone cannot reach (see safe_cmd.rs's
-    // own doc comment) — the exact orphaned-transaction class v2.213.0
+    // own doc comment) - the exact orphaned-transaction class v2.213.0
     // fixed for every pkg.rs call site, extended here.
     let output = safe_command_unsandboxed("bash", &[])
         .args(["-c", &install_cmd])
@@ -444,7 +444,7 @@ fn php_api_err(status: StatusCode, msg: &str) -> PhpApiErr {
     (status, Json(serde_json::json!({ "error": msg })))
 }
 
-/// GET /php/extensions/{version} — List installed PHP extensions.
+/// GET /php/extensions/{version} - List installed PHP extensions.
 async fn list_extensions(Path(version): Path<String>) -> Result<Json<serde_json::Value>, PhpApiErr> {
     if !ALLOWED_VERSIONS.contains(&version.as_str()) {
         return Err(php_api_err(StatusCode::BAD_REQUEST, &format!("Invalid PHP version. Allowed: {}", ALLOWED_VERSIONS.join(", "))));
@@ -466,7 +466,7 @@ async fn list_extensions(Path(version): Path<String>) -> Result<Json<serde_json:
     // List available (installable) extensions. The query differs per family and
     // so does the prefix to strip: Debian's packages are `php8.3-gd`, the RHEL
     // family's are `php-gd`. Asking apt-cache on a dnf box does not error
-    // loudly — `.ok()` swallows it and the operator simply sees an empty list
+    // loudly - `.ok()` swallows it and the operator simply sees an empty list
     // of extensions they could install, with nothing saying why.
     let rpm = crate::services::pkg::manager().await == crate::services::pkg::PkgMgr::Rpm;
     let (prefix, avail_output) = if rpm {
@@ -507,7 +507,7 @@ async fn list_extensions(Path(version): Path<String>) -> Result<Json<serde_json:
     Ok(Json(serde_json::json!({ "installed": extensions, "available": available, "version": version })))
 }
 
-/// POST /php/extensions/install — Install a PHP extension.
+/// POST /php/extensions/install - Install a PHP extension.
 async fn install_extension(Json(body): Json<serde_json::Value>) -> Result<Json<serde_json::Value>, PhpApiErr> {
     let version = body.get("version").and_then(|v| v.as_str()).unwrap_or("8.3");
     let extension = body.get("extension").and_then(|v| v.as_str()).unwrap_or("");
@@ -535,7 +535,7 @@ async fn install_extension(Json(body): Json<serde_json::Value>) -> Result<Json<s
     Ok(Json(serde_json::json!({ "ok": true, "package": package })))
 }
 
-/// POST /php/uninstall — Remove a PHP version and all its extensions.
+/// POST /php/uninstall - Remove a PHP version and all its extensions.
 async fn uninstall_version(
     Json(body): Json<InstallRequest>,
 ) -> Result<Json<InstallResponse>, (StatusCode, Json<InstallResponse>)> {
@@ -567,7 +567,7 @@ async fn uninstall_version(
     let _ = safe_command("systemctl").args(["disable", &unit]).output().await;
 
     // 2. Purge all PHP packages for this version. The glob is family-specific
-    // and stays out of `pkg::remove`, which translates package NAMES — a glob
+    // and stays out of `pkg::remove`, which translates package NAMES - a glob
     // is not a name, and putting one through the map yields a pattern matching
     // nothing. Debian's packages are versioned; the RHEL family's are not, so
     // removing "this version" there means removing PHP.
@@ -631,7 +631,7 @@ async fn uninstall_version(
 }
 
 // ──────────────────────────────────────────────────────────────
-// Global php.ini editor (FPM, per version) — contract §A2/§A3
+// Global php.ini editor (FPM, per version) - contract §A2/§A3
 // ──────────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
@@ -665,7 +665,7 @@ fn ini_response(version: &str, path: &str, content: String) -> serde_json::Value
     serde_json::json!({ "version": version, "path": path, "content": content, "values": values })
 }
 
-/// GET /php/ini/{version} — the FPM php.ini of a version and its main values.
+/// GET /php/ini/{version} - the FPM php.ini of a version and its main values.
 async fn get_ini(Path(version): Path<String>) -> Result<Json<serde_json::Value>, PhpApiErr> {
     let path = ini_path_for(&version)?;
     let content = std::fs::read_to_string(&path).map_err(|e| {
@@ -701,7 +701,7 @@ async fn fpm_is_active(version: &str) -> bool {
     false
 }
 
-/// PUT /php/ini/{version} — `{content}` (raw) or `{values}` (the 8 main keys).
+/// PUT /php/ini/{version} - `{content}` (raw) or `{values}` (the 8 main keys).
 /// Backup → atomic write → `php-fpm<ver> -t` → restart → is-active; any
 /// failure puts the previous file back, restarts, and answers 400.
 async fn put_ini(
@@ -773,7 +773,7 @@ async fn put_ini(
         tracing::warn!("php.ini update for PHP {version} rejected: {err}");
         let restored = write_atomic(&path, &previous).is_ok();
         if !restored {
-            tracing::error!("Could not restore {path} — the backup is at {backup}");
+            tracing::error!("Could not restore {path} - the backup is at {backup}");
         }
         if let Err(e) = php_pool::fpm_systemctl(&version, "restart").await {
             tracing::error!("Restart after restoring {path} failed: {e}");
@@ -785,7 +785,7 @@ async fn put_ini(
                 if restored {
                     " (the previous php.ini was restored)"
                 } else {
-                    " (restoring the previous php.ini FAILED — see php.ini.dockpanel.bak)"
+                    " (restoring the previous php.ini FAILED - see php.ini.dockpanel.bak)"
                 }
             ),
         ));

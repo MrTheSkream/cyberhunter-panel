@@ -18,8 +18,8 @@ pub const CODE_AGENT_UNREACHABLE: &str = "agent_unreachable";
 /// The status carried alongside it is deliberately **403, never 401**, and it
 /// stays 403 now that [`CODE_SESSION_INVALID`] has made 401 survivable. The
 /// session is still valid; only this one action is refused, which is what 403
-/// means. Choosing it is no longer a way around the client — it is the correct
-/// status — so do not "restore" this to 401 on the grounds that bodies now
+/// means. Choosing it is no longer a way around the client - it is the correct
+/// status - so do not "restore" this to 401 on the grounds that bodies now
 /// survive.
 pub const CODE_REAUTH_REQUIRED: &str = "reauth_required";
 
@@ -28,7 +28,7 @@ pub const CODE_REAUTH_REQUIRED: &str = "reauth_required";
 /// This is the ONLY thing that entitles the frontend to navigate someone to
 /// `/login`, and it is emitted from exactly one place: the [`AuthUser`]
 /// extractor and its `ServerScope` sibling in `crate::auth`. The rule behind
-/// that is structural rather than a matter of taste — **if a handler returned
+/// that is structural rather than a matter of taste - **if a handler returned
 /// 401, the session was valid**, because the extractor had already let the
 /// request through. A handler's 401 means the credential presented *inside* an
 /// authenticated request was refused: a wrong password, a wrong TOTP code, a
@@ -38,8 +38,8 @@ pub const CODE_REAUTH_REQUIRED: &str = "reauth_required";
 /// Until v2.87.0 the client could not tell the two apart, so it assumed the
 /// worst about all of them: it navigated to `/login` and threw a fixed
 /// "Unauthorized" *before the response body was ever parsed*. Every sentence
-/// written at a 401 site in this codebase — including the one telling a user
-/// their administrator had reset their 2FA — was discarded unread.
+/// written at a 401 site in this codebase - including the one telling a user
+/// their administrator had reset their 2FA - was discarded unread.
 ///
 /// [`AuthUser`]: crate::auth::AuthUser
 pub const CODE_SESSION_INVALID: &str = "session_invalid";
@@ -50,7 +50,7 @@ pub const CODE_SESSION_INVALID: &str = "session_invalid";
 /// It exists because the framework's own refusal cannot be rendered. An
 /// oversize body is rejected by axum's request-body limit before any handler
 /// runs, as `413` with the plain-text sentence "Failed to buffer the request
-/// body: length limit exceeded" — which `api.ts` correctly degrades to
+/// body: length limit exceeded" - which `api.ts` correctly degrades to
 /// "Request failed (413)", a sentence that tells an operator nothing. Issue
 /// #121 was filed because a 33 MB upload produced no explanation at all.
 /// Handlers that can be handed an oversize body take the rejection instead of
@@ -63,7 +63,7 @@ const MAX_AGENT_MSG: usize = 400;
 /// The label the agent puts on a certificate order that failed validation.
 ///
 /// ⚠ The agent crate carries this same literal and cannot share a constant with
-/// this one — two crates, no common dependency. That makes it a severed pair by
+/// this one - two crates, no common dependency. That makes it a severed pair by
 /// construction, so a pin compares the two spellings across both trees rather
 /// than trusting either alone; renaming it here and nowhere else silently
 /// returns every failed order to an incident id, with nothing red.
@@ -72,7 +72,7 @@ const ACME_ORDER_FAILED_CODE: &str = "acme_order_failed";
 /// The label the agent puts on a DNS-01 challenge the DNS PROVIDER refused.
 ///
 /// The third party on the third door. A Cloudflare token without `DNS:Edit`
-/// cannot publish `_acme-challenge`, and that is the operator's to fix — but it
+/// cannot publish `_acme-challenge`, and that is the operator's to fix - but it
 /// is not something the certificate authority said, so it may not borrow
 /// [`ACME_ORDER_FAILED_CODE`]'s sentence, which names the CA. Same severed-pair
 /// caveat as its sibling, same cross-tree pin.
@@ -84,13 +84,13 @@ const DNS_PROVIDER_FAILED_CODE: &str = "dns_provider_failed";
 const RENEWAL_FAILURE_PREFIX: &str = "Renewal failed:";
 
 /// The label the agent puts on a provision/renew order it declined because a
-/// certificate this product did not issue is already installed —
+/// certificate this product did not issue is already installed -
 /// `panel/agent/src/routes/ssl.rs::ca_or_internal`. `pub`, unlike its three
 /// siblings above: those are consumed only inside the functions beside them,
 /// but this one is also what a provision door's `err_coded` call names, so the
 /// frontend's force-retry has exactly one string to match rather than a copy
 /// that can drift from it. Same cross-tree severed-pair caveat as its siblings
-/// — the agent crate carries the same literal and cannot share this constant.
+/// - the agent crate carries the same literal and cannot share this constant.
 pub const CODE_FOREIGN_CERTIFICATE: &str = "foreign_certificate";
 
 pub fn err(status: StatusCode, msg: &str) -> ApiError {
@@ -104,8 +104,8 @@ pub fn err_coded(status: StatusCode, msg: &str, code: &str) -> ApiError {
 
 /// Extract the human-facing sentence from an agent error body.
 ///
-/// The agent answers errors in three shapes — `{"error": …}`, `{"success":
-/// false, "message": …}`, and occasionally bare text — so all three are
+/// The agent answers errors in three shapes - `{"error": …}`, `{"success":
+/// false, "message": …}`, and occasionally bare text - so all three are
 /// handled rather than the one that happened to be in front of us.
 fn agent_message(body: &str) -> String {
     let msg = serde_json::from_str::<serde_json::Value>(body)
@@ -134,7 +134,7 @@ fn agent_message(body: &str) -> String {
 
 /// The stable `code` an agent attached to an error body, if it attached one.
 ///
-/// Shared by the two label readers so the extraction lives once — a second
+/// Shared by the two label readers so the extraction lives once - a second
 /// hand-rolled copy is how one of them silently stops matching.
 fn agent_code(body: &str) -> Option<String> {
     serde_json::from_str::<serde_json::Value>(body)
@@ -146,8 +146,8 @@ fn agent_code(body: &str) -> Option<String> {
 /// when this failure is not one.
 ///
 /// The label is the ONLY proof accepted here, and deliberately so. Its sibling
-/// [`acme_order_failure`] has a second one — the renewal route's wrapper, carried
-/// by every agent ever shipped — which is what lets an un-updated install get the
+/// [`acme_order_failure`] has a second one - the renewal route's wrapper, carried
+/// by every agent ever shipped - which is what lets an un-updated install get the
 /// honest answer today. The DNS-01 door never had such a wrapper, so there is no
 /// legacy shape to recognise, and inventing one out of the agent's old message
 /// prefixes would be guessing at text this very change rewrites. An agent older
@@ -169,7 +169,7 @@ pub fn dns_provider_failure(e: &AgentError) -> Option<String> {
 /// The sentence an agent's failed ACME order should reach the operator as, or
 /// `None` when this failure is not one.
 ///
-/// A certificate order that fails validation is the operator's to fix — the
+/// A certificate order that fails validation is the operator's to fix - the
 /// domain does not resolve here, or port 80 is shut, or a wildcard's apex lives
 /// somewhere else. It is the single most likely way an SSL button fails, and
 /// [`agent_error`] answers all of it with an incident id, because the agent
@@ -184,7 +184,7 @@ pub fn dns_provider_failure(e: &AgentError) -> Option<String> {
 /// 1. The agent labels the order failure with a stable code. That is exact, and
 ///    it works at every door.
 /// 2. Failing that, the renewal route's own wrapper text. This is the half that
-///    reaches installs NOBODY HAS UPDATED — an agent is only updated when
+///    reaches installs NOBODY HAS UPDATED - an agent is only updated when
 ///    somebody updates it, so a fix that lives only in the agent does not
 ///    arrive, which is the whole reason the s386 Fix button was repaired
 ///    panel-side. Provisioning has no such wrapper, so an older agent keeps its
@@ -218,7 +218,7 @@ pub fn acme_order_failure(e: &AgentError) -> Option<String> {
 ///
 /// [`agent_error`] below is the whole answer whenever ONE agent call decides the
 /// response. A caller that asks SEVERAL members and has to summarise them cannot
-/// use it — it holds N errors and must pick one status — and the way that has
+/// use it - it holds N errors and must pick one status - and the way that has
 /// gone wrong is by stringifying each error and hand-rolling a 502, which throws
 /// away precisely the 4xx this module exists to preserve. Exposing the rule lets
 /// a fan-out apply it per member instead of re-deriving it, and keeps both the
@@ -254,7 +254,7 @@ pub fn agent_error(context: &str, e: AgentError) -> ApiError {
             let msg = agent_message(body);
             tracing::warn!(agent_status = code, error = %msg, "{context}");
             // A foreign-certificate refusal is the one 4xx a caller may want to
-            // retry, deliberately, with `force: true` — every provision/renew
+            // retry, deliberately, with `force: true` - every provision/renew
             // door funnels through here (#837's choke-point shape), so fixing
             // it here rather than per-door is what makes a door added later
             // inherit it too. `err` alone lost this exact code before: the
@@ -313,7 +313,7 @@ pub fn agent_error(context: &str, e: AgentError) -> ApiError {
 /// A call to a THIRD-PARTY service (Stripe, Cloudflare, …) failed.
 ///
 /// Deliberately separate from [`agent_error`]: these calls never touch the
-/// DockPanel agent, and routing them through the agent path is what made a
+/// CyberHunter - Panel agent, and routing them through the agent path is what made a
 /// Cloudflare outage tell an operator their agent was offline. Names the
 /// service so the log says which upstream broke, and carries no
 /// `agent_unreachable` marker.
@@ -372,7 +372,7 @@ mod tests {
 
     #[test]
     fn a_failed_order_is_recognised_on_an_agent_nobody_has_updated() {
-        // ⭐ THE HALF THAT ARRIVES. No label, because the agent predates it — the
+        // ⭐ THE HALF THAT ARRIVES. No label, because the agent predates it - the
         // renewal route's own wording is the evidence, and this is the only reason
         // an existing install stops answering a reference number today.
         let e = AgentError::Status(
@@ -387,7 +387,7 @@ mod tests {
 
     #[test]
     fn an_internal_agent_fault_is_still_only_an_incident_id() {
-        // ⭐ THE ASSERTION THAT STOPS THE FIX OVERREACHING — and it deliberately
+        // ⭐ THE ASSERTION THAT STOPS THE FIX OVERREACHING - and it deliberately
         // uses a fault raised INSIDE the labelled call, not one raised before it.
         // The first version of this test used the ACME account load, which happens
         // above the labelled call and so could never have carried a label: it
@@ -404,7 +404,7 @@ mod tests {
     fn a_local_fault_on_the_renew_door_of_an_updated_agent_keeps_its_incident_id() {
         // An agent new enough to label puts the renewal wrapper on local faults
         // too, so the wrapper alone must not be enough when the label is absent
-        // AND the agent is known to label. It is — the fallback is deliberately
+        // AND the agent is known to label. It is - the fallback is deliberately
         // wide, and this records what it costs: only an agent too old to label
         // reaches it. Documented in acme_order_failure's own note.
         let e = AgentError::Status(
@@ -451,7 +451,7 @@ mod tests {
     #[test]
     fn a_foreign_certificate_refusal_keeps_its_code() {
         // The agent labels this refusal so the frontend can offer a
-        // force-retry instead of just showing the sentence — see
+        // force-retry instead of just showing the sentence - see
         // `panel/agent/src/routes/ssl.rs::ca_or_internal`. Everything else in
         // `agent_4xx_keeps_its_status_and_says_why` holds; only this one label
         // must additionally survive as a `code`.
@@ -459,13 +459,13 @@ mod tests {
             "SSL provisioning",
             AgentError::Status(
                 422,
-                r#"{"error":"The certificate on example.com was not issued by DockPanel (issuer: DigiCert Inc).","code":"foreign_certificate"}"#.into(),
+                r#"{"error":"The certificate on example.com was not issued by CyberHunter - Panel (issuer: DigiCert Inc).","code":"foreign_certificate"}"#.into(),
             ),
         );
         assert_eq!(e.0, StatusCode::UNPROCESSABLE_ENTITY);
         assert_eq!(
             body_of(&e)["error"],
-            "The certificate on example.com was not issued by DockPanel (issuer: DigiCert Inc)."
+            "The certificate on example.com was not issued by CyberHunter - Panel (issuer: DigiCert Inc)."
         );
         assert_eq!(body_of(&e)["code"], CODE_FOREIGN_CERTIFICATE);
     }
@@ -545,8 +545,8 @@ mod tests {
 
     #[test]
     fn the_three_markers_are_distinct_strings() {
-        // They mean three different things to the client — "your agent is
-        // down", "re-present a credential", "log in again" — and a collision
+        // They mean three different things to the client - "your agent is
+        // down", "re-present a credential", "log in again" - and a collision
         // would silently give one the other's behaviour.
         assert_ne!(CODE_SESSION_INVALID, CODE_REAUTH_REQUIRED);
         assert_ne!(CODE_SESSION_INVALID, CODE_AGENT_UNREACHABLE);
@@ -579,8 +579,8 @@ mod tests {
 
     #[test]
     fn a_dns_provider_refusal_is_recognised_by_its_own_label() {
-        // The fixture carries the provider label and NOTHING else — no renewal
-        // wrapper, no ACME label — so exactly one branch can explain it (#666).
+        // The fixture carries the provider label and NOTHING else - no renewal
+        // wrapper, no ACME label - so exactly one branch can explain it (#666).
         let e = AgentError::Status(
             500,
             r#"{"error":"Cloudflare refused to create the challenge record: [{\"code\":10000}]","code":"dns_provider_failed"}"#.into(),
@@ -621,8 +621,8 @@ mod tests {
 
     #[test]
     fn an_unlabelled_dns01_fault_is_still_only_an_incident_id() {
-        // A fault raised INSIDE the labelled call — the certificate write, not
-        // the account load above it — so it is a fault that COULD have carried a
+        // A fault raised INSIDE the labelled call - the certificate write, not
+        // the account load above it - so it is a fault that COULD have carried a
         // label and deliberately does not.
         let e = AgentError::Status(
             500,

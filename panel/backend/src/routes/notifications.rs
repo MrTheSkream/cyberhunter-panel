@@ -30,7 +30,7 @@ pub struct NotificationRow {
 /// The handler used to take none, and the SQL ended in a bare `LIMIT 50`. On
 /// this panel that left 28 of 78 rows with no way to reach them: no offset, no
 /// cursor, and nothing in the UI that could have asked for them. The badge,
-/// meanwhile, counts unread without a limit — so the two numbers on screen were
+/// meanwhile, counts unread without a limit - so the two numbers on screen were
 /// answering different questions and could disagree by construction.
 #[derive(serde::Deserialize)]
 pub struct ListQuery {
@@ -46,7 +46,7 @@ pub struct ListQuery {
     unread: Option<bool>,
 }
 
-/// GET /api/notifications — one page of the current user's notifications.
+/// GET /api/notifications - one page of the current user's notifications.
 pub async fn list(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -79,7 +79,7 @@ pub async fn list(
     Ok(Json(notifs))
 }
 
-/// GET /api/notifications/summary — totals the list cannot carry.
+/// GET /api/notifications/summary - totals the list cannot carry.
 ///
 /// The page used to derive "N unread" from the rows it had loaded, while the
 /// bell used the server's own COUNT. With a hard limit on one side and none on
@@ -119,7 +119,7 @@ pub async fn summary(
     })))
 }
 
-/// GET /api/notifications/unread-count — Quick count for badge.
+/// GET /api/notifications/unread-count - Quick count for badge.
 pub async fn unread_count(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -135,7 +135,7 @@ pub async fn unread_count(
     Ok(Json(serde_json::json!({ "count": count })))
 }
 
-/// POST /api/notifications/{id}/read — Mark single notification as read.
+/// POST /api/notifications/{id}/read - Mark single notification as read.
 pub async fn mark_read(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -157,7 +157,7 @@ pub async fn mark_read(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// POST /api/notifications/read-all — Mark all notifications as read.
+/// POST /api/notifications/read-all - Mark all notifications as read.
 pub async fn mark_all_read(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -173,7 +173,7 @@ pub async fn mark_all_read(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// DELETE /api/notifications/{id} — Remove one notification.
+/// DELETE /api/notifications/{id} - Remove one notification.
 ///
 /// There was no way to remove a notification at all: the only DELETE against
 /// this table in the whole product is the retention sweep, which is time-based
@@ -198,11 +198,11 @@ pub async fn delete_one(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// DELETE /api/notifications/read — Clear everything already read.
+/// DELETE /api/notifications/read - Clear everything already read.
 ///
 /// Scoped to `read_at IS NOT NULL` on purpose: "clear" must never be able to
 /// discard something the operator has not seen. `user_id = $1` is the other half
-/// — one admin clearing their feed cannot touch another's copy of the same
+/// - one admin clearing their feed cannot touch another's copy of the same
 /// broadcast, because the fan-out gives each recipient their own row.
 pub async fn delete_read(
     State(state): State<AppState>,
@@ -220,7 +220,7 @@ pub async fn delete_read(
     ))
 }
 
-/// GET /api/notifications/stream — SSE stream for real-time notification delivery.
+/// GET /api/notifications/stream - SSE stream for real-time notification delivery.
 /// Filters events to only those belonging to the authenticated user.
 pub async fn stream(
     State(state): State<AppState>,
@@ -237,12 +237,12 @@ pub async fn stream(
                     Some(Ok(Event::default().data(json)))
                 }
                 Ok(_) => None,           // Not for this user
-                Err(_) => None,           // Lagged or closed — skip
+                Err(_) => None,           // Lagged or closed - skip
             }
         }
     })
     // `notif_tx` lives for the whole process, so without this the stream never
-    // ends on its own — every admin tab with the panel open holds one of these
+    // ends on its own - every admin tab with the panel open holds one of these
     // open indefinitely, which is exactly what blocks a graceful shutdown drain.
     .take_until(crate::helpers::shutdown_signal_fut(&state));
 

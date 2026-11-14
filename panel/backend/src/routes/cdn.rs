@@ -104,7 +104,7 @@ fn bunny_client(_api_key: &str) -> reqwest::Client {
 
 fn bunny_headers(api_key: &str) -> reqwest::header::HeaderMap {
     // The stored BunnyCDN key is encrypted at rest (see `create_zone`). Decrypt
-    // here — the single choke point every Bunny caller funnels through — so no
+    // here - the single choke point every Bunny caller funnels through - so no
     // read site can forget to, exactly as `helpers::cf_headers` does for the
     // Cloudflare half. The legacy fallback returns any pre-encryption plaintext
     // value (and a freshly-entered key during validation) unchanged, so the
@@ -119,7 +119,7 @@ fn bunny_headers(api_key: &str) -> reqwest::header::HeaderMap {
     headers
 }
 
-/// GET /api/cdn/zones — List CDN zones for the current user.
+/// GET /api/cdn/zones - List CDN zones for the current user.
 pub async fn list_zones(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -135,7 +135,7 @@ pub async fn list_zones(
     Ok(Json(zones.into_iter().map(CdnZoneView::from).collect()))
 }
 
-/// POST /api/cdn/zones — Add a CDN zone.
+/// POST /api/cdn/zones - Add a CDN zone.
 pub async fn create_zone(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -177,7 +177,7 @@ pub async fn create_zone(
     // promise every stored credential is AES-256-GCM at rest; this column was
     // one of three that were not. Reads go through `bunny_headers` /
     // `helpers::cf_headers`, which both decrypt, and both tolerate a legacy
-    // plaintext value — so existing rows keep working and there is no migration.
+    // plaintext value - so existing rows keep working and there is no migration.
     let api_key_enc = crate::services::secrets_crypto::encrypt_credential(
         body.api_key.trim(),
         &state.config.jwt_secret,
@@ -207,7 +207,7 @@ pub async fn create_zone(
     Ok((StatusCode::CREATED, Json(CdnZoneView::from(zone))))
 }
 
-/// PUT /api/cdn/zones/{id} — Update CDN zone settings.
+/// PUT /api/cdn/zones/{id} - Update CDN zone settings.
 pub async fn update_zone(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -243,7 +243,7 @@ pub async fn update_zone(
     Ok(Json(CdnZoneView::from(updated)))
 }
 
-/// DELETE /api/cdn/zones/{id} — Remove CDN zone.
+/// DELETE /api/cdn/zones/{id} - Remove CDN zone.
 pub async fn delete_zone(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -273,7 +273,7 @@ pub async fn delete_zone(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// POST /api/cdn/zones/{id}/purge — Purge CDN cache.
+/// POST /api/cdn/zones/{id}/purge - Purge CDN cache.
 pub async fn purge_cache(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -371,7 +371,7 @@ pub async fn purge_cache(
     Ok(Json(serde_json::json!({ "ok": true, "message": "Cache purged successfully" })))
 }
 
-/// GET /api/cdn/zones/{id}/stats — Get CDN bandwidth/request stats.
+/// GET /api/cdn/zones/{id}/stats - Get CDN bandwidth/request stats.
 pub async fn zone_stats(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -470,7 +470,7 @@ pub async fn zone_stats(
     }
 }
 
-/// POST /api/cdn/zones/{id}/test — Test CDN API credentials.
+/// POST /api/cdn/zones/{id}/test - Test CDN API credentials.
 pub async fn test_credentials(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -525,7 +525,7 @@ pub async fn test_credentials(
     }
 }
 
-/// GET /api/cdn/zones/{id}/pull-zones — List available pull zones from the provider.
+/// GET /api/cdn/zones/{id}/pull-zones - List available pull zones from the provider.
 pub async fn list_pull_zones(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,

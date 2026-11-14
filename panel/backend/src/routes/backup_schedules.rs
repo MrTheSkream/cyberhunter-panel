@@ -38,12 +38,12 @@ pub struct SetScheduleRequest {
 ///
 /// One line over [`crate::helpers::site_domain_for_caller`], which is shared with
 /// the five other modules that each carried their own copy of this query. The
-/// rules — including why only the admin arm is scoped by server — live there.
+/// rules - including why only the admin arm is scoped by server - live there.
 async fn get_site_domain(state: &AppState, site_id: Uuid, claims: &Claims) -> Result<String, ApiError> {
     crate::helpers::site_domain_for_caller(state, site_id, claims).await
 }
 
-/// GET /api/sites/{id}/backup-schedule — Get the backup schedule for a site.
+/// GET /api/sites/{id}/backup-schedule - Get the backup schedule for a site.
 pub async fn get_schedule(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -62,7 +62,7 @@ pub async fn get_schedule(
     Ok(Json(schedule))
 }
 
-/// PUT /api/sites/{id}/backup-schedule — Create or update backup schedule.
+/// PUT /api/sites/{id}/backup-schedule - Create or update backup schedule.
 pub async fn set_schedule(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -80,15 +80,15 @@ pub async fn set_schedule(
     // Verify the destination exists and is one this user may send backups to.
     //
     // The inner JOIN this replaces could never match. `backup_destinations.server_id`
-    // is nullable by design — the migration that added it calls destinations
-    // "shared" — and `create` inserts only (name, dtype, config), so the column is
+    // is nullable by design - the migration that added it calls destinations
+    // "shared" - and `create` inserts only (name, dtype, config), so the column is
     // NULL on every destination the panel has ever made. An inner join on a column
     // that is always NULL selects nothing, so this check answered 403 "Destination
     // not found or not owned by you" for every destination that existed, and the
     // per-site schedule form's Destination dropdown could not be used at all.
     //
     // A NULL server_id means unscoped: any user may target it. That is the model
-    // destinations already have — they are created and deleted through admin-only
+    // destinations already have - they are created and deleted through admin-only
     // routes, so the operator choosing them is the same person who owns the bucket,
     // and a site owner can upload to it but never read it. A destination that IS
     // pinned to a server still has to belong to this user.
@@ -142,7 +142,7 @@ pub async fn set_schedule(
     Ok(Json(schedule))
 }
 
-/// DELETE /api/sites/{id}/backup-schedule — Remove backup schedule.
+/// DELETE /api/sites/{id}/backup-schedule - Remove backup schedule.
 pub async fn remove_schedule(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -171,7 +171,7 @@ pub struct BackupSetupStatus {
     pub has_backup: bool,
 }
 
-/// GET /api/backup-setup-status — Whether the current user has any backup schedule
+/// GET /api/backup-setup-status - Whether the current user has any backup schedule
 /// or any stored backup (site, database, or volume). Used by the Dashboard onboarding
 /// step "Set up backups" so a one-off manual backup or scheduled backup counts as done.
 pub async fn setup_status(

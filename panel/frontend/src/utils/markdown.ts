@@ -7,7 +7,7 @@ marked.setOptions({ breaks: true, gfm: true });
  * Render trusted-but-stored markdown into sanitized HTML.
  *
  * Runbooks are admin-authored but persisted in the DB and editable via the
- * API surface, so DOMPurify is mandatory defense-in-depth — an admin who
+ * API surface, so DOMPurify is mandatory defense-in-depth - an admin who
  * pastes `<script>` from an untrusted wiki should not produce stored XSS
  * in the panel's incident detail view.
  */

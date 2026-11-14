@@ -56,7 +56,7 @@ async fn find_free_port(engine: &str) -> Result<u16, String> {
     Err("No free port available for database".into())
 }
 
-/// POST /databases — Create a new database container.
+/// POST /databases - Create a new database container.
 async fn create(
     Json(body): Json<CreateDbRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
@@ -116,7 +116,7 @@ async fn create(
     })))
 }
 
-/// DELETE /databases/{container_id} — Remove a database container.
+/// DELETE /databases/{container_id} - Remove a database container.
 async fn remove(
     Path(container_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
@@ -139,7 +139,7 @@ async fn remove(
     Ok(Json(serde_json::json!({ "success": true })))
 }
 
-/// GET /databases — List all managed database containers.
+/// GET /databases - List all managed database containers.
 async fn list() -> Result<Json<Vec<database::DbContainer>>, (StatusCode, Json<serde_json::Value>)>
 {
     let dbs = database::list_databases().await.map_err(|e| {
@@ -162,7 +162,7 @@ struct QueryDbRequest {
     sql: String,
 }
 
-/// POST /databases/query — Execute a SQL query inside a database container.
+/// POST /databases/query - Execute a SQL query inside a database container.
 async fn query_db(
     Json(body): Json<QueryDbRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
@@ -255,7 +255,7 @@ struct ResetPasswordRequest {
     new_password: String,
 }
 
-/// POST /databases/reset-password — Reset a database user's password.
+/// POST /databases/reset-password - Reset a database user's password.
 async fn reset_password(
     Json(body): Json<ResetPasswordRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {

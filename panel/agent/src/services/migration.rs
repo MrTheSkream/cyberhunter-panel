@@ -6,7 +6,7 @@ use crate::safe_cmd::safe_command;
 
 const MIGRATION_DIR: &str = "/tmp/dockpanel-migration";
 
-/// Where a URL-fetched archive is staged before analysis — inside the ONE
+/// Where a URL-fetched archive is staged before analysis - inside the ONE
 /// subtree systemd actually grants this unit write access to
 /// (`ReadWritePaths=... /var/backups/dockpanel ...`, not the bare
 /// `/var/backups/` an operator-copied archive can live under). Landing a new
@@ -20,14 +20,14 @@ pub const FETCH_DIR: &str = "/var/backups/dockpanel/migration-fetch";
 const MAX_FETCH_BYTES: u64 = 20 * 1024 * 1024 * 1024; // 20 GiB
 
 /// How long a fetch may run before this process gives up on it. Matches
-/// `EXTRACT_TIMEOUT_SECS` below — the same "bound the thing that will never
+/// `EXTRACT_TIMEOUT_SECS` below - the same "bound the thing that will never
 /// finish, not the one that will" reasoning applies to a slow remote host.
 const FETCH_TIMEOUT_SECS: u64 = 1800;
 
 /// Download a backup archive from `url` into `dest` (the caller has already
 /// validated `dest` sits inside [`FETCH_DIR`] and `url` is not an internal
 /// address). Streams to disk with a hard size cap instead of buffering the
-/// whole response — a real archive can be many gigabytes — and writes to a
+/// whole response - a real archive can be many gigabytes - and writes to a
 /// `.part` sibling first, renaming into place only once the full response has
 /// landed, so a crash or a cap trip never leaves something `analyze()` could
 /// mistake for a complete archive.
@@ -90,12 +90,12 @@ pub async fn fetch_archive(url: &str, dest: &str) -> Result<u64, String> {
     Ok(written)
 }
 
-/// Ceiling on unpacking one backup archive — for the WHOLE attempt, not per `tar`.
+/// Ceiling on unpacking one backup archive - for the WHOLE attempt, not per `tar`.
 ///
 /// Extraction can run twice: gzip first, then plain tar for an archive that is
 /// not gzipped. Giving each its own fresh budget would make the real worst case
-/// double this, and the panel's budget — set just above this number on the
-/// strength of the name — would then be the one to fire, replacing the sentence
+/// double this, and the panel's budget - set just above this number on the
+/// strength of the name - would then be the one to fire, replacing the sentence
 /// below with a contentless "the agent request timed out". So the second attempt
 /// gets what is LEFT, and this stays the true ceiling on the call.
 ///
@@ -154,8 +154,8 @@ pub async fn analyze(backup_path: &str, source: &str) -> Result<MigrationInvento
     // Extract the backup.
     //
     // Bounded, and bounded HERE rather than only at the caller. Unpacking a
-    // control-panel archive is the one step with no natural ceiling — a corrupt
-    // member or a disk that has stopped answering leaves `tar` waiting forever —
+    // control-panel archive is the one step with no natural ceiling - a corrupt
+    // member or a disk that has stopped answering leaves `tar` waiting forever -
     // and until #91 nothing on either side of the socket had a limit on it, so
     // the operation could only ever end by a gateway hanging up on the browser.
     // Owning the budget here is what lets the panel report *why* it stopped
@@ -188,7 +188,7 @@ pub async fn analyze(backup_path: &str, source: &str) -> Result<MigrationInvento
             return Err(format!(
                 "Extracting {backup_path} exceeded {EXTRACT_TIMEOUT_SECS}s and was stopped. \
                  The archive is either much larger than this server can unpack in that \
-                 window, or damaged — check it with `tar tzf` (or `tar tf`) and confirm \
+                 window, or damaged - check it with `tar tzf` (or `tar tf`) and confirm \
                  there is free space under /tmp."
             ));
         }
@@ -202,7 +202,7 @@ pub async fn analyze(backup_path: &str, source: &str) -> Result<MigrationInvento
             return Err(format!(
                 "Extracting {backup_path} exceeded {EXTRACT_TIMEOUT_SECS}s and was stopped. \
                  The archive is either much larger than this server can unpack in that \
-                 window, or damaged — check it with `tar tzf` and confirm there is \
+                 window, or damaged - check it with `tar tzf` and confirm there is \
                  free space under /tmp."
             ));
         }
@@ -219,7 +219,7 @@ pub async fn analyze(backup_path: &str, source: &str) -> Result<MigrationInvento
                     return Err(format!(
                         "Extracting {backup_path} exceeded {EXTRACT_TIMEOUT_SECS}s and was \
                          stopped. The archive is either much larger than this server can unpack \
-                         in that window, or damaged — check it with `tar tf` and confirm there \
+                         in that window, or damaged - check it with `tar tf` and confirm there \
                          is free space under /tmp."
                     ));
                 }
@@ -254,7 +254,7 @@ pub async fn analyze(backup_path: &str, source: &str) -> Result<MigrationInvento
 ///
 /// Everything in a `MigrationInventory` is joined onto the archive root on the
 /// import side, and `import_site_files` rejects any source that starts with `/`,
-/// so an absolute path here is not merely untidy — it cannot be imported at all.
+/// so an absolute path here is not merely untidy - it cannot be imported at all.
 /// Returns `None` when `path` is not inside `root`, which the caller should
 /// report rather than pass on.
 fn relative_to(path: &Path, root: &Path) -> Option<String> {
@@ -352,9 +352,9 @@ async fn parse_cpanel(id: &str, root: &str) -> Result<MigrationInventory, String
         }
     }
 
-    // Also check for mysql.sql (grants/users dump — skip it, just note)
+    // Also check for mysql.sql (grants/users dump - skip it, just note)
     if root.join("mysql.sql").exists() {
-        warnings.push("mysql.sql (user grants) found but not imported — create DB users manually".to_string());
+        warnings.push("mysql.sql (user grants) found but not imported - create DB users manually".to_string());
     }
 
     // 3. Find mail accounts from etc/
@@ -384,7 +384,7 @@ async fn parse_cpanel(id: &str, root: &str) -> Result<MigrationInventory, String
     }
 
     if sites.is_empty() && databases.is_empty() {
-        warnings.push("No sites or databases found — backup may be empty or in an unexpected format".to_string());
+        warnings.push("No sites or databases found - backup may be empty or in an unexpected format".to_string());
     }
 
     Ok(MigrationInventory {
@@ -402,7 +402,7 @@ async fn parse_plesk(id: &str, root: &str) -> Result<MigrationInventory, String>
     let root = Path::new(root);
     let mut sites = Vec::new();
     let mut databases = Vec::new();
-    let mut warnings = vec!["Plesk import is in beta — some items may not be detected".to_string()];
+    let mut warnings = vec!["Plesk import is in beta - some items may not be detected".to_string()];
 
     // Plesk: look for domains/ directory
     let domains_dir = root.join("domains");
@@ -417,7 +417,7 @@ async fn parse_plesk(id: &str, root: &str) -> Result<MigrationInventory, String>
                 // Relative to the archive root, like the cPanel parser. Emitting
                 // the absolute path put this straight into `import_site_files`'
                 // own traversal guard, which rejects anything starting with `/`
-                // — so every Plesk site failed at import with "Invalid source
+                // - so every Plesk site failed at import with "Invalid source
                 // directory path".
                 let Some(rel_doc_root) = relative_to(&doc_root, root) else {
                     warnings.push(format!("Skipped {domain}: document root is outside the archive"));
@@ -451,7 +451,7 @@ async fn parse_plesk(id: &str, root: &str) -> Result<MigrationInventory, String>
     }
 
     if sites.is_empty() && databases.is_empty() {
-        warnings.push("No data found — check that this is a valid Plesk backup".to_string());
+        warnings.push("No data found - check that this is a valid Plesk backup".to_string());
     }
 
     Ok(MigrationInventory { id: id.to_string(), source: "plesk".to_string(), sites, databases, mail_accounts: vec![], warnings })
@@ -462,7 +462,7 @@ async fn parse_hestiacp(id: &str, root: &str) -> Result<MigrationInventory, Stri
     let root = Path::new(root);
     let mut sites = Vec::new();
     let mut databases = Vec::new();
-    let mut warnings = vec!["HestiaCP import is in beta — some items may not be detected".to_string()];
+    let mut warnings = vec!["HestiaCP import is in beta - some items may not be detected".to_string()];
 
     // HestiaCP: web/ directory
     let web_dir = root.join("web");
@@ -474,7 +474,7 @@ async fn parse_hestiacp(id: &str, root: &str) -> Result<MigrationInventory, Stri
                 let doc_root = if public.exists() { public } else { entry.path() };
                 let (size, count) = dir_stats(&doc_root).await;
                 let runtime = detect_runtime(&doc_root);
-                // Relative to the archive root — see the note in `parse_plesk`.
+                // Relative to the archive root - see the note in `parse_plesk`.
                 let Some(rel_doc_root) = relative_to(&doc_root, root) else {
                     warnings.push(format!("Skipped {domain}: document root is outside the archive"));
                     continue;
@@ -492,14 +492,14 @@ async fn parse_hestiacp(id: &str, root: &str) -> Result<MigrationInventory, Stri
             if name.ends_with(".sql") || name.ends_with(".sql.gz") {
                 let db_name = name.trim_end_matches(".gz").trim_end_matches(".sql").to_string();
                 let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
-                // Carry the directory — see the note in `parse_plesk`.
+                // Carry the directory - see the note in `parse_plesk`.
                 databases.push(MigrationDatabase { name: db_name, file: format!("db/{name}"), size_bytes: size, engine: "mysql".to_string() });
             }
         }
     }
 
     if sites.is_empty() && databases.is_empty() {
-        warnings.push("No data found — check that this is a valid HestiaCP backup".to_string());
+        warnings.push("No data found - check that this is a valid HestiaCP backup".to_string());
     }
 
     Ok(MigrationInventory { id: id.to_string(), source: "hestiacp".to_string(), sites, databases, mail_accounts: vec![], warnings })
@@ -596,8 +596,8 @@ pub async fn import_site_files(
     // into the single top-level directory a control-panel archive normally
     // nests everything under. This side used to rebuild the base as the
     // extraction directory alone, so the two halves disagreed by exactly that
-    // one component and every nested archive — which is the shape a cPanel full
-    // backup and a `cpmove` archive both have — failed with "Source directory
+    // one component and every nested archive - which is the shape a cPanel full
+    // backup and a `cpmove` archive both have - failed with "Source directory
     // not found". Calling the same function is what keeps them from drifting
     // again.
     let extract_root = find_backup_root(&format!("{MIGRATION_DIR}-{migration_id}")).await;
@@ -633,12 +633,12 @@ pub async fn import_site_files(
         }
     }
 
-    // Fix ownership — everything except `.git`, which stays root's. For
-    // node/proxy/python, `dest` IS the site root — the same directory
+    // Fix ownership - everything except `.git`, which stays root's. For
+    // node/proxy/python, `dest` IS the site root - the same directory
     // `deploy.rs::clone_or_pull` clones `.git` into, so handing it over here
     // gives the app `config`/`hooks/` that deploy runs as root next. For
     // php/static, `dest` nests under `{site_dir}/public`, one level below any
-    // `.git` — this check is then a no-op, applied uniformly for simplicity and
+    // `.git` - this check is then a no-op, applied uniformly for simplicity and
     // because a stray nested `.git` shouldn't be silently handed over either.
     if let Ok(mut entries) = tokio::fs::read_dir(&dest).await {
         while let Ok(Some(entry)) = entries.next_entry().await {
@@ -667,12 +667,12 @@ pub async fn import_database(migration_id: &str, sql_file: &str, container_name:
         return Err("Invalid migration ID format".into());
     }
 
-    // Validate container name — only allow DockPanel-managed DB containers
+    // Validate container name - only allow CyberHunter - Panel-managed DB containers
     if !container_name.starts_with("dockpanel-") || container_name.contains('/') || container_name.contains('\0')
         || container_name.len() > 128
         || !container_name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
     {
-        return Err("Invalid container name — only DockPanel-managed containers are allowed".into());
+        return Err("Invalid container name - only CyberHunter - Panel-managed containers are allowed".into());
     }
 
     // Validate no path traversal in sql_file
@@ -680,7 +680,7 @@ pub async fn import_database(migration_id: &str, sql_file: &str, container_name:
         return Err("Invalid SQL file path".into());
     }
 
-    // Same archive-root resolution as `import_site_files` — see the note there.
+    // Same archive-root resolution as `import_site_files` - see the note there.
     let extract_root = find_backup_root(&format!("{MIGRATION_DIR}-{migration_id}")).await;
     let sql_path = format!("{extract_root}/{sql_file}");
 
@@ -704,7 +704,7 @@ pub async fn import_database(migration_id: &str, sql_file: &str, container_name:
         sql_path.clone()
     };
 
-    // Import into container — use safe argument passing (no shell interpolation)
+    // Import into container - use safe argument passing (no shell interpolation)
     let file = std::fs::File::open(&actual_path)
         .map_err(|e| format!("Failed to open SQL file: {e}"))?;
 
@@ -728,7 +728,7 @@ pub async fn import_database(migration_id: &str, sql_file: &str, container_name:
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        // Some MySQL warnings are OK — check for actual errors
+        // Some MySQL warnings are OK - check for actual errors
         if stderr.contains("ERROR") {
             return Err(format!("Database import error: {stderr}"));
         }

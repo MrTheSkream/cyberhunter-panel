@@ -31,10 +31,10 @@ use crate::AppState;
 /// `/git/auto-detect`), so a pre-build command configured against it would
 /// either silently do nothing or hit a route that no longer exists on the
 /// panel side. Refused up front via `require_agent_at_least`, mirroring
-/// `PROVIDED_TLS_MIN_AGENT` — same reasoning, same failure shape.
+/// `PROVIDED_TLS_MIN_AGENT` - same reasoning, same failure shape.
 pub(crate) const PRE_BUILD_SPLICE_MIN_AGENT: &str = "2.182.0";
 
-/// The row plus the alias of the certificate it references, if any — mirrors
+/// The row plus the alias of the certificate it references, if any - mirrors
 /// `stacks::STACK_SELECT`: a LEFT JOIN because most deploys reference none,
 /// and the alias is what the API and the deploy body speak; the id never
 /// leaves the panel. `id`/`user_id`/`server_id` are ambiguous once joined
@@ -67,7 +67,7 @@ pub(crate) fn strip_container_prefix(stored: &str) -> &str {
 ///
 /// `.` is the whole point: `is_valid_name` rejects it, so no *deployment* can be
 /// named into this space. Before the split, a preview of config `C` on branch
-/// `B` was `dockpanel-git-{C}-pr-{slug(B)}` — which is exactly the container of
+/// `B` was `dockpanel-git-{C}-pr-{slug(B)}` - which is exactly the container of
 /// a deployment named `{C}-pr-{slug(B)}`, a name the panel will happily create.
 pub(crate) const PREVIEW_SCOPE_PREFIX: &str = "pr.";
 
@@ -75,7 +75,7 @@ pub(crate) const PREVIEW_SCOPE_PREFIX: &str = "pr.";
 /// agent needs to address it.
 ///
 /// Rows written before the split carry the old unscoped name and must be torn
-/// down in the old space — hence `preview_legacy`, which addresses that name but
+/// down in the old space - hence `preview_legacy`, which addresses that name but
 /// refuses any container whose labels say it is a deployment. Recomputing the
 /// name from `{config}-pr-{slug(branch)}` instead would be a second answer to a
 /// question the row already answers, and would drift the day `dns_label` does.
@@ -89,9 +89,9 @@ pub(crate) fn preview_cleanup_target(stored: &str) -> (String, &'static str) {
 
 /// The one body every preview teardown sends to `POST /git/cleanup`.
 ///
-/// There are five call sites — the TTL sweep, the stuck sweep, the manual
+/// There are five call sites - the TTL sweep, the stuck sweep, the manual
 /// delete, the unauthenticated branch-delete webhook, and the parent
-/// deployment's own removal — and they had drifted into three different
+/// deployment's own removal - and they had drifted into three different
 /// spellings, one of which double-prefixed the name into a no-op. `domain` and
 /// `host_port` come from the row because the agent reads them off the container,
 /// which is exactly what is missing when a crashed preview is being swept.
@@ -119,7 +119,7 @@ pub(crate) fn preview_cleanup_body(
 /// subdomain / container name: lowercase, every run of chars outside `[a-z0-9]`
 /// collapses to a single '-', with leading/trailing '-' trimmed. Keeps the
 /// synthesized preview domain (`{slug}.{base}`) a valid hostname so the agent's
-/// `is_valid_domain` check accepts it — an underscore branch like
+/// `is_valid_domain` check accepts it - an underscore branch like
 /// `feature_login` would otherwise fail domain validation and the preview would
 /// silently fail. Falls back to "preview" if nothing alphanumeric remains.
 pub(crate) fn dns_label(s: &str) -> String {
@@ -140,7 +140,7 @@ pub(crate) fn dns_label(s: &str) -> String {
 
 /// Validate a single crontab field against the exact surface the executor
 /// (`deploy_scheduler::matches_field`) accepts: a comma list whose parts are each
-/// `*`, `*/N` (N>0), an `a-b` range, or a plain number. Format-only — the goal is
+/// `*`, `*/N` (N>0), an `a-b` range, or a plain number. Format-only - the goal is
 /// to reject unparseable garbage WITHOUT being stricter than the scheduler that
 /// runs it (a validator stricter than the executor rejects working crons on edit).
 fn is_valid_cron_field(field: &str) -> bool {
@@ -161,7 +161,7 @@ fn is_valid_cron_field(field: &str) -> bool {
 }
 
 /// A `deploy_cron` value is valid iff it has AT LEAST 5 whitespace-separated
-/// fields (the scheduler reads the first 5 and ignores extras — a 6-field
+/// fields (the scheduler reads the first 5 and ignores extras - a 6-field
 /// "seconds" cron still fires) and each of those first 5 is individually valid.
 pub(crate) fn is_valid_cron(expr: &str) -> bool {
     let parts: Vec<&str> = expr.split_whitespace().collect();
@@ -211,7 +211,7 @@ pub struct GitDeploy {
     /// The registered certificate a provided-mode deploy serves.
     pub tls_certificate_id: Option<Uuid>,
     /// Container paths to bind-mount durably under `GIT_DATA_DIR/{name}` on the
-    /// agent (#118) — a JSON array of strings, e.g. `["/data", "/app/uploads"]`.
+    /// agent (#118) - a JSON array of strings, e.g. `["/data", "/app/uploads"]`.
     /// Never sent to a preview deploy; see `handle_preview_deploy`.
     pub volumes: serde_json::Value,
     /// That certificate's alias, joined in by `GIT_DEPLOY_SELECT`. Defaulted
@@ -248,7 +248,7 @@ pub(crate) struct DeployBody<'a> {
     pub domain: Option<&'a str>,
     pub memory_mb: Option<i32>,
     pub cpu_percent: Option<i32>,
-    /// The address the AGENT is handed. Only sent for `acme` mode — pass
+    /// The address the AGENT is handed. Only sent for `acme` mode - pass
     /// through [`deploy_tls_email`], never `config.ssl_email` directly, so a
     /// `provided`- or `none`-mode deploy never orders a certificate the
     /// operator switched off, mirroring `stacks::TlsPlan::deploy_email`.
@@ -259,12 +259,12 @@ pub(crate) struct DeployBody<'a> {
     pub tls_mode: Option<&'a str>,
     /// The registered-certificate alias, `provided` mode only.
     pub tls_certificate: Option<&'a str>,
-    /// Which of the agent's two name spaces this deploy addresses — `"deploy"`
+    /// Which of the agent's two name spaces this deploy addresses - `"deploy"`
     /// or `"preview"`. Not defaulted on purpose: an omitted scope is precisely
     /// how a preview came to be able to name a deployment's container.
     pub scope: &'a str,
     /// Container paths to bind-mount durably (#118). ALWAYS empty for a preview
-    /// — see `handle_preview_deploy`'s own comment on why memory_mb/cpu_percent
+    /// - see `handle_preview_deploy`'s own comment on why memory_mb/cpu_percent
     /// are withheld there too, and the agent's `deploy_container` route refuses
     /// a non-empty list for any scope but `"deploy"` as the actual boundary.
     pub volumes: &'a [String],
@@ -272,7 +272,7 @@ pub(crate) struct DeployBody<'a> {
 
 /// The address the agent is handed for THIS deploy. Only an ACME order needs
 /// one, and the agent still infers the mode from `ssl_email` presence when an
-/// older panel sends no `tls_mode` at all — so a deploy whose effective mode
+/// older panel sends no `tls_mode` at all - so a deploy whose effective mode
 /// is `none` or `provided` must never forward the stored address, or an
 /// agent that predates this feature would order a certificate the operator
 /// switched off. Mirrors `stacks::TlsPlan::deploy_email`.
@@ -292,8 +292,8 @@ fn deploy_tls_email<'a>(mode: &str, ssl_email: Option<&'a str>) -> Option<&'a st
 ///   * Four of them sent the environment under the key `env_vars`, after the
 ///     column it is loaded from. The agent's handler declares that field as `env`
 ///     with `#[serde(default)]`, so the unrecognised key was dropped and the
-///     recognised one defaulted to empty. Every git deploy — Dockerfile AND
-///     Nixpacks, first deploy and redeploy — started its container with no
+///     recognised one defaulted to empty. Every git deploy - Dockerfile AND
+///     Nixpacks, first deploy and redeploy - started its container with no
 ///     environment, and no layer reported a problem: the panel logged a success
 ///     and the agent logged a deploy. Only `docker inspect` disagreed. Nixpacks
 ///     appeared to work because `/git/nixpacks-build` receives the variables
@@ -313,8 +313,8 @@ fn deploy_tls_email<'a>(mode: &str, ssl_email: Option<&'a str>) -> Option<&'a st
 ///
 /// The agent reads this field as `HashMap<String, String>`. `env_vars` is an
 /// unconstrained JSONB column, and while `CreateRequest`/`UpdateRequest` both type
-/// it as a string map, nothing stops a row written by hand — or by a future
-/// writer, or a restored dump — from holding a number or a bool. Passing the raw
+/// it as a string map, nothing stops a row written by hand - or by a future
+/// writer, or a restored dump - from holding a number or a bool. Passing the raw
 /// value through would make one such row fail the WHOLE deploy at the agent's
 /// deserializer, which trades a bug that lost the environment for a bug that
 /// refuses to deploy. Scalars are stringified, everything else is dropped.
@@ -338,7 +338,7 @@ fn env_object(env_vars: &serde_json::Value) -> serde_json::Value {
     serde_json::Value::Object(coerced)
 }
 
-/// A persistent-volume path is CONTAINER-path only (#118) — the host side is
+/// A persistent-volume path is CONTAINER-path only (#118) - the host side is
 /// always derived by the agent under `GIT_DATA_DIR/{name}`, never taken from
 /// the request. Mirrors the agent's OWN `is_valid_volume_path` exactly:
 /// duplicated rather than shared (different crates, different binaries that
@@ -375,7 +375,7 @@ fn validate_volumes(volumes: &[String]) -> Result<(), &'static str> {
 }
 
 /// Coerce the `volumes` JSONB into the `Vec<String>` the agent deserializes,
-/// mirroring `env_object`'s defensive extraction — an unconstrained JSONB
+/// mirroring `env_object`'s defensive extraction - an unconstrained JSONB
 /// column can hold anything a hand-written row or a future writer puts there,
 /// and a non-string entry should be dropped, not fail the whole deploy.
 fn volumes_vec(v: &serde_json::Value) -> Vec<String> {
@@ -450,7 +450,7 @@ pub struct CreateRequest {
     pub memory_mb: Option<i32>,
     pub cpu_percent: Option<i32>,
     pub ssl_email: Option<String>,
-    /// `none` / `acme` / `provided` — absent means derive it from `ssl_email`
+    /// `none` / `acme` / `provided` - absent means derive it from `ssl_email`
     /// presence, exactly as every row before this field existed.
     pub tls_mode: Option<String>,
     /// The registered-certificate alias, `provided` mode only.
@@ -493,12 +493,12 @@ pub struct UpdateRequest {
     pub preview_ttl_hours: Option<i32>,
     /// Absent means keep the stored list. The frontend always sends the full
     /// current list (including `[]` to clear it), so in practice this is only
-    /// ever `None` for a caller that omits the key entirely — matching how
+    /// ever `None` for a caller that omits the key entirely - matching how
     /// `env_vars`/`build_args` already behave on this handler.
     pub volumes: Option<Vec<String>>,
 }
 
-/// GET /api/git-deploys — List all git deploys for the current user.
+/// GET /api/git-deploys - List all git deploys for the current user.
 pub async fn list(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -515,7 +515,7 @@ pub async fn list(
     .await
     .map_err(|e| internal_error("list git_deploys", e))?;
 
-    // Mask github_token in responses; decrypt webhook_secret — GitDeploys.tsx
+    // Mask github_token in responses; decrypt webhook_secret - GitDeploys.tsx
     // builds the webhook URL to paste into the git host from it on every load.
     for d in &mut deploys {
         mask_github_token(d);
@@ -528,7 +528,7 @@ pub async fn list(
     Ok(Json(deploys))
 }
 
-/// POST /api/git-deploys — Create a new git deploy configuration.
+/// POST /api/git-deploys - Create a new git deploy configuration.
 pub async fn create(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -632,7 +632,7 @@ pub async fn create(
     }
     let volumes_json = serde_json::to_value(&volumes).unwrap_or(serde_json::json!([]));
 
-    // Format, reserved and every owner — see services::domain_claim. The two
+    // Format, reserved and every owner - see services::domain_claim. The two
     // conflict queries that used to be inlined here are the ones `update` never
     // grew, which is how a git deploy could be RENAMED onto an occupied domain
     // that it could not have been CREATED on.
@@ -661,12 +661,12 @@ pub async fn create(
     let github_token_enc =
         encrypt_stored_token(body.github_token.as_deref(), &state.config.jwt_secret)?;
 
-    // Resolve the TLS mode/certificate before the row is written — the
+    // Resolve the TLS mode/certificate before the row is written - the
     // DB-only half of `stacks::plan_tls` (alias shape + existence for this
     // user and server). Unlike a stack, a git deploy's create never talks to
     // the agent: the actual deploy is a separate, later action (manual,
     // webhook or scheduled), so the SAN-coverage check that needs a live
-    // agent call stays where the domain is actually served — the agent's own
+    // agent call stays where the domain is actually served - the agent's own
     // `TlsIntent::Provided` arm re-asks it at every deploy regardless, the
     // same "defence in depth" reasoning `expose_domain` documents for stacks:
     // the registry can drift between save and deploy either way, so a
@@ -697,7 +697,7 @@ pub async fn create(
                     .ok_or_else(|| {
                         err(
                             StatusCode::BAD_REQUEST,
-                            "tls_mode provided needs tls_certificate — the alias of a registered certificate",
+                            "tls_mode provided needs tls_certificate - the alias of a registered certificate",
                         )
                     })?
                     .to_ascii_lowercase();
@@ -735,8 +735,8 @@ pub async fn create(
     .bind(body.cpu_percent)
     // The form posts the same object to create and to update, so these arrive
     // blank rather than absent whenever the operator left the box alone. NULL is
-    // the stored spelling of "not set" on this table — every reader is written
-    // against it — so the blank is normalised away here rather than stored and
+    // the stored spelling of "not set" on this table - every reader is written
+    // against it - so the blank is normalised away here rather than stored and
     // guarded against at each of the readers for ever after.
     .bind(blank_to_none(body.ssl_email.as_deref()))
     .bind(blank_to_none(body.pre_build_cmd.as_deref()))
@@ -759,7 +759,7 @@ pub async fn create(
             internal_error("create git_deploys", e)
         }
     })?;
-    // `RETURNING *` has no join to read the alias through — the handler
+    // `RETURNING *` has no join to read the alias through - the handler
     // already knows it, from the request it just validated.
     deploy.tls_certificate = resolved_alias;
 
@@ -790,7 +790,7 @@ pub async fn create(
     Ok((StatusCode::CREATED, Json(deploy)))
 }
 
-/// GET /api/git-deploys/{id} — Get a single git deploy.
+/// GET /api/git-deploys/{id} - Get a single git deploy.
 pub async fn get_one(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -816,7 +816,7 @@ pub async fn get_one(
     Ok(Json(deploy))
 }
 
-/// PUT /api/git-deploys/{id} — Update a git deploy configuration.
+/// PUT /api/git-deploys/{id} - Update a git deploy configuration.
 pub async fn update(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -827,12 +827,12 @@ pub async fn update(
     require_admin(&claims.role)?;
 
     // Verify ownership + fetch current domain/cron so we only validate values
-    // that actually CHANGE (grandfather rows that predate these guards — e.g. a
-    // deploy already on a reserved zone, or a stored 6-field cron — so an
+    // that actually CHANGE (grandfather rows that predate these guards - e.g. a
+    // deploy already on a reserved zone, or a stored 6-field cron - so an
     // unrelated field edit that re-sends the unchanged value isn't rejected).
     //
     // `server_id` is no longer fetched. It used to be, so the per-server conflict
-    // check consulted the deploy's own host rather than the caller's header — a
+    // check consulted the deploy's own host rather than the caller's header - a
     // real fix at the time. The claim is now fleet-wide on every leg (a domain
     // may exist once across the whole installation, and a Docker app holding it
     // is invisible to SQL on any host), so there is no per-server question left
@@ -842,7 +842,7 @@ pub async fn update(
     // absent field onto the stored value, so "still true" and "set to true"
     // arrive here identically and only the previous value separates them.
     // `server_id`, `ssl_email`, `tls_mode` and the joined alias come along so
-    // the TLS block below can compute the deploy's CURRENT effective mode —
+    // the TLS block below can compute the deploy's CURRENT effective mode -
     // an edit that says nothing about TLS keeps it, the same "absent means
     // keep" contract every other field on this handler already gives.
     let existing: Option<(Option<String>, Option<String>, bool, Uuid, Option<String>, Option<String>, Option<String>)> =
@@ -867,7 +867,7 @@ pub async fn update(
 
     // Validate domain ONLY when it changes. This used to run `is_valid_domain` +
     // `is_reserved_domain` and stop there, under a comment claiming parity with
-    // `create` — but create ALSO ran two conflict queries, so a domain that could
+    // `create` - but create ALSO ran two conflict queries, so a domain that could
     // not be created could still be renamed onto. The next deploy then rendered a
     // proxy vhost over the file the victim owned.
     let domain = match body.domain.as_deref() {
@@ -898,7 +898,7 @@ pub async fn update(
         // it. The clear leg is deliberately NOT built in the same change: it
         // needs the `domain` column to accept the '' sentinel the way
         // `ssl_email` does, and every Option-shaped reader of that column
-        // re-checked — `remove` alone falls back on
+        // re-checked - `remove` alone falls back on
         // `domain.as_deref().unwrap_or(&name)`, where a stored '' would hand
         // the agent an empty site identifier. That is a separate, named piece
         // of work, not an oversight; the refusal stays honest until it lands.
@@ -916,8 +916,8 @@ pub async fn update(
                 &format!(
                     "Removing the domain is not supported yet: the vhost for {} would be left \
                      without a replacement to put in its place. Entering a DIFFERENT domain now \
-                     moves the deploy cleanly — the old vhost and its certificate are taken down \
-                     for you — or delete the deploy to remove it entirely.",
+                     moves the deploy cleanly - the old vhost and its certificate are taken down \
+                     for you - or delete the deploy to remove it entirely.",
                     cur_domain.as_deref().unwrap_or("")
                 ),
             ));
@@ -946,7 +946,7 @@ pub async fn update(
         }
     }
 
-    // Validate repo_url for SSRF the same way create() does, whenever it's present —
+    // Validate repo_url for SSRF the same way create() does, whenever it's present -
     // an edit can point an existing deploy at a NEW repo, not just create one.
     if let Some(ref url) = body.repo_url {
         if !url.trim().is_empty() {
@@ -968,7 +968,7 @@ pub async fn update(
     let github_token_enc =
         encrypt_stored_token(body.github_token.as_deref(), &state.config.jwt_secret)?;
 
-    // Absent means KEEP, for both mode and alias — the fix `stacks::update`
+    // Absent means KEEP, for both mode and alias - the fix `stacks::update`
     // already made for the identical bug: an edit that says nothing about TLS
     // used to forward whatever `ssl_email` the request happened to carry,
     // which took the certificate off a deploy that had one. See `create`'s
@@ -1016,7 +1016,7 @@ pub async fn update(
                     None => cur_alias.clone().ok_or_else(|| {
                         err(
                             StatusCode::BAD_REQUEST,
-                            "tls_mode provided needs tls_certificate — the alias of a registered certificate",
+                            "tls_mode provided needs tls_certificate - the alias of a registered certificate",
                         )
                     })?,
                 };
@@ -1036,7 +1036,7 @@ pub async fn update(
 
     // THREE states on the wire, two of which used to be one. A COALESCE self-guard
     // folds an absent field onto the stored value, which is right for a key the
-    // client omitted and wrong for a box the operator emptied — both arrive as
+    // client omitted and wrong for a box the operator emptied - both arrive as
     // NULL, so "leave it alone" and "clear it" were indistinguishable and the
     // second silently became the first while the save answered 200.
     //
@@ -1052,7 +1052,7 @@ pub async fn update(
     // correctly yields the deploy's name. Normalising at the writer keeps every
     // existing Option-shaped reader out of the blast radius.
     //
-    // `domain` is deliberately NOT in this list — see the refusal above; and
+    // `domain` is deliberately NOT in this list - see the refusal above; and
     // `github_token` is not either, because the GET masks it and the box is blank
     // on every ordinary edit.
     let mut deploy: GitDeploy = sqlx::query_as(
@@ -1108,19 +1108,19 @@ pub async fn update(
     .fetch_one(&state.db)
     .await
     .map_err(|e| internal_error("update git_deploys", e))?;
-    // `RETURNING *` has no join to read the alias through — the handler
+    // `RETURNING *` has no join to read the alias through - the handler
     // already knows it, from the request (or the previous row) it just
     // resolved.
     deploy.tls_certificate = resolved_alias;
 
     // A RENAME walked away from a vhost that is still serving. Until now the old
     // config kept proxying to this same container with a certificate that kept
-    // renewing, while the row above released the claim on that name — so another
+    // renewing, while the row above released the claim on that name - so another
     // tenant could claim it and be answered by the previous tenant's app.
     //
     // Asked of the agent, not decided here: only the box can see whether the old
     // vhost still points at THIS container's port. `services::ownership` fails
-    // closed, so a vhost re-claimed by a site since the rename is left alone —
+    // closed, so a vhost re-claimed by a site since the rename is left alone -
     // which is the objection `git_build.rs` raised against doing this at all,
     // and the reason it routes through the same gate the delete path uses.
     //
@@ -1219,7 +1219,7 @@ pub async fn update(
     Ok(Json(deploy))
 }
 
-/// DELETE /api/git-deploys/{id} — Remove a git deploy and its container.
+/// DELETE /api/git-deploys/{id} - Remove a git deploy and its container.
 pub async fn remove(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -1250,7 +1250,7 @@ pub async fn remove(
     // `trigger_deploy_task` already documents what that costs from the scheduler
     // side: `idx_git_deploys_name_server` makes `name` unique only PER SERVER while
     // the agent's checkout path is `/var/lib/dockpanel/git/{name}`, keyed by name
-    // alone — so addressing the wrong box does not error, it finds the same-named
+    // alone - so addressing the wrong box does not error, it finds the same-named
     // neighbour and acts on THAT. Removal is the sharpest form of it. `/git/cleanup`
     // stops the container and deletes its image, vhost, certificate and checkout,
     // and the calls below used to be fire-and-forget, so a teardown aimed at the
@@ -1271,7 +1271,7 @@ pub async fn remove(
 
     // Every preview of this deployment is a container, a bound port, a vhost and
     // a checkout of its own, and the `git_previews` rows are about to be removed
-    // by the FK cascade below — after which nothing on the box knows they exist.
+    // by the FK cascade below - after which nothing on the box knows they exist.
     // Tear them down while the records that name them are still there.
     let previews: Vec<(String, Option<String>, i32)> = sqlx::query_as(
         "SELECT container_name, domain, host_port FROM git_previews WHERE git_deploy_id = $1",
@@ -1303,7 +1303,7 @@ pub async fn remove(
     }
 
     // Tell agent to stop and remove container + cleanup. Discarding THIS result
-    // was the same defect as the loop above — three lines apart, on the larger
+    // was the same defect as the loop above - three lines apart, on the larger
     // subject: the deployment's own container, image, vhost, certificate and
     // checkout. The comment at the top of this function already said the calls
     // here were fire-and-forget and reported success; it described a defect
@@ -1323,7 +1323,7 @@ pub async fn remove(
     // anything knows these containers exist: `git_previews` rows go with the
     // parent, so deleting anyway leaves containers running, holding their ports
     // and serving their vhosts, with nothing in the panel able to find them
-    // again. Retryable by construction — `/git/cleanup` answers Ok for a
+    // again. Retryable by construction - `/git/cleanup` answers Ok for a
     // container that is already gone, so pressing Delete again once the server
     // answers finishes the job rather than double-deleting.
     //
@@ -1334,7 +1334,7 @@ pub async fn remove(
         return Err(err(
             StatusCode::CONFLICT,
             &format!(
-                "The server did not confirm teardown of {}. Nothing was deleted — these \
+                "The server did not confirm teardown of {}. Nothing was deleted - these \
                  records are the only thing that can still find those containers, their \
                  ports and their vhosts. Retry once the server answers.",
                 standing.join(", ")
@@ -1372,7 +1372,7 @@ pub async fn remove(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// POST /api/git-deploys/{id}/deploy — Trigger a build+deploy (async with SSE progress).
+/// POST /api/git-deploys/{id}/deploy - Trigger a build+deploy (async with SSE progress).
 pub async fn deploy(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -1380,7 +1380,7 @@ pub async fn deploy(
 ) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
     require_admin(&claims.role)?;
 
-    // Check for active critical/major incidents — block deploy during outage
+    // Check for active critical/major incidents - block deploy during outage
     let active_incidents: (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM managed_incidents \
          WHERE status NOT IN ('resolved', 'postmortem') \
@@ -1410,7 +1410,7 @@ pub async fn deploy(
         // this change, so the collapse is atomic rather than a read-then-write
         // that two concurrent clicks could both win. `rows_affected` is therefore
         // the honest answer to "did I create a request, or was one already
-        // waiting?" — and the requester is told which, because the reason this
+        // waiting?" - and the requester is told which, because the reason this
         // mattered is that they could not tell (see the migration).
         //
         // The clause is deliberately not spelled in this comment: a pin arm greps
@@ -1439,14 +1439,14 @@ pub async fn deploy(
         return Ok((StatusCode::ACCEPTED, Json(serde_json::json!({
             "status": "pending_approval",
             "message": if filed {
-                "Deploy requires approval from another admin \u{2014} the request is now waiting in Pending Approvals."
+                "Deploy requires approval from another admin - the request is now waiting in Pending Approvals."
             } else {
                 "This deployment already has a request waiting in Pending Approvals; another admin has not resolved it yet."
             },
         }))));
     }
 
-    // Resolve the agent for the server this deployment LIVES ON — see `remove()`
+    // Resolve the agent for the server this deployment LIVES ON - see `remove()`
     // for why the caller's `ServerScope` is the wrong authority. Deployed to the
     // wrong host this is not a stray teardown but a stray BUILD: the neighbour's
     // checkout of the same name is overwritten with this repository and restarted
@@ -1469,7 +1469,7 @@ pub async fn deploy(
     // The old guard queried git_deploy_history for a 'building'/'deploying'
     // status that is NEVER written there (all history rows are 'success'/'failed'),
     // so it always counted 0 and never fired. This conditional UPDATE is the real
-    // lock — a losing concurrent caller gets 0 rows affected — and self-heals a
+    // lock - a losing concurrent caller gets 0 rows affected - and self-heals a
     // crashed deploy after 30 min (stale 'building'; longer than the worst-case
     // clone+build+deploy so a still-running build never releases its own lock).
     // A DB error is surfaced as 500, NOT mistaken for "already in progress".
@@ -1508,7 +1508,7 @@ pub async fn deploy(
     }))))
 }
 
-/// GET /api/git-deploys/deploy/{deploy_id}/log — SSE stream of deploy progress.
+/// GET /api/git-deploys/deploy/{deploy_id}/log - SSE stream of deploy progress.
 pub async fn deploy_log(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -1517,7 +1517,7 @@ pub async fn deploy_log(
     // This check used to skip itself when the id was absent from the owner map,
     // on the stated grounds that the lookup below would 404 anyway. It would
     // not: absent from *owners* and absent from *logs* are different questions,
-    // and most writers never registered an owner — so the fall-through streamed
+    // and most writers never registered an owner - so the fall-through streamed
     // rollback, webhook, backup, migration and site provisioning logs to any
     // signed-in account. Absence is now a refusal, not a pass.
     let (snapshot, rx) = crate::helpers::open_provision_log(
@@ -1546,7 +1546,7 @@ pub async fn deploy_log(
     });
 
     // The underlying channel closes (and this stream ends) once the deploy
-    // finishes and its map entry is dropped — but a deploy in progress at
+    // finishes and its map entry is dropped - but a deploy in progress at
     // shutdown time can still run well past the graceful-drain window, so
     // race it against the panel's own shutdown signal too.
     Ok(
@@ -1559,7 +1559,7 @@ pub async fn deploy_log(
     )
 }
 
-/// GET /api/git-deploys/{id}/history — List deploy history.
+/// GET /api/git-deploys/{id}/history - List deploy history.
 pub async fn history(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -1592,7 +1592,7 @@ pub async fn history(
     Ok(Json(entries))
 }
 
-/// POST /api/git-deploys/{id}/history/{history_id}/explain — BYO-API-key AI
+/// POST /api/git-deploys/{id}/history/{history_id}/explain - BYO-API-key AI
 /// root-cause diagnosis for one failed deploy history entry. Off by default
 /// and per-request: this never fires on its own, only when an operator with a
 /// configured provider clicks the button (`ai_diagnosis::load_config` reads
@@ -1665,7 +1665,7 @@ pub async fn explain_history(
     })))
 }
 
-/// POST /api/git-deploys/{id}/rollback/{history_id} — Rollback to a previous image.
+/// POST /api/git-deploys/{id}/rollback/{history_id} - Rollback to a previous image.
 pub async fn rollback(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -1693,7 +1693,7 @@ pub async fn rollback(
     .map_err(|e| internal_error("rollback", e))?
     .ok_or_else(|| err(StatusCode::NOT_FOUND, "History entry not found"))?;
 
-    // The host comes from the row, not from the caller's server switcher — see
+    // The host comes from the row, not from the caller's server switcher - see
     // `remove()`. Rollback carries its own edge: `hist.image_tag` names an image
     // built on THIS deployment's server and present in that daemon's local store,
     // so pointed at another box `/git/deploy` either fails on a missing image or,
@@ -1707,7 +1707,7 @@ pub async fn rollback(
     )
     .await?;
 
-    // The same lock the other three build doors take, and for the same reason —
+    // The same lock the other three build doors take, and for the same reason -
     // this one wrote the status unconditionally and only warned on failure, so a
     // rollback could start on top of a running build and each would swap the
     // container out from under the other. It is the last door that acquired it.
@@ -1754,14 +1754,14 @@ pub async fn rollback(
             }
         };
 
-        // Skip clone+build — go straight to deploy with the historical image
+        // Skip clone+build - go straight to deploy with the historical image
         emit("deploy", "Rolling back container", "in_progress", None);
 
         let effective_mode =
             effective_tls_mode(config.tls_mode.as_deref(), config.ssl_email.as_deref());
         // An agent too old to honour `tls_mode`/`tls_certificate` silently
         // drops both (no `deny_unknown_fields` on its `DeployRequest`) and
-        // falls back to inferring the mode from `ssl_email` presence — which
+        // falls back to inferring the mode from `ssl_email` presence - which
         // `deploy_tls_email` withholds outright in `provided` mode, so an old
         // agent would roll this deploy back onto plain HTTP with no warning.
         // Refused here, before the historical image is even redeployed.
@@ -1919,7 +1919,7 @@ pub async fn rollback(
     }))))
 }
 
-/// POST /api/git-deploys/{id}/keygen — Generate SSH deploy key.
+/// POST /api/git-deploys/{id}/keygen - Generate SSH deploy key.
 pub async fn keygen(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -1939,13 +1939,13 @@ pub async fn keygen(
     let (name, domain, server_id) =
         deploy.ok_or_else(|| err(StatusCode::NOT_FOUND, "Git deploy not found"))?;
 
-    // The key has to be minted on the machine that will USE it — see `remove()`
+    // The key has to be minted on the machine that will USE it - see `remove()`
     // for why the host comes from the row. A keypair generated on the panel host
     // is written to that box's `key_path`, and the path is then stored against a
     // deployment whose clones run somewhere else: the public half gets added to
     // the GitHub repo, the private half never reaches the server that needs it,
     // and every subsequent clone fails authentication for a key the panel says
-    // exists. Worse on collision — it can overwrite the same-named neighbour's key.
+    // exists. Worse on collision - it can overwrite the same-named neighbour's key.
     let agent = crate::helpers::agent_for_site_server(
         &state,
         Some(server_id),
@@ -1979,11 +1979,11 @@ pub async fn keygen(
 /// The name the agent's container actually carries, and therefore the key
 /// `container_expected_stops` and the alert engine both use.
 ///
-/// The stored `git_deploys.name` is BARE — the agent adds `dockpanel-git-` in
+/// The stored `git_deploys.name` is BARE - the agent adds `dockpanel-git-` in
 /// `stop_container`/`start_container` (`agent routes/git_build.rs`) via
 /// `scope_of(..).scoped(..)`, which is the identity for `GitScope::Deploy`, the
 /// scope the lifecycle trio always uses because it sends no `scope` key. So the
-/// prefix belongs HERE and exactly once — see the double-prefix note at the top
+/// prefix belongs HERE and exactly once - see the double-prefix note at the top
 /// of this file for what happens when a caller gets that wrong in either
 /// direction.
 fn expected_stop_key(name: &str) -> String {
@@ -2001,10 +2001,10 @@ pub async fn stop(
         .bind(id).bind(claims.sub).fetch_optional(&state.db).await
         .map_err(|e| internal_error("stop", e))?
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "Git deploy not found"))?;
-    // Host from the row, not from the switcher — see `remove()`. The lifecycle
+    // Host from the row, not from the switcher - see `remove()`. The lifecycle
     // trio addresses the container purely by `config.name`, which is unique only
     // per server, so the caller's scope deciding the host means a stop aimed at a
-    // fleet member takes down the panel host's same-named container instead — and
+    // fleet member takes down the panel host's same-named container instead - and
     // then writes 'stopped' onto the row of the one still running.
     let agent = crate::helpers::agent_for_site_server(
         &state,
@@ -2019,11 +2019,11 @@ pub async fn stop(
     //
     // ⛔ READ THIS BEFORE BELIEVING THE CHANGELOG FOR v2.150.0. That entry said
     // the auto-healer restarted the operator's Stop within 120s. **It does not,
-    // and it never did** — measured on a box, both versions, not reasoned:
+    // and it never did** - measured on a box, both versions, not reasoned:
     // `list_deployed_apps` (agent `services/docker_apps.rs`) keeps only
     // containers carrying `dockpanel.app.template`, and a git container carries
     // no template label at all. So `/apps` never lists one, and BOTH readers of
-    // this table — the healer's container leg and `alert_engine` — walk exactly
+    // this table - the healer's container leg and `alert_engine` - walk exactly
     // that listing. A git deploy is invisible to container healing and to
     // `container_down` alerting alike. v2.150.1 corrects the claim.
     //
@@ -2064,7 +2064,7 @@ pub async fn start(
         .bind(id).bind(claims.sub).fetch_optional(&state.db).await
         .map_err(|e| internal_error("start", e))?
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "Git deploy not found"))?;
-    // Host from the row — see `stop()`.
+    // Host from the row - see `stop()`.
     let agent = crate::helpers::agent_for_site_server(
         &state,
         Some(config.server_id),
@@ -2074,7 +2074,7 @@ pub async fn start(
     agent.post("/git/start", Some(serde_json::json!({ "name": config.name }))).await
         .map_err(|e| agent_error("Start container", e))?;
     // Symmetry with `stop()`. The alert engine also clears from observation on
-    // its next sweep, so this is the fast path rather than the only one — but
+    // its next sweep, so this is the fast path rather than the only one - but
     // without it a start followed by a genuine crash inside one poll window
     // stays suppressed, which is the failure the table exists to avoid.
     expected_stops::clear(&state.db, config.server_id, &expected_stop_key(&config.name)).await;
@@ -2097,7 +2097,7 @@ pub async fn restart(
         .bind(id).bind(claims.sub).fetch_optional(&state.db).await
         .map_err(|e| internal_error("restart", e))?
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "Git deploy not found"))?;
-    // Host from the row — see `stop()`.
+    // Host from the row - see `stop()`.
     let agent = crate::helpers::agent_for_site_server(
         &state,
         Some(config.server_id),
@@ -2125,7 +2125,7 @@ pub async fn container_logs(
         .bind(id).bind(claims.sub).fetch_optional(&state.db).await
         .map_err(|e| internal_error("container logs", e))?
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "Git deploy not found"))?;
-    // Host from the row — see `stop()`. Read-only, but it fails in the direction
+    // Host from the row - see `stop()`. Read-only, but it fails in the direction
     // nobody checks: asked of the wrong box it returns the same-named neighbour's
     // stdout as if it were this deployment's, so an operator debugging an incident
     // reads another tenant's logs and believes them.
@@ -2140,7 +2140,7 @@ pub async fn container_logs(
     Ok(Json(result))
 }
 
-/// POST /api/webhooks/git/{id}/{secret} — Webhook endpoint (no auth).
+/// POST /api/webhooks/git/{id}/{secret} - Webhook endpoint (no auth).
 pub async fn webhook(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -2214,7 +2214,7 @@ pub async fn webhook(
         return Err(err(StatusCode::BAD_REQUEST, "Auto-deploy is not enabled for this project"));
     }
 
-    // Check for active critical/major incidents — skip webhook deploy during outage
+    // Check for active critical/major incidents - skip webhook deploy during outage
     let active_incidents: (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM managed_incidents \
          WHERE status NOT IN ('resolved', 'postmortem') \
@@ -2236,7 +2236,7 @@ pub async fn webhook(
     // Resolve the agent for the server this deployment lives on.
     //
     // A webhook has no authenticated caller, so it has no `ServerScope` to read
-    // an `X-Server-Id` header from — which is why this used to reach for the
+    // an `X-Server-Id` header from - which is why this used to reach for the
     // local agent. The row itself is the authority, and the same handler file
     // already establishes that pattern for `update` (see the comment at the
     // `server_id` fetch there: reading it from the ROW "means the guard consults
@@ -2247,7 +2247,7 @@ pub async fn webhook(
         Ok(a) => a,
         Err(e) => {
             tracing::warn!(
-                "Webhook deploy for {} refused: its server {} is unreachable ({e}) — \
+                "Webhook deploy for {} refused: its server {} is unreachable ({e}) - \
                  refusing to deploy on a different host",
                 config.name, config.server_id
             );
@@ -2275,7 +2275,7 @@ pub async fn webhook(
 
         let mut preview_retained = false;
         if let Some((preview_id, container_name, domain, host_port)) = deleted {
-            // Reached with NO authentication — the webhook route has no auth
+            // Reached with NO authentication - the webhook route has no auth
             // extractor, and a `deleted: true` payload names the branch. Which
             // makes it the sharpest of the four preview-teardown call sites, and
             // the one that most needs to address the preview's own space.
@@ -2306,11 +2306,11 @@ pub async fn webhook(
                     // on the box reaps a preview that has no row.
                     //
                     // This door is the one that most needs the row kept, because
-                    // deleting a branch is nobody's retryable action — no operator is
+                    // deleting a branch is nobody's retryable action - no operator is
                     // watching this response. Keeping it is what leaves a way back,
                     // and the ways back all read this row: Delete Preview always, and
                     // `preview_cleanup` once the preview is ELIGIBLE, which is not the
-                    // same as its five-minute cadence — an hour for a `deploying` or
+                    // same as its five-minute cadence - an hour for a `deploying` or
                     // `failed` one, `preview_ttl_hours` for a `running` one, and NEVER
                     // when that is 0, the documented opt-out from automatic cleanup.
                     // So on an opted-out install the operator's button is the only
@@ -2337,7 +2337,7 @@ pub async fn webhook(
         // Preview deployment for non-configured branches. Report what actually
         // happened: three paths abandon the push before anything is spawned, and
         // answering "triggered" for those told the pusher work had started in the
-        // one place they would look for it — GitHub's own delivery log. Still a
+        // one place they would look for it - GitHub's own delivery log. Still a
         // 200, deliberately: the delivery itself succeeded and a non-2xx would put
         // GitHub into retry over a decision that will not change on a retry.
         return match handle_preview_deploy(&state, &agent, &config, push_branch, &payload).await {
@@ -2354,7 +2354,7 @@ pub async fn webhook(
         };
     }
 
-    // Deploy lock (atomic — see deploy(); the old git_deploy_history guard was inert)
+    // Deploy lock (atomic - see deploy(); the old git_deploy_history guard was inert)
     match sqlx::query(
         "UPDATE git_deploys SET status = 'building', updated_at = NOW() \
          WHERE id = $1 AND (status IS DISTINCT FROM 'building' OR updated_at < NOW() - INTERVAL '30 minutes')"
@@ -2368,7 +2368,7 @@ pub async fn webhook(
 
     let deploy_id = Uuid::new_v4();
 
-    // No claims here — a webhook deploy has no signed-in actor. The log belongs
+    // No claims here - a webhook deploy has no signed-in actor. The log belongs
     // to whoever owns the git deploy it was fired against.
     crate::helpers::register_provision_log(
         &state.provision_logs,
@@ -2522,7 +2522,7 @@ fn spawn_deploy_task(
             }
         };
 
-        // Check for docker-compose.yml — if found, use compose deployment path
+        // Check for docker-compose.yml - if found, use compose deployment path
         let compose_result = agent.post("/git/compose-check", Some(serde_json::json!({
             "name": config.name, "build_context": config.build_context,
         }))).await.ok();
@@ -2627,7 +2627,7 @@ fn spawn_deploy_task(
 
         // A pre-build command skips Nixpacks entirely and goes straight to
         // auto-detect, so the command always gets spliced into the Dockerfile
-        // DockPanel controls — never silently discarded on a Nixpacks-success
+        // CyberHunter - Panel controls - never silently discarded on a Nixpacks-success
         // path the way the old host-exec pre-build-hook was (it used to fire
         // unconditionally after this block, with no check on whether
         // Nixpacks had already built the image and made its filesystem
@@ -2661,7 +2661,7 @@ fn spawn_deploy_task(
         }
 
         // Try Nixpacks first (skipped when a pre-build command is configured
-        // — see above), then fall back to auto-detect.
+        // - see above), then fall back to auto-detect.
         let mut nixpacks_image: Option<String> = None;
         emit("detect", "Detecting build method", "in_progress", None);
         let nixpacks_result = if pre_build_cmd.is_some() {
@@ -2686,7 +2686,7 @@ fn spawn_deploy_task(
             }
             None => {
                 // Nixpacks failed/unavailable, or was skipped for a pre-build
-                // command — either way, fall through to auto-detect.
+                // command - either way, fall through to auto-detect.
                 match agent.post("/git/auto-detect", Some(serde_json::json!({
                     "name": config.name, "dockerfile": config.dockerfile, "build_context": config.build_context,
                     "pre_build_cmd": pre_build_cmd,
@@ -2805,7 +2805,7 @@ fn spawn_deploy_task(
 
         // An agent too old to honour `tls_mode`/`tls_certificate` silently
         // drops both and falls back to inferring the mode from `ssl_email`
-        // presence — which `deploy_tls_email` withholds outright in
+        // presence - which `deploy_tls_email` withholds outright in
         // `provided` mode, so an old agent would deploy this domain over
         // plain HTTP with no warning. Refused here, before the deploy call.
         if effective_mode == "provided" {
@@ -2863,8 +2863,8 @@ fn spawn_deploy_task(
                 let container_id = result.get("container_id").and_then(|v| v.as_str()).unwrap_or("");
                 let duration_ms = started.elapsed().as_millis() as i32;
 
-                // A refused registered certificate is not a failed deploy — the
-                // container is running — but it IS the outage this feature
+                // A refused registered certificate is not a failed deploy - the
+                // container is running - but it IS the outage this feature
                 // exists to prevent if nobody notices: the domain would be
                 // live over plain HTTP instead of the certificate the
                 // operator asked for. Surfaced as its own warning; every
@@ -2872,7 +2872,7 @@ fn spawn_deploy_task(
                 // `deploy_url`, fed the SCHEME THE AGENT ACTUALLY SERVED
                 // (`result["ssl"]`) rather than the mode that was merely
                 // requested, so a refusal never reads as a spurious
-                // health-check 5xx or a broken GitHub deploy link — still
+                // health-check 5xx or a broken GitHub deploy link - still
                 // ONE function deciding every URL in this file, never a
                 // second hardcoded `https://`.
                 let actual_mode = if result.get("tls_refused").and_then(|v| v.as_bool()) == Some(true) {
@@ -2976,7 +2976,7 @@ fn spawn_deploy_task(
                     });
                 }
 
-                // GitHub commit status — success
+                // GitHub commit status - success
                 if let Some(ref gh_token) = config.github_token {
                     if !gh_token.is_empty() && commit_hash != "unknown" {
                         let token = gh_token.clone();
@@ -3042,13 +3042,13 @@ fn spawn_deploy_task(
                     // configured. Without these it rebuilt the container from the
                     // four fields above alone, which meant a crash-triggered
                     // rollback silently dropped the environment and the memory/CPU
-                    // limits — the container came back both unconfigured and
+                    // limits - the container came back both unconfigured and
                     // unbounded, on the one path nobody is watching (GH #94).
                     let monitor_config_env = config.env_vars.clone();
                     let monitor_config_memory = config.memory_mb;
                     let monitor_config_cpu = config.cpu_percent;
                     let monitor_config_ssl_email = config.ssl_email.clone();
-                    // `&'static str`, so a plain copy — no clone needed.
+                    // `&'static str`, so a plain copy - no clone needed.
                     let monitor_effective_mode = effective_mode;
                     let monitor_config_tls_certificate = config.tls_certificate.clone();
                     let monitor_config_volumes = volumes_vec(&config.volumes);
@@ -3060,9 +3060,9 @@ fn spawn_deploy_task(
 
                             // Check if container is still running
                             match monitor_agent.post("/git/logs", Some(serde_json::json!({ "name": monitor_config_name, "lines": 1 }))).await {
-                                Ok(_) => {} // Container is responding — alive
+                                Ok(_) => {} // Container is responding - alive
                                 Err(_) => {
-                                    // Container might be down — check status
+                                    // Container might be down - check status
                                     let container_name = format!("dockpanel-git-{monitor_config_name}");
                                     tracing::warn!("Auto-rollback: container {container_name} may have crashed, checking...");
 
@@ -3195,7 +3195,7 @@ fn spawn_deploy_task(
                 // Panel notification
                 notifications::notify_panel(&db, Some(user_id), &format!("Deploy failed: {}", deploy_name), &format!("{e}"), "critical", "deploy", Some("/git-deploys")).await;
 
-                // GitHub commit status — failure
+                // GitHub commit status - failure
                 if let Some(ref gh_token) = config.github_token {
                     if !gh_token.is_empty() && commit_hash != "unknown" {
                         let token = gh_token.clone();
@@ -3242,7 +3242,7 @@ fn spawn_deploy_task(
     });
 }
 
-/// Mask github_token in API responses — show "●●●●●●●●" if set.
+/// Mask github_token in API responses - show "●●●●●●●●" if set.
 /// Everything a Compose document must satisfy before a git deploy hands it to
 /// an agent, in one place because there are two callers and they had neither.
 ///
@@ -3250,7 +3250,7 @@ fn spawn_deploy_task(
 /// this path, so it is a deploy door like any other: it names registry images
 /// an operator's CVE threshold applies to, and images their container policy
 /// may restrict. It also skipped `validate_compose_yaml`, which the three
-/// front-door compose paths run — not an escape, because the agent refuses any
+/// front-door compose paths run - not an escape, because the agent refuses any
 /// bind outside `/var/lib/dockpanel/compose/` and blocks the Docker socket by
 /// name, but it meant the same document was judged by different rules
 /// depending on which door it arrived through.
@@ -3266,7 +3266,7 @@ fn spawn_deploy_task(
 /// used to take the HTTP status as the answer and write `status = 'running'`
 /// over a deploy in which nothing came up. That is not a rare shape: the compose
 /// engine has no teardown, so the SECOND compose deploy of the same deployment
-/// collides with its own container names and every service fails — while the row
+/// collides with its own container names and every service fails - while the row
 /// said the new commit was running. `stacks::deployed_service_states` is the
 /// reader written for exactly this, and it is shared rather than copied so the
 /// two paths cannot drift apart again.
@@ -3284,7 +3284,7 @@ fn compose_outcome(deploy_result: serde_json::Value) -> Result<(), String> {
             errors.join(" | ")
         };
         return Err(format!(
-            "no service in the compose file stayed running — {detail}"
+            "no service in the compose file stayed running - {detail}"
         ));
     }
     Ok(())
@@ -3296,7 +3296,7 @@ fn compose_outcome(deploy_result: serde_json::Value) -> Result<(), String> {
 /// A repository that has a Dockerfile is exactly the one whose compose file
 /// builds from source, and the compose engine drops every service it cannot
 /// resolve to a registry image. The deploy then comes up without the
-/// application — the one service the author cared about — while the row says
+/// application - the one service the author cared about - while the row says
 /// `running`. Naming them is better than dropping them, and the alternative
 /// offered is better than the thing refused: without a compose file this
 /// deployment builds the Dockerfile and also gets the domain, the certificate,
@@ -3306,7 +3306,7 @@ fn compose_outcome(deploy_result: serde_json::Value) -> Result<(), String> {
 /// `deploy-gate-coverage-pin-e2e.sh` attributes a `preflight_gate_image` call to
 /// the nearest `fn` declared within the 40 lines above it, so prose added inside
 /// that span pushes the declaration out of the window and the door reads as
-/// ungated. Writing this arm inline cost exactly that — the census dropped from
+/// ungated. Writing this arm inline cost exactly that - the census dropped from
 /// 7 gated doors to 6 and named `trigger_deploy_task`, a door that does reach
 /// the gate. Add explanation here, not there.
 fn dropped_service_refusal(yaml: &str) -> Option<String> {
@@ -3320,8 +3320,8 @@ fn dropped_service_refusal(yaml: &str) -> Option<String> {
         ("they", "them")
     };
     Some(format!(
-        "this repository's compose file gives no image for {}, and DockPanel's Compose support \
-         runs registry images rather than building them — {it} would be skipped and the deploy \
+        "this repository's compose file gives no image for {}, and CyberHunter - Panel's Compose support \
+         runs registry images rather than building them - {it} would be skipped and the deploy \
          would come up without {them}. Either name an already-built image for each of them, or \
          remove the compose file: without it this deployment builds your Dockerfile and also \
          gets the domain, the certificate, zero-downtime swaps, preview environments and \
@@ -3373,12 +3373,12 @@ const GITHUB_TOKEN_MASK: &str = "\u{25CF}\u{25CF}\u{25CF}\u{25CF}\u{25CF}\u{25CF
 
 /// Encrypt a submitted GitHub token for storage.
 ///
-/// `None` is passed through so `update`'s `COALESCE` keeps whatever is stored —
+/// `None` is passed through so `update`'s `COALESCE` keeps whatever is stored -
 /// that is how the SPA leaves an unchanged token alone. The mask sentinel is
 /// ALSO mapped to `None`: every handler now returns the masked row, so a client
 /// that submits the form it was served sends the mask back, and storing it would
 /// replace a working token with eight circles. Encrypting it would be worse
-/// still — the value would look like a legitimate credential to every later
+/// still - the value would look like a legitimate credential to every later
 /// read. v2.48.3 shipped this class of bug once (an Edit button that re-encrypted
 /// an already-encrypted destination password); it is closed here by construction
 /// rather than by the caller remembering.
@@ -3387,7 +3387,7 @@ const GITHUB_TOKEN_MASK: &str = "\u{25CF}\u{25CF}\u{25CF}\u{25CF}\u{25CF}\u{25CF
 ///
 /// The agent's `is_valid_repo_url` accepts `https://TOKEN@github.com/me/app.git`
 /// and nothing strips it, so a token pasted into the Repository field is stored
-/// verbatim. This does not un-store it — it stops the panel handing it to a
+/// verbatim. This does not un-store it - it stops the panel handing it to a
 /// reader who is not its owner. Used on the deploy-approval list, whose reader
 /// is an administrator of the machine rather than the deploy's operator.
 pub fn mask_repo_credentials(url: &str) -> String {
@@ -3411,7 +3411,7 @@ fn blank_to_none(v: Option<&str>) -> Option<&str> {
 }
 
 /// The human sentence out of an [`ApiError`], for use inside a fire-and-forget
-/// spawned deploy task — those return `()` and cannot propagate `?`, so
+/// spawned deploy task - those return `()` and cannot propagate `?`, so
 /// `require_agent_at_least`'s `Result<(), ApiError>` has to be unpacked by hand.
 fn api_error_message(e: ApiError) -> String {
     e.1
@@ -3447,7 +3447,7 @@ fn mask_github_token(deploy: &mut GitDeploy) {
 /// The URL a git deploy's domain is actually reachable on.
 ///
 /// Takes the EFFECTIVE mode (`stacks::effective_tls_mode`), not raw
-/// `ssl_email` — `provided` mode withholds `ssl_email` from the agent
+/// `ssl_email` - `provided` mode withholds `ssl_email` from the agent
 /// entirely (see `deploy_tls_email`), so a scheme decision still keyed on its
 /// presence would report a `provided`-mode deploy as plain HTTP. This used to
 /// be assumed to be https everywhere, under a comment reading "Git deploys
@@ -3466,8 +3466,8 @@ fn deploy_url(domain: &str, tls_mode: &str) -> String {
 /// third parties see on the commit.
 async fn set_github_status(token: &str, repo_url: &str, sha: &str, state: &str, target_url: Option<String>) {
     // `git_deploys.github_token` is encrypted at rest by `create` and `update`.
-    // Every one of the seven read sites in this module funnels here — either
-    // directly or through a spawned task that clones the value first — and the
+    // Every one of the seven read sites in this module funnels here - either
+    // directly or through a spawned task that clones the value first - and the
     // token never leaves the backend (the agent tree has zero references to it),
     // so this is the single place that has to open it, the same shape as
     // `helpers::cf_headers` and `cdn::bunny_headers`. The legacy fallback
@@ -3482,7 +3482,7 @@ async fn set_github_status(token: &str, repo_url: &str, sha: &str, state: &str, 
 
     let target_url = target_url.unwrap_or_default();
     let description = match state {
-        "success" => "Deployed successfully via DockPanel",
+        "success" => "Deployed successfully via CyberHunter - Panel",
         "failure" => "Deploy failed",
         "pending" => "Deploying...",
         _ => "Deploy status update",
@@ -3533,7 +3533,7 @@ pub async fn trigger_deploy_task(
     user_id: Uuid,
     triggered_by: String,
 ) {
-    // Check for active critical/major incidents — skip scheduled deploy during outage
+    // Check for active critical/major incidents - skip scheduled deploy during outage
     let active_incidents: (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM managed_incidents \
          WHERE status NOT IN ('resolved', 'postmortem') \
@@ -3545,7 +3545,7 @@ pub async fn trigger_deploy_task(
         return;
     }
 
-    // Fetch config FIRST — before acquiring the lock — so a config-fetch error
+    // Fetch config FIRST - before acquiring the lock - so a config-fetch error
     // (or a row deleted between the scheduler's list and now) returns WITHOUT
     // having flipped status to 'building' and stranding it for the self-heal window.
     let config: GitDeploy = match sqlx::query_as(&format!("{GIT_DEPLOY_SELECT} WHERE d.id = $1"))
@@ -3561,7 +3561,7 @@ pub async fn trigger_deploy_task(
     // This used to be `AgentHandle::Local(agent)`, decided before the row was
     // even read. `git_deploys.server_id` is NOT NULL and
     // `idx_git_deploys_name_server` makes `name` unique only PER SERVER, so two
-    // servers may legitimately own a deployment called the same thing — and the
+    // servers may legitimately own a deployment called the same thing - and the
     // agent's checkout path is `/var/lib/dockpanel/git/{name}`, keyed by name
     // alone. Driven on a two-box fleet against v2.56.0: a member's cron deploy
     // ran entirely on the panel host, and because both owned an `api`, whichever
@@ -3570,13 +3570,13 @@ pub async fn trigger_deploy_task(
     // never ran anything at all.
     //
     // Refuse rather than fall back to the local agent when the server cannot be
-    // reached — the fallback is the defect, not the remedy.
+    // reached - the fallback is the defect, not the remedy.
     let agent = match agents.for_server(config.server_id).await {
         Ok(a) => a,
         Err(e) => {
             tracing::warn!(
                 "Scheduled deploy skipped for {} ({git_deploy_id}): its server {} is \
-                 unreachable ({e}) — NOT deploying. Refusing to act on a different host.",
+                 unreachable ({e}) - NOT deploying. Refusing to act on a different host.",
                 config.name, config.server_id
             );
             return;
@@ -3593,7 +3593,7 @@ pub async fn trigger_deploy_task(
         }
     };
 
-    // Deploy lock (atomic — see deploy(); the old git_deploy_history guard was inert).
+    // Deploy lock (atomic - see deploy(); the old git_deploy_history guard was inert).
     // Acquired AFTER the config fetch above so a fetch error can't leave 'building' stuck.
     match sqlx::query(
         "UPDATE git_deploys SET status = 'building', updated_at = NOW() \
@@ -3656,7 +3656,7 @@ pub async fn trigger_deploy_task(
         }
     };
 
-    // Check for docker-compose.yml — if found, use compose deployment path
+    // Check for docker-compose.yml - if found, use compose deployment path
     if let Ok(compose_result) = agent.post("/git/compose-check", Some(serde_json::json!({
         "name": config.name, "build_context": config.build_context,
     }))).await {
@@ -3725,7 +3725,7 @@ pub async fn trigger_deploy_task(
 
     // A pre-build command skips Nixpacks entirely and goes straight to
     // auto-detect, so the command always gets spliced into the Dockerfile
-    // DockPanel controls — mirrors spawn_deploy_task's twin block.
+    // CyberHunter - Panel controls - mirrors spawn_deploy_task's twin block.
     let pre_build_cmd = config.pre_build_cmd.as_deref().filter(|c| !c.trim().is_empty());
 
     if pre_build_cmd.is_some() {
@@ -3746,7 +3746,7 @@ pub async fn trigger_deploy_task(
         }
     }
 
-    // Try Nixpacks first (skipped when a pre-build command is configured —
+    // Try Nixpacks first (skipped when a pre-build command is configured -
     // see above), then fall back to auto-detect + docker build.
     let mut nixpacks_image: Option<String> = None;
     let nixpacks_result = if pre_build_cmd.is_some() {
@@ -3768,7 +3768,7 @@ pub async fn trigger_deploy_task(
             tracing::warn!("Failed to update git deploy build method: {db_err}");
         }
     } else {
-        // Nixpacks unavailable, or skipped for a pre-build command — try auto-detect.
+        // Nixpacks unavailable, or skipped for a pre-build command - try auto-detect.
         let auto_detect_result = agent.post("/git/auto-detect", Some(serde_json::json!({
             "name": config.name, "dockerfile": config.dockerfile, "build_context": config.build_context,
             "pre_build_cmd": pre_build_cmd,
@@ -3835,7 +3835,7 @@ pub async fn trigger_deploy_task(
     };
 
     // An agent too old to honour `tls_mode`/`tls_certificate` silently drops
-    // both and falls back to inferring the mode from `ssl_email` presence —
+    // both and falls back to inferring the mode from `ssl_email` presence -
     // which `deploy_tls_email` withholds outright in `provided` mode, so an
     // old agent would deploy this domain over plain HTTP with no warning.
     // Refused here, before the deploy call.
@@ -4000,14 +4000,14 @@ async fn record_failed_history(db: &sqlx::PgPool, git_deploy_id: Uuid, commit_ha
 ///
 /// Returns the reason the push was NOT taken up, when it was not. Four things
 /// abandon a preview BEFORE the build task is spawned, and the webhook answered
-/// `Preview deploy triggered` for all of them — a claim about work that never
+/// `Preview deploy triggered` for all of them - a claim about work that never
 /// started, delivered to the one place a pusher would look for it. Past the spawn
 /// the answer is honest: a clone or build failure after that point is recorded on
 /// the row as `status = 'failed'` and shown in the previews list.
 ///
 /// The fourth was added last and is the reason that last sentence is true at all.
 /// A failed `git_previews` upsert used to be logged and stepped over, and every
-/// status write below is `WHERE git_deploy_id = $1 AND branch = $2` — so with no
+/// status write below is `WHERE git_deploy_id = $1 AND branch = $2` - so with no
 /// row they all match zero rows and return `Ok`, and a preview that built, bound
 /// a port, took a vhost and obtained a certificate was recorded nowhere and
 /// reported as running. Nothing on the box reaps a preview that has no row.
@@ -4039,12 +4039,12 @@ async fn handle_preview_deploy(
         Some(p) => p,
         None => {
             tracing::warn!("No preview ports available");
-            return Err("no preview port is free — 8000-8999 are all in use".to_string());
+            return Err("no preview port is free - 8000-8999 are all in use".to_string());
         }
     };
 
     // The preview's own name space. Before v2.55.0 this was
-    // `dockpanel-git-{config}-pr-{slug}` — the container name of a DEPLOYMENT
+    // `dockpanel-git-{config}-pr-{slug}` - the container name of a DEPLOYMENT
     // called `{config}-pr-{slug}`, which any admin can create and which the
     // agent resolved by name alone. Both halves of that string are reachable by
     // whoever can push to the repo (the webhook has no auth extractor), so a
@@ -4093,24 +4093,24 @@ async fn handle_preview_deploy(
                 // the next push retries this teardown from the same state.
                 tracing::warn!(
                     "Failed to tear down predecessor preview {prev_name}: {e}. Leaving the \
-                     git_previews row pointing at it and skipping this preview deploy — \
+                     git_previews row pointing at it and skipping this preview deploy - \
                      overwriting the row here is what orphans the container."
                 );
                 return Err(format!(
                     "the previous preview container {prev_name} could not be torn down, so \
-                     this push was not taken up — retry once the server answers"
+                     this push was not taken up - retry once the server answers"
                 ));
             }
         }
     }
 
     // The preview domain's leftmost label comes from a PUSHED BRANCH NAME, and
-    // `POST /api/webhooks/git/{id}/{secret}` has no auth extractor — so a repo
+    // `POST /api/webhooks/git/{id}/{secret}` has no auth extractor - so a repo
     // collaborator with no panel account chooses it. A branch called `www`, `mail`
     // or `api` used to synthesise `www.example.com` and hand it straight to the
     // agent, which replaced whatever vhost was already there.
     //
-    // A collision here is almost always accidental, so the preview still deploys —
+    // A collision here is almost always accidental, so the preview still deploys -
     // it just does not get a vhost. Losing a preview URL is a far smaller thing
     // than repointing a production site at a branch build. Note `is_reserved_domain`
     // and not `is_reserved_domain_for`: the Host header on this request is chosen
@@ -4133,7 +4133,7 @@ async fn handle_preview_deploy(
         if taken.is_some() {
             tracing::warn!(
                 "Preview for branch '{branch}' would have claimed {candidate}, which is \
-                 already served on this server — deploying the preview without a domain"
+                 already served on this server - deploying the preview without a domain"
             );
             preview_domain = None;
         }
@@ -4147,7 +4147,7 @@ async fn handle_preview_deploy(
     // below exist: every consumer reads `git_previews` (the previews list, Delete
     // Preview, both cleanup sweeps, the parent delete) and nothing reconciles
     // running containers against rows. Deploying past a failed write is how a
-    // preview becomes unreapable — the same state :3081 already refuses to
+    // preview becomes unreapable - the same state :3081 already refuses to
     // create, for the same reason, forty lines up.
     if let Err(e) = sqlx::query(
         "INSERT INTO git_previews (git_deploy_id, server_id, branch, container_name, host_port, domain, status) \
@@ -4159,11 +4159,11 @@ async fn handle_preview_deploy(
     {
         // The returned reason is echoed verbatim into the webhook's HTTP body at
         // :1684 and from there into GitHub's delivery log, and that door has no
-        // auth extractor — so it carries no database detail. The detail goes to
+        // auth extractor - so it carries no database detail. The detail goes to
         // the operator's journal instead.
         tracing::warn!("Failed to upsert git preview record for branch '{branch}': {e}");
         return Err(
-            "the preview could not be recorded, so it was not deployed — retry the push".to_string(),
+            "the preview could not be recorded, so it was not deployed - retry the push".to_string(),
         );
     }
 
@@ -4181,20 +4181,20 @@ async fn handle_preview_deploy(
     let key_path = config.deploy_key_path.clone();
     let ssl_email = config.ssl_email.clone();
     // A `provided`-mode certificate names the PARENT domain, almost
-    // certainly not `{branch}.{parent}` — passed through regardless and left
+    // certainly not `{branch}.{parent}` - passed through regardless and left
     // to the agent's own `cert_covers_domain` SAN re-check (the same
     // defence-in-depth `TlsIntent::Provided` always runs) to decide: a
     // wildcard or a SAN naming the preview host covers it and serves HTTPS,
     // anything narrower is refused gracefully and the preview falls back to
-    // plain HTTP — never a hard failure over a preview's own TLS story.
+    // plain HTTP - never a hard failure over a preview's own TLS story.
     let effective_mode =
         effective_tls_mode(config.tls_mode.as_deref(), config.ssl_email.as_deref());
     let tls_certificate = config.tls_certificate.clone();
     let branch = branch.to_string();
     // Same GitHub-status wiring the regular/scheduled deploy paths already use
-    // (`set_github_status`, 9 existing call sites) — a preview builds, deploys
+    // (`set_github_status`, 9 existing call sites) - a preview builds, deploys
     // and gets a subdomain today, but nothing tells GitHub a commit or PR where
-    // to find it, so the pusher has to go look in the DockPanel UI instead of
+    // to find it, so the pusher has to go look in the CyberHunter - Panel UI instead of
     // seeing a status check / link on the commit.
     let github_token = config.github_token.clone();
     let github_target = preview_domain.as_deref().map(|d| deploy_url(d, effective_mode));
@@ -4268,11 +4268,11 @@ async fn handle_preview_deploy(
         // Deploy. memory_mb/cpu_percent are deliberately not inherited from the
         // parent app: preview containers have always run unbounded, and quietly
         // starting to cap them would be a behaviour change this fix did not set out
-        // to make. Recorded rather than silently kept — see the s288 ledger.
+        // to make. Recorded rather than silently kept - see the s288 ledger.
         //
         // volumes is likewise ALWAYS empty here, and for a sharper reason than
         // "unreviewed behaviour change": a throwaway PR container must never gain
-        // durable local storage (#118) — TTL teardown would then be destroying
+        // durable local storage (#118) - TTL teardown would then be destroying
         // real data rather than a re-clonable checkout, and the point of a
         // preview is that it IS throwaway. The agent's `deploy_container` route
         // refuses a non-empty list for any scope but `"deploy"` as the actual
@@ -4360,7 +4360,7 @@ async fn handle_preview_deploy(
     Ok(())
 }
 
-/// GET /api/git-deploys/{id}/previews — List preview deployments.
+/// GET /api/git-deploys/{id}/previews - List preview deployments.
 pub async fn list_previews(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -4374,7 +4374,7 @@ pub async fn list_previews(
     Ok(Json(previews))
 }
 
-/// DELETE /api/git-deploys/{id}/previews/{preview_id} — Delete a preview.
+/// DELETE /api/git-deploys/{id}/previews/{preview_id} - Delete a preview.
 pub async fn delete_preview(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -4382,8 +4382,8 @@ pub async fn delete_preview(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     require_admin(&claims.role)?;
     // `g.server_id` is joined in for the same reason `remove()` selects it: the
-    // preview runs on the server its PARENT deployment lives on — that is the box
-    // `handle_preview_deploy` built it on — and the caller's `ServerScope` was
+    // preview runs on the server its PARENT deployment lives on - that is the box
+    // `handle_preview_deploy` built it on - and the caller's `ServerScope` was
     // deciding which agent got the teardown. A preview's container name is derived
     // from deploy name + branch, so two servers running the same repository produce
     // byte-identical preview names: aimed at the wrong host, `/git/cleanup` finds
@@ -4404,7 +4404,7 @@ pub async fn delete_preview(
     )
     .await?;
 
-    // Clean up container — the stored name carries both the `dockpanel-git-`
+    // Clean up container - the stored name carries both the `dockpanel-git-`
     // prefix the agent re-adds and, for rows written from v2.55.0 on, the
     // preview scope. `preview_cleanup_target` resolves both.
     if let Err(e) = agent
@@ -4425,7 +4425,7 @@ pub async fn delete_preview(
         //
         // The agent's own sentence travels only on a 4xx (`error.rs`), so take
         // it where there is one and name the transport failure where there is
-        // not — and in both cases state that the preview was kept, because that
+        // not - and in both cases state that the preview was kept, because that
         // is what makes this retryable rather than just failed.
         tracing::warn!("Failed to tear down preview {container_name}: {e}");
         let unanswered = "the server did not answer".to_string();
@@ -4435,7 +4435,7 @@ pub async fn delete_preview(
             status,
             &format!(
                 "Could not tear down preview {container_name}: {detail}. The preview was \
-                 kept — its record is the only thing that can still find that container, \
+                 kept - its record is the only thing that can still find that container, \
                  its port and its vhost. Retry once the server answers."
             ),
         ));
@@ -4447,7 +4447,7 @@ pub async fn delete_preview(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// POST /api/git-deploys/{id}/schedule — Schedule a one-time deploy.
+/// POST /api/git-deploys/{id}/schedule - Schedule a one-time deploy.
 pub async fn schedule_deploy(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -4476,7 +4476,7 @@ pub async fn schedule_deploy(
 
     let scheduled_at = chrono::DateTime::parse_from_rfc3339(deploy_at)
         .map(|dt| dt.with_timezone(&chrono::Utc))
-        .map_err(|_| err(StatusCode::BAD_REQUEST, "Invalid deploy_at format — use ISO 8601 (e.g., 2026-03-23T02:00:00Z)"))?;
+        .map_err(|_| err(StatusCode::BAD_REQUEST, "Invalid deploy_at format - use ISO 8601 (e.g., 2026-03-23T02:00:00Z)"))?;
 
     if scheduled_at <= chrono::Utc::now() {
         return Err(err(StatusCode::BAD_REQUEST, "deploy_at must be in the future"));
@@ -4503,7 +4503,7 @@ pub async fn schedule_deploy(
     })))
 }
 
-/// DELETE /api/git-deploys/{id}/schedule — Cancel a scheduled deploy.
+/// DELETE /api/git-deploys/{id}/schedule - Cancel a scheduled deploy.
 pub async fn cancel_scheduled_deploy(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -4537,7 +4537,7 @@ pub async fn cancel_scheduled_deploy(
 
 // ── Deploy Approvals ────────────────────────────────────────────────────────
 
-/// GET /api/deploy-approvals — List pending deploy approvals.
+/// GET /api/deploy-approvals - List pending deploy approvals.
 pub async fn list_approvals(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -4545,7 +4545,7 @@ pub async fn list_approvals(
     require_admin(&claims.role)?;
 
     // Scoped to the machines this administrator operates. `require_admin` alone is
-    // not a boundary — every sibling read in this file also carries `user_id =
+    // not a boundary - every sibling read in this file also carries `user_id =
     // $claims.sub`, and this list carried nothing, so every pending approval in the
     // installation was legible to any admin account regardless of whose fleet the
     // deployment ran on. It leaks the deploy name and the requester's id, and it
@@ -4553,21 +4553,21 @@ pub async fn list_approvals(
     //
     // The predicate cannot be the sibling one. `deploy()` is the only writer of
     // these rows and it fetches its config with `user_id = $2`, so `requested_by`
-    // is ALWAYS the deployment's owner — and approving your own request is refused
+    // is ALWAYS the deployment's owner - and approving your own request is refused
     // two lines into `approve_deploy`. `g.user_id = $claims.sub` would therefore
     // make every approval unapprovable by construction: it would read as a tighter
     // guard while quietly deleting the feature.
     //
     // So the boundary is the one `SITE_CALLER_PREDICATE`'s admin arm already draws
-    // for sites: an operator may act on the box in front of them — this machine, or
-    // a server they registered themselves — and does not reach a machine somebody
+    // for sites: an operator may act on the box in front of them - this machine, or
+    // a server they registered themselves - and does not reach a machine somebody
     // else added. That keeps the two-person rule intact and still stops a second
     // tenant's admin from signing off on a deploy to hardware they do not run.
     // `u.role` is read from the DATABASE, not from `claims.role`, for the reason
     // stated there: a JWT keeps asserting the role it was minted with until it
     // expires, so a demoted account would otherwise keep approving all session.
     // `g.deploy_protected` is part of the predicate, not just of the write path.
-    // A request survives its flag being switched off — `update()` now resolves
+    // A request survives its flag being switched off - `update()` now resolves
     // those, but an install that flipped the flag before this release still holds
     // them, and a row whose deployment is no longer protected must not be offered
     // for approval by a screen that shows the same deployment as unprotected.
@@ -4577,7 +4577,7 @@ pub async fn list_approvals(
     // table to its owner, so the approving administrator has usually never seen
     // this deployment anywhere else in the panel and would be authorising a
     // production build of a repository the screen never named. The email also
-    // replaces nothing — the raw requester id was already on the wire — and it is
+    // replaces nothing - the raw requester id was already on the wire - and it is
     // the less identifying of the two for an operator reading it.
     let rows: Vec<(Uuid, Uuid, Uuid, String, String, String, String, String, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
         "SELECT da.id, da.deploy_id, da.requested_by, da.status, g.name, \
@@ -4618,7 +4618,7 @@ pub async fn list_approvals(
     Ok(Json(result))
 }
 
-/// POST /api/deploy-approvals/{id}/approve — Approve a pending deploy.
+/// POST /api/deploy-approvals/{id}/approve - Approve a pending deploy.
 pub async fn approve_deploy(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -4627,7 +4627,7 @@ pub async fn approve_deploy(
     require_admin(&claims.role)?;
 
     // Fetch the pending approval, scoped to the machines this administrator
-    // operates — the same predicate `list_approvals` now applies, and the reason it
+    // operates - the same predicate `list_approvals` now applies, and the reason it
     // cannot simply be `g.user_id = $claims.sub` is written out in full there.
     // Unscoped, this handler let any admin account sign off on a protected deploy
     // belonging to a different tenant on hardware they do not run, which is exactly
@@ -4662,7 +4662,7 @@ pub async fn approve_deploy(
     // The order matters and it changed with this fix. The agent used to arrive as
     // an extractor, so an unreachable host was answered by `ServerScope` with a 502
     // before the handler body ran and the approval stayed pending, retryable.
-    // Resolving it here — correctly, from the row — moves that failure INSIDE the
+    // Resolving it here - correctly, from the row - moves that failure INSIDE the
     // body, and marking the approval first would burn it: `status` is no longer
     // 'pending', so the retry is refused with 409 and a protected deploy needs a
     // fresh request and a second admin all over again because a box was rebooting.
@@ -4693,7 +4693,7 @@ pub async fn approve_deploy(
         ));
     }
 
-    // The build runs on the server the deployment lives on — see `deploy()`, of
+    // The build runs on the server the deployment lives on - see `deploy()`, of
     // which this is the deferred half. It carried the sharper version of the bug:
     // the requester and the approver are different people, so the approver's server
     // switcher decided where somebody else's deploy landed.
@@ -4709,8 +4709,8 @@ pub async fn approve_deploy(
     // a losing caller must leave the request retryable rather than burn it.
     //
     // This path used to flip the status unconditionally and merely warn on error,
-    // so two administrators resolving the queue at the same moment — or an
-    // approval landing while an unprotected sibling deploy was mid-build — each
+    // so two administrators resolving the queue at the same moment - or an
+    // approval landing while an unprotected sibling deploy was mid-build - each
     // spawned a full production build against one working tree. The condition is
     // copied from `deploy()` verbatim, including the 30-minute self-heal for a
     // crashed build, so the two doors cannot drift into disagreeing about what
@@ -4733,7 +4733,7 @@ pub async fn approve_deploy(
     .map_err(|e| internal_error("approve deploy", e))?;
 
     let new_deploy_id = Uuid::new_v4();
-    // The approver, not the requester — and deliberately so. `new_deploy_id`
+    // The approver, not the requester - and deliberately so. `new_deploy_id`
     // is returned in this response and stored nowhere else, so the approver is
     // the only party that ever learns it; the requester got a bare
     // "pending_approval" with no id and has nothing to open a stream with.
@@ -4764,7 +4764,7 @@ pub async fn approve_deploy(
     }))))
 }
 
-/// POST /api/deploy-approvals/{id}/reject — Reject a pending deploy.
+/// POST /api/deploy-approvals/{id}/reject - Reject a pending deploy.
 pub async fn reject_deploy(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -4775,7 +4775,7 @@ pub async fn reject_deploy(
     // Same boundary as `list_approvals` and `approve_deploy`, for the same reason:
     // an approval this administrator cannot see must not be one they can resolve.
     // Rejection has no agent and so no wrong-host half, but unscoped it is the
-    // denial-of-service twin of approve — a second tenant's admin could kill any
+    // denial-of-service twin of approve - a second tenant's admin could kill any
     // protected deploy in the installation, and rejection is terminal (the check
     // below refuses anything not 'pending', so the requester must start over).
     let row: Option<(String,)> = sqlx::query_as(
@@ -4830,7 +4830,7 @@ mod tests {
         );
         // TWO '@' inside the authority. A username may legitimately contain one
         // (Azure DevOps and some LDAP-backed hosts issue them), and the
-        // authority boundary is the LAST one — splitting on the first leaves
+        // authority boundary is the LAST one - splitting on the first leaves
         // ":tok@" on screen, i.e. the secret this function exists to hide. This
         // is the case that distinguishes rfind from find; without it the test
         // passes under both and certifies a leak.
@@ -4838,7 +4838,7 @@ mod tests {
             mask_repo_credentials("https://me@corp.com:ghp_secret123@github.com/me/app.git"),
             "https://•••@github.com/me/app.git"
         );
-        // A URL with nothing to hide is returned untouched — the operator still
+        // A URL with nothing to hide is returned untouched - the operator still
         // has to be able to tell which repository a row is for.
         assert_eq!(
             mask_repo_credentials("https://github.com/me/app.git"),
@@ -4860,7 +4860,7 @@ mod tests {
     #[test]
     fn a_blank_field_is_stored_as_null_not_as_an_empty_string() {
         // NULL is this table's spelling of "not set", and `remove` reads the
-        // domain column with `unwrap_or(&name)` — a stored "" would hand the
+        // domain column with `unwrap_or(&name)` - a stored "" would hand the
         // agent an empty site identifier where NULL correctly yields the name.
         assert_eq!(blank_to_none(Some("")), None);
         assert_eq!(blank_to_none(Some("   ")), None);
@@ -4879,9 +4879,9 @@ mod tests {
             preview_cleanup_target("dockpanel-git-pr.myapp-pr-feature-x"),
             ("myapp-pr-feature-x".to_string(), "preview")
         );
-        // Written before it: the old shared space. Addressed by the old name —
+        // Written before it: the old shared space. Addressed by the old name -
         // recomputing it would be a second answer to a question the row already
-        // holds — but with the ownership rule that refuses a labelled deploy.
+        // holds - but with the ownership rule that refuses a labelled deploy.
         assert_eq!(
             preview_cleanup_target("dockpanel-git-myapp-pr-feature-x"),
             ("myapp-pr-feature-x".to_string(), "preview_legacy")
@@ -4963,7 +4963,7 @@ mod tests {
 
     #[test]
     fn provided_mode_sends_the_alias_and_withholds_the_acme_address() {
-        // A `provided`-mode config is never sent an `ssl_email` — an agent
+        // A `provided`-mode config is never sent an `ssl_email` - an agent
         // that still infers the mode from its presence must not be told to
         // order a certificate the operator switched off. Positive control for
         // the mutation this guards against: delete the `deploy_tls_email`
@@ -5022,7 +5022,7 @@ mod tests {
     fn env_scalars_are_stringified_rather_than_failing_the_deploy() {
         // env_vars is an unconstrained JSONB column. The agent reads it as
         // HashMap<String, String>, so one numeric value in one row would other-
-        // wise reject the WHOLE deploy — trading a bug that lost the environment
+        // wise reject the WHOLE deploy - trading a bug that lost the environment
         // for a bug that refuses to deploy at all.
         let env = env_object(&serde_json::json!({
             "PORT": 8080,
@@ -5065,7 +5065,7 @@ mod tests {
     fn strip_prefix_is_idempotent_and_safe_on_bare() {
         // A bare name (the manual path already passes this) is returned unchanged.
         assert_eq!(strip_container_prefix("myapp-pr-feat-x"), "myapp-pr-feat-x");
-        // Only ONE prefix is stripped — a double-prefixed input still loses just one,
+        // Only ONE prefix is stripped - a double-prefixed input still loses just one,
         // but the stored value only ever carries a single prefix.
         assert_eq!(strip_container_prefix("dockpanel-git-dockpanel-git-x"), "dockpanel-git-x");
     }

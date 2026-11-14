@@ -94,8 +94,8 @@ function AnimatedTerminal() {
           { text: '  Configuring nginx & PostgreSQL...', cls: 'text-zinc-600', delay: 500 },
           { text: '  Starting services...', cls: 'text-zinc-600', delay: 400 },
           { text: '\u00A0', cls: '', delay: 250 },
-          // No version number here. It said "v2.8.0" \u2014 thirty-six releases
-          // stale \u2014 because a hardcoded version in a decorative animation is
+          // No version number here. It said "v2.8.0" - thirty-six releases
+          // stale - because a hardcoded version in a decorative animation is
           // something nobody ever remembers to bump. The elapsed time is the
           // point of the line anyway.
           //
@@ -103,7 +103,7 @@ function AnimatedTerminal() {
           // edit: the version came out for being un-bumpable and the "41 MB"
           // beside it, wrong by a factor of two, stayed. Both were decoration;
           // only one was noticed. It is quoted from the register now.
-          { text: `\u2713 DockPanel installed in ${m.installSeconds}s`, cls: 'text-emerald-400 font-medium', delay: 350 },
+          { text: `\u2713 CyberHunter - Panel installed in ${m.installSeconds}s`, cls: 'text-emerald-400 font-medium', delay: 350 },
           { text: '  Panel \u2192 https://your-server:3080', cls: 'text-zinc-300', delay: 200 },
         ];
 
@@ -124,7 +124,7 @@ function AnimatedTerminal() {
 
   return (
     // No macOS traffic lights. This product manages Linux servers, and a fake
-    // Mac window frame around a root shell is a costume \u2014 it was on the hero
+    // Mac window frame around a root shell is a costume - it was on the hero
     // terminal and on all five product screenshots. What replaces it is the
     // thing a real session actually shows: who you are and where you are.
     <div ref={ref} className="w-full max-w-3xl border border-[#1e1e22] bg-[#0d0d0f]">
@@ -158,8 +158,8 @@ function RamBar({ name, mb, max, highlight = false, delay = 0 }: {
   const width = (mb / max) * 100;
 
   // The figure sits OUTSIDE the fill, in a fixed column, for the reason this
-  // chart exists: DockPanel is a small fraction of an 800 MB scale, so its bar
-  // is narrow and a label printed inside it was clipped to nothing — the one
+  // chart exists: CyberHunter - Panel is a small fraction of an 800 MB scale, so its bar
+  // is narrow and a label printed inside it was clipped to nothing - the one
   // number the chart is making an argument about was the only one you could
   // not read. Putting every figure in the same right-hand column also means
   // they align, which is what makes a set of measurements comparable at all.
@@ -197,7 +197,7 @@ function NavLink({ href, label, active }: { href: string; label: string; active:
 const showcase = [
   {
     title: `${m.templates} templates. One click.`,
-    desc: 'WordPress, Postgres, Grafana, n8n, Immich \u2014 pick a template. SSL, reverse proxy, and networking are configured automatically.',
+    desc: 'WordPress, Postgres, Grafana, n8n, Immich - pick a template. SSL, reverse proxy, and networking are configured automatically.',
     shot: '/screenshots/dp-apps.png',
     alt: 'Docker Apps gallery',
   },
@@ -229,7 +229,7 @@ const allFeatures = [
   { name: 'Web Terminal', desc: 'Full PTY with privilege drop & command filtering', icon: Terminal },
   { name: 'Infrastructure as Code', desc: 'YAML export/import for reproducible setups', icon: FileCode2 },
   { name: 'Uptime Monitoring', desc: 'HTTP, TCP, ping probes with incident management', icon: Activity },
-  { name: 'WAF (ModSecurity)', desc: 'OWASP CRS v4 \u2014 per-site detection or prevention', icon: ShieldCheck },
+  { name: 'WAF (ModSecurity)', desc: 'OWASP CRS v4 - per-site detection or prevention', icon: ShieldCheck },
   { name: 'Image CVE Scanning', desc: 'Per-app grype scans, deploy gate, scheduled rescan', icon: ScanSearch },
   { name: 'Signed Releases + SBOM', desc: 'cosign keyless via Sigstore, SPDX 2.3 SBOMs, Rekor transparency log', icon: BadgeCheck },
   { name: 'Per-Image SBOM', desc: 'On-demand SPDX 2.3 download per deployed container (syft)', icon: Package },
@@ -260,16 +260,16 @@ const steps = [
 ];
 
 const faqs = [
-  { q: 'Is it really free?', a: 'Every feature, every server, no limits. Licensed under the AGPL v3 — free software, on as many servers as you like, commercially included. There is no premium tier.' },
+  { q: 'Is it really free?', a: 'Every feature, every server, no limits. Licensed under the AGPL v3 - free software, on as many servers as you like, commercially included. There is no premium tier.' },
   { q: 'System requirements?', a: '512 MB RAM, 1 CPU, 10 GB disk. Runs on Ubuntu, Debian, CentOS, Rocky, AlmaLinux, and Fedora. ARM64 works too.' },
-  { q: 'How is this different from cPanel?', a: `cPanel uses ~${m.competitorRam.cPanel} MB of RAM, costs $15/month, and doesn't support Docker. DockPanel's two services take about ${m.ram.services} MB between them, or roughly ${m.ram.fullStack} MB counting the bundled PostgreSQL, cost nothing, and ship with ${m.templates} Docker templates, a WAF, passkey authentication, Git deploys, a CLI, and multi-server management.` },
-  { q: 'What happens if DockPanel goes down?', a: 'Your sites keep running. Nginx and Docker are independent processes \u2014 the panel is just the management layer. It auto-restarts via systemd if it ever stops.' },
+  { q: 'How is this different from cPanel?', a: `cPanel uses ~${m.competitorRam.cPanel} MB of RAM, costs $15/month, and doesn't support Docker. CyberHunter - Panel's two services take about ${m.ram.services} MB between them, or roughly ${m.ram.fullStack} MB counting the bundled PostgreSQL, cost nothing, and ship with ${m.templates} Docker templates, a WAF, passkey authentication, Git deploys, a CLI, and multi-server management.` },
+  { q: 'What happens if CyberHunter - Panel goes down?', a: 'Your sites keep running. Nginx and Docker are independent processes - the panel is just the management layer. It auto-restarts via systemd if it ever stops.' },
   { q: 'Can I manage multiple servers?', a: 'As many as you want. Install a lightweight agent on each server and manage them all from one dashboard.' },
   // "On a $5 VPS, that's the difference between running 20 sites and running 2"
   // used to close this answer. Nothing derives 20 or 2, and a page arguing from
   // measurement cannot afford a figure it invented. The measured ones make the
   // point without it.
-  { q: 'Why Rust?', a: `${m.binary.total} MB of binaries on disk and about ${m.ram.services} MB of RAM for the two panel services at idle — no JVM, no Node, no Python runtime to keep patched. The panel is a process you can forget about rather than a stack you maintain.` },
+  { q: 'Why Rust?', a: `${m.binary.total} MB of binaries on disk and about ${m.ram.services} MB of RAM for the two panel services at idle - no JVM, no Node, no Python runtime to keep patched. The panel is a process you can forget about rather than a stack you maintain.` },
 ];
 
 /* ── Page ─────────────────────────────────────────────────────────── */
@@ -348,7 +348,7 @@ export default function Landing() {
         <div className="max-w-7xl mx-auto px-6 h-14 flex items-center justify-between">
           <Link to="/" className="flex items-center gap-2.5">
             <Logo className="h-6 w-6" />
-            <span className="text-[17px] font-semibold text-[#f4f4f5] tracking-[-0.01em]">DockPanel</span>
+            <span className="text-[17px] font-semibold text-[#f4f4f5] tracking-[-0.01em]">CyberHunter - Panel</span>
           </Link>
           <div className="hidden md:flex items-center gap-8 text-[13px] font-medium text-zinc-500">
             <NavLink href="#features" label="Features" active={activeSection === 'features'} />
@@ -418,7 +418,7 @@ export default function Landing() {
           buttons. Every landing page in this category looks like that.
 
           The thesis here is the SPEC SHEET, because the product's entire
-          argument is a set of measurements — and a spec sheet is left-aligned
+          argument is a set of measurements - and a spec sheet is left-aligned
           by nature. The headline states the claim, the figures beside it are
           the evidence, and the install command is the largest interactive
           thing on the screen because copying it is the only thing a visitor
@@ -455,7 +455,7 @@ export default function Landing() {
               </p>
             </div>
 
-            {/* The evidence, as an instrument reads it. Mono, tabular, ruled —
+            {/* The evidence, as an instrument reads it. Mono, tabular, ruled -
                 and labelled precisely enough that the memory figure cannot be
                 mistaken for the download size, which is what the old headline
                 did by putting the RAM figure next to the product name.
@@ -467,7 +467,7 @@ export default function Landing() {
                 argument is measurement should show the measurement happening.
                 It runs once, on load, and nothing loops.
 
-                Motion is off entirely for anyone who has asked for that — the
+                Motion is off entirely for anyone who has asked for that - the
                 CSS media query cannot stop a JS spring, so the counter checks
                 the same preference itself and renders the final value. */}
             <dl className="lg:col-span-5 mono text-sm border-t border-[#1e1e22]">
@@ -498,7 +498,7 @@ export default function Landing() {
           </motion.div>
 
           {/* The command. Full width of the text column, monospaced, and big
-              enough to read across a room — it is the product's front door. */}
+              enough to read across a room - it is the product's front door. */}
           <motion.div
             initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.12, ease: [0.16, 1, 0.3, 1] }}
@@ -542,13 +542,13 @@ export default function Landing() {
           >
             <img
               src="/screenshots/dp-dashboard.png"
-              alt="The DockPanel dashboard: CPU, memory and disk over 24 hours, with uptime, sites, databases and container counts beneath."
+              alt="The CyberHunter - Panel dashboard: CPU, memory and disk over 24 hours, with uptime, sites, databases and container counts beneath."
               className="w-full block border border-[#1e1e22]"
             />
             {/* Names no host. The demo box is private, and a landing page is
                 the wrong place to point traffic at it. */}
             <figcaption className="mono text-[11px] text-[#3f3f46] mt-3">
-              the dashboard, unmodified — a real box, real numbers
+              the dashboard, unmodified - a real box, real numbers
             </figcaption>
           </motion.figure>
         </div>
@@ -560,13 +560,13 @@ export default function Landing() {
           STEP 1 / STEP 2 / STEP 3.
 
           The counter strip went because the hero's spec table already states
-          those figures, better labelled — and repeating a number is how the
+          those figures, better labelled - and repeating a number is how the
           two copies start disagreeing.
 
           The steps went because an icon in a rounded square is a picture of
           nothing. Installing IS a terminal session, so the terminal plays it:
           the real command, the real output, the real elapsed time. The three
-          steps survive as what they actually are — a caption naming what
+          steps survive as what they actually are - a caption naming what
           happens after the command returns.                                */}
       <section className="rule py-20 lg:py-28">
         <div className="max-w-7xl mx-auto px-6">
@@ -602,7 +602,7 @@ export default function Landing() {
       {/* ── Feature showcase ──────────────────────────────────────────────
           The strongest material on the page was already here: real
           screenshots of a real product, with copy that has a voice. Two
-          things were wasting it — a fake Mac window frame on every shot, and
+          things were wasting it - a fake Mac window frame on every shot, and
           a two-up grid that rendered each one ~330px wide, at which size the
           product UI is grey texture rather than evidence.
 
@@ -653,8 +653,8 @@ export default function Landing() {
 
       {/* ── The full list ─────────────────────────────────────────────────
           Was 26 bordered cards, each with a rounded-square lucide icon. The
-          icons were chosen loosely — a lightning bolt for webhooks, a palette
-          for themes, a globe for a CDN — so they carried no information and
+          icons were chosen loosely - a lightning bolt for webhooks, a palette
+          for themes, a globe for a CDN - so they carried no information and
           took the eye first anyway.
 
           What a reader wants from a list of 26 modules is to scan it, so it
@@ -687,7 +687,7 @@ export default function Landing() {
       </section>
 
       {/* ── Comparison ────────────────────────────────────────────────────
-          The RAM bars were already the best idea on the page — a real
+          The RAM bars were already the best idea on the page - a real
           measurement, drawn to scale, where the product's whole claim is
           legible in one glance. They keep their prominence; only the framing
           changed, from a centred "The numbers." to a heading that says what
@@ -708,7 +708,7 @@ export default function Landing() {
           </div>
 
           <div className="max-w-4xl space-y-3 mb-16">
-            <RamBar name="DockPanel" mb={m.ram.fullStack} max={m.competitorRam.cPanel} highlight delay={0} />
+            <RamBar name="CyberHunter - Panel" mb={m.ram.fullStack} max={m.competitorRam.cPanel} highlight delay={0} />
             <RamBar name="CloudPanel" mb={m.competitorRam.cloudPanel} max={m.competitorRam.cPanel} delay={0.1} />
             <RamBar name="Plesk" mb={m.competitorRam.plesk} max={m.competitorRam.cPanel} delay={0.2} />
             <RamBar name="HestiaCP" mb={m.competitorRam.hestiaCp} max={m.competitorRam.cPanel} delay={0.3} />
@@ -728,7 +728,7 @@ export default function Landing() {
               </thead>
               <tbody>
                 {[
-                  { n: 'DockPanel', t: '<60 sec', p: 'Free', d: true, s: true, hl: true },
+                  { n: 'CyberHunter - Panel', t: '<60 sec', p: 'Free', d: true, s: true, hl: true },
                   { n: 'cPanel', t: '~45 min', p: '$15/mo', d: false, s: true },
                   { n: 'Plesk', t: '~20 min', p: '$10/mo', d: false, s: true },
                   { n: 'RunCloud', t: '~5 min', p: '$8/mo', d: false, s: false },
@@ -753,7 +753,7 @@ export default function Landing() {
           A 9xl "$0" centred on the page was the one place the design raised
           its voice, and it raised it about a number that is zero. The
           interesting claim is not the digit, it is the list of things that
-          are not metered — so the terms are set as terms, and the figure
+          are not metered - so the terms are set as terms, and the figure
           sits in the margin column like every other measurement.          */}
       <section id="pricing" className="rule py-24 lg:py-32">
         <div className="max-w-7xl mx-auto px-6">
@@ -772,7 +772,7 @@ export default function Landing() {
                   ['per site', '$0'],
                   ['feature tiers', 'none'],
                   ['usage limits', 'none'],
-                  ['licence', 'AGPL v3 — free software'],
+                  ['licence', 'AGPL v3 - free software'],
                 ].map(([k, v]) => (
                   <div key={k} className="flex items-baseline justify-between gap-6 py-3 border-b border-[#1e1e22]">
                     <dt className="text-[#6b6b74]">{k}</dt>
@@ -797,7 +797,7 @@ export default function Landing() {
                   Deliberately AFTER the six zeroes and inside the same
                   section. The reader has just been told the price six times;
                   the honest next question is what pays for it, and the answer
-                  is nobody. So this states the arithmetic and stops — no
+                  is nobody. So this states the arithmetic and stops - no
                   "please", no progress bar, no guilt, and the word optional
                   in the margin where the price figures were.
 
@@ -810,7 +810,7 @@ export default function Landing() {
                 <p className="text-[15px] text-[#a3a3ad] leading-relaxed">
                   The panel this replaces bills every month, forever. This one has no company
                   behind it, no investors to answer to, no telemetry, and no tier above the one
-                  you just read — which is why the roadmap is decided by what helps people
+                  you just read - which is why the roadmap is decided by what helps people
                   running servers rather than by what converts.
                 </p>
                 <p className="mt-4 text-[15px] text-[#a3a3ad] leading-relaxed">
@@ -867,7 +867,7 @@ export default function Landing() {
             <div>
               <div className="flex items-center gap-2.5 mb-3">
                 <Logo className="h-6 w-6" />
-                <span className="text-[17px] font-semibold text-[#f4f4f5] tracking-[-0.01em]">DockPanel</span>
+                <span className="text-[17px] font-semibold text-[#f4f4f5] tracking-[-0.01em]">CyberHunter - Panel</span>
               </div>
               <p className="text-[13px] text-zinc-600 max-w-xs leading-relaxed">
                 Lightweight, Docker-native server management.<br />
@@ -894,7 +894,7 @@ export default function Landing() {
             </div>
           </div>
           <div className="mt-10 pt-6 border-t border-zinc-800/40 flex flex-col sm:flex-row items-center justify-between gap-2">
-            <span className="text-[12px] text-zinc-700">&copy; 2026 DockPanel</span>
+            <span className="text-[12px] text-zinc-700">&copy; 2026 CyberHunter - Panel</span>
             <span className="text-[11px] text-zinc-700">Solo-developed &middot; AGPL v3</span>
           </div>
         </div>

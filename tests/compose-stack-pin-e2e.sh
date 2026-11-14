@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# compose-stack-pin-e2e.sh — s296 / v2.54.0
+# compose-stack-pin-e2e.sh - s296 / v2.54.0
 #
-# DockPanel's "Compose" support does not run `docker compose`. It creates each
+# CyberHunter - Panel's "Compose" support does not run `docker compose`. It creates each
 # service directly through the Docker API, which is what lets the panel apply
-# its own sandboxing — and which means every convenience `docker compose` gives
+# its own sandboxing - and which means every convenience `docker compose` gives
 # for free has to be reproduced deliberately. Until v2.54.0 almost none of it
 # was, and the result was a feature that could not work: no user-defined
 # network, so `postgresql://app:pw@database:5432` never resolved, so every
@@ -16,7 +16,7 @@
 #       by stack, so the `db` service of two packages can coexist.
 #   §C  THE PARSER DOES NOT SILENTLY DISCARD WHAT THE AUTHOR WROTE. `command:`,
 #       `depends_on:`, `labels:` and long-form `ports:` were all parsed away by
-#       a struct that did not declare them — which turned a queue worker into a
+#       a struct that did not declare them - which turned a queue worker into a
 #       second copy of the web server. `dockpanel.*` labels are still ours.
 #   §D  "RUNNING" MEANS RUNNING. `create` + `start` returning Ok is not a
 #       status, and a 200 carrying N failures is not a successful deploy.
@@ -36,7 +36,7 @@
 #
 # NO PIPES INTO `grep -q`. Under `set -o pipefail` grep -q closes the pipe on its
 # first match, the upstream dies of SIGPIPE (141), and pipefail reports the whole
-# pipeline failed — so an arm goes red on correct code, non-deterministically.
+# pipeline failed - so an arm goes red on correct code, non-deterministically.
 # Every arm here feeds grep a here-string.
 
 set -uo pipefail
@@ -126,7 +126,7 @@ derives() {
 }
 
 # First 1-indexed line of $2 within $1, or 0. Used where the DEFECT IS THE
-# ORDER — a pin that only checks both statements exist passes on the bug.
+# ORDER - a pin that only checks both statements exist passes on the bug.
 lineof() {
   local n
   n=$(grep -nE -- "$2" <<< "$1" | head -1 | cut -d: -f1)
@@ -143,7 +143,7 @@ TR=$(subj "$TELE_ROUTE")  || TR=""
 UR=$(subj "$UPDATE_ROUTE")|| UR=""
 
 echo
-echo "compose-stack-pin-e2e — a stack is a network, a namespace, and an honest status"
+echo "compose-stack-pin-e2e - a stack is a network, a namespace, and an honest status"
 echo
 
 # ── stripper self-check ────────────────────────────────────────────────
@@ -155,24 +155,24 @@ stripper_self_check "$COMPOSE" "$APPS_ROUTE" "$LOGS_ROUTE" "$STACKS_BE" "$CLAIM"
 echo
 echo "§A a stack is a network, and a service answers to its compose key on it"
 if [ -z "$C" ]; then
-  skip "§A — $COMPOSE could not be read"
+  skip "§A - $COMPOSE could not be read"
 else
   DS=$(fnbody "$C" "deploy_service")
   if derives "$DS" 'networking_config:[[:space:]]*Some'; then
     ok "A1 the container is created WITH a network attachment"
   else
-    bad "A1 no networking_config — every service lands on the default bridge, where sibling names do not resolve"
+    bad "A1 no networking_config - every service lands on the default bridge, where sibling names do not resolve"
   fi
   if derives "$DS" 'aliases:[[:space:]]*Some\(svc\.aliases'; then
     ok "A2 the attachment registers aliases (the names siblings were configured with)"
   else
-    bad "A2 attached with no alias — the network exists but 'database' still does not resolve"
+    bad "A2 attached with no alias - the network exists but 'database' still does not resolve"
   fi
   DC=$(fnbody "$C" "deploy_compose")
   if derives "$DC" 'ensure_stack_network'; then
     ok "A3 the network is created before any service is deployed"
   else
-    bad "A3 nothing creates the network — the attachment above fails on every service"
+    bad "A3 nothing creates the network - the attachment above fails on every service"
   fi
   PC=$(fnbody "$C" "parse_compose")
   # Keyed on the property: the alias list must be seeded from the services-map
@@ -185,7 +185,7 @@ else
   if derives "$C" 'fn remove_stack_network'; then
     ok "A5 the network is torn down with the stack"
   else
-    bad "A5 nothing removes the network — one leaks per stack, forever"
+    bad "A5 nothing removes the network - one leaks per stack, forever"
   fi
   RSN=$(fnbody "$C" "remove_stack_network")
   if derives "$RSN" '\.get\("dockpanel\.managed"\)'; then
@@ -199,13 +199,13 @@ fi
 echo
 echo "§B container, volume and network names are scoped by stack"
 if [ -z "$C" ]; then
-  skip "§B — $COMPOSE could not be read"
+  skip "§B - $COMPOSE could not be read"
 else
   PC=$(fnbody "$C" "parse_compose")
   if derives "$PC" 'dockpanel-compose-\{scope\}'; then
     ok "B1 the container name carries the stack scope"
   else
-    bad "B1 unscoped container name — two packages both want dockpanel-compose-db"
+    bad "B1 unscoped container name - two packages both want dockpanel-compose-db"
   fi
   SNN=$(fnbody "$C" "stack_network_name")
   if derives "$SNN" 'stack_scope'; then
@@ -217,7 +217,7 @@ else
   if derives "$DS" 'scoped_volume'; then
     ok "B3 named volumes are resolved through the stack scope"
   else
-    bad "B3 bare named volumes — a second stack from the same package mounts the first one's database"
+    bad "B3 bare named volumes - a second stack from the same package mounts the first one's database"
   fi
   # The safety half of B3: scoping a volume must never orphan data that is
   # already in one. Renaming a volume does not move what is inside it.
@@ -225,14 +225,14 @@ else
   if derives "$SV" 'inspect_volume'; then
     ok "B4 an existing volume is reused rather than renamed out from under its data"
   else
-    bad "B4 the scoping renames unconditionally — an upgraded install loses sight of its data"
+    bad "B4 the scoping renames unconditionally - an upgraded install loses sight of its data"
   fi
   # An author-chosen container_name must not become the host-level Docker name,
   # or the namespace is only as good as the compose files people paste.
   if derives "$PC" 'aliases\.push\(explicit'; then
     ok "B5 an author's container_name becomes an alias, not the Docker name"
   else
-    bad "B5 container_name is taken as the Docker name — the collision returns through the YAML"
+    bad "B5 container_name is taken as the Docker name - the collision returns through the YAML"
   fi
 fi
 
@@ -240,7 +240,7 @@ fi
 echo
 echo "§C nothing the author wrote is discarded in silence"
 if [ -z "$C" ]; then
-  skip "§C — $COMPOSE could not be read"
+  skip "§C - $COMPOSE could not be read"
 else
   # serde drops unknown keys silently, so a field that is not DECLARED is a
   # field that is thrown away without a word. Each of these was.
@@ -249,18 +249,18 @@ else
     if derives "$C" "^[[:space:]]*${field}:[[:space:]]*Option<"; then
       ok "C-${field} '${field}:' is declared, so serde keeps it"
     else
-      bad "C-${field} '${field}:' is not declared — serde discards it without a word"
+      bad "C-${field} '${field}:' is not declared - serde discards it without a word"
     fi
   done
   DS=$(fnbody "$C" "deploy_service")
   if derives "$DS" 'cmd:[[:space:]]*svc\.command'; then
     ok "C4 a parsed command actually reaches the container"
   else
-    bad "C4 command is parsed and then not applied — the worker runs the image's default CMD"
+    bad "C4 command is parsed and then not applied - the worker runs the image's default CMD"
   fi
   PP=$(fnbody "$C" "parse_ports")
   if derives "$PP" 'Value::Mapping'; then
-    ok "C5 long-form ports (target/published) are published — that is what compose tooling emits"
+    ok "C5 long-form ports (target/published) are published - that is what compose tooling emits"
   else
     bad "C5 long-form ports fall through to the discard arm: no published port, no warning"
   fi
@@ -280,7 +280,7 @@ else
   if derives "$PC" 'order_by_dependencies'; then
     ok "C8 depends_on orders the deploy"
   else
-    bad "C8 depends_on is parsed and ignored — the app can be created before its database"
+    bad "C8 depends_on is parsed and ignored - the app can be created before its database"
   fi
 fi
 
@@ -288,13 +288,13 @@ fi
 echo
 echo "§D a service is 'running' because it is, not because start() returned Ok"
 if [ -z "$C" ]; then
-  skip "§D — $COMPOSE could not be read"
+  skip "§D - $COMPOSE could not be read"
 else
   DS=$(fnbody "$C" "deploy_service")
   if derives "$DS" 'confirm_running\(.*\.await\?'; then
     ok "D1 the deploy confirms the container stayed up"
   else
-    bad "D1 'running' is asserted from create+start alone — a crash-on-boot reports success"
+    bad "D1 'running' is asserted from create+start alone - a crash-on-boot reports success"
   fi
   CR=$(fnbody "$C" "confirm_running")
   if derives "$CR" 'inspect_container'; then
@@ -309,7 +309,7 @@ else
   fi
 fi
 if [ -z "$SB" ]; then
-  skip "§D backend — $STACKS_BE could not be read"
+  skip "§D backend - $STACKS_BE could not be read"
 else
   # The agent reports per-service failure INSIDE a 200, so an HTTP-status check
   # is not a deploy check.
@@ -330,7 +330,7 @@ fi
 echo
 echo "§E a stack's domain is claimed through the one door and released through the guard"
 if [ -z "$SB" ] || [ -z "$CL" ]; then
-  skip "§E — subject unreadable"
+  skip "§E - subject unreadable"
 else
   CRE=$(fnbody "$SB" "create")
   UPD=$(fnbody "$SB" "update")
@@ -340,7 +340,7 @@ else
     bad "E1 a stack can take a domain a site or app already holds"
   fi
   if derives "$UPD" 'ensure_claimable|claim_stack_domain'; then
-    ok "E2 update claims too — an edit is a second chance to collide"
+    ok "E2 update claims too - an edit is a second chance to collide"
   else
     bad "E2 the edit path claims nothing"
   fi
@@ -350,16 +350,16 @@ else
   if derives "$FO" 'FROM docker_stacks'; then
     ok "E3 the claim check can see a stack as a holder"
   else
-    bad "E3 stacks write vhosts but are invisible to the claim check — two owners, one domain"
+    bad "E3 stacks write vhosts but are invisible to the claim check - two owners, one domain"
   fi
   if derives "$CL" 'Stack\(Uuid\)'; then
     ok "E4 a stack may re-claim its own domain across an edit"
   else
-    bad "E4 no self-exclusion — a stack collides with itself on the second edit"
+    bad "E4 no self-exclusion - a stack collides with itself on the second edit"
   fi
 fi
 if [ -z "$AR" ]; then
-  skip "§E agent — $APPS_ROUTE could not be read"
+  skip "§E agent - $APPS_ROUTE could not be read"
 else
   SA=$(fnbody "$AR" "stack_action")
   if derives "$SA" 'unexpose_domain'; then
@@ -371,7 +371,7 @@ else
   if derives "$UD" 'ownership::app_vhost'; then
     ok "E6 the vhost delete proves the vhost is still this stack's"
   else
-    bad "E6 the vhost is deleted on the name alone — a site that took the domain over loses its config"
+    bad "E6 the vhost is deleted on the name alone - a site that took the domain over loses its config"
   fi
   if derives "$UD" 'cert_dir_in_use_elsewhere'; then
     ok "E7 the certificate delete honours a shared wildcard lineage"
@@ -392,7 +392,7 @@ fi
 echo
 echo "§F the stored YAML is the only copy, so it outlives a failed redeploy"
 if [ -z "$SB" ]; then
-  skip "§F — $STACKS_BE could not be read"
+  skip "§F - $STACKS_BE could not be read"
 else
   UPD=$(fnbody "$SB" "update")
   if derives "$UPD" 'restore_previous'; then
@@ -421,13 +421,13 @@ fi
 echo
 echo "§G the container you need the logs of is the one that stopped"
 if [ -z "$LR" ]; then
-  skip "§G — $LOGS_ROUTE could not be read"
+  skip "§G - $LOGS_ROUTE could not be read"
 else
   DCN=$(fnbody "$LR" "docker_containers")
   if derives "$DCN" '"-a"'; then
     ok "G1 the log picker lists stopped containers too"
   else
-    bad "G1 'docker ps' without -a — a crashed service is missing from the one page that explains it"
+    bad "G1 'docker ps' without -a - a crashed service is missing from the one page that explains it"
   fi
 fi
 if [ -f "$APPS_TSX" ]; then
@@ -439,20 +439,20 @@ if [ -f "$APPS_TSX" ]; then
     bad "G2 a stack service cannot be inspected from the panel"
   fi
 else
-  skip "§G2 — $APPS_TSX could not be read"
+  skip "§G2 - $APPS_TSX could not be read"
 fi
 
 # ── §H the update banner is a comparison (GitHub #98) ──────────────────
 echo
 echo "§H 'an update is available' is a comparison, not a non-empty string"
 if [ -z "$TR" ] || [ -z "$TC" ] || [ -z "$UR" ]; then
-  skip "§H — subject unreadable"
+  skip "§H - subject unreadable"
 else
   US=$(fnbody "$TR" "update_status")
   if derives "$US" 'is_newer_release'; then
     ok "H1 the read path compares the advertised version against this binary"
   else
-    bad "H1 the banner renders from presence — any stored value, however old, shows an update"
+    bad "H1 the banner renders from presence - any stored value, however old, shows an update"
   fi
   if derives "$TR" 'fn get_config'; then
     GC=$(fnbody "$TR" "get_config")
@@ -462,7 +462,7 @@ else
       bad "H2 the Telemetry page's own consumers still test presence"
     fi
   else
-    skip "H2 — get_config not found"
+    skip "H2 - get_config not found"
   fi
   # update.sh never touches the settings table, so after an upgrade the row
   # still advertises the version now running. Nothing else closes that window.
@@ -472,7 +472,7 @@ else
   if [ "$RECON" -gt 0 ] && [ "$SLEEP" -gt 0 ] && [ "$RECON" -lt "$SLEEP" ]; then
     ok "H3 the stored advertisement is reconciled on boot, before anything sleeps"
   else
-    bad "H3 no boot reconcile — every upgrade advertises itself for the whole poll interval (recon@$RECON sleep@$SLEEP)"
+    bad "H3 no boot reconcile - every upgrade advertises itself for the whole poll interval (recon@$RECON sleep@$SLEEP)"
   fi
   RAT=$(fnbody "$UR" "reject_apply_target")
   if derives "$RAT" 'is_newer_release'; then
@@ -487,7 +487,7 @@ else
   if ! has "$TC" 'fn compare_versions' && ! has "$TR" 'fn compare_versions'; then
     ok "H5 the segment-dropping comparator is gone, not merely bypassed"
   else
-    bad "H5 compare_versions is still present — a second, wrong answer to the same question"
+    bad "H5 compare_versions is still present - a second, wrong answer to the same question"
   fi
 fi
 
@@ -497,13 +497,13 @@ fi
 # had not done.
 #
 #  * The compose engine SKIPS any service it cannot resolve to a registry image,
-#    so a repository with a Dockerfile — the one whose compose file builds from
-#    source — deployed without its application while the row said running.
+#    so a repository with a Dockerfile - the one whose compose file builds from
+#    source - deployed without its application while the row said running.
 #  * `deploy_compose` reports per-service outcomes INSIDE a 200 and never errors
 #    for a service that failed to start, so both callers took the HTTP status as
 #    the answer. With no teardown in the engine, the SECOND compose deploy of the
 #    same deployment collides with its own container names and every service
-#    fails — still reported as running.
+#    fails - still reported as running.
 I_GD=$(subj "$GITDEP")  || { bad "I0 could not extract $GITDEP"; I_GD=""; }
 I_RT=$(subj "$BE_ROUTER") || { bad "I0 could not extract $BE_ROUTER"; I_RT=""; }
 if [ -n "$I_GD" ] && [ -n "$I_RT" ]; then
@@ -511,25 +511,25 @@ if [ -n "$I_GD" ] && [ -n "$I_RT" ]; then
 
   # ⚠ The predicate must be the AGENT'S question. The agent deserialises `image`
   # into an Option<String>; this side reads untyped YAML. They disagree about
-  # YAML null, so `image:` left blank — the ordinary way an author switches a
-  # service to `build:` — is Some(Null) here and None there. Pinned as the
+  # YAML null, so `image:` left blank - the ordinary way an author switches a
+  # service to `build:` - is Some(Null) here and None there. Pinned as the
   # derivation: an arm naming the function survives the rule being inverted.
   if has "$I_RT" 'None \| Some\(serde_yaml_ng::Value::Null\)'; then
     ok "I1 the dropped-service predicate also treats a blanked image: line as no image"
   else
-    bad "I1 the dropped-service predicate no longer matches what the agent skips — a compose file whose service says 'image:' with no value would deploy without that service again"
+    bad "I1 the dropped-service predicate no longer matches what the agent skips - a compose file whose service says 'image:' with no value would deploy without that service again"
   fi
 
   # ⚠ NOT fnbody here: `compose_deploy_refusal` opens with a nested `fn
   # sentence`, and this file's fnbody is bounded by the next fn declaration at
-  # ANY indent — so its window closes eight lines in, before the arm being
+  # ANY indent - so its window closes eight lines in, before the arm being
   # pinned. Counted instead: the name occurs exactly twice, its declaration and
   # its one call, so deleting the call reads 1 and goes red.
   D=$(count "$I_GD" 'dropped_service_refusal')
   if [ "$D" = "2" ]; then
     ok "I2 the compose door refuses a file whose services name no image (declared once, called once)"
   else
-    bad "I2 expected the no-image refusal declared once and called once, found $D occurrences — a compose file that builds from source would deploy without those services again"
+    bad "I2 expected the no-image refusal declared once and called once, found $D occurrences - a compose file that builds from source would deploy without those services again"
   fi
 
   # BOTH copies of the branch, counted. There are two, they diverged once
@@ -538,7 +538,7 @@ if [ -n "$I_GD" ] && [ -n "$I_RT" ]; then
   if [ "$N" = "2" ]; then
     ok "I3 both compose deploy call sites read the per-service outcome (2)"
   else
-    bad "I3 expected 2 compose call sites reading the per-service outcome, found $N — a 200 whose services all failed would be written as status='running'"
+    bad "I3 expected 2 compose call sites reading the per-service outcome, found $N - a 200 whose services all failed would be written as status='running'"
   fi
 
   # The reader is SHARED with the stacks door rather than copied, so the two
@@ -556,15 +556,15 @@ if [ -n "$I_GD" ] && [ -n "$I_RT" ]; then
   if has "$I_GD" 'total > 0 && running == 0'; then
     ok "I5 only a report of services that ALL failed counts as a failure"
   else
-    bad "I5 the empty-report guard is gone — a deploy against an agent that reports no services would be recorded as failed"
+    bad "I5 the empty-report guard is gone - a deploy against an agent that reports no services would be recorded as failed"
   fi
 fi
 
 echo
 echo "== §J  compose_validate is honest about what deploy_service silently drops =="
 
-# s449: `user:`/`healthcheck:`/`entrypoint:` have no field on this deployer —
-# `deploy_service` has never read any of the three — but `compose_validate`
+# s449: `user:`/`healthcheck:`/`entrypoint:` have no field on this deployer -
+# `deploy_service` has never read any of the three - but `compose_validate`
 # said a stack declaring one was simply "valid", with no warning that the
 # directive would be dropped on the floor at deploy time.
 # [[project_dockpanel_tech_debt_p185]] carry I.
@@ -578,7 +578,7 @@ if [ -n "$AR" ]; then
       if has "$CV" "svc\\.$flag"; then
         ok "J1 compose_validate reads svc.$flag"
       else
-        bad "J1 compose_validate does not read svc.$flag — the author gets no warning that this directive is dropped"
+        bad "J1 compose_validate does not read svc.$flag - the author gets no warning that this directive is dropped"
       fi
     done
   fi
@@ -587,7 +587,7 @@ else
 fi
 
 # The flags themselves must actually be DERIVED from the parsed def, not a
-# constant — `derives` also fails on a `let _unused` or `if false` shape.
+# constant - `derives` also fails on a `let _unused` or `if false` shape.
 CS=panel/agent/src/services/compose.rs
 if CSS=$(subj "$CS"); then
   PC=$(fnbody "$CSS" "parse_compose")

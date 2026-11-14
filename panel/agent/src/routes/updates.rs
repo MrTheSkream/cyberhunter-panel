@@ -73,8 +73,8 @@ fn parse_upgradable_line(line: &str) -> Option<PackageUpdate> {
 /// `check-update`'s exit status is not a plain success/failure boolean: 0
 /// means "ran fine, nothing to upgrade", 100 means "ran fine, updates
 /// listed on stdout", and anything else (network down, a broken repo) is a
-/// real error. Treating a non-zero exit as failure — the way every other
-/// command in this file does — would make the "0 updates" exit look
+/// real error. Treating a non-zero exit as failure - the way every other
+/// command in this file does - would make the "0 updates" exit look
 /// identical to a hard failure that also happens to report 0, for the
 /// wrong reason. Returns `None` only for that real-error case.
 async fn rpm_check_update(bin: &str) -> Option<String> {
@@ -107,7 +107,7 @@ fn parse_rpm_update_line(line: &str) -> Option<PackageUpdate> {
     if !version.chars().any(|c| c.is_ascii_digit()) {
         return None;
     }
-    // A real package token is always `name.arch` — requiring the dot (rather
+    // A real package token is always `name.arch` - requiring the dot (rather
     // than falling back to the whole first token when absent) is what
     // rejects a 3-word, digit-containing line that ISN'T a package, such as
     // a hypothetical "Security: 3 patches" summary line.
@@ -120,7 +120,7 @@ fn parse_rpm_update_line(line: &str) -> Option<PackageUpdate> {
         // dnf/yum don't classify security updates in `check-update`'s own
         // output the way apt's repo name does; a real classifier needs
         // `updateinfo list security` parsed and cross-referenced, which
-        // this session could not verify against a live RHEL box — left
+        // this session could not verify against a live RHEL box - left
         // false rather than shipping an unverified parse.
         security: false,
     })
@@ -128,7 +128,7 @@ fn parse_rpm_update_line(line: &str) -> Option<PackageUpdate> {
 
 /// `rpm -qa` once, as `name -> version-release`, so the RPM listing can show
 /// the CURRENTLY installed version the way apt's "upgradable from:" bracket
-/// already does — cheaper than one `rpm -q` per package.
+/// already does - cheaper than one `rpm -q` per package.
 async fn rpm_installed_versions() -> std::collections::HashMap<String, String> {
     let mut map = std::collections::HashMap::new();
     if let Ok(output) = safe_command("rpm")
@@ -150,10 +150,10 @@ async fn rpm_installed_versions() -> std::collections::HashMap<String, String> {
 /// Debian family: `update-notifier-common` (installed by default on server
 /// images) drops `/var/run/reboot-required` the moment a reboot-needing
 /// package lands. The RHEL family has no equivalent file; `needs-restarting
-/// -r` (from `dnf-utils`/`yum-utils`) is the standard proxy — exit 1 means a
+/// -r` (from `dnf-utils`/`yum-utils`) is the standard proxy - exit 1 means a
 /// reboot is recommended, exit 0 means it is not. Neither check is
 /// guaranteed present (a minimal RHEL install may lack `dnf-utils`), so
-/// absence degrades to "no reboot needed" rather than an error — the same
+/// absence degrades to "no reboot needed" rather than an error - the same
 /// soft-fail shape the file-existence check already had on Debian.
 async fn reboot_required() -> bool {
     if tokio::fs::metadata("/var/run/reboot-required").await.is_ok() {
@@ -167,7 +167,7 @@ async fn reboot_required() -> bool {
     false
 }
 
-/// GET /system/updates — list available package updates.
+/// GET /system/updates - list available package updates.
 async fn list_updates() -> Json<Vec<PackageUpdate>> {
     if matches!(pkg::manager().await, PkgMgr::Rpm) {
         let bin = match pkg::installer().await {
@@ -233,7 +233,7 @@ async fn list_updates() -> Json<Vec<PackageUpdate>> {
     Json(packages)
 }
 
-/// POST /system/updates/apply — apply package updates with streaming NDJSON output.
+/// POST /system/updates/apply - apply package updates with streaming NDJSON output.
 ///
 /// Returns newline-delimited JSON: each line is `{"type":"line","line":"..."}` for output,
 /// and the final line is `{"type":"done","success":bool,"reboot_required":bool}`.
@@ -343,7 +343,7 @@ async fn apply_updates(Json(body): Json<ApplyRequest>) -> Response {
         .unwrap()
 }
 
-/// GET /system/updates/count — quick count of available updates (no apt update).
+/// GET /system/updates/count - quick count of available updates (no apt update).
 async fn update_count() -> Json<UpdateCount> {
     let (count, security) = if matches!(pkg::manager().await, PkgMgr::Rpm) {
         let bin = match pkg::installer().await {
@@ -392,10 +392,10 @@ async fn update_count() -> Json<UpdateCount> {
     Json(UpdateCount { count, security, reboot_required })
 }
 
-/// POST /system/reboot — schedule a system reboot in 1 minute.
+/// POST /system/reboot - schedule a system reboot in 1 minute.
 async fn system_reboot() -> Json<RebootResult> {
     let result = safe_command("shutdown")
-        .args(["-r", "+1", "DockPanel initiated reboot"])
+        .args(["-r", "+1", "CyberHunter - Panel initiated reboot"])
         .output()
         .await;
 
@@ -440,7 +440,7 @@ mod tests {
         assert_eq!(pkg.repo, "baseos");
     }
 
-    /// A real `yum check-update` line, epoch-qualified — same 3-token shape.
+    /// A real `yum check-update` line, epoch-qualified - same 3-token shape.
     #[test]
     fn parses_a_yum_line_with_an_epoch_qualified_version() {
         let pkg = parse_rpm_update_line("kernel.x86_64    3:5.14.0-284.11.1.el9_2    baseos")
@@ -467,7 +467,7 @@ mod tests {
     }
 
     /// The digit-in-version guard is what tells a real update line apart
-    /// from a 3-word line that ISN'T one — this is what would misfire
+    /// from a 3-word line that ISN'T one - this is what would misfire
     /// without it. `Some(0) | Some(100)` alone can't catch this; it is a
     /// per-line parsing decision, not an exit-code one.
     #[test]

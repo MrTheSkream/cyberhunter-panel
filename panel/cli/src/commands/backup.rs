@@ -17,7 +17,7 @@ pub async fn cmd_backup_create(token: &str, domain: &str) -> Result<(), String> 
     // The CLI authenticates to the AGENT, which has no access to the panel's
     // `databases` table and therefore cannot know which databases belong to
     // this site or hold their credentials. A backup taken here is genuinely
-    // less complete than one taken from the panel, so say so — an archive that
+    // less complete than one taken from the panel, so say so - an archive that
     // looks equivalent but silently lacks the site's content is the exact
     // failure this path was built to end.
     println!(
@@ -72,7 +72,7 @@ pub async fn cmd_backup_restore(token: &str, domain: &str, filename: &str) -> Re
     // to /etc/dockpanel/backend.token): it holds the site's database
     // credentials and can restore a backup's database dumps as well as its
     // files, which the agent alone structurally cannot. Falls back to the
-    // agent-direct path below (files only) when no key is configured — same
+    // agent-direct path below (files only) when no key is configured - same
     // behavior as every CLI install before this, unchanged.
     if let Ok(backend_token) = crate::backend_client::load_token() {
         return cmd_backup_restore_via_backend(&backend_token, domain, filename).await;
@@ -92,10 +92,10 @@ pub async fn cmd_backup_restore(token: &str, domain: &str, filename: &str) -> Re
     .map_err(|e| {
         if e.contains("supplied no database credentials") || e.contains("database(s) were NOT") {
             format!(
-                "{e}\n\nThis backup contains database dumps, and the CLI cannot restore them — it \
+                "{e}\n\nThis backup contains database dumps, and the CLI cannot restore them - it \
                  talks to the agent directly and has no access to the site's database credentials. \
                  Mint an API key from the panel (Settings → API Keys), save it to \
-                 /etc/dockpanel/backend.token, and retry — or restore this backup from the panel instead."
+                 /etc/dockpanel/backend.token, and retry - or restore this backup from the panel instead."
             )
         } else {
             e
@@ -124,7 +124,7 @@ pub async fn cmd_backup_restore(token: &str, domain: &str, filename: &str) -> Re
 /// panel UI's own Restore button starts, then follow its progress stream to
 /// completion. `ServerScope` (which every panel route resolving `/api/sites`
 /// goes through) only re-derives a caller identity from the token when an
-/// `X-Server-Id` header is present — this never sends one, so it always
+/// `X-Server-Id` header is present - this never sends one, so it always
 /// resolves to the LOCAL server regardless of whether the caller authenticated
 /// with a JWT or a `dp_` key. That is exactly the single-box case this
 /// restore path is scoped to; a fleet CLI wanting a specific remote server
@@ -137,7 +137,7 @@ async fn cmd_backup_restore_via_backend(token: &str, domain: &str, filename: &st
         .find(|s| s["domain"].as_str() == Some(domain))
         .and_then(|s| s["id"].as_str());
 
-    // GET /api/sites is scoped to sites this account literally OWNS — but the
+    // GET /api/sites is scoped to sites this account literally OWNS - but the
     // restore endpoint below (via SITE_CALLER_PREDICATE) also admits an admin
     // of the machine a site runs on, same as the panel UI itself. Without this
     // fallback, an admin's key could restore a site it administers but
@@ -171,7 +171,7 @@ async fn cmd_backup_restore_via_backend(token: &str, domain: &str, filename: &st
         .ok_or_else(|| format!("No backup named '{filename}' found for {domain} via the panel API"))?
         .to_string();
 
-    println!("Restoring {domain} from {filename} (via the panel API — files and databases)...");
+    println!("Restoring {domain} from {filename} (via the panel API - files and databases)...");
 
     let started = crate::backend_client::post_empty(
         &format!("/api/sites/{site_id}/backups/{backup_id}/restore"),
@@ -335,7 +335,7 @@ pub async fn cmd_backup_verify(
     let body = match backup_type {
         "site" => serde_json::json!({ "domain": name, "filename": filename }),
         // `db_type` was hardcoded to "postgres" here regardless of the database's
-        // real engine — a mysql/mariadb backup would always get a Postgres restore
+        // real engine - a mysql/mariadb backup would always get a Postgres restore
         // attempted against it and report FAILED, even when the backup was fine.
         "database" => serde_json::json!({ "db_type": db_type, "db_name": name, "filename": filename }),
         "volume" => serde_json::json!({ "container_name": name, "filename": filename }),
@@ -369,11 +369,11 @@ pub async fn cmd_backup_verify(
 }
 
 // `/var/backups/dockpanel`'s top level is not exclusively site-backup domain
-// directories — the agent also writes `databases/`, `volumes/`, `wp-snapshots/`,
+// directories - the agent also writes `databases/`, `volumes/`, `wp-snapshots/`,
 // `snapshots/`, `.staging/` and `.snapshot-staging/` there, and ops tooling
 // outside this codebase drops the panel's own DB dumps in a `db/` subdirectory
 // and as loose top-level files. Walking every top-level dir as if it were a site
-// domain folded all of that into "site backups" — reproducibly ~9x the real file
+// domain folded all of that into "site backups" - reproducibly ~9x the real file
 // count and ~50000x the real size on this box. Anything starting with `.`, plus
 // every other subsystem's own root, is excluded from the site-backup count.
 const RESERVED_TOP_LEVEL_DIRS: &[&str] = &["databases", "volumes", "wp-snapshots", "snapshots", "db"];
@@ -400,7 +400,7 @@ pub async fn cmd_backup_health(token: &str) -> Result<(), String> {
         .unwrap_or(0);
 
     // Count total files. `only_site_dirs`, when set, skips every subdirectory that
-    // belongs to another subsystem's own root rather than a site backup — without
+    // belongs to another subsystem's own root rather than a site backup - without
     // it, `databases`/`volumes` scans would double-count their own children too.
     let count_files = |dir: &str, only_site_dirs: bool| -> (usize, u64) {
         let mut count = 0usize;

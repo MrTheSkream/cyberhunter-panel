@@ -19,13 +19,13 @@ fn validate_backup_path(filepath: &str) -> Result<(), String> {
 
 /// Appended after the ciphertext of every file this build encrypts: a
 /// 32-byte HMAC-SHA256 tag over the ciphertext, followed by this 8-byte
-/// marker. AES-256-CBC alone has no integrity check — PKCS7 padding bounds
+/// marker. AES-256-CBC alone has no integrity check - PKCS7 padding bounds
 /// only the final block, so a bit-flip anywhere earlier decrypts silently
 /// into corrupted plaintext instead of failing. Encrypt-then-MAC catches
 /// that: `decrypt_file` verifies the tag before it ever hands the
 /// ciphertext to openssl.
 ///
-/// A backup made before this fix has no trailer at all — its last 8 bytes
+/// A backup made before this fix has no trailer at all - its last 8 bytes
 /// are AES output, not this marker, for all practical purposes (odds of a
 /// collision are 1 in 2^64). `decrypt_file` treats that absence as "this
 /// predates the integrity tag" and falls back to the old, unauthenticated
@@ -128,7 +128,7 @@ pub async fn encrypt_file(filepath: &str, key: &str) -> Result<String, String> {
 
     // Append the integrity tag. Computed over the ciphertext as written by
     // openssl, so verification on the way back out needs no knowledge of
-    // anything openssl did internally — only the shared passphrase.
+    // anything openssl did internally - only the shared passphrase.
     let tag = compute_tag(key, &ciphertext);
     let mut trailer = Vec::with_capacity(MAC_TRAILER_LEN);
     trailer.extend_from_slice(&tag);
@@ -153,7 +153,7 @@ pub async fn encrypt_file(filepath: &str, key: &str) -> Result<String, String> {
 
 /// Decrypt an encrypted file. Returns the path to the decrypted file.
 ///
-/// Verifies the integrity tag `encrypt_file` appends BEFORE decrypting —
+/// Verifies the integrity tag `encrypt_file` appends BEFORE decrypting -
 /// verify-then-decrypt, so a tampered or corrupted ciphertext is rejected
 /// without ever running it through openssl. A file with no tag (encrypted
 /// before this fix) is decrypted as before, unauthenticated.
@@ -181,7 +181,7 @@ pub async fn decrypt_file(enc_filepath: &str, key: &str) -> Result<String, Strin
         let tag = &raw[split..split + MAC_TAG_LEN];
         if !verify_tag(key, ciphertext, tag) {
             return Err(
-                "Backup integrity check failed — the file may be corrupted or tampered with"
+                "Backup integrity check failed - the file may be corrupted or tampered with"
                     .to_string(),
             );
         }
@@ -194,7 +194,7 @@ pub async fn decrypt_file(enc_filepath: &str, key: &str) -> Result<String, Strin
     } else {
         tracing::warn!(
             "Decrypting {enc_filepath} without an integrity tag (backup predates the integrity \
-             fix) — cannot verify it wasn't tampered with"
+             fix) - cannot verify it wasn't tampered with"
         );
         (enc_filepath.to_string(), None)
     };

@@ -6,7 +6,7 @@ import { navGroups, isNavVisible, type NavGroup } from "../data/navItems";
 const themeOrder = ["terminal", "midnight", "ember", "arctic", "clean", "clean-dark"] as const;
 
 /** Fired after any user-initiated theme change so every mounted reader re-seeds.
- *  Distinct from `dp-layout-change` on purpose — reusing that name would make
+ *  Distinct from `dp-layout-change` on purpose - reusing that name would make
  *  LayoutShell re-read `dp-layout` on every theme click. */
 export const THEME_CHANGE_EVENT = "dp-theme-change";
 /**
@@ -16,7 +16,7 @@ export const THEME_CHANGE_EVENT = "dp-theme-change";
  * can see a mark-read: the poll is a minute behind and the stream only carries
  * things arriving, not things being dismissed. So the bell went on showing "9+"
  * over a feed the operator had just emptied. Same bus as the theme switch above,
- * for the same reason — two components that must agree and do not share state.
+ * for the same reason - two components that must agree and do not share state.
  */
 export const NOTIF_CHANGE_EVENT = "dp-notif-change";
 
@@ -24,11 +24,11 @@ export const NOTIF_CHANGE_EVENT = "dp-notif-change";
  * Render a count for a badge.
  *
  * The unread badge used to saturate at `> 9 ? "9+"`, which on this panel meant
- * a "9+" standing for 29 — while the open-incident badge two rows away showed
+ * a "9+" standing for 29 - while the open-incident badge two rows away showed
  * an uncapped "9" standing for 9. Two glyphs that read alike and mean different
  * things, one of them by an order of magnitude. The cap has to exist (the badge
  * is a 16px circle) but at 9 it was hiding the number almost as soon as the
- * feature was doing anything, so it moves to 99 — and every caller pairs it with
+ * feature was doing anything, so it moves to 99 - and every caller pairs it with
  * a `title` giving the exact figure and what it counts, which is the part that
  * makes a saturated badge honest rather than merely less wrong.
  */
@@ -51,7 +51,7 @@ export function readStoredTheme(): string {
 
 /** THE writer for a user-initiated theme change: persists, stamps both root
  *  attributes, and announces. Every theme setter in the app must go through
- *  here — a caller that writes the DOM itself leaves `theme` below stale, which
+ *  here - a caller that writes the DOM itself leaves `theme` below stale, which
  *  is what made the header cycle button look dead for one click.
  *
  *  `data-color-scheme` is load-bearing: index.css reads it to hand the native
@@ -79,7 +79,7 @@ export interface LayoutState {
   apiHealthy: boolean | null;
   /** Whether to render the host-health indicator at all. False for every
    *  non-admin: `/settings/health` is admin-only, so there is nothing behind it
-   *  for them — and a permanent "Checking..." is a quieter version of the same
+   *  for them - and a permanent "Checking..." is a quieter version of the same
    *  lie the pulsing "Disconnected" told. */
   canSeeHealth: boolean;
   twoFaEnforced: boolean;
@@ -119,12 +119,12 @@ export function useLayoutState(): LayoutState {
   // This replaces a `useEffect(..., [theme])` that stamped both the DOM attribute
   // and `dp-theme` into localStorage. A dep-array effect RUNS ON MOUNT, so that
   // one persisted "midnight" on the first authenticated render of a user who had
-  // never picked a theme — the same defect as the old main.tsx write, and fixing
+  // never picked a theme - the same defect as the old main.tsx write, and fixing
   // only main.tsx would have left this one live.
   //
   // Nothing needs to re-assert the DOM here: theme-init.js sets it before first
   // paint and applyTheme() sets it on every user-initiated change. This effect
-  // only keeps `theme` — the value cycleTheme steps from — in step, so the first
+  // only keeps `theme` - the value cycleTheme steps from - in step, so the first
   // click after a Settings pick advances from what is actually on screen.
   useEffect(() => {
     const onThemeChange = () => setThemeRaw(readStoredTheme());
@@ -142,8 +142,8 @@ export function useLayoutState(): LayoutState {
       // Asks the panel's own question rather than a narrower one of its own.
       // This used to fetch `?status=investigating&limit=100` and take the array
       // length: `investigating` is one of three open statuses, so an incident
-      // dropped out of this count the moment anyone moved it to `identified` —
-      // which is the first thing the incident screen offers — while the
+      // dropped out of this count the moment anyone moved it to `identified` -
+      // which is the first thing the incident screen offers - while the
       // dashboard went on counting it. The length was also capped at the page
       // size it asked for.
       api.get<{ open: number }>("/incidents/summary")
@@ -156,8 +156,8 @@ export function useLayoutState(): LayoutState {
     fetchCounts();
     alertTimer.current = setInterval(fetchCounts, 60000);
 
-    // A mark-read is invisible to both refresh paths — the poll is up to a
-    // minute behind and the stream only carries arrivals — so the notifications
+    // A mark-read is invisible to both refresh paths - the poll is up to a
+    // minute behind and the stream only carries arrivals - so the notifications
     // page says when it has changed the unread count.
     const onNotifChange = () => {
       api.get<{ count: number }>("/notifications/unread-count")
@@ -190,7 +190,7 @@ export function useLayoutState(): LayoutState {
   // Health check polling.
   //
   // `/settings/health` is admin-only, and this `.catch` did not distinguish "the
-  // panel is unwell" from "you were not allowed to ask" — so every non-admin got
+  // panel is unwell" from "you were not allowed to ask" - so every non-admin got
   // `apiHealthy === false` on the first tick and every 30s after, which the four
   // layouts render as a pulsing red "Disconnected" / "Issues Detected" in the
   // sidebar. A client signed in and the panel told them, on every page, that it
@@ -214,7 +214,7 @@ export function useLayoutState(): LayoutState {
   // 2FA status AND whether the panel requires it.
   //
   // Both now come from `/auth/2fa/status`, which is `AuthUser`. Enforcement used
-  // to be read from `GET /api/settings` — an `AdminUser` route — with the 403
+  // to be read from `GET /api/settings` - an `AdminUser` route - with the 403
   // swallowed by an empty catch, so `twoFaEnforced` stayed false for exactly the
   // population the banner exists to warn, and only admins were ever told that
   // admins had made 2FA mandatory.

@@ -145,7 +145,7 @@ dockpanel db -f analytics
 Create a new database in a Docker container.
 
 ```bash
-# Prefer --password-stdin — a bare --password is visible to other local
+# Prefer --password-stdin - a bare --password is visible to other local
 # users via `ps`/`/proc` for the life of the process and lands in shell
 # history.
 echo -n "s3cureP@ss" | dockpanel db create blog_db --engine mysql --password-stdin --port 3307
@@ -158,7 +158,7 @@ dockpanel db create blog_db --engine mysql --port 3307
 |----------|----------|-------------|
 | `NAME` | Yes | Database name |
 | `--engine` | Yes | Engine: `mysql`, `mariadb`, or `postgres` |
-| `--password` | No | Root/admin password. Discouraged — visible via shell history and `ps`. |
+| `--password` | No | Root/admin password. Discouraged - visible via shell history and `ps`. |
 | `--password-stdin` | No | Read the root/admin password from stdin instead |
 | `--port` | Yes | Host port to expose |
 
@@ -193,7 +193,7 @@ dockpanel apps
 NAME           IMAGE                   PORT    STATUS     DOMAIN
 ghost          ghost:5-alpine          2368    running    blog.example.com
 grafana        grafana/grafana:latest  3000    running    metrics.example.com
-n8n            n8nio/n8n:latest        5678    running    —
+n8n            n8nio/n8n:latest        5678    running    -
 ```
 
 Filter by name or domain:
@@ -287,8 +287,8 @@ Deploy from a Docker Compose file.
 dockpanel apps compose /path/to/docker-compose.yml
 ```
 
-A stack deployed this way carries no domain. To front a stack with a domain — over
-Let's Encrypt or a registered certificate — create it through the panel
+A stack deployed this way carries no domain. To front a stack with a domain - over
+Let's Encrypt or a registered certificate - create it through the panel
 (`POST /api/stacks`), which records how the domain is served. Registered
 certificates are managed from the panel, not the CLI: the CLI speaks to the agent
 alone, and a certificate the panel's database does not know cannot be referenced by
@@ -312,7 +312,7 @@ nginx                ● running   1236    12 MB
 docker               ● running   1237    45 MB
 php8.3-fpm           ● running   1238    18 MB
 fail2ban             ● running   1239    8 MB
-ufw                  ● active    —       —
+ufw                  ● active    -       -
 ```
 
 Filter by service name:
@@ -359,7 +359,7 @@ dockpanel ssl provision example.com --email admin@example.com --runtime php
 | `--email` | Yes | | Let's Encrypt email |
 | `--runtime` | No | `static` | Site runtime: `static`, `php`, or `proxy` |
 | `--proxy-port` | No | | Upstream port (for proxy runtime) |
-| `--force` | No | | Issue even if the installed certificate came from elsewhere — it will be **replaced** |
+| `--force` | No | | Issue even if the installed certificate came from elsewhere - it will be **replaced** |
 
 **Ordering over somebody else's certificate is refused.** Provisioning writes
 `fullchain.pem` and `privkey.pem` into `/etc/dockpanel/ssl/<domain>/`, so a
@@ -369,17 +369,17 @@ certificate's issuer first and refuses by name:
 
 ```
 Refusing to issue a Let's Encrypt certificate for example.com: the certificate
-already installed there was issued by DigiCert Inc, not by DockPanel, and
+already installed there was issued by DigiCert Inc, not by CyberHunter - Panel, and
 ordering would overwrite it. Renew it wherever it was issued, or pass --force if
 you intend to replace it.
 ```
 
-A certificate whose issuer cannot be read is **not** treated as somebody else's —
+A certificate whose issuer cannot be read is **not** treated as somebody else's -
 refusing on doubt is how a real certificate lapses. The same guard covers
 `dockpanel sites create --ssl` and `dockpanel apply`, because it lives at the
 point where the file is written rather than at each command.
 
-> There is no `dockpanel ssl renew`. Renewal is the panel's job — the weekly
+> There is no `dockpanel ssl renew`. Renewal is the panel's job - the weekly
 > security scan reissues what it owns, including Compose stacks since 2.161.0.
 
 ---
@@ -406,7 +406,7 @@ Creating backup for example.com...
   Create the backup from the panel (or the panel API) to include them.
 ```
 
-CLI backups never include databases — the agent has no access to the panel's database records.
+CLI backups never include databases - the agent has no access to the panel's database records.
 Create the backup from the panel if you need one that holds the site's content.
 
 #### `dockpanel backup list`
@@ -428,7 +428,7 @@ Restoring example.com from example.com_2026-03-20_143022.tar.gz...
 ```
 
 Restoring an archive that carries database dumps works from the CLI when a panel API key is
-configured (`Settings → API Keys`, saved to `/etc/dockpanel/backend.token`) — `backup restore`
+configured (`Settings → API Keys`, saved to `/etc/dockpanel/backend.token`) - `backup restore`
 prefers that path automatically, restoring files and databases through the same route the panel
 UI's own Restore button uses, then following its progress stream to completion.
 
@@ -516,7 +516,7 @@ Scan Results
 ```
 
 Risk level and each finding's severity are one of `critical`/`warning`/`info`,
-derived from the findings the scan actually returns — there is no
+derived from the findings the scan actually returns - there is no
 separate numeric score.
 
 #### `dockpanel security firewall`
@@ -686,12 +686,12 @@ dockpanel apply config.yml --email admin@example.com
 | `--dry-run` | No | Show changes without applying |
 | `--email` | No | Email for Let's Encrypt SSL provisioning |
 
-`apply` only creates resources that are missing — for sites, databases, apps and
+`apply` only creates resources that are missing - for sites, databases, apps and
 PHP versions it never diffs or updates something that already exists, even if the
 file describes it differently now (e.g. a changed `proxy_port` or `php_version`
 on an existing site is silently ignored). Cron jobs are the one exception: a
 matching `id` already in the crontab is compared and re-synced if its schedule or
-command changed. Firewall rules in an exported file are shown for reference only —
+command changed. Firewall rules in an exported file are shown for reference only -
 `apply` never creates, updates, or removes them; manage those with
 `dockpanel security firewall`.
 

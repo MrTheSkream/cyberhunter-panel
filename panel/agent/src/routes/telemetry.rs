@@ -25,7 +25,7 @@ pub struct ServiceStatus {
     pub active: bool,
 }
 
-/// GET /telemetry/system-info — Collect system information for telemetry reports.
+/// GET /telemetry/system-info - Collect system information for telemetry reports.
 async fn system_info() -> Json<SystemInfo> {
     let timeout = std::time::Duration::from_secs(5);
 
@@ -62,7 +62,7 @@ async fn system_info() -> Json<SystemInfo> {
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .unwrap_or_default();
 
-    // Hostname (sanitized — no FQDN, just the short hostname)
+    // Hostname (sanitized - no FQDN, just the short hostname)
     let hostname = tokio::time::timeout(timeout, safe_command("hostname").arg("-s").output())
         .await
         .ok()
@@ -134,7 +134,7 @@ async fn system_info() -> Json<SystemInfo> {
         .map(|f| f as u64)
         .unwrap_or(0);
 
-    // Service status for key DockPanel services
+    // Service status for key CyberHunter - Panel services
     let service_names = [
         "dockpanel-agent",
         "dockpanel-api",

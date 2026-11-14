@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
 # Regression pins for the s430 dockpanel-fanout run on panel/agent/src/routes/
 # volume_backup.rs + services/volume_backup.rs + backend backup_orchestrator.rs
-# — two findings, upheld by an independent skeptic before either fix landed.
+# - two findings, upheld by an independent skeptic before either fix landed.
 #
 # 1. CROSS-ADMIN METADATA LEAK (list_volume_backups, confidentiality). The
 #    endpoint was a flat `SELECT * FROM volume_backups ... LIMIT/OFFSET`
-#    gated only by `AdminUser` — no server_id/user_id scope at all — unlike
+#    gated only by `AdminUser` - no server_id/user_id scope at all - unlike
 #    its own sibling `list_db_backups` two functions above it, which has
-#    always scoped by `s.user_id`. DockPanel is multi-tenant at the admin
+#    always scoped by `s.user_id`. CyberHunter - Panel is multi-tenant at the admin
 #    tier (any admin can promote another user to `role='admin'` via
 #    `PUT /api/users/{id}`, a routine action, not an edge case), so every
 #    OTHER admin's container/volume names, filenames, sizes, sha256 hashes,
 #    timestamps, and server_id were visible to any admin who opened this
-#    endpoint's own dashboard tile. Does NOT enable cross-tenant RESTORE —
+#    endpoint's own dashboard tile. Does NOT enable cross-tenant RESTORE -
 #    restore_volume_backup below it re-derives the target from a DB row
 #    gated by an explicit ownership EXISTS predicate, which was already
 #    correct and is unchanged. Fix: scope the list the same way restore
-#    already scopes its own lookup — join servers and require
+#    already scopes its own lookup - join servers and require
 #    `sv.is_local OR sv.user_id = $1`.
 #
 # 2. EMPTY-ARCHIVE VOLUME WIPE (volume_backup.rs restore_volume, data
@@ -33,7 +33,7 @@
 #    (a) a genuinely empty tar.gz -> guard fires, exit 3, volume untouched;
 #    (b) a real non-empty tar.gz -> restores correctly, old content replaced;
 #    (c) a truncated/corrupt tar.gz -> still caught by the FIRST guard
-#    (regression control — proves the new check didn't weaken the old one).
+#    (regression control - proves the new check didn't weaken the old one).
 #
 # Sections A/B are pure SOURCE pins (no box, no network, no build). Section C
 # documents the real docker verification narratively (already run and struck
@@ -72,7 +72,7 @@ has "$VOLBACKUP_SVC" '[ \$n -gt 0 ]' \
 hasE "$VOLBACKUP_SVC" "archive is empty.*volume left untouched" \
   "the empty-archive rejection message is distinct from the corrupt/truncated one (so an operator can tell them apart)"
 # Regression control: the ORIGINAL corruption check must still be present and still run FIRST.
-# grep -c counts MATCHING LINES, not occurrences — both invocations sit on the
+# grep -c counts MATCHING LINES, not occurrences - both invocations sit on the
 # same format! line, so -c would silently read "1" as "both, wrongly counted"
 # rather than "only one present". grep -o | wc -l counts occurrences.
 N_TAR_TZF=$(grep -o 'tar tzf /backup/{filename}' "$VOLBACKUP_SVC" 2>/dev/null | wc -l); N_TAR_TZF=${N_TAR_TZF:-0}
@@ -89,7 +89,7 @@ echo "== C. Real docker verification (already executed at fix time, not re-run e
 echo "     (a) empty tar.gz  -> exit 3, volume untouched   [verified s430]"
 echo "     (b) real tar.gz   -> exit 0, restores correctly [verified s430]"
 echo "     (c) truncated tar.gz -> exit 3, volume untouched (regression control) [verified s430]"
-ok "documented — see project_dockpanel_tech_debt_p165.md for the full docker transcript"
+ok "documented - see project_dockpanel_tech_debt_p165.md for the full docker transcript"
 
 echo
 printf 'passed %d, failed %d\n' "$PASS" "$FAIL"

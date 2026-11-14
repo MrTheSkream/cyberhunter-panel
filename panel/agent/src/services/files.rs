@@ -26,13 +26,13 @@ pub fn resolve_safe_path(domain: &str, relative_path: &str) -> Result<PathBuf, S
     resolve_within(&base, relative_path)
 }
 
-/// Resolve a path that must name something INSIDE the site root — never the root itself.
+/// Resolve a path that must name something INSIDE the site root - never the root itself.
 ///
 /// `resolve_within` deliberately permits the site root, because listing it is the file
 /// manager's default view (`?path=/`). Containment and identity are different questions,
 /// though, and only the containment one was being asked: `.`, `""` and `/` all canonicalise
 /// to the webroot, and a path always starts with itself, so the traversal check passes them.
-/// A destructive verb handed that path is a request to erase the entire site in one call —
+/// A destructive verb handed that path is a request to erase the entire site in one call -
 /// `remove_dir_all` on the webroot takes the site with it, and the caller sees `success`.
 ///
 /// So the read verbs keep using the permissive resolver and the destructive ones use this,
@@ -51,7 +51,7 @@ pub fn resolve_safe_child(domain: &str, relative_path: &str) -> Result<PathBuf, 
 
 /// Core of [`resolve_safe_path`], parameterized on the base directory so it is
 /// unit-testable. Guarantees the returned path is inside `base` AND that no symlink
-/// sits in the to-be-created portion of the path — otherwise a create/upload sink
+/// sits in the to-be-created portion of the path - otherwise a create/upload sink
 /// (which opens O_CREAT and follows the final symlink) could write OUTSIDE the site
 /// root as root. A LIVE symlink escaping the root is caught by canonicalize + the
 /// `starts_with` check; a DANGLING symlink is invisible to `exists()`/canonicalize
@@ -88,7 +88,7 @@ pub(crate) fn resolve_within(base: &Path, relative_path: &str) -> Result<PathBuf
         }
         // `exists()` follows symlinks, so a DANGLING symlink read as "absent" and
         // became a trailing component. Re-check each trailing component on the REAL
-        // filesystem path with lstat and refuse ANY symlink — a create/upload sink
+        // filesystem path with lstat and refuse ANY symlink - a create/upload sink
         // would otherwise follow it out of the site root (sandbox escape).
         let mut real = existing.clone();
         for component in trail.iter().rev() {
@@ -158,7 +158,7 @@ pub async fn list_directory(path: &Path, site_root: Option<&Path>) -> Result<Vec
         // Return paths relative to the site root to avoid leaking server paths.
         // `path` is already canonical, so canonicalize the root too (in case
         // /var/www is itself a symlink) and strip that. Fail CLOSED to the bare
-        // name — never the absolute server path — if the strip misses.
+        // name - never the absolute server path - if the strip misses.
         let relative_path = if let Some(root) = site_root {
             let canon_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
             match std::path::Path::new(&abs_path).strip_prefix(&canon_root) {
@@ -227,7 +227,7 @@ pub async fn write_file(path: &Path, content: &str) -> Result<(), String> {
     // directory, then rename over the target. `with_extension("tmp")` would REPLACE
     // the extension and could clobber a distinct real sibling (saving report.php
     // would destroy an existing report.tmp). The UUID alone guarantees uniqueness, so
-    // keep the temp name a FIXED short length — embedding the real filename could push
+    // keep the temp name a FIXED short length - embedding the real filename could push
     // the component past NAME_MAX (255) for a long-but-valid basename -> ENAMETOOLONG
     // on save. Clean up the temp on any failure so a failed write can't leak orphans.
     let tmp = match path.parent() {
@@ -311,7 +311,7 @@ mod tests {
     }
 
     // The sandbox-escape primitive: a DANGLING symlink leaf (target absent) must be
-    // rejected — otherwise create/upload would fs::write THROUGH it as root.
+    // rejected - otherwise create/upload would fs::write THROUGH it as root.
     #[test]
     fn rejects_dangling_symlink_leaf() {
         let base = tmpbase();
@@ -359,7 +359,7 @@ mod tests {
     }
 
     // A legit IN-ROOT symlink directory (e.g. `current -> releases/v1`) must still
-    // allow creating files beneath it — the escape fix must not break this.
+    // allow creating files beneath it - the escape fix must not break this.
     #[test]
     fn allows_create_through_in_root_symlink_dir() {
         let base = tmpbase();

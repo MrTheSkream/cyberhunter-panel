@@ -94,25 +94,25 @@ const POSTFIX_VIRTUAL_MAILBOX: &str = "/etc/postfix/virtual_mailbox_maps";
 const POSTFIX_VIRTUAL_ALIAS: &str = "/etc/postfix/virtual_alias_maps";
 /// Which SASL login may use which envelope sender. Nothing bound the two until
 /// this file existed, so any mailbox on the box could send as any address on
-/// any other tenant's hosted domain — and leave DKIM-signed with that tenant's
+/// any other tenant's hosted domain - and leave DKIM-signed with that tenant's
 /// key, because the signing table is keyed on the sender domain alone.
 const POSTFIX_SENDER_LOGIN: &str = "/etc/postfix/sender_login_maps";
 const DOVECOT_USERS: &str = "/etc/dovecot/users";
 const DKIM_KEYS_DIR: &str = "/etc/dockpanel/dkim";
-/// OpenDKIM's own config lives under the DockPanel data dir, not at the
+/// OpenDKIM's own config lives under the CyberHunter - Panel data dir, not at the
 /// distro's `/etc/opendkim.conf`, so it can be written under the hardened
-/// agent sandbox (ProtectSystem=strict) — the unit's ReadWritePaths covers
+/// agent sandbox (ProtectSystem=strict) - the unit's ReadWritePaths covers
 /// /etc/dockpanel but not bare files in /etc. Same reasoning as the scanner
 /// dir in services/image_scanner.rs. A systemd drop-in points the daemon here.
 const OPENDKIM_CONF: &str = "/etc/dockpanel/opendkim.conf";
 const OPENDKIM_DROPIN_DIR: &str = "/etc/systemd/system/opendkim.service.d";
 /// OpenDKIM's milter endpoint, in OpenDKIM's own `Socket` syntax, and the
 /// matching Postfix `smtpd_milters` value. A loopback port rather than a Unix
-/// socket under Postfix's spool — see [`write_opendkim_config`] for why the
+/// socket under Postfix's spool - see [`write_opendkim_config`] for why the
 /// spool arrangement is Debian-only and SELinux-forbidden on RHEL.
 const OPENDKIM_SOCKET: &str = "inet:8891@127.0.0.1";
 const OPENDKIM_MILTER: &str = "inet:127.0.0.1:8891";
-/// Rspamd's milter endpoint — the bind of its `rspamd_proxy` worker in milter
+/// Rspamd's milter endpoint - the bind of its `rspamd_proxy` worker in milter
 /// mode, which is what Postfix talks to. Named alongside [`OPENDKIM_MILTER`]
 /// on purpose: these two are the only values `smtpd_milters` ever holds, and
 /// keeping them together is what stops one moving without the other.
@@ -120,7 +120,7 @@ const RSPAMD_MILTER: &str = "inet:127.0.0.1:11332";
 const KEY_TABLE: &str = "/etc/dockpanel/dkim/key.table";
 const SIGNING_TABLE: &str = "/etc/dockpanel/dkim/signing.table";
 /// Ports the mail stack listens on once installed. Opened in the firewall by
-/// the installer — starting a listener the firewall drops is not an install.
+/// the installer - starting a listener the firewall drops is not an install.
 const MAIL_PORTS: &[&str] = &["25", "587", "465", "143", "993", "110", "995"];
 /// The Roundcube webmail image, deliberately NOT `:latest`. Rationale and the
 /// digest this was verified against live at the single use site in
@@ -181,7 +181,7 @@ async fn mail_status() -> Result<Json<serde_json::Value>, ApiErr> {
     let vmail_exists = Path::new(VMAIL_DIR).exists();
     let password_schemes = dovecot_password_schemes().await;
 
-    // Packages present and services up is what apt gives you for free — its
+    // Packages present and services up is what apt gives you for free - its
     // postinst starts all three. It is NOT evidence that this installer ran:
     // for the whole life of the product `mail_install` aborted partway and
     // this endpoint still answered installed+running, so a failed install was
@@ -195,13 +195,13 @@ async fn mail_status() -> Result<Json<serde_json::Value>, ApiErr> {
 
     // OpenDKIM counts. It used to be reported in its own sub-object and
     // excluded from the summary, so a box whose DKIM milter was in a restart
-    // loop answered `installed:true, running:true, configured:true` — with
+    // loop answered `installed:true, running:true, configured:true` - with
     // `opendkim.running:false` sitting in the same response, unread (measured
     // on Rocky 9.8, s268, where the milter exited 78/CONFIG on every start).
     // Mail still flows in that state because `milter_default_action = accept`,
     // so nothing looks wrong until a receiver rejects the unsigned mail. That
     // is the same "healthy while delivering nothing" shape `configured` was
-    // added to close in s262 — closed one layer further here.
+    // added to close in s262 - closed one layer further here.
     let installed = postfix_installed && dovecot_installed && opendkim_installed && configured;
     let running = postfix && dovecot && opendkim && configured;
 
@@ -215,7 +215,7 @@ async fn mail_status() -> Result<Json<serde_json::Value>, ApiErr> {
         "vmail_user": vmail_exists,
         // What THIS box's Dovecot can actually verify. The panel hashes
         // mailbox passwords centrally but the verifier is per-box, so the
-        // scheme has to be chosen from here — see dovecot_password_schemes.
+        // scheme has to be chosen from here - see dovecot_password_schemes.
         "password_schemes": password_schemes,
     })))
 }
@@ -227,7 +227,7 @@ async fn mail_install() -> Result<Json<serde_json::Value>, ApiErr> {
         return Err(err(StatusCode::NOT_IMPLEMENTED, &why));
     }
     // The packages resolve on the RHEL family, but nothing past them has been
-    // driven there. Refusing is the honest answer until it has been — see the
+    // driven there. Refusing is the honest answer until it has been - see the
     // reason's own comment for why a half-configured mail stack is worse than
     // an absent one.
     if let Some(why) = pkg::mail_refusal_reason().await {
@@ -237,14 +237,14 @@ async fn mail_install() -> Result<Json<serde_json::Value>, ApiErr> {
 
     // 1. Install packages.
     // The transaction runs unsandboxed so the package manager can take its own
-    // locks — the agent unit's ProtectSystem=strict makes /var/lib/dpkg
+    // locks - the agent unit's ProtectSystem=strict makes /var/lib/dpkg
     // read-only inside the namespace, which left apt with "Not using locking
     // for read only lock file" warnings followed by chown failures. Same #54-A
     // pattern as the vmail useradd/groupadd below. (issue #57 follow-up from
     // WiskeyPapa, v2.8.19.)
     //
     // Debian splits Dovecot into one package per protocol while the RHEL family
-    // ships a single `dovecot`, so all three names collapse to one there —
+    // ships a single `dovecot`, so all three names collapse to one there -
     // handled by the name map rather than by branching here.
     if let Err(e) = pkg::install(&[
         "postfix",
@@ -258,7 +258,7 @@ async fn mail_install() -> Result<Json<serde_json::Value>, ApiErr> {
     {
         // `nothing provides …` on the RHEL family almost always means CRB is
         // not enabled. Say so here rather than gating the installer behind a
-        // probe that cannot run reliably inside the sandbox — see
+        // probe that cannot run reliably inside the sandbox - see
         // pkg::explain_package_failure.
         let detail = pkg::explain_package_failure(&e).await;
         return Err(err(
@@ -268,7 +268,7 @@ async fn mail_install() -> Result<Json<serde_json::Value>, ApiErr> {
     }
 
     // 2. Create vmail user (uid/gid 5000).
-    // groupadd/useradd write /etc/passwd, /etc/shadow, /etc/group — all too
+    // groupadd/useradd write /etc/passwd, /etc/shadow, /etc/group - all too
     // sensitive to put in the agent's ReadWritePaths. Run unsandboxed via
     // systemd-run, the same escape used for apt/dpkg (#54-A pattern, v2.8.14).
     let _ = safe_command_unsandboxed("groupadd", &[]).args(["-g", "5000", "vmail"]).output().await;
@@ -277,7 +277,7 @@ async fn mail_install() -> Result<Json<serde_json::Value>, ApiErr> {
     //
     // The agent unit lists `-/var/vmail`, and systemd's `-` prefix means "bind
     // this read-write IF IT EXISTS". For a directory the agent merely writes
-    // INTO that is fine; for one the agent must CREATE it is not — on a box
+    // INTO that is fine; for one the agent must CREATE it is not - on a box
     // where /var/vmail is absent at unit start, the path is simply not in the
     // namespace and `mkdir` fails with EROFS. Today setup.sh happens to
     // pre-create it, so the installer's ability to work depends on a mirror in
@@ -287,7 +287,7 @@ async fn mail_install() -> Result<Json<serde_json::Value>, ApiErr> {
     if !Path::new(VMAIL_DIR).exists() {
         return Err(err(
             StatusCode::INTERNAL_SERVER_ERROR,
-            &format!("Failed to create {VMAIL_DIR} — mail cannot be stored"),
+            &format!("Failed to create {VMAIL_DIR} - mail cannot be stored"),
         ));
     }
     let _ = safe_command_unsandboxed("chown", &[]).args(["-R", "vmail:vmail", VMAIL_DIR]).output().await;
@@ -351,7 +351,7 @@ non_smtpd_milters = {OPENDKIM_MILTER}
     //
     // Debian's postfix debconf writes `inet_interfaces = all` during its
     // "Internet Site" setup; the RHEL package ships `localhost`, so Postfix
-    // bound 127.0.0.1:25 only and NO mail could ever arrive from another host —
+    // bound 127.0.0.1:25 only and NO mail could ever arrive from another host -
     // with the firewall correctly opened and the installer reporting success
     // (measured on Rocky 9.8, s268).
     //
@@ -364,13 +364,13 @@ non_smtpd_milters = {OPENDKIM_MILTER}
     // 4b. HELO name. Left unset, Postfix uses the short OS hostname, which
     // receivers score heavily against: on a stock cloud image the delivered
     // mail earned HFILTER_HELO_5 + HFILTER_HOSTNAME_UNKNOWN + MID_RHS_NOT_FQDN
-    // — six spam points before any content was examined.
+    // - six spam points before any content was examined.
     if let Some(host) = panel_server_name() {
         let _ = safe_command("postconf").arg(format!("myhostname={host}")).output().await;
         // Applied here too, not only in the block above: that block is appended
         // once and skipped forever after, so an install that already has it
         // would take the new myhostname and keep the dangerous default
-        // mydestination — the combination that bounces real mailboxes.
+        // mydestination - the combination that bounces real mailboxes.
         let _ = safe_command("postconf").arg("mydestination=localhost").output().await;
         tracing::info!("Postfix myhostname set to {host}, mydestination narrowed to localhost");
     }
@@ -385,7 +385,7 @@ non_smtpd_milters = {OPENDKIM_MILTER}
     // 5. Enable submission port (587) in master.cf.
     // Test for an ACTIVE entry, not merely the string: the stock Ubuntu file
     // ships the service commented out, and the old test matched that comment
-    // forever — so every re-run appended another live block and Postfix warned
+    // forever - so every re-run appended another live block and Postfix warned
     // "duplicate master.cf entry for service submission". Since a failed
     // install is retried by hand, re-running was the normal case.
     let master_cf = tokio::fs::read_to_string("/etc/postfix/master.cf").await.unwrap_or_default();
@@ -403,7 +403,7 @@ non_smtpd_milters = {OPENDKIM_MILTER}
     // 6. Write Dovecot configuration for virtual users.
     // `ssl = required` without a trusted certificate is not a working IMAPS
     // service: Dovecot falls back to the distro snakeoil and every client that
-    // verifies its peer is turned away with "unknown ca" — including the
+    // verifies its peer is turned away with "unknown ca" - including the
     // Roundcube this product installs and points at ssl://<domain>:993. Where
     // the box already holds a Let's Encrypt certificate for the panel host,
     // serve that.
@@ -411,7 +411,7 @@ non_smtpd_milters = {OPENDKIM_MILTER}
     // Dovecot 2.4 (Debian 13's stock package, issue #124) rewrote the settings
     // file with no compatibility mode: a pre-2.4 drop-in fails `dovecot -n`
     // outright rather than degrading. Detected from the installed binary, not
-    // the distro — that is what actually decides which shape parses.
+    // the distro - that is what actually decides which shape parses.
     // `protocols = imap pop3 lmtp`, `mail_uid`/`mail_gid`/`first_valid_uid` and
     // the `service { unix_listener ... }` blocks are unaffected (confirmed
     // against the reporter's own working fix and doc.dovecot.org), so only the
@@ -431,14 +431,14 @@ non_smtpd_milters = {OPENDKIM_MILTER}
     };
     let dovecot_mail_and_auth = if v24 {
         // Two Debian-package 2.4 defaults fight this setup and both are silent
-        // until LMTP actually tries to deliver — neither shows up in `doveconf -n`
+        // until LMTP actually tries to deliver - neither shows up in `doveconf -n`
         // as anything obviously ours to fix, and neither affects IMAP login, which
         // is why a login-only smoke test would have missed both (measured live,
         // issue #124's own fresh Debian 13 box):
         //   1. `/etc/dovecot/conf.d/20-lmtp.conf` ships
         //      `protocol lmtp { auth_username_format = %{user | username | lower} }`
         //      uncommented, live. It scopes ONLY to the lmtp protocol and wins over
-        //      any `auth_username_format` set inside passdb/userdb — so LMTP looked
+        //      any `auth_username_format` set inside passdb/userdb - so LMTP looked
         //      up the bare local part ("testuser") against a file keyed by the full
         //      address ("testuser@domain") and answered "user doesn't exist" even
         //      though `doveadm user testuser@domain` (and IMAP login) resolved it
@@ -494,7 +494,7 @@ userdb {
 "#
     };
     let dovecot_base = format!(
-        r#"# DockPanel Dovecot configuration
+        r#"# CyberHunter - Panel Dovecot configuration
 protocols = imap pop3 lmtp
 
 {dovecot_mail_and_auth}
@@ -547,14 +547,14 @@ service auth {{
     // of the create-if-missing loop above: that loop discards postmap's exit
     // status, and this is the one map whose hash must be known good before the
     // restriction naming it is written. Reading the file first is what makes a
-    // re-run of the installer preserve an existing map — the same reason the
+    // re-run of the installer preserve an existing map - the same reason the
     // loop above never truncates.
     let existing_sender_login =
         tokio::fs::read_to_string(POSTFIX_SENDER_LOGIN).await.unwrap_or_default();
     ensure_sender_login_enforcement(&existing_sender_login).await;
 
     // 8. Configure OpenDKIM. Its config and the drop-in that points the daemon
-    // at it both live inside ReadWritePaths — writing the distro's
+    // at it both live inside ReadWritePaths - writing the distro's
     // /etc/opendkim.conf is refused under ProtectSystem=strict, and that single
     // EROFS is what aborted this installer on every install ever made, taking
     // the DKIM tables, the socket directory and step 9 down with it.
@@ -568,7 +568,7 @@ service auth {{
     // The milter is a loopback port now, so there is no shared socket
     // directory to create, no `opendkim` group for Postfix to join, and no
     // stale socket to clean up. All three went away with the chroot coupling
-    // — see write_opendkim_config.
+    // - see write_opendkim_config.
 
     // 9. Enable and start services
     if let Ok(out) = safe_command("systemctl").args(["enable", "postfix", "dovecot", "opendkim"]).output().await {
@@ -602,7 +602,7 @@ service auth {{
     Ok(ok("Mail server installed and configured"))
 }
 
-/// POST /mail/uninstall — Remove mail server packages and configuration.
+/// POST /mail/uninstall - Remove mail server packages and configuration.
 async fn mail_uninstall() -> Result<Json<serde_json::Value>, ApiErr> {
     tracing::info!("Starting mail server uninstall...");
 
@@ -626,7 +626,7 @@ async fn mail_uninstall() -> Result<Json<serde_json::Value>, ApiErr> {
     //
     // This call site shelled straight to `apt-get purge` and `apt-get
     // autoremove`. s266 converted the INSTALLERS and missed the uninstaller, so
-    // on an RPM box uninstall failed with "Failed to find executable apt-get" —
+    // on an RPM box uninstall failed with "Failed to find executable apt-get" -
     // a true sentence that tells an operator nothing. `pkg::remove` already
     // exists and maps the three Debian Dovecot package names onto the single
     // RPM `dovecot`; counting the call sites, not just fixing the one in front
@@ -638,7 +638,7 @@ async fn mail_uninstall() -> Result<Json<serde_json::Value>, ApiErr> {
     .await
     .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &format!("Package removal failed: {e}")))?;
 
-    // 4. Remove DockPanel mail config dirs (NOT /var/vmail — user mail data)
+    // 4. Remove CyberHunter - Panel mail config dirs (NOT /var/vmail - user mail data)
     let _ = tokio::fs::remove_dir_all("/etc/dockpanel/mail").await;
     let _ = tokio::fs::remove_dir_all("/etc/dockpanel/dkim").await;
 
@@ -650,18 +650,18 @@ async fn mail_uninstall() -> Result<Json<serde_json::Value>, ApiErr> {
 /// Whether the installed Dovecot needs the 2.4+ settings syntax.
 ///
 /// Dovecot 2.4 is a breaking rewrite of the config file format with no
-/// compatibility mode — `mail_location`, the `passdb`/`userdb` block shape and
+/// compatibility mode - `mail_location`, the `passdb`/`userdb` block shape and
 /// the `ssl_cert`/`ssl_key` names all changed, and a 2.3-style drop-in fails
 /// `dovecot -n` outright rather than degrading (issue #124: Debian 13 ships
 /// Dovecot 2.4.1 out of the box). `dovecot --version` needs no config to
 /// answer and the binary is already on disk by the time this runs (package
 /// install is step 1 of this handler), so this asks the box rather than
-/// assuming a version from the distro — same discipline as
+/// assuming a version from the distro - same discipline as
 /// `dovecot_password_schemes` below, and for the same reason: a distro/version
 /// pairing nobody has hit yet is a matter of when, not if.
 ///
 /// Any failure to determine the version (binary missing, unparseable output)
-/// defaults to `false` — the syntax every prior install has always used, and
+/// defaults to `false` - the syntax every prior install has always used, and
 /// the one still correct on the overwhelming majority of boxes today.
 async fn dovecot_needs_v24_syntax() -> bool {
     let Ok(out) = safe_command("dovecot").arg("--version").output().await else {
@@ -684,14 +684,14 @@ async fn dovecot_needs_v24_syntax() -> bool {
 ///
 /// **Argon2id is a build option, not a version.** The panel hashes mailbox
 /// passwords as `{ARGON2ID}` and the code that does it says Dovecot ">= 2.3.11
-/// verifies natively" — which is false in the way that matters. Rocky 9.8
+/// verifies natively" - which is false in the way that matters. Rocky 9.8
 /// ships Dovecot **2.3.16**, comfortably past that version, built WITHOUT
 /// libsodium: `doveadm pw -l` lists no ARGON2I or ARGON2ID at all, and every
 /// login fails with `Unknown scheme ARGON2ID` while the panel reports the
 /// account created successfully. Debian's 2.3.21 does list them.
 ///
-/// That is s259's finding on a different family — a mailbox nobody could open,
-/// with file ownership and password hash both perfect — so the fix is to ask
+/// That is s259's finding on a different family - a mailbox nobody could open,
+/// with file ownership and password hash both perfect - so the fix is to ask
 /// the box rather than to assume a version implies a capability.
 ///
 /// An empty vector means "could not tell" (Dovecot not installed yet, or
@@ -716,7 +716,7 @@ async fn dovecot_password_schemes() -> Vec<String> {
 /// **This is the one that silently ate every message.** `/var/vmail` is created
 /// by this installer, so it inherits `var_t` from `/var`. Dovecot's delivery
 /// process runs as `dovecot_t`, which the shipped policy permits to write
-/// `mail_spool_t` and not `var_t` — so LMTP fails `mkdir(.../cur)` with
+/// `mail_spool_t` and not `var_t` - so LMTP fails `mkdir(.../cur)` with
 /// "Permission denied" on a directory whose UNIX ownership is `vmail:vmail`
 /// and mode 0755. Every message is `deferred`, retried, and never delivered,
 /// while `postfix` and `dovecot` are both active and the panel calls the mail
@@ -730,7 +730,7 @@ async fn dovecot_password_schemes() -> Vec<String> {
 /// `semanage` records the rule so it survives a filesystem relabel;
 /// `restorecon` applies it now. `policycoreutils-python-utils` carries
 /// `semanage` and is not installed by default on a minimal RHEL box, so it is
-/// pulled in first — but its absence is not fatal, because `chcon` still fixes
+/// pulled in first - but its absence is not fatal, because `chcon` still fixes
 /// the running system even when the durable rule cannot be written.
 async fn label_vmail_for_selinux() {
     let enforcing = safe_command("selinuxenabled")
@@ -762,7 +762,7 @@ async fn label_vmail_for_selinux() {
                 tracing::warn!("SELinux: could not record fcontext for {VMAIL_DIR}: {}", e.trim());
             }
         }
-        Err(e) => tracing::warn!("SELinux: semanage unavailable ({e}) — falling back to chcon"),
+        Err(e) => tracing::warn!("SELinux: semanage unavailable ({e}) - falling back to chcon"),
     }
 
     // Apply now. restorecon uses the rule above; chcon is the fallback when the
@@ -791,7 +791,7 @@ async fn is_service_active(name: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Package presence, on dpkg and rpm boxes alike — see `services::pkg`, which
+/// Package presence, on dpkg and rpm boxes alike - see `services::pkg`, which
 /// also maps Debian's three Dovecot packages onto the single RPM `dovecot`.
 async fn is_installed(package: &str) -> bool {
     crate::services::pkg::is_installed(package).await
@@ -800,7 +800,7 @@ async fn is_installed(package: &str) -> bool {
 // ── OpenDKIM wiring ─────────────────────────────────────────────────────
 
 /// Render OpenDKIM's config and the systemd drop-in that makes the daemon read
-/// it from the DockPanel data dir instead of the distro path.
+/// it from the CyberHunter - Panel data dir instead of the distro path.
 ///
 /// Both targets are inside the agent's ReadWritePaths; the distro path is not,
 /// which is why writing it aborted the whole installer before anything below
@@ -809,7 +809,7 @@ async fn write_opendkim_config() -> Result<(), String> {
     // Run as the packaged `opendkim` user, which owns the keys.
     //
     // The socket is a LOOPBACK TCP port, not a Unix socket in Postfix's spool.
-    // The old arrangement — `local:/var/spool/postfix/opendkim/opendkim.sock` —
+    // The old arrangement - `local:/var/spool/postfix/opendkim/opendkim.sock` -
     // exists only because Debian runs smtpd CHROOTED to /var/spool/postfix, so
     // the milter has to live inside that tree. On the RHEL family `master.cf`
     // ships `smtp inet … n …` (not chrooted), the chroot buys nothing, and
@@ -819,14 +819,14 @@ async fn write_opendkim_config() -> Result<(), String> {
     // create its socket and never starts.
     //
     // A loopback port is reachable from inside a chroot and outside one alike,
-    // needs no shared group, no socket directory and no ownership dance — so
+    // needs no shared group, no socket directory and no ownership dance - so
     // BOTH families run the same path (#94d). `dkim_milter_port_t` already
     // covers 8891 in the shipped policy, so nothing needs relabelling.
     //
     // TrustAnchorFile is emitted only when an anchor actually exists.
     // `/usr/share/dns/root.key` is Debian's (`dns-root-data`); RHEL keeps its
     // anchor at `/var/lib/unbound/root.key` and may have neither. OpenDKIM
-    // treats a missing anchor as a FATAL config error — `status=78/CONFIG`, so
+    // treats a missing anchor as a FATAL config error - `status=78/CONFIG`, so
     // the daemon never starts and nothing is ever signed (measured s268).
     let trust_anchor = ["/usr/share/dns/root.key", "/var/lib/unbound/root.key"]
         .into_iter()
@@ -847,11 +847,11 @@ async fn write_opendkim_config() -> Result<(), String> {
     tokio::fs::create_dir_all(OPENDKIM_DROPIN_DIR).await
         .map_err(|e| format!("Failed to create {OPENDKIM_DROPIN_DIR}: {e}"))?;
     // The drop-in owns BOTH `Type` and `ExecStart`, so the packaged unit's
-    // choice stops mattering — which is the whole point. Debian ships
+    // choice stops mattering - which is the whole point. Debian ships
     // `Type=forking` (a foreground daemon never returns and systemd times the
     // start out) while EPEL ships `Type=simple` with `-f` already in its own
     // ExecStart (a backgrounding daemon makes systemd reap the parent and log
-    // `Deactivated successfully` while the unit goes INACTIVE — a failure that
+    // `Deactivated successfully` while the unit goes INACTIVE - a failure that
     // does not even register as failed). Pinning Type=simple and passing `-f`
     // is one arrangement that is correct on both, instead of a flag whose
     // rightness depends on a file we do not control.
@@ -867,7 +867,7 @@ async fn write_opendkim_config() -> Result<(), String> {
 /// disk, then restart OpenDKIM so it loads them.
 ///
 /// Derived from the filesystem rather than accumulated incrementally, so it is
-/// idempotent and cannot drift from reality no matter which caller runs it —
+/// idempotent and cannot drift from reality no matter which caller runs it -
 /// domain added, domain removed, or a re-run of the installer. Without these
 /// two tables OpenDKIM holds no keys and signs nothing, which is the state
 /// every install shipped in.
@@ -940,7 +940,7 @@ async fn rebuild_dkim_tables() -> Result<(), String> {
 /// Postfix and Dovecot listening behind a firewall that drops every packet.
 async fn open_mail_ports() {
     // This used to shell out to `ufw` and discard every result, then log
-    // "Mail ports opened in firewall" unconditionally — a sentence that was
+    // "Mail ports opened in firewall" unconditionally - a sentence that was
     // false on every RHEL-family box, where firewalld is the firewall and ufw
     // is usually not even installed (s265). Say what actually happened.
     let failed = crate::services::firewall::allow_tcp_ports(MAIL_PORTS).await;
@@ -952,7 +952,7 @@ async fn open_mail_ports() {
         );
     } else {
         tracing::warn!(
-            "Mail ports NOT opened: {} — mail will not be deliverable until they are",
+            "Mail ports NOT opened: {} - mail will not be deliverable until they are",
             failed.join(", ")
         );
     }
@@ -961,7 +961,7 @@ async fn open_mail_ports() {
 /// The panel's own Let's Encrypt certificate, when this box has one for the
 /// host the panel is served on. Dovecot and Postfix otherwise fall back to the
 /// distro's self-signed snakeoil, which any IMAP client that verifies its peer
-/// refuses — Roundcube among them.
+/// refuses - Roundcube among them.
 fn panel_tls_paths() -> Option<(String, String)> {
     let host = panel_server_name()?;
     let dir = format!("/etc/letsencrypt/live/{host}");
@@ -1091,7 +1091,7 @@ async fn domain_remove(
         tracing::warn!("DKIM keys removed for {domain} but tables not rebuilt: {e}");
     }
 
-    // Note: we don't delete the maildir — that's destructive.
+    // Note: we don't delete the maildir - that's destructive.
     // The sync_config will remove the domain from Postfix/Dovecot maps.
 
     tracing::info!("Mail domain removed: {domain}");
@@ -1104,8 +1104,8 @@ async fn domain_remove(
 ///
 /// `domain_configure` already refuses a domain component containing `..`, `/` or
 /// `\` before it joins it onto `VMAIL_DIR`. The local part is the other half of
-/// exactly the same path — `format!("{VMAIL_DIR}/{}/{}", parts[1], parts[0])` in
-/// step 7 below — and nothing checked it, so:
+/// exactly the same path - `format!("{VMAIL_DIR}/{}/{}", parts[1], parts[0])` in
+/// step 7 below - and nothing checked it, so:
 ///
 /// * `..@example.com` produced `/var/vmail/example.com/..`, i.e. `/var/vmail`,
 ///   one level above the domain directory, and the `chown -R` beside it then
@@ -1113,7 +1113,7 @@ async fn domain_remove(
 /// * `@example.com` produced the map key `@example.com`, which is byte-identical
 ///   to the domain's catch-all key. Account lines are written before catch-all
 ///   lines, `postmap` keeps the first, and its duplicate-entry warning goes to a
-///   stderr this file discards — so the mailbox silently replaced the catch-all.
+///   stderr this file discards - so the mailbox silently replaced the catch-all.
 ///
 /// The panel refuses these too (`is_wellformed_address`), but the agent builds
 /// the path, so the agent checks independently.
@@ -1141,7 +1141,7 @@ async fn sync_config(
         if !local_part_is_safe(&acc.email) {
             return Err(err(StatusCode::BAD_REQUEST, "Invalid email local part"));
         }
-        // Dovecot users file uses ':' as field separator — reject in password hash
+        // Dovecot users file uses ':' as field separator - reject in password hash
         if acc.password_hash.contains(':') || acc.password_hash.contains('\n')
             || acc.password_hash.contains('\r') || acc.password_hash.contains('\0')
             || acc.password_hash.contains('\t') {
@@ -1278,7 +1278,7 @@ async fn sync_config(
     // only code path that runs again on a box already carrying mail: it fires
     // on every domain, account and alias mutation, so an existing install
     // repairs itself on the next mailbox change without a heal of its own.
-    // Self-contained and fail-safe — see `ensure_sender_login_enforcement`.
+    // Self-contained and fail-safe - see `ensure_sender_login_enforcement`.
     ensure_sender_login_enforcement(&build_sender_login_map(&body)).await;
 
     // 5b. Per-domain outgoing IP (transports, sender map, HELO). Rolls its own
@@ -1714,7 +1714,7 @@ async fn queue_delete(
 /// so a change to [`OPENDKIM_MILTER`] can never silently orphan this edit the
 /// way it did between s268 and s270.
 ///
-/// Returns `None` when neither key is present — that means Postfix has no mail
+/// Returns `None` when neither key is present - that means Postfix has no mail
 /// configuration to extend, which the caller must treat as an error rather than
 /// writing a file back unchanged. Idempotent: a milter already in the list is
 /// left exactly once.
@@ -1750,12 +1750,12 @@ fn add_milter(main_cf: &str, milter: &str) -> Option<String> {
     Some(out)
 }
 
-/// POST /mail/rspamd/install — Install and configure Rspamd.
+/// POST /mail/rspamd/install - Install and configure Rspamd.
 async fn rspamd_install() -> Result<Json<serde_json::Value>, ApiErr> {
     tracing::info!("Installing Rspamd spam filter...");
 
     // rspamd is not in EPEL. On a stock Rocky 9 with EPEL *and* CRB enabled,
-    // `dnf install rspamd` answers "Unable to find a match: rspamd" — so the
+    // `dnf install rspamd` answers "Unable to find a match: rspamd" - so the
     // spam filter could never be installed on the RHEL family at all, and the
     // panel offered the button anyway (measured s270). Upstream publishes an
     // rpm repo; add it only when the package is genuinely unreachable, so a
@@ -1763,7 +1763,7 @@ async fn rspamd_install() -> Result<Json<serde_json::Value>, ApiErr> {
     //
     // Gated on the RPM family EXPLICITLY, not on the availability probe alone.
     // Debian and Ubuntu package rspamd themselves and that path has worked
-    // since s262 — if a probe failure were allowed to reach `add_repo` there it
+    // since s262 - if a probe failure were allowed to reach `add_repo` there it
     // would break the family that works in order to fix the one that does not,
     // which is exactly lesson #95c.
     if crate::services::pkg::manager().await == crate::services::pkg::PkgMgr::Rpm
@@ -1776,7 +1776,7 @@ async fn rspamd_install() -> Result<Json<serde_json::Value>, ApiErr> {
 
     // Install rspamd through the package abstraction. Another call site s266's
     // conversion missed: it shelled to `apt-get` directly AND passed
-    // `redis-server`, whose RPM package and unit are both `redis` — the exact
+    // `redis-server`, whose RPM package and unit are both `redis` - the exact
     // trap `pkg::service_name`'s own doc comment describes.
     crate::services::pkg::install(&["rspamd", "redis-server"])
         .await
@@ -1787,7 +1787,7 @@ async fn rspamd_install() -> Result<Json<serde_json::Value>, ApiErr> {
     // This was a literal string replace against
     // `smtpd_milters = unix:opendkim/opendkim.sock`. s268 moved OpenDKIM's
     // milter to a loopback port because the Unix socket lived inside Postfix's
-    // chroot — a Debian arrangement SELinux forbids on RHEL — and this sibling
+    // chroot - a Debian arrangement SELinux forbids on RHEL - and this sibling
     // kept matching the old literal. `str::replace` with an absent needle
     // returns the string UNCHANGED, so main.cf was rewritten byte-identical,
     // the handler reported success, and Postfix never consulted Rspamd on ANY
@@ -1805,7 +1805,7 @@ async fn rspamd_install() -> Result<Json<serde_json::Value>, ApiErr> {
         // Silently writing nothing is what produced the defect above.
         None => return Err(err(
             StatusCode::PRECONDITION_FAILED,
-            "Postfix has no smtpd_milters setting — install the mail server before the spam filter",
+            "Postfix has no smtpd_milters setting - install the mail server before the spam filter",
         )),
     }
 
@@ -1836,7 +1836,7 @@ async fn rspamd_install() -> Result<Json<serde_json::Value>, ApiErr> {
     Ok(ok("Rspamd spam filter installed"))
 }
 
-/// GET /mail/rspamd/status — Check Rspamd status.
+/// GET /mail/rspamd/status - Check Rspamd status.
 async fn rspamd_status() -> Json<serde_json::Value> {
     let installed = is_installed("rspamd").await;
     let running = is_service_active("rspamd").await;
@@ -1846,7 +1846,7 @@ async fn rspamd_status() -> Json<serde_json::Value> {
     Json(serde_json::json!({ "installed": installed, "running": running, "redis": redis }))
 }
 
-/// POST /mail/rspamd/toggle — Enable/disable Rspamd.
+/// POST /mail/rspamd/toggle - Enable/disable Rspamd.
 async fn rspamd_toggle(Json(body): Json<serde_json::Value>) -> Result<Json<serde_json::Value>, ApiErr> {
     let enable = body.get("enable").and_then(|v| v.as_bool()).unwrap_or(true);
     if enable {
@@ -1914,11 +1914,11 @@ fn webmail_nginx_block(port: u16) -> String {
     // v2.10.1: Roundcube emits root-anchored URLs (form action="/?_task=...",
     // JS comm_path="/?_task=..."). Without sub_filter, browser navigation
     // and AJAX from Roundcube hit the panel's `location /` (the React SPA),
-    // not /webmail/ — symptom: Open lands on dashboard, login form posts
+    // not /webmail/ - symptom: Open lands on dashboard, login form posts
     // to /?_task=login. proxy_redirect handles 30x Location: headers from
     // Roundcube; sub_filter rewrites embedded URLs in HTML/JSON bodies.
     format!(
-        "# DockPanel webmail (Roundcube) reverse-proxy — managed by agent, do not edit\n\
+        "# CyberHunter - Panel webmail (Roundcube) reverse-proxy - managed by agent, do not edit\n\
          # v2.10.1: sub_filter rewrites Roundcube's root-anchored URLs (form action,\n\
          # comm_path) under /webmail/ so navigation doesn't land on the panel root.\n\
          location /webmail/ {{\n\
@@ -1938,7 +1938,7 @@ fn webmail_nginx_block(port: u16) -> String {
          \x20   client_max_body_size 25M;\n\
          \x20   # Roundcube's Elastic skin frames itself same-origin. The panel\n\
          \x20   # vhost sends X-Frame-Options DENY and frame-ancestors 'none',\n\
-         \x20   # which this location inherits — the iframe is refused, the list\n\
+         \x20   # which this location inherits - the iframe is refused, the list\n\
          \x20   # JS throws a SecurityError reaching into it, and the inbox\n\
          \x20   # renders empty however much mail is really in it. Re-declare the\n\
          \x20   # whole header set here (nginx add_header in a location replaces\n\
@@ -1957,7 +1957,7 @@ fn webmail_nginx_block(port: u16) -> String {
 
 /// Write the `/webmail/` reverse-proxy nginx fragment into the panel-locations
 /// drop-in dir, validate with `nginx -t`, reload on success. Unlinks the
-/// fragment if validation fails — never leaves nginx in a broken state.
+/// fragment if validation fails - never leaves nginx in a broken state.
 async fn write_webmail_nginx(port: u16) -> Result<(), ApiErr> {
     if let Err(e) = std::fs::create_dir_all(WEBMAIL_NGINX_DIR) {
         return Err(err(StatusCode::INTERNAL_SERVER_ERROR, &format!("Failed to create {WEBMAIL_NGINX_DIR}: {e}")));
@@ -1982,18 +1982,18 @@ async fn write_webmail_nginx(port: u16) -> Result<(), ApiErr> {
 /// Bring an existing `/webmail/` fragment up to the current template.
 ///
 /// The fragment is written only on the Install click, so a fix to its contents
-/// reaches nobody who already installed webmail. That is how s262's fix — the
+/// reaches nobody who already installed webmail. That is how s262's fix - the
 /// re-declared header set, without which the location inherits the panel's
 /// `frame-ancestors 'none'`, the Roundcube content frame is refused, and
 /// `clear_message_list` throws a SecurityError that aborts `list_mailbox`
-/// before the list is ever requested — never arrived on a single existing box.
+/// before the list is ever requested - never arrived on a single existing box.
 /// `update.sh` had a heal for the *previous* shape and it made this worse: it
 /// fired only when `sub_filter` was absent and wrote the v2.10.1 shape, which
 /// is exactly the shape that renders the inbox empty.
 ///
 /// Runs at agent startup, so an upgrade is all it takes. Rewrites only when the
 /// on-disk bytes differ from the template, and only when the fragment already
-/// exists — this never installs webmail for someone who does not have it.
+/// exists - this never installs webmail for someone who does not have it.
 pub async fn heal_webmail_nginx() {
     if !Path::new(WEBMAIL_NGINX_CONF).exists() {
         return;
@@ -2040,7 +2040,7 @@ async fn remove_webmail_nginx() {
     }
 }
 
-/// POST /mail/webmail/install — Deploy Roundcube webmail via Docker.
+/// POST /mail/webmail/install - Deploy Roundcube webmail via Docker.
 ///
 /// Idempotent: tears down any prior `dockpanel-roundcube` container before
 /// recreating, so env-var additions across releases apply on next Install
@@ -2057,7 +2057,7 @@ async fn webmail_install(Json(body): Json<serde_json::Value>) -> Result<Json<ser
 
     // Webmail keeps its accounts, identities, contacts and preferences in a SQLite
     // database, which its image places under this path whenever no external database is
-    // configured — and this install deliberately configures none. The image declares no
+    // configured - and this install deliberately configures none. The image declares no
     // volume there, so without this bind the whole lot lives in the container's writable
     // layer, and the `rm -f` directly above (or any Update from the Apps page) takes it
     // with the container. Bound under the app data directory, on the same
@@ -2096,17 +2096,17 @@ async fn webmail_install(Json(body): Json<serde_json::Value>) -> Result<Json<ser
         "-l".into(), "dockpanel.app.template=roundcube".into(),
         "-l".into(), "dockpanel.app.name=roundcube".into(),
         // Pinned off `:latest`, which let a MAJOR Roundcube upgrade land on a
-        // user's mail stack with no warning and no way back — the panel warns
+        // user's mail stack with no warning and no way back - the panel warns
         // users about exactly this in docker_apps.rs while floating itself.
         //
         // `1.7.x` rather than an exact `1.7.2`: this is a web-facing PHP app and
-        // nothing in DockPanel would ever bump a frozen patch tag, so an exact
+        // nothing in CyberHunter - Panel would ever bump a frozen patch tag, so an exact
         // pin would quietly stop receiving CVE fixes. The `.x` line still gets
         // upstream's security rebuilds while ruling out the surprise major.
         //
         // `-apache` is load-bearing, not decoration: the container is published
         // on port 80 above, and the -fpm variants do not serve HTTP at all.
-        // Verified by digest at the time of pinning — `latest`, `latest-apache`
+        // Verified by digest at the time of pinning - `latest`, `latest-apache`
         // and `1.7.2-apache` were all sha256:aed1b9b5dc34, so this changed the
         // guarantee without changing the image.
         ROUNDCUBE_IMAGE.into(),
@@ -2128,7 +2128,7 @@ async fn webmail_install(Json(body): Json<serde_json::Value>) -> Result<Json<ser
     Ok(Json(serde_json::json!({ "ok": true, "port": port })))
 }
 
-/// GET /mail/webmail/status — Check if Roundcube is running.
+/// GET /mail/webmail/status - Check if Roundcube is running.
 async fn webmail_status() -> Json<serde_json::Value> {
     let output = safe_command("docker")
         .args(["inspect", "--format", "{{.State.Running}}", "dockpanel-roundcube"])
@@ -2144,7 +2144,7 @@ async fn webmail_status() -> Json<serde_json::Value> {
     Json(serde_json::json!({ "installed": running || port > 0, "running": running, "port": port }))
 }
 
-/// POST /mail/webmail/remove — Remove Roundcube container + panel-vhost fragment.
+/// POST /mail/webmail/remove - Remove Roundcube container + panel-vhost fragment.
 async fn webmail_remove() -> Result<Json<serde_json::Value>, ApiErr> {
     let _ = safe_command("docker").args(["rm", "-f", "dockpanel-roundcube"]).output().await;
     remove_webmail_nginx().await;
@@ -2161,7 +2161,7 @@ struct RelayConfig {
     password: String,
 }
 
-/// POST /mail/relay/configure — Set up SMTP relay (smarthost).
+/// POST /mail/relay/configure - Set up SMTP relay (smarthost).
 async fn relay_configure(Json(body): Json<RelayConfig>) -> Result<Json<serde_json::Value>, ApiErr> {
     if body.host.is_empty() { return Err(err(StatusCode::BAD_REQUEST, "Relay host required")); }
 
@@ -2202,7 +2202,7 @@ async fn relay_configure(Json(body): Json<RelayConfig>) -> Result<Json<serde_jso
     Ok(ok("SMTP relay configured"))
 }
 
-/// GET /mail/relay/status — Check current relay configuration.
+/// GET /mail/relay/status - Check current relay configuration.
 async fn relay_status() -> Json<serde_json::Value> {
     let main_cf = tokio::fs::read_to_string("/etc/postfix/main.cf").await.unwrap_or_default();
     let relayhost = main_cf.lines()
@@ -2215,7 +2215,7 @@ async fn relay_status() -> Json<serde_json::Value> {
     }))
 }
 
-/// POST /mail/relay/remove — Remove SMTP relay configuration.
+/// POST /mail/relay/remove - Remove SMTP relay configuration.
 async fn relay_remove() -> Result<Json<serde_json::Value>, ApiErr> {
     let main_cf = tokio::fs::read_to_string("/etc/postfix/main.cf").await.unwrap_or_default();
     let cleaned: String = main_cf.lines()
@@ -2237,7 +2237,7 @@ async fn relay_remove() -> Result<Json<serde_json::Value>, ApiErr> {
 /// Where this box's MTA log actually lives.
 ///
 /// Probed rather than branched on the package manager, because the name is a
-/// property of the running syslog configuration, not of the distro family — a
+/// property of the running syslog configuration, not of the distro family - a
 /// Debian box with an unusual rsyslog config, or an RHEL box with none at all,
 /// both answer correctly here. Falls back to the Debian name so the failure
 /// mode on a box with neither file is unchanged.
@@ -2250,11 +2250,11 @@ pub async fn mail_log_path() -> String {
     "/var/log/mail.log".to_string()
 }
 
-/// GET /mail/logs — Parse the mail log for recent activity and stats.
+/// GET /mail/logs - Parse the mail log for recent activity and stats.
 async fn mail_logs() -> Result<Json<serde_json::Value>, ApiErr> {
     // Debian's rsyslog writes `/var/log/mail.log`; the RHEL family writes
     // `/var/log/maillog`. Hardcoding the Debian name meant this endpoint
-    // returned `sent:0, received:0` on every RHEL box — measured on Rocky 9.8
+    // returned `sent:0, received:0` on every RHEL box - measured on Rocky 9.8
     // minutes after that box had sent and received a DKIM-signed message
     // (s268). It is the page an operator opens when mail is missing, so it
     // failed exactly when it was needed.
@@ -2299,7 +2299,7 @@ async fn mail_logs() -> Result<Json<serde_json::Value>, ApiErr> {
 
 // ── Storage Usage ───────────────────────────────────────────────────────
 
-/// GET /mail/storage — Get storage usage for all mailboxes.
+/// GET /mail/storage - Get storage usage for all mailboxes.
 async fn storage_usage() -> Result<Json<serde_json::Value>, ApiErr> {
     let mut usage = Vec::new();
 
@@ -2344,7 +2344,7 @@ async fn storage_usage() -> Result<Json<serde_json::Value>, ApiErr> {
 
 // ── Rate Limiting ───────────────────────────────────────────────────────
 
-/// POST /mail/rate-limit/set — Set global outbound rate limit.
+/// POST /mail/rate-limit/set - Set global outbound rate limit.
 async fn rate_limit_set(Json(body): Json<RateLimitRequest>) -> Result<Json<serde_json::Value>, ApiErr> {
     if body.rate.is_empty() { return Err(err(StatusCode::BAD_REQUEST, "Rate required")); }
 
@@ -2381,7 +2381,7 @@ async fn rate_limit_set(Json(body): Json<RateLimitRequest>) -> Result<Json<serde
     Ok(ok(&format!("Rate limit set: {}", body.rate)))
 }
 
-/// GET /mail/rate-limit/status — Get current rate limit.
+/// GET /mail/rate-limit/status - Get current rate limit.
 async fn rate_limit_status() -> Json<serde_json::Value> {
     let main_cf = tokio::fs::read_to_string("/etc/postfix/main.cf").await.unwrap_or_default();
     let rate_line = main_cf.lines().find(|l| l.contains("# DockPanel rate limit:"));
@@ -2390,7 +2390,7 @@ async fn rate_limit_status() -> Json<serde_json::Value> {
     Json(serde_json::json!({ "configured": configured, "rate": rate }))
 }
 
-/// POST /mail/rate-limit/remove — Remove rate limit.
+/// POST /mail/rate-limit/remove - Remove rate limit.
 async fn rate_limit_remove() -> Result<Json<serde_json::Value>, ApiErr> {
     let main_cf = tokio::fs::read_to_string("/etc/postfix/main.cf").await.unwrap_or_default();
     let cleaned: String = main_cf.lines()
@@ -2406,7 +2406,7 @@ async fn rate_limit_remove() -> Result<Json<serde_json::Value>, ApiErr> {
 
 // ── Mailbox Backup/Restore ──────────────────────────────────────────────
 
-/// POST /mail/backup — Create a backup of a mailbox (tar.gz of maildir).
+/// POST /mail/backup - Create a backup of a mailbox (tar.gz of maildir).
 async fn mailbox_backup(Json(body): Json<MailboxBackupRequest>) -> Result<Json<serde_json::Value>, ApiErr> {
     let email = body.email.trim();
     if email.is_empty() || !email.contains('@') { return Err(err(StatusCode::BAD_REQUEST, "Invalid email")); }
@@ -2427,7 +2427,7 @@ async fn mailbox_backup(Json(body): Json<MailboxBackupRequest>) -> Result<Json<s
 
     let backup_dir = "/var/lib/dockpanel/mail-backups";
     tokio::fs::create_dir_all(backup_dir).await.ok();
-    // The tarballs contain plaintext mail — keep the directory owner-only (0700).
+    // The tarballs contain plaintext mail - keep the directory owner-only (0700).
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -2452,7 +2452,7 @@ async fn mailbox_backup(Json(body): Json<MailboxBackupRequest>) -> Result<Json<s
         return Err(err(StatusCode::INTERNAL_SERVER_ERROR, &format!("Backup failed: {stderr}")));
     }
 
-    // 0600: the archive is a full copy of the mailbox's plaintext mail — never world-readable.
+    // 0600: the archive is a full copy of the mailbox's plaintext mail - never world-readable.
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -2466,7 +2466,7 @@ async fn mailbox_backup(Json(body): Json<MailboxBackupRequest>) -> Result<Json<s
     Ok(Json(serde_json::json!({ "ok": true, "file": backup_file, "size": size })))
 }
 
-/// POST /mail/restore — Restore a mailbox from backup.
+/// POST /mail/restore - Restore a mailbox from backup.
 async fn mailbox_restore(Json(body): Json<serde_json::Value>) -> Result<Json<serde_json::Value>, ApiErr> {
     let email = body.get("email").and_then(|v| v.as_str()).unwrap_or("");
     let backup_file = body.get("file").and_then(|v| v.as_str()).unwrap_or("");
@@ -2481,7 +2481,7 @@ async fn mailbox_restore(Json(body): Json<serde_json::Value>) -> Result<Json<ser
     let parts: Vec<&str> = email.splitn(2, '@').collect();
     if parts.len() != 2 { return Err(err(StatusCode::BAD_REQUEST, "Invalid email format")); }
     let (user, domain) = (parts[0], parts[1]);
-    // Reject path traversal in the email — otherwise `maildir` below could escape /var/vmail into
+    // Reject path traversal in the email - otherwise `maildir` below could escape /var/vmail into
     // an agent-writable root-daemon config dir (the tar `-C` target + the recursive chown). This
     // mirrors the guard the sibling mailbox_backup already applies.
     if user.is_empty() || domain.is_empty()
@@ -2513,7 +2513,7 @@ async fn mailbox_restore(Json(body): Json<serde_json::Value>) -> Result<Json<ser
     Ok(ok(&format!("Mailbox {email} restored")))
 }
 
-/// GET /mail/backups — List available mailbox backups.
+/// GET /mail/backups - List available mailbox backups.
 async fn mailbox_backups() -> Result<Json<serde_json::Value>, ApiErr> {
     let backup_dir = "/var/lib/dockpanel/mail-backups";
     let mut backups = Vec::new();
@@ -2542,7 +2542,7 @@ async fn mailbox_backups() -> Result<Json<serde_json::Value>, ApiErr> {
     Ok(Json(serde_json::json!({ "backups": backups })))
 }
 
-/// POST /mail/backups/delete — Delete a backup file.
+/// POST /mail/backups/delete - Delete a backup file.
 async fn mailbox_backup_delete(Json(body): Json<serde_json::Value>) -> Result<Json<serde_json::Value>, ApiErr> {
     let file = body.get("file").and_then(|v| v.as_str()).unwrap_or("");
     if file.is_empty() || !file.starts_with("/var/lib/dockpanel/mail-backups/") || file.contains("..") {
@@ -2554,7 +2554,7 @@ async fn mailbox_backup_delete(Json(body): Json<serde_json::Value>) -> Result<Js
 
 // ── TLS Enforcement ─────────────────────────────────────────────────────
 
-/// GET /mail/tls/status — Check TLS configuration in Postfix and Dovecot.
+/// GET /mail/tls/status - Check TLS configuration in Postfix and Dovecot.
 async fn tls_status() -> Json<serde_json::Value> {
     let main_cf = tokio::fs::read_to_string("/etc/postfix/main.cf").await.unwrap_or_default();
 
@@ -2589,7 +2589,7 @@ const NO_AUTHORISED_SENDER: &str = "dockpanel-no-authorised-sender";
 /// Neither existing map can serve this, and reusing one would MANUFACTURE the
 /// defect this closes. `virtual_mailbox_maps` values are maildir paths, so
 /// pointing the restriction at it would refuse every authenticated send on the
-/// box. `virtual_alias_maps` values are FORWARD TARGETS — so a mailbox that
+/// box. `virtual_alias_maps` values are FORWARD TARGETS - so a mailbox that
 /// merely set forwarding would lose the right to send as itself while the
 /// forward target gained it, and any tenant could create
 /// `sales@theirs -> victim@other-tenant` and thereby hand that tenant send-as
@@ -2610,7 +2610,7 @@ const NO_AUTHORISED_SENDER: &str = "dockpanel-no-authorised-sender";
 /// permitted. The variant that checks only already-listed addresses is a
 /// different parameter, and it is deliberately not the one used.
 ///
-/// So the `@domain` row does not close a forgery hole — the allow-list closes
+/// So the `@domain` row does not close a forgery hole - the allow-list closes
 /// it, because an invented local part at another tenant's domain is unlisted
 /// and refused either way. The row is what keeps a domain's own logins able to
 /// send as their aliases, catch-alls and role addresses. Without it a mailbox
@@ -2622,14 +2622,14 @@ const NO_AUTHORISED_SENDER: &str = "dockpanel-no-authorised-sender";
 /// only if it is a mailbox on this box, or sits at a domain hosted on it. A
 /// subdomain that was never added as its own mail domain is a different domain
 /// and is refused; so is any external address. That includes the panel's own
-/// notification sender when it relays through this box — `smtp_from` and
+/// notification sender when it relays through this box - `smtp_from` and
 /// `smtp_username` are independent settings, so a `smtp_from` the authenticated
 /// mailbox does not own is refused like any other unowned sender.
 ///
 /// A domain with no enabled mailbox is owned by [`NO_AUTHORISED_SENDER`], so
 /// nobody may send as it. Under the allow-list that row is belt-and-braces
-/// rather than load-bearing — omitting it would leave the domain unlisted and
-/// therefore refused anyway — but it states the intent inside the table, and it
+/// rather than load-bearing - omitting it would leave the domain unlisted and
+/// therefore refused anyway - but it states the intent inside the table, and it
 /// keeps the answer correct if the restriction is ever changed to the variant
 /// that only consults listed addresses.
 ///
@@ -2665,14 +2665,14 @@ fn build_sender_login_map(body: &SyncRequest) -> String {
 }
 
 /// Write the sender-login map, rebuild its hash, and arm the restriction that
-/// consults it — strictly in that order.
+/// consults it - strictly in that order.
 ///
 /// The order is the whole of the risk in this change. A `hash:` table named by
 /// an smtpd restriction is opened when smtpd initialises: if the `.db` is
-/// missing or stale, smtpd exits fatal and master throttles it — a total outage
+/// missing or stale, smtpd exits fatal and master throttles it - a total outage
 /// on 25 and 587, not a per-message deferral. So the map is written and
-/// postmapped first, its exit status is CHECKED — the four other `postmap` call
-/// sites in this file discard theirs — and the keys are written only if that
+/// postmapped first, its exit status is CHECKED - the four other `postmap` call
+/// sites in this file discard theirs - and the keys are written only if that
 /// succeeded. A failure here leaves the box exactly as it was: unprotected, and
 /// still carrying mail. For a control being added underneath a running system
 /// that is the correct direction to fail, and it is the reason this is not
@@ -2683,7 +2683,7 @@ fn build_sender_login_map(body: &SyncRequest) -> String {
 async fn ensure_sender_login_enforcement(map_content: &str) {
     if let Err(e) = write_file_atomic(POSTFIX_SENDER_LOGIN, map_content).await {
         tracing::error!(
-            "Sender-login map not written ({e}) — leaving sender identity unenforced rather \
+            "Sender-login map not written ({e}) - leaving sender identity unenforced rather \
              than arming a restriction against a map that is not there"
         );
         return;
@@ -2693,7 +2693,7 @@ async fn ensure_sender_login_enforcement(map_content: &str) {
         Ok(out) if out.status.success() => {}
         Ok(out) => {
             tracing::error!(
-                "postmap {POSTFIX_SENDER_LOGIN} failed ({}) — leaving sender identity \
+                "postmap {POSTFIX_SENDER_LOGIN} failed ({}) - leaving sender identity \
                  unenforced; arming the restriction against an unopenable map would take \
                  smtpd down on 25 and 587. stderr: {}",
                 out.status,
@@ -2703,7 +2703,7 @@ async fn ensure_sender_login_enforcement(map_content: &str) {
         }
         Err(e) => {
             tracing::error!(
-                "postmap {POSTFIX_SENDER_LOGIN} could not be run ({e}) — leaving sender \
+                "postmap {POSTFIX_SENDER_LOGIN} could not be run ({e}) - leaving sender \
                  identity unenforced"
             );
             return;
@@ -2711,7 +2711,7 @@ async fn ensure_sender_login_enforcement(map_content: &str) {
     }
 
     // A map with no rows authorises NOBODY, and the restriction is an
-    // allow-list, so arming against one does not leave the box unprotected — it
+    // allow-list, so arming against one does not leave the box unprotected - it
     // refuses EVERY authenticated submission on it, 553, with no other symptom.
     // This is the trap the old "an unowned sender is permitted" reading hid: it
     // made an empty map look like the harmless case when it is the total one.
@@ -2724,13 +2724,13 @@ async fn ensure_sender_login_enforcement(map_content: &str) {
     //
     // Declining costs nothing. The map is empty only when the box has no enabled
     // mailbox and no enabled domain, and a mailbox that does not exist cannot
-    // authenticate — so there is no send to refuse and no forge to prevent. The
+    // authenticate - so there is no send to refuse and no forge to prevent. The
     // first domain or account mutation calls this again through `sync_config`
     // with a populated map, and that is what arms it. The map itself is still
     // written above, so the table on disk keeps telling the truth either way.
     if map_content.trim().is_empty() {
         tracing::info!(
-            "Sender-login map is empty (no enabled mailbox or domain) — writing it but NOT \
+            "Sender-login map is empty (no enabled mailbox or domain) - writing it but NOT \
              arming the restriction. Arming an allow-list against an empty table would refuse \
              every authenticated submission on this box. The next mail sync arms it."
         );
@@ -2757,12 +2757,12 @@ async fn ensure_sender_login_enforcement(map_content: &str) {
     // mail(). Driven on a real two-tenant box, that version was INERT: every
     // forge was accepted, because `mynetworks_style = host` still covers
     // 127.0.0.0/8, and a `permit` matches before the reject is ever reached. On
-    // a hosting box "connections from this machine" is not a trusted set — it
+    // a hosting box "connections from this machine" is not a trusted set - it
     // is every tenant's own code. Isolated by experiment: plain `hash:` with no
     // `permit_mynetworks` rejects the forge; `proxy:hash:` WITH it accepts.
     //
-    // And it protected nothing. Local submission — `sendmail`, which is what
-    // PHP mail() invokes — is `non_smtpd` and never passes through
+    // And it protected nothing. Local submission - `sendmail`, which is what
+    // PHP mail() invokes - is `non_smtpd` and never passes through
     // `smtpd_sender_restrictions` at all. Measured on the same box: after this
     // parameter was removed, `sendmail -f anything@hosted.domain` was still
     // accepted, queued and delivered. The only thing the permit exempted was an
@@ -2771,7 +2771,7 @@ async fn ensure_sender_login_enforcement(map_content: &str) {
     //
     // The AUTHENTICATED form of the check, though. The bare
     // `reject_sender_login_mismatch` would also refuse UNAUTHENTICATED inbound
-    // mail on 25 whose envelope sender is a hosted address — ordinary for a
+    // mail on 25 whose envelope sender is a hosted address - ordinary for a
     // mailing list, a forwarder, or a tenant's own address used by an external
     // SaaS. The threat is an authenticated co-tenant; restricting more than
     // that would break delivery to pay for nothing.
@@ -2781,7 +2781,7 @@ async fn ensure_sender_login_enforcement(map_content: &str) {
         .await;
 }
 
-/// POST /mail/tls/enforce — Set TLS enforcement level.
+/// POST /mail/tls/enforce - Set TLS enforcement level.
 async fn tls_enforce(Json(body): Json<serde_json::Value>) -> Result<Json<serde_json::Value>, ApiErr> {
     let inbound = body.get("inbound").and_then(|v| v.as_str()).unwrap_or("may");
     let outbound = body.get("outbound").and_then(|v| v.as_str()).unwrap_or("may");
@@ -2819,7 +2819,7 @@ async fn write_file_atomic(path: &str, content: &str) -> Result<(), String> {
 ///
 /// The file holds every mail account's password hash, so it must not be
 /// world-readable. `0600 root:root` enforces that and is the instinctive
-/// choice — but it is one notch too strict, and the cost is the entire mail
+/// choice - but it is one notch too strict, and the cost is the entire mail
 /// vertical: Dovecot's auth worker drops privileges to the `dovecot` user, so
 /// it could not open this file at all. Every IMAP, POP3 and submission login
 /// failed with `Temporary authentication failure` while the panel reported the
@@ -2832,7 +2832,7 @@ async fn write_file_atomic(path: &str, content: &str) -> Result<(), String> {
 /// The group is set on the temporary file *before* the rename, so the real
 /// path is never momentarily visible with ownership that would lock auth out.
 /// A box that has no `dovecot` group has no Dovecot either, so a failing
-/// `chown` is not worth losing the write over — the mode already keeps the
+/// `chown` is not worth losing the write over - the mode already keeps the
 /// hashes private.
 async fn write_dovecot_users(content: &str) -> Result<(), String> {
     let tmp_path = format!("{DOVECOT_USERS}.tmp");
@@ -2879,7 +2879,7 @@ mod tests {
 
     /// No milter list at all means mail was never installed. Returning `None`
     /// is what lets the caller fail loudly instead of writing back a file it
-    /// did not change — the silent no-op that hid the defect for two ships.
+    /// did not change - the silent no-op that hid the defect for two ships.
     #[test]
     fn absent_keys_report_absence_rather_than_a_no_op() {
         assert!(add_milter("mydomain = example.com\n", RSPAMD_MILTER).is_none());
@@ -2905,7 +2905,7 @@ mod tests {
     // The property under test is the one no source grep can reach: given a
     // payload, does the generated table let tenant A claim tenant B's domain?
     // Proving the RESTRICTION rejects the forge needs a real Postfix and two
-    // authenticated tenants — that is the fresh-VPS leg, not these.
+    // authenticated tenants - that is the fresh-VPS leg, not these.
 
     fn domain(name: &str, enabled: bool) -> SyncDomain {
         SyncDomain { domain: name.into(), enabled, catch_all: None, send_ip: None, helo: None }
@@ -2922,7 +2922,7 @@ mod tests {
     }
 
     /// Look up a key the way Postfix does: the full address first, then
-    /// `@domain`. Encoding the lookup order here is deliberate — a table is
+    /// `@domain`. Encoding the lookup order here is deliberate - a table is
     /// only correct with respect to how it is read, and every assertion below
     /// asks a question an SMTP session would actually ask.
     fn owners_of(table: &str, sender: &str) -> Option<String> {
@@ -2942,7 +2942,7 @@ mod tests {
             // An absent key is REFUSAL, not permission: the armed restriction
             // rejects an authenticated client whose MAIL FROM "is not listed in
             // $smtpd_sender_login_maps". This model asserted the opposite until
-            // the parameter's own manual page was read against it — and not one
+            // the parameter's own manual page was read against it - and not one
             // of the tests below moved when it was corrected, because every one
             // of them names an address at a hosted domain, which is listed under
             // either reading. The two tests that DO discriminate were written
@@ -2978,7 +2978,7 @@ mod tests {
     }
 
     /// The `@domain` row is what covers every address that is not itself a
-    /// mailbox — aliases, catch-alls, and any local part a forger invents.
+    /// mailbox - aliases, catch-alls, and any local part a forger invents.
     /// Without it the control would only defend addresses that already exist,
     /// which is the smaller half of the surface.
     #[test]
@@ -3002,7 +3002,7 @@ mod tests {
 
     /// Disabled accounts are already excluded from the Dovecot users file, so
     /// they hold no login at all. Listing one as an owner would grant an
-    /// identity to a credential that cannot authenticate — and, worse, would
+    /// identity to a credential that cannot authenticate - and, worse, would
     /// leave a domain looking owned when its only mailbox is switched off.
     #[test]
     fn a_disabled_mailbox_owns_neither_itself_nor_its_domain() {
@@ -3034,7 +3034,7 @@ mod tests {
         // The one that actually bites, and the one the first two cannot reach:
         // both of those name addresses the exact rows already cover, so they
         // pass even when the WILDCARD is wrong. A relaxed domain test leaks
-        // through the `@domain` row, on an invented local part — so that is
+        // through the `@domain` row, on an invented local part - so that is
         // where it has to be asked. (Found by mutation, not by writing.)
         assert!(!may_send_as(&t, "b@mail.example.com", "invented@example.com"));
     }
@@ -3042,7 +3042,7 @@ mod tests {
     /// The two tests the original eight could not express, because all eight
     /// named addresses at hosted domains and those are listed under either
     /// reading of the restriction. These are the ones that fail if `may_send_as`
-    /// goes back to treating an absent key as permission — i.e. they are the
+    /// goes back to treating an absent key as permission - i.e. they are the
     /// tests that would have caught the premise being wrong.
     #[test]
     fn an_address_at_no_hosted_domain_is_refused() {
@@ -3053,7 +3053,7 @@ mod tests {
 
     /// The cheapest way a legitimate operator meets the bound: a shop or app on
     /// a subdomain that was never added as its own mail domain. Refused, and
-    /// the fix is to add the subdomain — not to widen the map.
+    /// the fix is to add the subdomain - not to widen the map.
     #[test]
     fn a_subdomain_that_was_never_added_is_refused() {
         let t = build_sender_login_map(&two_tenants());
@@ -3077,7 +3077,7 @@ mod tests {
     }
 
     /// Every line must be exactly `key<TAB>value`, or `postmap` builds a table
-    /// that does not answer the question the restriction asks — and a bad hash
+    /// that does not answer the question the restriction asks - and a bad hash
     /// is the failure mode that takes smtpd down.
     #[test]
     fn every_line_is_a_well_formed_two_column_row() {

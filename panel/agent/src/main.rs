@@ -29,7 +29,7 @@ async fn main() {
     //
     // Handled before anything else runs. Note the standing hazard this does NOT
     // change: an UNRECOGNISED argument still falls through to the daemon, which
-    // binds the agent socket — never run this binary by hand on a box that is
+    // binds the agent socket - never run this binary by hand on a box that is
     // already serving one (there is still no `--version`; read /health instead).
     if std::env::args().skip(1).any(|a| a == "--print-unit") {
         print!("{}", services::agent_unit::AGENT_UNIT);
@@ -38,7 +38,7 @@ async fn main() {
     // An unrecognised option must be an ERROR, not a daemon. Every version
     // before this one ignored its arguments entirely and went straight to
     // binding the agent socket, so `dockpanel-agent --anything` silently
-    // started a second agent — and an installer asking an older binary for
+    // started a second agent - and an installer asking an older binary for
     // `--print-unit` hung for ever instead of being refused (measured, s271).
     // Only `--`-prefixed arguments are judged; bare arguments keep their old
     // behaviour, since nothing passes any.
@@ -78,7 +78,7 @@ async fn main() {
     // The backup tree is root-only, and this repairs what is already on disk.
     // `create_dir_all` above made these 0755 and every writer's redirect made
     // the files 0644, so on a panel host that also serves sites the panel's own
-    // database dump — agent tokens in cleartext — was readable by www-data, the
+    // database dump - agent tokens in cleartext - was readable by www-data, the
     // uid every hosted site's PHP runs as. Both panel services run as root, so
     // nothing legitimate loses access. See the function's own docs.
     services::backups::secure_backup_tree();
@@ -86,7 +86,7 @@ async fn main() {
 
     // One-shot migration, idempotent: give static vhosts already on disk the denies
     // v2.68.0 added to the template. The template alone reaches a site only when
-    // something re-renders its vhost, and nothing re-renders on upgrade — so an
+    // something re-renders its vhost, and nothing re-renders on upgrade - so an
     // already-switched site keeps serving its PHP source. update.sh carries the same
     // retrofit, but its own header records that an agent-only box never runs it, so
     // this is the copy that reaches a fleet member. Awaited deliberately: it must
@@ -108,7 +108,7 @@ async fn main() {
             tracing::info!("Using agent token from AGENT_TOKEN env var");
             env_token
         } else {
-            // Empty env var — fall through to file
+            // Empty env var - fall through to file
             match std::fs::read_to_string(&token_path) {
                 Ok(t) if !t.trim().is_empty() => t.trim().to_string(),
                 _ => {
@@ -125,7 +125,7 @@ async fn main() {
             }
         }
     } else {
-        // No env var — use file or generate
+        // No env var - use file or generate
         match std::fs::read_to_string(&token_path) {
             Ok(t) if !t.trim().is_empty() => t.trim().to_string(),
             _ => {
@@ -162,7 +162,7 @@ async fn main() {
     sys.refresh_all();
 
     // CPU usage is sampled on its own fixed cadence rather than inside request
-    // handlers — a per-request refresh measures the gap since some unrelated
+    // handlers - a per-request refresh measures the gap since some unrelated
     // caller, which is why an idle box could report ~99%. See the module docs.
     let cpu_sampler = services::cpu_sampler::CpuSampler::new();
     cpu_sampler.spawn();
@@ -257,7 +257,7 @@ async fn main() {
             });
         if let Some(gid) = group_gid {
             let path = std::ffi::CString::new(SOCKET_PATH).expect("socket path null");
-            // chown(socket, -1 (keep owner), gid) — sets group only.
+            // chown(socket, -1 (keep owner), gid) - sets group only.
             unsafe { libc::chown(path.as_ptr(), libc::uid_t::MAX, gid) };
         }
         // Group-readable/writable so nginx (in the resolved group) can connect.
@@ -277,7 +277,7 @@ async fn main() {
 
     // Bring a pre-existing /webmail/ nginx fragment up to the current template.
     // The fragment is written only on the Install click, so without this an
-    // existing install never receives a fix to its contents — which is how
+    // existing install never receives a fix to its contents - which is how
     // s262's header fix reached no box at all until s270. No-op when webmail
     // was never installed.
     tokio::spawn(routes::mail::heal_webmail_nginx());
@@ -296,7 +296,7 @@ async fn main() {
     }
 
     // A member used to ALSO bind 127.0.0.1:9090 and serve the ENTIRE router
-    // there — `app.clone()`, so files, terminal, exec, databases and the SSH
+    // there - `app.clone()`, so files, terminal, exec, databases and the SSH
     // hardening routes all answered on it. Its only caller in the tree was the
     // command poller removed in s305, which could never execute anything, so
     // the port was a second full-surface door that existed to serve nothing.
@@ -330,7 +330,7 @@ async fn main() {
     }
 
     tracing::info!(
-        "DockPanel Agent v{} listening on {SOCKET_PATH}",
+        "CyberHunter - Panel Agent v{} listening on {SOCKET_PATH}",
         env!("CARGO_PKG_VERSION")
     );
 
@@ -341,7 +341,7 @@ async fn main() {
         tracing::error!("Agent server error: {e}");
     }
 
-    tracing::info!("DockPanel Agent shut down gracefully");
+    tracing::info!("CyberHunter - Panel Agent shut down gracefully");
 }
 
 async fn shutdown_signal() {

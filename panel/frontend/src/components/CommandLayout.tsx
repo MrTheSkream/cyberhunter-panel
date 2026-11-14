@@ -130,8 +130,8 @@ export default function CommandLayout() {
                 </div>
                 {!branding.hideBranding && (
                   <span className="text-lg font-bold logo-glow">
-                    {branding.panelName === "DockPanel" ? (
-                      <><span className="text-rust-400">Dock</span><span className="text-dark-50">Panel</span></>
+                    {branding.panelName === "CyberHunter - Panel" ? (
+                      <><span className="text-rust-400">CyberHunter</span><span className="text-dark-50"> - Panel</span></>
                     ) : (
                       <span className="text-dark-50">{branding.panelName}</span>
                     )}
@@ -170,7 +170,7 @@ export default function CommandLayout() {
         {/* Nav */}
         <nav className="flex-1 px-3 pt-4 overflow-y-auto sidebar-scroll-fade">
           {flatNav && navItems ? (
-            /* Flat nav — no group labels */
+            /* Flat nav - no group labels */
             <div className="space-y-1">
               {navItems.map((item) => (
                 <NavLink
@@ -222,7 +222,7 @@ export default function CommandLayout() {
               ))}
             </div>
           ) : (
-            /* Grouped nav — with labels */
+            /* Grouped nav - with labels */
             state.visibleGroups.map((group, gi) => (
               <div key={group.label} className={gi > 0 ? "mt-5" : ""}>
                 {gi > 0 && (
@@ -250,7 +250,7 @@ export default function CommandLayout() {
                           <Icon name={item.iconName} />
                           <span>{item.label}</span>
                           {/* Both counts belong to this one row now, so they are
-                              rendered together rather than as alternatives — a
+                              rendered together rather than as alternatives - a
                               chain would have shown the alerts and silently
                               swallowed the incidents whenever both were live. */}
                           {item.to === "/monitoring" && (state.firingCount > 0 || state.incidentCount > 0) ? (
@@ -432,7 +432,7 @@ export default function CommandLayout() {
               <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" /></svg>
             </button>
             <span className="text-base font-bold logo-glow">
-              {branding.hideBranding ? "" : branding.panelName === "DockPanel" ? <><span className="text-rust-400">Dock</span><span className="text-dark-50">Panel</span></> : <span className="text-dark-50">{branding.panelName}</span>}
+              {branding.hideBranding ? "" : branding.panelName === "CyberHunter - Panel" ? <><span className="text-rust-400">CyberHunter</span><span className="text-dark-50"> - Panel</span></> : <span className="text-dark-50">{branding.panelName}</span>}
             </span>
           </div>
         )}

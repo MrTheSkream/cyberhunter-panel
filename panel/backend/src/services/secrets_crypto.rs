@@ -51,7 +51,7 @@ fn encryption_key_override() -> Option<String> {
     normalize_env_key(std::env::var(ENCRYPTION_KEY_ENV).ok())
 }
 
-/// Legacy key derivation (SHA-256 only) — kept for decrypting existing data.
+/// Legacy key derivation (SHA-256 only) - kept for decrypting existing data.
 fn derive_key_legacy(secret: &str, salt: &[u8]) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(salt);
@@ -86,8 +86,8 @@ fn derive_key(key_source: &str) -> [u8; 32] {
 /// ⚠ This is deliberately a UNION, never an if/else, and that is the whole
 /// point of the function. Until v2.112.0 `derive_credential_key` was an
 /// if/else yielding exactly ONE key per process: with `SECRETS_ENCRYPTION_KEY`
-/// set it returned `HKDF(env)`, and `HKDF(jwt)` — the key every existing
-/// install had actually encrypted with — appeared in NO arm of the decrypt
+/// set it returned `HKDF(env)`, and `HKDF(jwt)` - the key every existing
+/// install had actually encrypted with - appeared in NO arm of the decrypt
 /// chain. Setting the variable on a running panel was therefore silent,
 /// irreversible data loss, and `decrypt_credential_or_legacy` fail-opened the
 /// wreckage into its callers as base64 text where a password belonged.
@@ -115,7 +115,7 @@ fn credential_key_candidates(jwt_secret: &str, env_key: Option<&str>) -> Vec<[u8
 ///
 /// Same defect, second subsystem: `routes::secrets::get_encryption_key` returns
 /// the env var verbatim when set, else `hex(sha256(salt || jwt))`, and
-/// [`decrypt`]'s two arms are both derived from whatever that one string is —
+/// [`decrypt`]'s two arms are both derived from whatever that one string is -
 /// so the pre-env derivation was in no arm at all and setting the variable
 /// stranded every vault secret, including the CMS admin passwords site
 /// provisioning writes there and the values `deploy` injects into a site's
@@ -125,7 +125,7 @@ pub fn vault_key_sources(jwt_secret: &str, env_key: Option<&str>) -> Vec<String>
     if let Some(env) = env_key {
         sources.push(env.to_string());
     }
-    // UNCONDITIONAL — see above.
+    // UNCONDITIONAL - see above.
     sources.push(hex::encode(derive_key_legacy(jwt_secret, VAULT_SOURCE_SALT)));
     sources
 }
@@ -143,11 +143,11 @@ pub fn vault_key_primary(jwt_secret: &str) -> String {
 ///
 /// Callers pass this to `openssl enc -pass stdin`, which runs its own PBKDF2
 /// (100k iterations, random salt per file) to turn a passphrase into an
-/// AES-256 key — that stretching step was always fine. What v1
+/// AES-256 key - that stretching step was always fine. What v1
 /// (`services::backup_policy_executor::derive_backup_encryption_key_v1`) got
 /// wrong was the passphrase's VALUE: a literal substring of `JWT_SECRET`, the
 /// same secret every session token is HMAC-signed with. Learning a v1 backup
-/// passphrase handed an attacker 32 bytes of the panel's auth signing key —
+/// passphrase handed an attacker 32 bytes of the panel's auth signing key -
 /// coupling the blast radius of "one old backup file leaked" to "every
 /// session on this install can be forged." HKDF is a one-way PRF: this
 /// string reveals nothing about `jwt_secret`, and `jwt_secret` reveals
@@ -161,7 +161,7 @@ pub fn derive_backup_encryption_key_v2(jwt_secret: &str) -> String {
 ///
 /// A value we wrote is `base64(nonce || ciphertext || tag)`: 12 bytes of nonce
 /// plus a 16-byte GCM tag, so 28 bytes is the floor even for empty plaintext.
-/// This is what lets a failed decrypt be classified instead of swallowed —
+/// This is what lets a failed decrypt be classified instead of swallowed -
 /// "this was never encrypted" and "this is encrypted with a key I cannot
 /// derive" are the same `Err` without it.
 fn looks_like_ciphertext(value: &str) -> bool {
@@ -310,7 +310,7 @@ pub fn decrypt_credential(encrypted_b64: &str, jwt_secret: &str) -> Result<Strin
 /// Decrypt a Secrets Manager vault value, trying every key source the value
 /// could have been written under.
 ///
-/// Takes the RAW jwt secret, not a derived key — deriving one source and
+/// Takes the RAW jwt secret, not a derived key - deriving one source and
 /// handing it to [`decrypt`] is precisely what made setting
 /// `SECRETS_ENCRYPTION_KEY` unsurvivable for the vault.
 pub fn decrypt_vault(encrypted_b64: &str, jwt_secret: &str) -> Result<String, String> {
@@ -373,7 +373,7 @@ pub fn reencrypt_vault(encrypted_b64: &str, jwt_secret: &str) -> Result<Option<S
 /// call sites take this function's return value and use it AS a password. When
 /// the value really is a legacy plaintext, handing it back is exactly right.
 /// When the value is our own ciphertext that no key opens, handing it back
-/// means the caller authenticates with base64 — nineteen of those sites then
+/// means the caller authenticates with base64 - nineteen of those sites then
 /// fail against a remote service with no panel-side log at all, so the blame
 /// lands on the remote service, and the five TOTP sites hard-fail into a 2FA
 /// lockout.
@@ -397,7 +397,7 @@ pub fn decrypt_credential_or_legacy(value: &str, jwt_secret: &str) -> String {
                 tracing::error!(
                     error = %e,
                     "Stored credential is well-formed ciphertext that NO key derivation opens. \
-                     Returning the stored value verbatim — callers will receive base64 text \
+                     Returning the stored value verbatim - callers will receive base64 text \
                      where a credential belongs, and any service they authenticate against \
                      will reject it. This almost always means {} was added, changed or removed \
                      on a panel that already held encrypted data. Restore the previous value \
@@ -496,7 +496,7 @@ mod tests {
     #[test]
     fn backup_key_v2_differs_from_vault_and_credential_keys() {
         // Same domain-separation property as credential_key_differs_from_vault_key,
-        // extended to the backup key — three subsystems, three keys, one jwt_secret.
+        // extended to the backup key - three subsystems, three keys, one jwt_secret.
         let secret = "same-jwt-secret";
         let vault = derive_key(secret);
         let cred = derive_key_with_salt(secret, CREDENTIAL_JWT_SALT);
@@ -509,7 +509,7 @@ mod tests {
     #[test]
     fn backup_key_v2_does_not_leak_the_jwt_secret() {
         // THE regression this function exists to fix: v1 was
-        // format!("backup-enc-{}", &jwt_secret[..32]) — a literal substring of
+        // format!("backup-enc-{}", &jwt_secret[..32]) - a literal substring of
         // the auth signing secret. v2 must contain no substring of jwt_secret
         // at all (HKDF is one-way), so a leaked backup passphrase reveals
         // nothing about the key every session token is signed with.
@@ -517,7 +517,7 @@ mod tests {
         let key = derive_backup_encryption_key_v2(secret);
         assert!(
             !key.contains(&secret[..16]),
-            "the v2 backup key must not contain any substring of jwt_secret — got {key}"
+            "the v2 backup key must not contain any substring of jwt_secret - got {key}"
         );
         assert!(
             !key.to_lowercase().contains(&secret.to_lowercase()[..16]),
@@ -546,7 +546,7 @@ mod tests {
     // Setting SECRETS_ENCRYPTION_KEY used to swap the ONE credential key for a
     // different one, taking the key production had actually encrypted with out
     // of the decrypt chain entirely. Every arm below names the SPECIFIC key
-    // whose absence was the bug — none of them counts candidates, because an
+    // whose absence was the bug - none of them counts candidates, because an
     // arm that counts is satisfied by the members that were never at risk.
 
     #[test]
@@ -560,7 +560,7 @@ mod tests {
         // sets one, or every existing row becomes unreadable.
         assert!(
             with.contains(&without[0]),
-            "HKDF(jwt) — the key production encrypts with today — is missing from the \
+            "HKDF(jwt) - the key production encrypts with today - is missing from the \
              candidate set once SECRETS_ENCRYPTION_KEY is set. This is the data-loss bug."
         );
     }
@@ -573,7 +573,7 @@ mod tests {
 
         assert!(
             with.contains(&without[0]),
-            "the derived vault key source is missing once SECRETS_ENCRYPTION_KEY is set — \
+            "the derived vault key source is missing once SECRETS_ENCRYPTION_KEY is set - \
              every existing vault secret would be unreadable."
         );
     }
@@ -602,7 +602,7 @@ mod tests {
         // The vault half lacked this guard while the credential half had it,
         // so the two subsystems disagreed about what the operator configured.
         //
-        // ⚠ This arm drives `normalize_env_key` — THE guard — and not
+        // ⚠ This arm drives `normalize_env_key` - THE guard - and not
         // `vault_key_sources`. The first cut asserted on `vault_key_sources(jwt,
         // Some(""))`, which never consults the guard at all, so deleting the
         // guard left it GREEN. The mutation run caught it; the arm now names and

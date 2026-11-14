@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Regression pin for "does the backup actually LAND, and does the panel tell the
-# truth about it?" — the six defects of s289.
+# truth about it?" - the six defects of s289.
 #
 # Every one of them had the same shape: a green check over a broken thing. s288
 # fixed the credential path and proved Test Connection, and stopped there; none of
@@ -18,12 +18,12 @@
 #
 #   B  `backup_scheduler` computed its upload result into a discarded `_`-prefixed
 #      binding and inserted five columns, omitting `uploaded` and `destination_id`
-#      — the two the migration added for exactly this. So every per-site scheduled
+#      - the two the migration added for exactly this. So every per-site scheduled
 #      backup that DID go off-site was filed as local-only. Measured on a live box:
 #      the SFTP copy sat at the destination while its row read uploaded=f.
 #
 #   C  Nothing installed `sshpass`, which is the only path a password-authenticated
-#      SFTP destination can take — and password is the mode the form offers first.
+#      SFTP destination can take - and password is the mode the form offers first.
 #      s288 measured SFTP as working only because the test rig had apt-installed
 #      sshpass itself, so the product's own gap was invisible to the test.
 #
@@ -38,14 +38,14 @@
 #      `remote_path`, so Test passed while every scp failed "No such file or
 #      directory". The default is /backups, which exists on almost no server.
 #
-#   F  S3 Test HEADed the bucket ROOT while upload PUTs into the PREFIX — different
+#   F  S3 Test HEADed the bucket ROOT while upload PUTs into the PREFIX - different
 #      permission, different path. Read-only and prefix-scoped keys both read green.
 #
 # and the one s339 added:
 #
 #   G  Both SFTP operations were SSH **exec** requests (`ssh host "mkdir -p ..."`,
-#      then `scp`). `ForceCommand internal-sftp` — OpenSSH's own documented way to
-#      run a chrooted, SFTP-only account — replaces the requested command with the
+#      then `scp`). `ForceCommand internal-sftp` - OpenSSH's own documented way to
+#      run a chrooted, SFTP-only account - replaces the requested command with the
 #      SFTP subsystem, so the mkdir was discarded and no such destination could
 #      complete a backup (issue #102). The refusal arrives on STDOUT, so an error
 #      built from stderr alone showed the operator nothing but ssh's known-hosts
@@ -73,7 +73,7 @@ done
 
 # Strip // line comments so a prose mention of a flag cannot satisfy an arm.
 # This pin's whole subject is code that LOOKS right, and its own header names
-# every string it greps for — without this, the header would pass the suite.
+# every string it greps for - without this, the header would pass the suite.
 # (Deliberately not stripping /* */: none of these files use block comments, and
 # a naive block stripper has already swallowed a whole file here once.)
 strip() { sed 's://.*::' "$1"; }
@@ -83,14 +83,14 @@ SRC_SCHED=$(strip "$SCHED")
 SRC_RB=$(strip "$RB")
 SRC_RBR=$(strip "$RBR")
 
-# Match against text already held in a variable, via a HERE-STRING — never a
+# Match against text already held in a variable, via a HERE-STRING - never a
 # pipeline.
 #
 # `code "$f" | grep -q ...` is the obvious spelling and it is wrong here:
 # `grep -q` closes the pipe the moment it matches, the upstream `sed` dies of
 # SIGPIPE with status 141, and `set -o pipefail` then reports the whole pipeline
 # as FAILED. Whether an arm went green depended on whether sed had finished
-# writing before grep bailed — the same source scored differently run to run, and
+# writing before grep bailed - the same source scored differently run to run, and
 # the first draft of this suite reported a real fix as missing for exactly that
 # reason. A here-string is a single command, so there is no upstream to kill.
 has()  { grep -q  -- "$2" <<< "$1"; }
@@ -102,13 +102,13 @@ echo
 echo "§1 the upload call sites outlive the agent's own upload budget (A)"
 
 # The agent's own budget, read from the upload functions rather than from a bare
-# `from_secs(600)` literal — the refactor that fixed D moved the timeout into the
+# `from_secs(600)` literal - the refactor that fixed D moved the timeout into the
 # shared runners' argument lists, and an arm pinned to the old spelling reports a
 # problem with the code when the problem is with the arm.
 if hasE "$(fnbody "$SRC_RB" upload_s3)" '^ +600,' && hasE "$(fnbody "$SRC_RB" upload_sftp)" '600,'; then
   ok "the agent still budgets 600s for both uploads"
 else
-  bad "the agent's upload budget moved — this pin's numbers need rechecking"
+  bad "the agent's upload budget moved - this pin's numbers need rechecking"
 fi
 
 for f in "$EXEC" "$SCHED"; do
@@ -117,16 +117,16 @@ for f in "$EXEC" "$SCHED"; do
   if has "$src" 'post_long("/backups/upload"'; then
     ok "$n uploads via post_long, not the 60s post"
   else
-    bad "$n uses plain post for /backups/upload — 60s cap over a 600s operation"
+    bad "$n uses plain post for /backups/upload - 60s cap over a 600s operation"
   fi
   # Pull the digits out of the argument list. Anchoring on `$` matched nothing,
-  # because the captured text ends in `)` — an arm that silently extracts an
+  # because the captured text ends in `)` - an arm that silently extracts an
   # empty string reports "none" and looks like a real failure of the code.
   t=$(grep -oE 'post_long\("/backups/upload", Some\([a-z_]+\.clone\(\)\), [0-9]+' <<< "$src" | grep -oE '[0-9]+' | tail -1)
   if [ -n "$t" ] && [ "$t" -gt 600 ]; then
-    ok "$n allows ${t}s — longer than the agent's 600s, so the agent errors first"
+    ok "$n allows ${t}s - longer than the agent's 600s, so the agent errors first"
   else
-    bad "$n passes '${t:-none}' — must exceed the agent's 600s budget"
+    bad "$n passes '${t:-none}' - must exceed the agent's 600s budget"
   fi
 done
 
@@ -135,18 +135,18 @@ echo "§2 a scheduled backup records WHERE its bytes went (B)"
 
 # Assert the CAPABILITY (both columns are in the list), never the list itself.
 # The first cut of this arm froze the whole column list terminated by
-# `destination_id)`, so #114's correct fix — appending sha256_hash/previous_hash,
-# which this arm has no opinion about — turned it red with the false verdict
+# `destination_id)`, so #114's correct fix - appending sha256_hash/previous_hash,
+# which this arm has no opinion about - turned it red with the false verdict
 # "omits uploaded/destination_id" while both were plainly still there. A pin that
 # freezes a list guarantees the next legitimate addition looks like a regression,
 # and it cannot notice the asymmetry it was supposed to be watching for.
 SCHED_INSERT=$(sed -n '/INSERT INTO backups (/,/)/p' <<< "$SRC_SCHED" | head -2 | tr -d '\n')
 if [ -z "$SCHED_INSERT" ]; then
-  bad "the scheduler's INSERT could not be isolated — the arm examined nothing"
+  bad "the scheduler's INSERT could not be isolated - the arm examined nothing"
 elif hasE "$SCHED_INSERT" 'uploaded' && hasE "$SCHED_INSERT" 'destination_id'; then
   ok "the scheduler's INSERT carries uploaded + destination_id"
 else
-  bad "the scheduler's INSERT omits uploaded/destination_id — the badge cannot light"
+  bad "the scheduler's INSERT omits uploaded/destination_id - the badge cannot light"
 fi
 
 if hasE "$SRC_SCHED" 'let _uploaded_remote'; then
@@ -158,18 +158,18 @@ fi
 # Pinned as a CAPABILITY, not as a literal.
 #
 # The previous spelling of this arm was an exact match on
-# `bind(if uploaded_remote { ... } else { None })`, and s389's correct fix — making
-# the bind unconditional — therefore reported as a regression. That is the same
+# `bind(if uploaded_remote { ... } else { None })`, and s389's correct fix - making
+# the bind unconditional - therefore reported as a regression. That is the same
 # freeze-a-literal failure this file's own §B comment above already describes.
 #
 # What actually has to hold: the destination is recorded whatever the upload did.
-# `uploaded = FALSE` alone cannot mean "off-site failed" — the manual path binds
-# no destination and a schedule with none writes FALSE too — so the only predicate
+# `uploaded = FALSE` alone cannot mean "off-site failed" - the manual path binds
+# no destination and a schedule with none writes FALSE too - so the only predicate
 # that identifies a failed off-site copy is the PAIR (destination_id IS NOT NULL
 # AND NOT uploaded), which is what the policy executor already writes.
 DEST_BIND=$(grep -oE '\.bind\([^)]*dest_id[^)]*\)' <<< "$SRC_SCHED" | head -1)
 if [ -z "$DEST_BIND" ]; then
-  bad "the scheduler binds no destination_id at all — a scheduled off-site copy records no destination"
+  bad "the scheduler binds no destination_id at all - a scheduled off-site copy records no destination"
 elif grep -q 'uploaded' <<< "$DEST_BIND"; then
   bad "destination_id is bound only when the upload succeeded, so a failed off-site copy cannot be told from a schedule that never had a destination: $DEST_BIND"
 else
@@ -177,7 +177,7 @@ else
 fi
 
 if has "$(grep -B2 'dest_id: Option<Uuid>' <<< "$SRC_SCHED")" 'allow(dead_code)'; then
-  bad "dest_id is #[allow(dead_code)] again — the annotation hides the gap"
+  bad "dest_id is #[allow(dead_code)] again - the annotation hides the gap"
 else
   ok "dest_id carries no dead_code annotation"
 fi
@@ -188,7 +188,7 @@ echo "§3 no S3 call treats a redirect as a delivered upload (D)"
 # --fail is the flag that made a 3xx look like success. It must be gone from
 # every S3 invocation, not just the one that was investigated.
 if has "$SRC_RB" '"--fail"'; then
-  bad "an S3 curl invocation still passes --fail — 3xx will read as success"
+  bad "an S3 curl invocation still passes --fail - 3xx will read as success"
 else
   ok "no S3 curl invocation passes --fail"
 fi
@@ -196,7 +196,7 @@ fi
 if has "$SRC_RB" 'fn s3_ok' && has "$SRC_RB" '(200..300).contains'; then
   ok "success is defined as an explicit 2xx"
 else
-  bad "there is no explicit 2xx check — status is being inferred from exit code"
+  bad "there is no explicit 2xx check - status is being inferred from exit code"
 fi
 
 # All four S3 operations must go through the one runner. Fixing the copy under
@@ -205,14 +205,14 @@ for fn in upload_s3 test_s3 list_s3 delete_s3; do
   if has "$(fnbody "$SRC_RB" "$fn")" 's3_curl('; then
     ok "$fn goes through the shared s3_curl runner"
   else
-    bad "$fn builds its own curl call — the 3xx bug can return there"
+    bad "$fn builds its own curl call - the 3xx bug can return there"
   fi
 done
 
 # Following redirects is NOT the fix: a SigV4 signature is bound to the host and
 # path it was signed for, and curl downgrades PUT to GET on 301/302.
 if hasE "$SRC_RB" '"-L"|--location'; then
-  bad "an S3 call follows redirects — the SigV4 signature will not match the new host"
+  bad "an S3 call follows redirects - the SigV4 signature will not match the new host"
 else
   ok "no S3 call follows redirects"
 fi
@@ -223,14 +223,14 @@ echo "§4 Test Connection exercises what an upload needs (E, F)"
 if has "$SRC_RBR" 'test_s3(bucket, region, endpoint, access_key, secret_key, prefix)'; then
   ok "the S3 test is handed the same prefix the upload writes to"
 else
-  bad "the S3 test does not receive path_prefix — it probes a different location"
+  bad "the S3 test does not receive path_prefix - it probes a different location"
 fi
 
 S3TEST=$(fnbody "$SRC_RB" test_s3)
 if has "$S3TEST" '"PUT"'; then
   ok "the S3 test performs a PUT, the operation an upload performs"
 else
-  bad "the S3 test does not write — a read-only key will pass it"
+  bad "the S3 test does not write - a read-only key will pass it"
 fi
 if has "$S3TEST" '"DELETE"'; then
   ok "the S3 test removes its own probe object"
@@ -238,7 +238,7 @@ else
   bad "the S3 test leaves its probe behind at the destination"
 fi
 if has "$S3TEST" '"-I"'; then
-  bad "the S3 test still HEADs — that is the check that could not see a 301"
+  bad "the S3 test still HEADs - that is the check that could not see a 301"
 else
   ok "the S3 test no longer relies on HEAD"
 fi
@@ -249,22 +249,22 @@ SFTPTEST=$(fnbody "$SRC_RB" test_sftp)
 if has "$UPSFTP" 'sftp_mkdir_script'; then
   ok "the SFTP upload creates its remote directory"
 else
-  bad "nothing creates the SFTP remote directory — a transfer will not"
+  bad "nothing creates the SFTP remote directory - a transfer will not"
 fi
 
 if has "$(grep -A8 'test_sftp(' <<< "$SRC_RBR")" 'remote_path'; then
   ok "the SFTP test is handed remote_path"
 else
-  bad "the SFTP test never receives remote_path — it cannot check the directory"
+  bad "the SFTP test never receives remote_path - it cannot check the directory"
 fi
 
 if has "$SFTPTEST" 'sftp_mkdir_script'; then
   ok "the SFTP test creates and probes the directory an upload will use"
 else
-  bad "the SFTP test does not touch remote_path — green while every upload fails"
+  bad "the SFTP test does not touch remote_path - green while every upload fails"
 fi
 if has "$SFTPTEST" '"exit".into()'; then
-  bad "the SFTP test is back to connecting and exiting — it proves only auth"
+  bad "the SFTP test is back to connecting and exiting - it proves only auth"
 else
   ok "the SFTP test does more than authenticate"
 fi
@@ -279,44 +279,44 @@ echo "§4b the transport survives a server that only allows SFTP (G)"
 for pair in "upload_sftp:$UPSFTP" "test_sftp:$SFTPTEST"; do
   fn=${pair%%:*}; body=${pair#*:}
   # Flatten first. grep matches within ONE line, and rustfmt wraps a call whose
-  # argument list is long — `run_sftp(\n    "ssh",` never puts the callee and its
+  # argument list is long - `run_sftp(\n    "ssh",` never puts the callee and its
   # first argument on the same line, so a line-based arm reads a call it cannot
   # see as absent. s339 shipped exactly that: this arm went red against the
   # single-line pre-fix source and stayed GREEN over a transport reverted to ssh.
   flat=$(tr '\n' ' ' <<< "$body" | tr -s ' ')
   if hasE "$flat" 'run_sftp\( *"(ssh|scp)"'; then
-    bad "$fn issues an SSH exec request — ForceCommand internal-sftp discards it"
+    bad "$fn issues an SSH exec request - ForceCommand internal-sftp discards it"
   else
     ok "$fn does not depend on an SSH exec request"
   fi
   if hasE "$flat" 'run_sftp\( *"sftp"'; then
     ok "$fn names the sftp transport explicitly"
   else
-    bad "$fn does not call run_sftp with sftp — the transport is not what it claims"
+    bad "$fn does not call run_sftp with sftp - the transport is not what it claims"
   fi
   if has "$body" '"-b"'; then
     ok "$fn drives the SFTP subsystem in batch mode"
   else
-    bad "$fn no longer runs a batch script — the transport moved"
+    bad "$fn no longer runs a batch script - the transport moved"
   fi
   # A path reaching a batch line unquoted does not fail: sftp splits it and writes
   # to the wrong place under the source filename, exit 0.
   if has "$body" 'sftp_quote'; then
     ok "$fn quotes the paths it puts in a batch line"
   else
-    bad "$fn passes an unquoted path — a space silently redirects the transfer"
+    bad "$fn passes an unquoted path - a space silently redirects the transfer"
   fi
   if has "$body" 'reject_unquotable_path'; then
     ok "$fn refuses a remote path carrying a line break"
   else
-    bad "$fn accepts a newline in remote_path — that appends a second sftp command"
+    bad "$fn accepts a newline in remote_path - that appends a second sftp command"
   fi
 done
 
 # scp is not merely unused, it must stay gone: OpenSSH < 9.0 speaks legacy `scp -t`,
 # which is an exec request and dies the same way. A modern dev box hides this.
 if has "$SRC_RB" '"scp"'; then
-  bad "scp is back — on OpenSSH < 9.0 it is an exec request and cannot survive ForceCommand"
+  bad "scp is back - on OpenSSH < 9.0 it is an exec request and cannot survive ForceCommand"
 else
   ok "no scp invocation remains"
 fi
@@ -326,13 +326,13 @@ fi
 if has "$SRC_RB" 'fn command_detail'; then
   ok "a helper exists to report both output streams"
 else
-  bad "nothing joins stdout into the error — a refusal on stdout reads as no error at all"
+  bad "nothing joins stdout into the error - a refusal on stdout reads as no error at all"
 fi
 for fn in upload_sftp test_sftp; do
   if has "$(fnbody "$SRC_RB" "$fn")" 'command_detail'; then
     ok "$fn reports both streams to the operator"
   else
-    bad "$fn reports only one stream — the diagnosis is on the other one"
+    bad "$fn reports only one stream - the diagnosis is on the other one"
   fi
 done
 
@@ -343,7 +343,7 @@ builders=$(grep -c 'StrictHostKeyChecking=accept-new' <<< "$SRC_RB")
 if [ "$builders" -eq 1 ]; then
   ok "the ssh options are built in exactly one place"
 else
-  bad "$builders ssh option lists — they drifted once already (ConnectTimeout)"
+  bad "$builders ssh option lists - they drifted once already (ConnectTimeout)"
 fi
 
 if has "$SRC_RB" 'fn sftp_opts'; then
@@ -356,7 +356,7 @@ fi
 if has "$(grep -A3 'if key_path.is_some() || password.is_none()' <<< "$SRC_RB")" 'BatchMode=yes'; then
   ok "BatchMode is still applied only when authenticating by key"
 else
-  bad "BatchMode is unconditional again — it disables the auth sshpass supplies"
+  bad "BatchMode is unconditional again - it disables the auth sshpass supplies"
 fi
 
 # The same trap has a second entrance: `sftp -b` turns BatchMode on BY ITSELF, so
@@ -365,7 +365,7 @@ fi
 if has "$SRC_RB" 'BatchMode=no'; then
   ok "the password branch disables the BatchMode that -b would impose"
 else
-  bad "nothing says BatchMode=no — sftp -b re-enables it and password auth dies"
+  bad "nothing says BatchMode=no - sftp -b re-enables it and password auth dies"
 fi
 
 echo
@@ -375,7 +375,7 @@ SETUP_SRC=$(cat "$SETUP")
 if hasE "$SETUP_SRC" 'pkg_install sshpass'; then
   ok "setup.sh installs sshpass"
 else
-  bad "nothing installs sshpass — password SFTP destinations cannot work"
+  bad "nothing installs sshpass - password SFTP destinations cannot work"
 fi
 
 if hasE "$SETUP_SRC" 'pkg_install .*openssh-client'; then
@@ -390,7 +390,7 @@ fi
 if hasE "$SETUP_SRC" 'if ! run "Installing sshpass'; then
   ok "the sshpass install is best-effort, so it cannot abort an install"
 else
-  bad "the sshpass install is not guarded — a missing package now aborts setup"
+  bad "the sshpass install is not guarded - a missing package now aborts setup"
 fi
 
 # And when it is genuinely absent, the operator must be told which binary.
@@ -420,18 +420,18 @@ SRC_MOD=$(strip "$MOD")
 SRC_CP=$(strip "$CP")
 
 # Both route arms close on the quote. An unanchored `…/sshpass` is also satisfied
-# by `…/sshpass_DISABLED`, so renaming the route out of service left them green —
+# by `…/sshpass_DISABLED`, so renaming the route out of service left them green -
 # measured, not guessed.
 if hasE "$SRC_SI" '"/services/install/sshpass"'; then
   ok "the agent exposes an install route for sshpass"
 else
-  bad "the agent has no sshpass install route — an existing server cannot be repaired"
+  bad "the agent has no sshpass install route - an existing server cannot be repaired"
 fi
 
 if hasE "$SRC_MOD" '"/api/services/install/sshpass"'; then
   ok "the panel routes through to it"
 else
-  bad "the agent route is unreachable — nothing on the panel calls it"
+  bad "the agent route is unreachable - nothing on the panel calls it"
 fi
 
 # The handler runs a package transaction as root on the target box. It must
@@ -447,17 +447,17 @@ fi
 if hasE "$SRC_SI" '"sshpass":[[:space:]]*\{[[:space:]]*"installed"'; then
   ok "install-status reports sshpass, so the panel can show it before it is needed"
 else
-  bad "nothing reports whether sshpass is present — the control cannot render state"
+  bad "nothing reports whether sshpass is present - the control cannot render state"
 fi
 
 # The shared fnbody() anchors on `pub async fn`, and this handler is private, so
 # it extracts NOTHING here. An empty window makes a presence arm red for a reason
-# that has nothing to do with the code — and would make an ABSENCE arm green. So
+# that has nothing to do with the code - and would make an ABSENCE arm green. So
 # match either spelling, and refuse to score an empty extraction at all.
 fnbody_any() { awk "/async fn $2\(/,/^}/" <<< "$1"; }
 TD=$(fnbody_any "$SRC_RBR" test_destination)
 if [ "$(printf '%s' "$TD" | wc -l)" -lt 20 ]; then
-  bad "test_destination did not extract — every arm below it is measuring nothing"
+  bad "test_destination did not extract - every arm below it is measuring nothing"
 else
   ok "test_destination extracted ($(printf '%s' "$TD" | wc -l) lines)"
 
@@ -468,7 +468,7 @@ else
   if hasE "$TD" 'FAILED_DEPENDENCY'; then
     ok "a missing prerequisite answers 4xx, so its sentence survives the trip"
   else
-    bad "the missing-sshpass answer is a 5xx again — the panel will eat the remedy"
+    bad "the missing-sshpass answer is a 5xx again - the panel will eat the remedy"
   fi
 
   # ...and it must be that ONE condition, not every SFTP failure. A blanket 4xx
@@ -480,11 +480,11 @@ else
   # defends.
   SFTP_ARM=$(awk '/"sftp" =>/,/SFTP connection successful/' <<< "$TD")
   if [ "$(printf '%s' "$SFTP_ARM" | wc -l)" -lt 10 ]; then
-    bad "the sftp branch did not extract — the two status arms measure nothing"
+    bad "the sftp branch did not extract - the two status arms measure nothing"
   elif hasE "$SFTP_ARM" 'BAD_GATEWAY'; then
     ok "every other SFTP failure is still a gateway error"
   else
-    bad "the 4xx is unconditional — genuine agent failures now read as user error"
+    bad "the 4xx is unconditional - genuine agent failures now read as user error"
   fi
 fi
 
@@ -503,7 +503,7 @@ echo "── 8. the remedy reaches the path nobody is watching ──"
 # answer a client error, and the sentence it protects is worth least on that one.
 # `test_destination` runs while an operator is looking at the screen; `upload`
 # runs from the scheduler at 03:00. Both were reachable, both mapped the same
-# service error, and only the watched one was fixed — so the unattended failure
+# service error, and only the watched one was fixed - so the unattended failure
 # still arrived as an incident reference for a box that merely lacked a package.
 ERR=panel/backend/src/error.rs
 BDST=panel/backend/src/routes/backup_destinations.rs
@@ -515,21 +515,21 @@ SRC_BDST=$(strip "$BDST")
 
 UP=$(fnbody_any "$SRC_RBR" upload)
 if [ "$(printf '%s' "$UP" | wc -l)" -lt 20 ]; then
-  bad "upload did not extract — every arm below it is measuring nothing"
+  bad "upload did not extract - every arm below it is measuring nothing"
 else
   ok "upload extracted ($(printf '%s' "$UP" | wc -l) lines)"
 
   # Scoped to upload's OWN sftp branch. The file holds four other arms that map a
-  # status, and `upload` itself also holds the S3 branch — a whole-function match
+  # status, and `upload` itself also holds the S3 branch - a whole-function match
   # is satisfied by any of them, which is how a flipped arm stays green.
   UP_SFTP=$(awk '/"sftp" =>/,/"destination": dest/' <<< "$UP")
   if [ "$(printf '%s' "$UP_SFTP" | wc -l)" -lt 10 ]; then
-    bad "upload's sftp branch did not extract — its two status arms measure nothing"
+    bad "upload's sftp branch did not extract - its two status arms measure nothing"
   else
     if hasE "$UP_SFTP" 'FAILED_DEPENDENCY'; then
       ok "a scheduled upload blocked by a missing package answers 4xx, so its sentence survives"
     else
-      bad "the unattended upload path answers 5xx again — the nightly failure loses its remedy"
+      bad "the unattended upload path answers 5xx again - the nightly failure loses its remedy"
     fi
 
     # ...and only for that one condition. A blanket 4xx here would tell an
@@ -537,7 +537,7 @@ else
     if hasE "$UP_SFTP" 'INTERNAL_SERVER_ERROR'; then
       ok "every other upload failure is still a server error"
     else
-      bad "upload's 4xx is unconditional — real transfer failures now read as user error"
+      bad "upload's 4xx is unconditional - real transfer failures now read as user error"
     fi
   fi
 fi
@@ -548,19 +548,19 @@ fi
 if hasE "$SRC_ERR" 'pub fn agent_actionable'; then
   ok "the actionable-status rule is exposed once, for callers that summarise many agents"
 else
-  bad "no shared rule — a fan-out has to re-derive which agent statuses are answers"
+  bad "no shared rule - a fan-out has to re-derive which agent statuses are answers"
 fi
 
 FLEET=$(fnbody_any "$SRC_BDST" test_from_whole_fleet)
 if [ "$(printf '%s' "$FLEET" | wc -l)" -lt 20 ]; then
-  bad "test_from_whole_fleet did not extract — its arms measure nothing"
+  bad "test_from_whole_fleet did not extract - its arms measure nothing"
 else
   ok "test_from_whole_fleet extracted ($(printf '%s' "$FLEET" | wc -l) lines)"
 
   if hasE "$FLEET" 'agent_actionable'; then
     ok "the fleet summariser asks whether the refusal was actionable"
   else
-    bad "the fleet summariser stringifies its errors again — a unanimous 4xx dies here"
+    bad "the fleet summariser stringifies its errors again - a unanimous 4xx dies here"
   fi
 
   # The defect precisely: a hard-coded gateway status on the nothing-reached exit.
@@ -568,18 +568,18 @@ else
   # branch, so this is the common path, not the exotic one.
   #
   # Keyed on the ARGUMENT the exit passes, on its own line. The obvious spelling
-  # — one regex spanning `err(` and the status and the format! — cannot ever
+  # - one regex spanning `err(` and the status and the format! - cannot ever
   # match: `hasE` is grep, grep is line-based, and that call is four lines. It
   # was written that way here first and the mutation battery reported it
   # SURVIVED, which is the only reason it is not still in the file.
   EXIT_ARG=$(awk '/if reachable.is_empty\(\) \{/,/^    \}/' <<< "$FLEET" \
              | awk '/return Err\(err\(/{getline; print; exit}')
   if [ -z "$EXIT_ARG" ]; then
-    bad "the nothing-reached exit did not extract — its status arm measures nothing"
+    bad "the nothing-reached exit did not extract - its status arm measures nothing"
   elif grep -qE '^[[:space:]]*status,[[:space:]]*$' <<< "$EXIT_ARG"; then
     ok "the nothing-reached exit carries a computed status rather than asserting one"
   else
-    bad "the nothing-reached exit asserts its own status — a unanimous 4xx is flattened again"
+    bad "the nothing-reached exit asserts its own status - a unanimous 4xx is flattened again"
   fi
 
   # ...but the fallback must survive: a mixed bag, or a genuine agent fault, has
@@ -591,7 +591,7 @@ else
   if hasE "$FLEET" '_ =>[[:space:]]*StatusCode::BAD_GATEWAY'; then
     ok "a fleet with no shared answer still reports a gateway failure"
   else
-    bad "the gateway fallback is gone — an agent that genuinely broke now reads as user error"
+    bad "the gateway fallback is gone - an agent that genuinely broke now reads as user error"
   fi
 fi
 

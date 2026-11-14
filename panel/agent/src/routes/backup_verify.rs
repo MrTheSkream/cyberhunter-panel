@@ -19,7 +19,7 @@ pub struct VerifySiteRequest {
     pub filename: String,
 }
 
-/// POST /backups/verify/site — Verify a site backup.
+/// POST /backups/verify/site - Verify a site backup.
 async fn verify_site(
     Json(req): Json<VerifySiteRequest>,
 ) -> Result<Json<backup_verify::VerificationResult>, ApiErr> {
@@ -42,7 +42,7 @@ pub struct VerifyDbRequest {
     pub filename: String,
 }
 
-/// POST /backups/verify/database — Verify a database backup by restoring to temp container.
+/// POST /backups/verify/database - Verify a database backup by restoring to temp container.
 async fn verify_database(
     Json(req): Json<VerifyDbRequest>,
 ) -> Result<Json<backup_verify::VerificationResult>, ApiErr> {
@@ -58,7 +58,7 @@ pub struct VerifyVolumeRequest {
     pub filename: String,
 }
 
-/// POST /backups/verify/volume — Verify a volume backup.
+/// POST /backups/verify/volume - Verify a volume backup.
 async fn verify_volume(
     Json(req): Json<VerifyVolumeRequest>,
 ) -> Result<Json<backup_verify::VerificationResult>, ApiErr> {

@@ -1,12 +1,12 @@
-//! Server IPv4 inventory and management — the DockPanel equivalent of
+//! Server IPv4 inventory and management - the CyberHunter - Panel equivalent of
 //! HestiaCP's `v-add-sys-ip` / `v-delete-sys-ip`.
 //!
 //! Two layers, deliberately kept apart:
 //!
-//! * **Runtime** — `ip addr add/del`, which takes effect immediately and
+//! * **Runtime** - `ip addr add/del`, which takes effect immediately and
 //!   without touching any other address (no link bounce, no `netplan apply`,
 //!   which can drop a remote server off the network).
-//! * **Persistence** — [`NETPLAN_PATH`], a netplan file that holds *only* the
+//! * **Persistence** - [`NETPLAN_PATH`], a netplan file that holds *only* the
 //!   addresses the panel itself added. netplan merges every file of
 //!   `/etc/netplan` by definition id, so the interface's own definition
 //!   (cloud-init DHCP, an installer-written static config, `60-hestia.yaml`…)
@@ -60,7 +60,7 @@ fn is_container_interface(name: &str) -> bool {
 ///
 /// Each line looks like
 /// `2: eth0    inet 192.168.250.10/24 brd 192.168.250.255 scope global eth0\ ...`
-/// — field 1 is the device (possibly `name@peer` for veth-like links), field 3
+/// - field 1 is the device (possibly `name@peer` for veth-like links), field 3
 /// the CIDR. Container interfaces are dropped (see [`is_container_interface`]).
 pub fn parse_ip_addr_output(out: &str) -> Vec<HostAddr> {
     let mut addrs = Vec::new();
@@ -110,7 +110,7 @@ pub fn parse_default_route_dev(out: &str) -> Option<String> {
 
 /// Interface name shape accepted from a request: `^[A-Za-z0-9._-]{1,15}$`
 /// (15 = IFNAMSIZ - 1). `.` and `..` match the character class but are
-/// refused — and the name must additionally be one of the host's real links,
+/// refused - and the name must additionally be one of the host's real links,
 /// which the caller checks against the enumerated list.
 pub fn is_valid_iface_name(s: &str) -> bool {
     !s.is_empty()
@@ -165,7 +165,7 @@ pub fn parse_dig_ptr(out: &str) -> Option<String> {
 }
 
 /// Parse [`NETPLAN_PATH`]. Only `network.ethernets.<iface>.addresses` is
-/// read; anything else in the file is ignored (and dropped on the next write —
+/// read; anything else in the file is ignored (and dropped on the next write -
 /// the file is ours). An empty file parses as no managed addresses.
 pub fn parse_netplan(text: &str) -> Result<Managed, String> {
     let mut managed = Managed::new();
@@ -201,7 +201,7 @@ pub fn parse_netplan(text: &str) -> Result<Managed, String> {
 }
 
 /// Render [`NETPLAN_PATH`]. `None` when nothing is managed: the caller then
-/// **removes the file** rather than writing an empty `ethernets:` — an absent
+/// **removes the file** rather than writing an empty `ethernets:` - an absent
 /// file is unambiguous for every netplan version, an empty mapping is not
 /// guaranteed to be.
 ///
@@ -233,7 +233,7 @@ pub fn render_netplan(managed: &Managed, with_renderer: bool) -> Option<String> 
 /// netplan merges files **by definition ID**, not by kernel name. If the
 /// interface is defined as `lan: {match: {macaddress: …}, set-name: eth0}`
 /// and we wrote `eth0:`, networkd would get two `.network` files for the same
-/// link and the lexically first (ours, `10-netplan-eth0`) would win at boot —
+/// link and the lexically first (ours, `10-netplan-eth0`) would win at boot -
 /// the link would keep only our /32s and lose its own addresses and gateway.
 /// So: scan the other files (`files`, already in lexical order, ours
 /// excluded) for an `ethernets` definition whose ID equals `iface`, or whose
@@ -464,7 +464,7 @@ async fn run_unsandboxed(binary: &str, args: &[&str]) -> Result<(), String> {
 
 /// Put `content` at [`NETPLAN_PATH`] (mode 600, root:root), or remove the
 /// file when `content` is `None`. Atomic: installed under a `.tmp` name
-/// (which netplan ignores — it only reads `*.yaml`) then renamed.
+/// (which netplan ignores - it only reads `*.yaml`) then renamed.
 pub async fn write_netplan_raw(content: Option<&str>) -> Result<(), String> {
     let Some(content) = content else {
         return run_unsandboxed("rm", &["-f", NETPLAN_PATH]).await;
@@ -498,7 +498,7 @@ pub async fn write_netplan_raw(content: Option<&str>) -> Result<(), String> {
     Ok(())
 }
 
-/// `netplan generate` — validates every file of `/etc/netplan` and renders the
+/// `netplan generate` - validates every file of `/etc/netplan` and renders the
 /// backend config under `/run`, without applying anything. If `netplan` is not
 /// installed at all (non-netplan distro) this is an error: the address would
 /// not survive a reboot and the caller must not report success.

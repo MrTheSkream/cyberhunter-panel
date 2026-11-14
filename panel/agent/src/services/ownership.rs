@@ -1,7 +1,7 @@
 //! A delete must prove it owns what it deletes.
 //!
 //! v2.52.0 fixed the *write* side of this mistake: a vhost writer that replaced
-//! a file and, when the whole-server `nginx -t` failed, deleted it — so a
+//! a file and, when the whole-server `nginx -t` failed, deleted it - so a
 //! neighbour's broken config cost an innocent site its own. The read side was
 //! left standing, and it is the same shape one step later: a *removal* that
 //! names its target by a key it never checked belongs to the thing being
@@ -11,14 +11,14 @@
 //!
 //! **It is derived from an identity nobody re-verified.** A Docker app's domain
 //! lives in the `dockpanel.app.domain` label. Removing the app deletes
-//! `/etc/nginx/sites-enabled/{domain}.conf` — but by then that vhost may belong
+//! `/etc/nginx/sites-enabled/{domain}.conf` - but by then that vhost may belong
 //! to a site, because on any box installed before v2.52.0 nothing stopped a site
 //! from claiming a domain an app already held.
 //!
 //! **It is not injective.** `domain.replace('.', "-")` maps `a.b.com` and
 //! `a-b.com` onto one name, and `-` is legal inside a domain label, so both are
 //! separately claimable and separately deletable by different owners. That is
-//! the bug `traefik::route_key` was written to fix — and the fix is only half
+//! the bug `traefik::route_key` was written to fix - and the fix is only half
 //! applied while `remove_route_config` still deletes the pre-fix name, which is
 //! the *current* name of a different live domain.
 //!
@@ -28,7 +28,7 @@
 //! `WorkingDirectory` of the site it runs. A Fail2Ban jail carries the `logpath`
 //! it watches. A Traefik route carries its `Host()` rule. An app's vhost carries
 //! the `proxy_pass` port of the container behind it. So do not trust the
-//! filename — open the file and ask who it says it belongs to.
+//! filename - open the file and ask who it says it belongs to.
 //!
 //! [`Owner::Unknown`] deliberately does **not** permit a delete. Leaving a stale
 //! config behind is an untidy box; deleting a live one is an outage nobody can
@@ -38,12 +38,12 @@
 //! # Containers
 //!
 //! Everything above reads a file. That left the largest resource the agent
-//! destroys — a running container — with no primitive at all, and the same two
+//! destroys - a running container - with no primitive at all, and the same two
 //! ways for a key to lie apply to it word for word.
 //!
 //! A git deploy named `X` is the container `dockpanel-git-X`. A *preview* of
 //! config `C` on branch `B` was the container `dockpanel-git-{C}-pr-{slug(B)}`,
-//! which is the same string a deploy named `{C}-pr-{slug(B)}` produces — and
+//! which is the same string a deploy named `{C}-pr-{slug(B)}` produces - and
 //! `is_valid_name` permits that name. The branch half is chosen by whoever can
 //! push to `C`'s repo, and the webhook that acts on it has no auth extractor.
 //! `find_container` matched on the name alone, so a pushed branch could adopt a
@@ -56,7 +56,7 @@
 //! character [`crate::routes::is_valid_name`] rejects, so no deploy can spell
 //! one), and [`git_container`] is the read-side proof: a container states what
 //! it is in the labels the agent wrote when it created it. Same remedy as
-//! above — do not trust the name, open the thing and ask.
+//! above - do not trust the name, open the thing and ask.
 
 /// Who a resource on disk says it belongs to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,7 +67,7 @@ pub enum Owner {
     /// configuration.
     Theirs,
     /// The file could not be read, or carries no marker to judge by. Treated as
-    /// `Theirs` by [`Owner::may_delete`] — see the module note on fail-closed.
+    /// `Theirs` by [`Owner::may_delete`] - see the module note on fail-closed.
     Unknown,
 }
 
@@ -86,7 +86,7 @@ pub const GIT_KIND_LABEL: &str = "dockpanel.git.kind";
 ///
 /// It was `-blue`, which is not a space anybody owns: `is_valid_name` accepts
 /// `api-blue`, so `dockpanel-app-api-blue` is *simultaneously* the stand-in for
-/// the app `api` and the production container of the app `api-blue` — and the
+/// the app `api` and the production container of the app `api-blue` - and the
 /// leftover-cleanup that runs before every swap force-removed whatever it
 /// found there. The separator is now `.`, which `is_valid_name` rejects, so no
 /// deployment can be standing in this space to begin with.
@@ -104,13 +104,13 @@ pub fn blue_name(container_name: &str) -> String {
 /// the ownership rule, and those four must never disagree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GitScope {
-    /// A configured deployment — a row in `git_deploys`, whose `name` is unique
+    /// A configured deployment - a row in `git_deploys`, whose `name` is unique
     /// per server.
     Deploy,
     /// A branch preview. Scoped `pr.` so it cannot spell a deploy's name.
     Preview,
     /// A preview created before the scopes were separated, addressed by its old
-    /// unscoped name. Cleanup only — nothing may ever *create* in this space.
+    /// unscoped name. Cleanup only - nothing may ever *create* in this space.
     PreviewLegacy,
 }
 
@@ -151,26 +151,26 @@ impl GitScope {
 /// `expected_port` is what the CALLER's own record says this thing publishes,
 /// and `actual_port` is what the container publishes. Docker will not let two
 /// containers bind one host port, so when the labels cannot answer, the port
-/// can — the same argument [`app_vhost`] already makes for a vhost.
+/// can - the same argument [`app_vhost`] already makes for a vhost.
 ///
 /// Containers created before the scopes were separated carry no
 /// [`GIT_KIND_LABEL`] at all, and the answer to that has to differ by space,
 /// because the three spaces have entirely different legacy populations:
 ///
-/// * [`GitScope::Deploy`] — an unlabelled container at `dockpanel-git-{name}`
+/// * [`GitScope::Deploy`] - an unlabelled container at `dockpanel-git-{name}`
 ///   is this deployment's own, created by an older agent: deploy names are
 ///   unique per server, and the one thing that could previously stand there
-///   under someone else's ownership — a preview — no longer writes into this
+///   under someone else's ownership - a preview - no longer writes into this
 ///   space at all. Refusing would break the update path of every app on every
 ///   existing install. `Ours`, and the next deploy relabels it.
-/// * [`GitScope::Preview`] — nothing legacy can be here; the space did not
+/// * [`GitScope::Preview`] - nothing legacy can be here; the space did not
 ///   exist. An unlabelled container at `dockpanel-git-pr.{name}` was not put
 ///   there by this agent. `Unknown`, which may not delete.
-/// * [`GitScope::PreviewLegacy`] — the old SHARED space, reached only to clean
+/// * [`GitScope::PreviewLegacy`] - the old SHARED space, reached only to clean
 ///   up, and the one place where "unlabelled" is genuinely ambiguous: an old
 ///   preview and a deployment that merely shares its name look identical.
 ///   Answering `Ours` here would have preserved, inside the fix, the exact
-///   unattended cross-owner delete the fix exists to close — every container
+///   unattended cross-owner delete the fix exists to close - every container
 ///   predating this build is unlabelled, including the victim's. So the port
 ///   must agree, and if the caller does not know it, or it does not match, the
 ///   answer is `Unknown` and the stale preview is left standing.
@@ -198,7 +198,7 @@ pub fn git_container(
 ///
 /// The load-bearing half of that question is answered by [`BLUE_SUFFIX`]: no
 /// panel resource can be named into that space, so nothing legitimate is
-/// standing there. This is the second half — Docker itself will accept a `.` in
+/// standing there. This is the second half - Docker itself will accept a `.` in
 /// a name typed by hand, and an operator's own container is not ours to
 /// destroy. `Unknown` for anything that does not say it is managed.
 pub fn blue_leftover(labels: Option<&std::collections::HashMap<String, String>>) -> Owner {
@@ -216,7 +216,7 @@ pub fn blue_leftover(labels: Option<&std::collections::HashMap<String, String>>)
 ///
 /// Whole-line equality rather than `contains`, because every marker here embeds
 /// a domain and `contains` would let `example.com` answer for
-/// `example.community` — the same unanchored-substring defect that let one
+/// `example.community` - the same unanchored-substring defect that let one
 /// site's WordPress auto-update cron strip another's.
 fn owner_by_lines(path: &str, markers: &[String]) -> Owner {
     let Ok(content) = std::fs::read_to_string(path) else {
@@ -243,8 +243,8 @@ fn owner_by_lines(path: &str, markers: &[String]) -> Owner {
 /// dropped. Units written before v2.123.0 hardcoded `{domain}/public`; v2.123.0
 /// starts the process at the site root instead (the crash-loop fix in
 /// `app_process`). Recognising only the new form would hand every unit already on
-/// disk to the `Theirs` branch — `owned_service_name` refuses to stop, restart or
-/// delete one of those — so an upgrade would strand exactly the sites the release
+/// disk to the `Theirs` branch - `owned_service_name` refuses to stop, restart or
+/// delete one of those - so an upgrade would strand exactly the sites the release
 /// exists to repair. The `Description` marker happens to cover the same case, but
 /// this function's whole reason for accepting two markers is that either one alone
 /// can be edited away.
@@ -274,7 +274,7 @@ pub fn fail2ban_jail(path: &str, domain: &str) -> Owner {
 /// Does the allocated SFTP uid `uid` actually belong to `domain`?
 ///
 /// Unlike every other resource type in this file, the marker isn't read from
-/// the resource itself (a Linux account has nowhere safe to carry one — its
+/// the resource itself (a Linux account has nowhere safe to carry one - its
 /// own home directory is inside the chroot jail the account can write to) but
 /// from a dedicated file `services::sftp_accounts::provision` writes, once,
 /// only after every provisioning step has already succeeded. A caller-passed
@@ -302,7 +302,7 @@ pub fn traefik_route(path: &str, domain: &str) -> Owner {
 /// An app's vhost is rendered from the same template a site's is, so the file
 /// carries nothing that says "an app wrote this". What it does carry is the
 /// `proxy_pass` line naming the container's own published port, and Docker will
-/// not let two containers publish the same host port — so the port is the
+/// not let two containers publish the same host port - so the port is the
 /// app's identity in the only place the vhost records it.
 ///
 /// `None` for the port means the container's binding could not be read; that is
@@ -328,7 +328,7 @@ pub fn app_vhost(path: &str, host_port: Option<u16>) -> Owner {
 /// A DNS-01 wildcard is provisioned once under the zone apex and every site in
 /// the zone points its `ssl_certificate` at that one directory. Deleting it
 /// because *one* of those sites went away leaves the others pointing at a
-/// missing file — which does not fail now, because nginx is already serving from
+/// missing file - which does not fail now, because nginx is already serving from
 /// memory, but fails the next `nginx -t` anyone triggers and leaves nginx down
 /// at the next full restart, for every site on the box.
 ///
@@ -338,7 +338,7 @@ pub fn cert_dir_in_use_elsewhere(domain: &str) -> bool {
     let needle = format!("/etc/dockpanel/ssl/{domain}/");
     let own = format!("{domain}.conf");
     let Ok(entries) = std::fs::read_dir(super::nginx::sites_dir()) else {
-        // Cannot tell — assume shared. Refusing to delete a cert directory is
+        // Cannot tell - assume shared. Refusing to delete a cert directory is
         // recoverable; deleting one another vhost still points at is not.
         return true;
     };
@@ -358,12 +358,12 @@ pub fn cert_dir_in_use_elsewhere(domain: &str) -> bool {
 }
 
 /// Is the registered certificate `alias` still referenced by any vhost on this
-/// box — in service or parked?
+/// box - in service or parked?
 ///
 /// The same question as [`cert_dir_in_use_elsewhere`] asked of the other tree,
 /// with one difference: there is no "own" vhost to skip, because a registered
 /// certificate belongs to no domain. Any vhost naming its directory is a reason
-/// not to delete it — a parked one included, since enabling that site would put
+/// not to delete it - a parked one included, since enabling that site would put
 /// a vhost pointing at a missing file back into service, which fails the next
 /// `nginx -t` for every site on the box.
 ///
@@ -375,7 +375,7 @@ pub fn registry_cert_in_use(alias: &str) -> bool {
     registry_needle_in_use(
         &needle,
         std::path::Path::new(super::nginx::sites_dir()),
-        // The parent of the parked path `nginx::vhost_paths` spells — the SAME
+        // The parent of the parked path `nginx::vhost_paths` spells - the SAME
         // directory as the live one on the RHEL family, which has no second
         // directory; `registry_needle_references` skips the double scan then.
         std::path::Path::new(super::nginx::parked_dir()),
@@ -383,7 +383,7 @@ pub fn registry_cert_in_use(alias: &str) -> bool {
 }
 
 /// Every vhost file that names the registered certificate `alias`, in service
-/// or parked — so a refusal to delete it can say WHICH files, and the operator
+/// or parked - so a refusal to delete it can say WHICH files, and the operator
 /// knows whether to move a domain or clear a parked configuration. `Err` means
 /// a tree could not be read, which the caller must treat as "in use".
 pub fn registry_cert_references(alias: &str) -> Result<Vec<String>, String> {
@@ -411,12 +411,12 @@ fn registry_needle_in_use(
 
 /// The files under the two roots whose text names `needle`.
 ///
-/// Both trees are read whole — the parked one too, without filtering on the
+/// Both trees are read whole - the parked one too, without filtering on the
 /// parked filename, which `nginx::vhost_paths` alone may spell. A hand-kept
 /// copy in that directory naming the pair is a reader nginx could be handed
 /// next, so it counts. An unreadable in-service tree is an error. A parked
 /// tree that does not exist holds nothing parked; any other failure to read
-/// it is an error for the same fail-closed reason as the sibling — refusing a
+/// it is an error for the same fail-closed reason as the sibling - refusing a
 /// delete is recoverable, deleting a referenced pair is not.
 fn registry_needle_references(
     needle: &str,
@@ -434,7 +434,7 @@ fn registry_needle_references(
         }
     }
     // The RHEL family has no separate parked directory (see `nginx::parked_dir`)
-    // — live and parked are the same path there, and the live scan above
+    // - live and parked are the same path there, and the live scan above
     // already covered it. Scanning again would list every match twice.
     if parked_dir == live_dir {
         return Ok(found);
@@ -498,7 +498,7 @@ mod tests {
 
     /// v2.123.0 moved a managed process off `{domain}/public` and onto the site
     /// root. Ownership is keyed on that very line, so BOTH spellings have to be
-    /// recognised — and the one that matters on an upgrade is the OLD one: every
+    /// recognised - and the one that matters on an upgrade is the OLD one: every
     /// unit already on disk carries it, and `owned_service_name` refuses to stop,
     /// restart or delete anything this function calls `Theirs`. Dropping the
     /// superseded marker would strand exactly the sites the release repairs.
@@ -539,7 +539,7 @@ mod tests {
     #[test]
     fn the_traefik_legacy_name_names_a_different_live_domain() {
         // `legacy_route_config_path("a-b.com")` is `a-b-com.yml`, which is
-        // `route_key("a.b.com")` — the file below. Deleting it on behalf of
+        // `route_key("a.b.com")` - the file below. Deleting it on behalf of
         // `a-b.com` is what this refuses.
         let (_d, p) = tmpfile(concat!(
             "http:\n",
@@ -637,7 +637,7 @@ mod tests {
     fn the_legacy_space_needs_the_port_because_every_old_container_is_unlabelled() {
         // THE TRAP THIS TEST EXISTS FOR: the compatibility path is reached with
         // a name that a production deployment can legally hold, and on an
-        // install upgrading to this build EVERY container is unlabelled —
+        // install upgrading to this build EVERY container is unlabelled -
         // including the victim's. Answering `Ours` on the label alone would
         // have carried the original unattended delete straight through the fix.
         assert_eq!(
@@ -706,7 +706,7 @@ mod tests {
         assert_eq!(GitScope::from_wire("nonsense"), GitScope::Deploy);
         assert_eq!(GitScope::from_wire("preview"), GitScope::Preview);
         assert_eq!(GitScope::from_wire("preview_legacy"), GitScope::PreviewLegacy);
-        // The legacy space addresses the OLD name, not the scoped one — that is
+        // The legacy space addresses the OLD name, not the scoped one - that is
         // the entire reason it exists.
         assert_eq!(GitScope::PreviewLegacy.scoped("a-pr-b"), "a-pr-b");
     }
@@ -763,7 +763,7 @@ mod tests {
 
     #[test]
     fn a_single_shared_directory_is_not_scanned_twice() {
-        // The RHEL family has no separate parked directory — live and parked
+        // The RHEL family has no separate parked directory - live and parked
         // are the SAME path (see `nginx::parked_dir`). Scanning it twice would
         // list a matching file twice, which is exactly what this pins against.
         let needle = format!("{}/wild/", super::super::ssl::SSL_REGISTRY_DIR);

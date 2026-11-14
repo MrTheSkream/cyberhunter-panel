@@ -4,7 +4,7 @@ use std::time::Duration;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
-/// The settings every webhook notification's HTTP client shares — extracted so
+/// The settings every webhook notification's HTTP client shares - extracted so
 /// `post_user_webhook` can build a fresh, PINNED client per call (below) with
 /// the same settings rather than duplicating them.
 fn webhook_client_builder() -> reqwest::ClientBuilder {
@@ -31,10 +31,10 @@ fn http_client() -> &'static reqwest::Client {
 }
 
 /// POST a JSON payload to a user-supplied Slack/Discord/webhook URL, re-validating
-/// it against SSRF at send time (DNS-rebinding defense — the write-time check can be
+/// it against SSRF at send time (DNS-rebinding defense - the write-time check can be
 /// defeated by a low-TTL record that flips to an internal IP before the alert fires).
 ///
-/// `_client` is the caller's shared `http_client()` — kept as a parameter since
+/// `_client` is the caller's shared `http_client()` - kept as a parameter since
 /// every call site already has it to hand, but no longer used for the actual
 /// POST. A shared client's resolver would re-resolve `url`'s host
 /// independently of the validation above; instead this pins the request to
@@ -132,7 +132,7 @@ async fn format_message(pool: &PgPool, channel: &str, subject: &str, message: &s
 
 /// Derive severity string from subject line (for webhook/pagerduty payloads).
 ///
-/// Only `send_notification` still calls this — every fired-alert path has a
+/// Only `send_notification` still calls this - every fired-alert path has a
 /// REAL stored severity (`alerts.severity`) and passes it in directly instead;
 /// see `severity_color` and the doc on `send_notification_with_runbook`.
 /// `send_notification`'s own callers (resolve/git-deploy/security-hardening/
@@ -152,7 +152,7 @@ fn derive_severity(subject: &str) -> &'static str {
 
 /// HTML colour for a stored alert severity. Single-sourced so the initial page
 /// (`try_fire_alert`) and its escalation re-page (`check_escalations`) can
-/// never disagree about what a warning looks like — before this, the
+/// never disagree about what a warning looks like - before this, the
 /// escalation path hardcoded critical-red for every severity, including a
 /// re-paged warning.
 pub fn severity_color(severity: &str) -> &'static str {
@@ -174,7 +174,7 @@ pub async fn send_notification(
     let client = http_client();
     let severity = derive_severity(subject);
 
-    // Email — supports custom template via notif_template_email
+    // Email - supports custom template via notif_template_email
     if let Some(ref email) = channels.email {
         let email_template: Option<(String,)> = sqlx::query_as(
             "SELECT value FROM settings WHERE key = 'notif_template_email'"
@@ -198,7 +198,7 @@ pub async fn send_notification(
         }
     }
 
-    // Slack webhook — supports custom template via notif_template_slack
+    // Slack webhook - supports custom template via notif_template_slack
     if let Some(ref url) = channels.slack_url {
         if !url.is_empty() {
             let text = format_message(pool, "slack", subject, message, severity).await;
@@ -206,7 +206,7 @@ pub async fn send_notification(
         }
     }
 
-    // Discord webhook — supports custom template via notif_template_discord
+    // Discord webhook - supports custom template via notif_template_discord
     if let Some(ref url) = channels.discord_url {
         if !url.is_empty() {
             let content = format_message(pool, "discord", subject, message, severity).await;
@@ -229,7 +229,7 @@ pub async fn send_notification(
                     "event_action": event_action,
                     "payload": {
                         "summary": subject,
-                        "source": "DockPanel",
+                        "source": "CyberHunter - Panel",
                         "severity": severity,
                         "custom_details": { "message": message },
                     },
@@ -249,7 +249,7 @@ pub async fn send_notification(
         }
     }
 
-    // Generic webhook (GAP 31) — supports custom template via notif_template_webhook
+    // Generic webhook (GAP 31) - supports custom template via notif_template_webhook
     if let Some(ref url) = channels.webhook_url {
         if !url.is_empty() {
             let custom_message = format_message(pool, "webhook", subject, message, severity).await;
@@ -317,11 +317,11 @@ pub async fn load_runbook_payload(
 }
 
 /// Phase 4 W2: Send a notification with runbook attachment.
-/// Used by `try_fire_alert` and `check_escalations` (W3) — non-alert
+/// Used by `try_fire_alert` and `check_escalations` (W3) - non-alert
 /// callers stay on `send_notification`.
 ///
-/// `severity` is the caller's OWN stored value — the same one `try_fire_alert`
-/// bound to the `alerts` INSERT — not re-derived here. This function used to
+/// `severity` is the caller's OWN stored value - the same one `try_fire_alert`
+/// bound to the `alerts` INSERT - not re-derived here. This function used to
 /// keyword-scan `subject` for it via `derive_severity`, which is the only
 /// severity source `send_notification` (no stored value in scope) still has
 /// any business using; a fired alert already knows its severity and every
@@ -344,7 +344,7 @@ pub async fn send_notification_with_runbook(
 ) {
     let client = http_client();
 
-    // Email — appends rendered runbook HTML to body_html.
+    // Email - appends rendered runbook HTML to body_html.
     if let Some(ref email) = channels.email {
         let email_template: Option<(String,)> = sqlx::query_as(
             "SELECT value FROM settings WHERE key = 'notif_template_email'",
@@ -379,7 +379,7 @@ pub async fn send_notification_with_runbook(
         }
     }
 
-    // Slack — append `*Runbook:* <url|view>\n_excerpt_` to message.
+    // Slack - append `*Runbook:* <url|view>\n_excerpt_` to message.
     if let Some(ref url) = channels.slack_url {
         if !url.is_empty() {
             let mut text = format_message(pool, "slack", subject, message, severity).await;
@@ -394,7 +394,7 @@ pub async fn send_notification_with_runbook(
         }
     }
 
-    // Discord — append **Runbook:** [view](url)\n*excerpt*
+    // Discord - append **Runbook:** [view](url)\n*excerpt*
     if let Some(ref url) = channels.discord_url {
         if !url.is_empty() {
             let mut content = format_message(pool, "discord", subject, message, severity).await;
@@ -409,7 +409,7 @@ pub async fn send_notification_with_runbook(
         }
     }
 
-    // PagerDuty — extend custom_details with runbook fields.
+    // PagerDuty - extend custom_details with runbook fields.
     if let Some(ref key) = channels.pagerduty_key {
         if !key.is_empty() {
             let event_action = if subject.contains("Resolved") || subject.contains("back up") {
@@ -431,7 +431,7 @@ pub async fn send_notification_with_runbook(
                     "event_action": event_action,
                     "payload": {
                         "summary": subject,
-                        "source": "DockPanel",
+                        "source": "CyberHunter - Panel",
                         "severity": severity,
                         "custom_details": custom_details,
                     },
@@ -451,7 +451,7 @@ pub async fn send_notification_with_runbook(
         }
     }
 
-    // Generic webhook — top-level runbook keys.
+    // Generic webhook - top-level runbook keys.
     if let Some(ref url) = channels.webhook_url {
         if !url.is_empty() {
             let custom_message = format_message(pool, "webhook", subject, message, severity).await;
@@ -474,7 +474,7 @@ pub async fn send_notification_with_runbook(
 }
 
 /// Render markdown to safe HTML using pulldown-cmark. Wrapped in catch_unwind
-/// defensively — admin-authored input is trusted but the parser is third-party.
+/// defensively - admin-authored input is trusted but the parser is third-party.
 fn render_runbook_html(md: &str) -> String {
     use std::panic::{catch_unwind, AssertUnwindSafe};
     let result = catch_unwind(AssertUnwindSafe(|| {
@@ -669,7 +669,7 @@ pub async fn load_escalation_steps(
 ///
 /// Resolves the step's `route` against on-call schedules and user IDs,
 /// then sends `send_notification_with_runbook` for each resolved
-/// channel-set. `alert_owner_id` is the user_id on the alerts row —
+/// channel-set. `alert_owner_id` is the user_id on the alerts row -
 /// used as the fallback "channels of record" for `all_channels` routes
 /// and synthetic-webhook routes.
 pub async fn dispatch_escalation_step(
@@ -688,7 +688,7 @@ pub async fn dispatch_escalation_step(
     let route = &step.route;
     if let Some(url) = route.strip_prefix("webhook:") {
         // A step-level webhook has no user behind it, so the suppression that
-        // applies is the alert owner's — the same row the settings grid edits.
+        // applies is the alert owner's - the same row the settings grid edits.
         // This branch used to synthesize an EMPTY suppression list, which meant
         // the one route shape that never consults a user was also the one route
         // shape a mute could not reach: `user:` and `on_call_schedule:` steps go
@@ -698,7 +698,7 @@ pub async fn dispatch_escalation_step(
         if let Some(owner) = get_user_channels(pool, alert_owner_id, alert_owner_server_id).await {
             if is_type_muted(&owner, alert_type) {
                 tracing::debug!(
-                    "Alert type '{alert_type}' muted by the alert owner — skipping escalation webhook step"
+                    "Alert type '{alert_type}' muted by the alert owner - skipping escalation webhook step"
                 );
                 return;
             }
@@ -728,7 +728,7 @@ pub async fn dispatch_escalation_step(
     }
 
     if route == "all_channels" {
-        // Fan out to the alert's owner — preserves pre-W3 default behaviour.
+        // Fan out to the alert's owner - preserves pre-W3 default behaviour.
         fanout_to_user(
             pool,
             alert_owner_id,
@@ -750,13 +750,13 @@ pub async fn dispatch_escalation_step(
     if users.is_empty() {
         // Fail OPEN to the alert's owner rather than dropping the page. An
         // unresolvable route (deleted schedule, emptied members, deleted routed
-        // user, malformed shape) used to silently swallow the notification —
+        // user, malformed shape) used to silently swallow the notification -
         // and since try_fire_alert dispatches step 0 and returns, that swallowed
         // the *initial* page for a critical alert too. A page to the owner
         // instead of the rota is a degraded delivery; no page at all is a
         // missed outage.
         tracing::warn!(
-            "dispatch_escalation_step: route {route} resolved to no users — falling back to the alert owner's channels"
+            "dispatch_escalation_step: route {route} resolved to no users - falling back to the alert owner's channels"
         );
         fanout_to_user(
             pool,
@@ -792,12 +792,12 @@ pub async fn dispatch_escalation_step(
 
     if !delivered {
         // The route resolved to real user IDs, but none of them has any
-        // notification configuration — a rota member who never opened alert
+        // notification configuration - a rota member who never opened alert
         // settings, or a `user:<uuid>` route to a since-deleted account. That is
         // indistinguishable from an unresolvable route in effect: nobody is
         // paged. Degrade to the owner for the same reason.
         tracing::warn!(
-            "dispatch_escalation_step: no routed user for {route} has notification channels — falling back to the alert owner"
+            "dispatch_escalation_step: no routed user for {route} has notification channels - falling back to the alert owner"
         );
         fanout_to_user(
             pool,
@@ -821,11 +821,11 @@ pub async fn dispatch_escalation_step(
 /// write paths validate against it, so a stored list can never name something
 /// the panel does not page about. It drifted once: the grid was a hand-written
 /// ten and the panel had grown to twenty producers, so half the alert types
-/// that page an operator had no per-type control at all — and the missing half
+/// that page an operator had no per-type control at all - and the missing half
 /// was the half nobody had thought about recently, which is the half that
 /// pages you at three in the morning.
 ///
-/// Membership is every alert type this panel raises, with no exemptions — the
+/// Membership is every alert type this panel raises, with no exemptions - the
 /// list and the producers are compared by a pin arm that reads the call sites
 /// rather than either list, so a new producer without an entry here fails CI.
 ///
@@ -835,7 +835,7 @@ pub async fn dispatch_escalation_step(
 /// the wrong half: the recovery notice DOES go through the fan-out and does
 /// honour this list, so the entry governs every external message that type
 /// actually produces. Leaving it out also rejected a stored value that had been
-/// working. The asymmetry was real and belonged to the producer, not here —
+/// working. The asymmetry was real and belonged to the producer, not here -
 /// `uptime.rs`'s firing half now calls `try_fire_alert` too (a guard-SELECT
 /// ahead of it preserves the old dedup), so both halves of this alert type
 /// honour the list the same way every other producer does.
@@ -884,7 +884,7 @@ pub fn unknown_suppressible_types(raw: &str) -> Vec<String> {
 ///
 /// Single-sourced because the mute has to mean the same thing on both edges of
 /// an alert's life. It was applied on the firing path and skipped on the resolve
-/// path, so muting a type silenced the page and still delivered the recovery —
+/// path, so muting a type silenced the page and still delivered the recovery -
 /// a suppression that only half-suppresses is worse than none, because the
 /// operator sees "Resolved: X" for an X they were never told about.
 fn is_type_muted(channels: &NotifyChannels, alert_type: &str) -> bool {
@@ -918,16 +918,16 @@ async fn fanout_to_user(
 ) -> bool {
     let Some(channels) = get_user_channels(pool, user_id, server_id).await else {
         // `alert_rules` rows are only created when a user opens alert settings,
-        // so a perfectly valid rota member can have none — this is the common
+        // so a perfectly valid rota member can have none - this is the common
         // case, not a corrupt one.
         tracing::warn!(
-            "No notification channels configured for user {user_id} — cannot deliver '{alert_type}' page to them"
+            "No notification channels configured for user {user_id} - cannot deliver '{alert_type}' page to them"
         );
         return false;
     };
     if is_type_muted(&channels, alert_type) {
         tracing::debug!(
-            "Alert type '{alert_type}' muted for routed user {user_id} — skipping external channels"
+            "Alert type '{alert_type}' muted for routed user {user_id} - skipping external channels"
         );
         return true;
     }
@@ -1036,7 +1036,7 @@ pub async fn get_thresholds(
             global_thresholds(pool, user_id).await
         }
     } else {
-        // server_id = None means "the user's global rule" — that is exactly what
+        // server_id = None means "the user's global rule" - that is exactly what
         // check_ssl_expiry asks for (SSL is site-scoped, not server-scoped). This
         // arm used to return None unconditionally, so the SSL ladder silently ran
         // on the hardcoded defaults and a user's configured ssl_warning_days was
@@ -1108,8 +1108,8 @@ pub async fn get_gpu_thresholds(
 /// Fire an alert: check cooldown, record in alerts table, send notification.
 /// Convenience wrapper that ignores errors (for callers that don't need retry).
 ///
-/// `state_key` names the entity this alert is about — the container name, the
-/// service name, the GPU index — and MUST be the same key the caller writes to
+/// `state_key` names the entity this alert is about - the container name, the
+/// service name, the GPU index - and MUST be the same key the caller writes to
 /// `alert_state.state_key`. Pass `""` for a condition about the server as a
 /// whole (disk, CPU, memory). It is a required argument rather than an
 /// `Option` with a default precisely so that a new alert type cannot inherit
@@ -1134,7 +1134,7 @@ pub async fn fire_alert(
 /// Both SSL loops raise FIVE different conditions under that one type, and
 /// `fire_alert_deduped` below dedups on `(alert_type, site_id, state_key)`.
 /// Feeding it the whole-server key made all five one subject, so whichever
-/// fired first muted the other four for twelve hours — four of them `critical`.
+/// fired first muted the other four for twelve hours - four of them `critical`.
 ///
 /// The pairing that made this fatal is sequential, not coincidental.
 /// `RenewalPlan::Refuse` alerts every twelve hours for as long as a DNS-01 zone
@@ -1146,7 +1146,7 @@ pub async fn fire_alert(
 ///
 /// Keyed per CONDITION, not per certificate: `site_id` already names the
 /// certificate, and the two loops must still collapse to ONE alert when they
-/// reach the same condition on the same site — which is the flood control the
+/// reach the same condition on the same site - which is the flood control the
 /// dedup was added for and which these keys preserve exactly.
 pub mod ssl_renewal_key {
     /// The installed certificate was issued by somebody else, so renewing it
@@ -1154,7 +1154,7 @@ pub mod ssl_renewal_key {
     pub const DECLINED: &str = "declined";
     /// A renewal was attempted and failed.
     pub const FAILED: &str = "failed";
-    /// A renewal could not be attempted at all — a configuration problem, so
+    /// A renewal could not be attempted at all - a configuration problem, so
     /// deliberately a different sentence from FAILED.
     pub const BLOCKED: &str = "blocked";
     /// A DNS-01 renewal refused while there is still time to fix the zone.
@@ -1165,8 +1165,8 @@ pub mod ssl_renewal_key {
     /// overwritten a certificate covering more names than the mail host.
     ///
     /// ⚠ Deliberately its own key rather than `BLOCKED`. The two say opposite
-    /// things about what happened — `BLOCKED` reports a renewal the panel could
-    /// not perform, this reports one it deliberately declined to perform — and
+    /// things about what happened - `BLOCKED` reports a renewal the panel could
+    /// not perform, this reports one it deliberately declined to perform - and
     /// they are raised about the SAME `site_id`. Sharing a key would let
     /// whichever fired first mute the other for twelve hours, which is the
     /// defect `state_key` exists to prevent and the one v2.154.0 shipped to fix.
@@ -1174,7 +1174,7 @@ pub mod ssl_renewal_key {
 
     /// Every key above, so a consumer can decide about all of them without
     /// re-listing them and drifting. ⚠ A new `pub const` above MUST be added
-    /// here too — a key missing from this array is silently never considered by
+    /// here too - a key missing from this array is silently never considered by
     /// `renewal_success_clears`. `alert-resolve-scope` H6 checks MEMBERSHIP by
     /// name, one line per key; it deliberately does not check this array's
     /// declared length, because the compiler already enforces that and an arm
@@ -1197,7 +1197,7 @@ pub mod ssl_renewal_key {
 /// it can be tested one key at a time. Three of the six say a renewal DID NOT
 /// HAPPEN, and a renewal happening is what makes them false. The other three
 /// describe the certificate that is installed NOW, and a later renewal does not
-/// contradict any of them — see the doc on the resolver for why
+/// contradict any of them - see the doc on the resolver for why
 /// `DNS01_DOWNGRADED` in particular must stay out.
 ///
 /// ⚠ The fall-through is `false`, so a key added later is NOT resolved until
@@ -1213,7 +1213,7 @@ pub fn renewal_success_clears(key: &str) -> bool {
 
 /// Clear the `ssl_renewal_failure` alerts that a SUCCESSFUL renewal disproves.
 ///
-/// `ssl_expiry` learned to resolve itself long ago — `ssl_decision` in
+/// `ssl_expiry` learned to resolve itself long ago - `ssl_decision` in
 /// `alert_engine.rs` records why, in its own words: *"Nothing used to resolve an ssl_expiry row, so a cert
 /// renewed weeks ago left a 'firing' row that check_escalations re-paged every
 /// 30 minutes forever and the purge (resolved-only) never collected."*
@@ -1226,26 +1226,26 @@ pub fn renewal_success_clears(key: &str) -> bool {
 /// ⚠ THREE of the six keys, and the split is the whole point. These three say a
 /// renewal DID NOT HAPPEN, and a renewal happening is what makes them false:
 ///
-///   * `FAILED` — attempted, failed.
-///   * `BLOCKED` — could not be attempted at all.
-///   * `DNS01_DECLINED` — declined while there is still time to fix the zone.
+///   * `FAILED` - attempted, failed.
+///   * `BLOCKED` - could not be attempted at all.
+///   * `DNS01_DECLINED` - declined while there is still time to fix the zone.
 ///
 /// The other three are standing descriptions of the certificate installed NOW,
 /// and a later renewal does not contradict any of them:
 ///
-///   * `DNS01_DOWNGRADED` — names really did stop being covered, and they stay
+///   * `DNS01_DOWNGRADED` - names really did stop being covered, and they stay
 ///     uncovered until a wildcard is re-issued. It is also RAISED on this very
 ///     success path when the plan downgraded, and `fire_alert_deduped` windows on
-///     `created_at` regardless of status — so resolving it here would let the
+///     `created_at` regardless of status - so resolving it here would let the
 ///     re-fire land inside its own 12-hour window and be swallowed. The alert
 ///     naming what stopped being covered would resolve itself and never come back.
-///   * `DECLINED` — the installed certificate is somebody else's. Still true.
-///   * `MAIL_HOST_CONFLICT` — a mail host's certificate was refused to protect a
+///   * `DECLINED` - the installed certificate is somebody else's. Still true.
+///   * `MAIL_HOST_CONFLICT` - a mail host's certificate was refused to protect a
 ///     wildcard. Renewing that wildcard does not remove the conflict.
 ///
 /// ⚠ Scoped by `site_id` with `server_id: None` ON PURPOSE. `resolve_alert` picks
 /// its arm on `server_id.is_some()` FIRST, so passing a server id would build a
-/// `WHERE server_id = $2` that misses every row the security scanner raised —
+/// `WHERE server_id = $2` that misses every row the security scanner raised -
 /// that loop fires with `None`, while `auto_healer`'s FAILED fires with
 /// `Some(server_id)`. The same logical alert exists in two shapes; only the
 /// site arm matches both, and every producer passes a site.
@@ -1280,7 +1280,7 @@ pub async fn resolve_ssl_renewal_failure(pool: &PgPool, user_id: Uuid, site_id: 
 /// inside `within_hours`.
 ///
 /// The loops that watch certificates run every two minutes. An unconditional
-/// alert from inside one of them is not a warning, it is a flood — and a flood
+/// alert from inside one of them is not a warning, it is a flood - and a flood
 /// is how a real alert gets muted. Deduplicating against the alerts table keeps
 /// it to one per site per window without introducing a second piece of state
 /// that can disagree with the first.
@@ -1296,7 +1296,7 @@ pub async fn fire_alert_deduped(
     message: &str,
     within_hours: i64,
 ) {
-    // within_hours is a typed i64 — safe to interpolate, and it keeps Postgres
+    // within_hours is a typed i64 - safe to interpolate, and it keeps Postgres
     // from having to infer a parameter type inside an interval expression.
     //
     // The dedup window is scoped by `state_key` too: two different certificates
@@ -1335,13 +1335,13 @@ pub async fn fire_alert_deduped(
 ///
 ///   * `alert_engine::fire_alert_with_retry` auto-creates a `managed_incidents`
 ///     row with `visible_on_status_page = TRUE`. Reported as fired, a type the
-///     operator switched off published the outage on their PUBLIC status page —
+///     operator switched off published the outage on their PUBLIC status page -
 ///     the one control meaning "do not tell me about this" was the one that
 ///     told everybody.
 ///   * That same function's contract is "was the alert actually recorded", and
 ///     the SSL ladder gates its `last_warned_day` stamp on it precisely so a
 ///     page that did not land cannot consume a rung. Reported as fired, a
-///     disabled `ssl_expiry` burned rungs anyway — and because `ssl_decision`
+///     disabled `ssl_expiry` burned rungs anyway - and because `ssl_decision`
 ///     only fires a TIGHTER rung than the one stamped, re-enabling the type did
 ///     not bring them back. That is the permanent silence `maintenance_users`
 ///     names in so many words as the reason suppression is applied at each
@@ -1381,12 +1381,12 @@ pub async fn try_fire_alert(
     .await
     .map_err(|e| format!("Failed to record alert: {e}"))?;
 
-    // Also store in panel notification center (bell icon) — notify all admins
+    // Also store in panel notification center (bell icon) - notify all admins
     notify_panel(pool, None, title, message, severity, "alert", Some("/monitoring?tab=alerts")).await;
 
-    // Build the notification payload once — both the NULL-policy fan-out and the
+    // Build the notification payload once - both the NULL-policy fan-out and the
     // policy-driven fan-out reuse it.
-    let subject = format!("DockPanel Alert: {title}");
+    let subject = format!("CyberHunter - Panel Alert: {title}");
     let html = format!(
         "<div style=\"font-family:sans-serif;max-width:600px;margin:0 auto\">\
          <h2 style=\"color:{}\">{title}</h2>\
@@ -1425,7 +1425,7 @@ pub async fn try_fire_alert(
             return Ok(true);
         }
         tracing::warn!(
-            "Alert rule references escalation_policy {pid} with empty/invalid steps — falling back to default channel fan-out"
+            "Alert rule references escalation_policy {pid} with empty/invalid steps - falling back to default channel fan-out"
         );
     }
 
@@ -1475,15 +1475,15 @@ pub async fn notify_panel(
 ///
 /// Two things here used to be wrong in ways nothing could report.
 ///
-/// The INSERT was `let _ = …`, so a notification that failed to store — a
-/// constraint, a full disk, a pool timeout — was indistinguishable from one
+/// The INSERT was `let _ = …`, so a notification that failed to store - a
+/// constraint, a full disk, a pool timeout - was indistinguishable from one
 /// that stored fine. The one class of message whose entire job is to tell you
 /// something went wrong was the class that failed silently. It still does not
 /// return an error (a caller reporting a deploy result must not fail because
 /// the notification did not store), but it now says so at `error!`.
 ///
 /// And the SSE payload was built from the arguments, so it carried no `id`, no
-/// `created_at` and no `read_at` — every field a client needs to render the row
+/// `created_at` and no `read_at` - every field a client needs to render the row
 /// or to mark it read. That is why the only subscriber in the frontend threw the
 /// body away and re-fetched a count instead. The INSERT now RETURNs the row's
 /// identity and the payload carries it, so a live list can prepend what arrives
@@ -1507,7 +1507,7 @@ async fn insert_and_broadcast(
         Ok(row) => row,
         Err(e) => {
             tracing::error!(
-                "notification not stored for {user_id} ({category}/{severity}): {title} — {e}"
+                "notification not stored for {user_id} ({category}/{severity}): {title} - {e}"
             );
             return;
         }
@@ -1538,7 +1538,7 @@ async fn insert_and_broadcast(
 /// `(user_id, server_id, alert_type)`, so one container recovering resolved the
 /// alert rows of every other container down on that server. Those siblings kept
 /// `alert_state.current_state = 'firing'`, and a transition-triggered engine
-/// never re-announces a condition it believes it already announced — so the
+/// never re-announces a condition it believes it already announced - so the
 /// remaining outages went silent permanently.
 ///
 /// The recovery page is sent only if this call actually resolved something.
@@ -1560,8 +1560,8 @@ pub async fn resolve_alert(
     // The third arm exists because `monitors.site_id` is nullable: a monitor
     // that watches a bare URL fires with both ids NULL, and before `state_key`
     // there was no way to name what such an alert was about, so this function
-    // could only refuse. A non-empty key IS the scope — it identifies one
-    // subject inside one user's alerts — so that case is now resolvable. Both
+    // could only refuse. A non-empty key IS the scope - it identifies one
+    // subject inside one user's alerts - so that case is now resolvable. Both
     // ids NULL *and* an empty key is still a refusal: that would match every
     // server-wide alert the user has.
     let query = if server_id.is_some() {
@@ -1579,7 +1579,7 @@ pub async fn resolve_alert(
          WHERE user_id = $1 AND $2::uuid IS NULL AND alert_type = $3 AND state_key = $4 AND status = 'firing'"
     } else {
         tracing::warn!(
-            "resolve_alert called for '{alert_type}' with no server_id, no site_id and no state_key — refusing to resolve unscoped"
+            "resolve_alert called for '{alert_type}' with no server_id, no site_id and no state_key - refusing to resolve unscoped"
         );
         return;
     };
@@ -1603,7 +1603,7 @@ pub async fn resolve_alert(
 
     if resolved == 0 {
         tracing::debug!(
-            "resolve_alert: nothing firing for '{alert_type}' key '{state_key}' — no recovery notice sent"
+            "resolve_alert: nothing firing for '{alert_type}' key '{state_key}' - no recovery notice sent"
         );
         return;
     }
@@ -1612,9 +1612,9 @@ pub async fn resolve_alert(
     // path honours. A muted type that pages on recovery is still a page.
     if let Some(channels) = get_user_channels(pool, user_id, server_id).await {
         if is_type_muted(&channels, alert_type) {
-            tracing::debug!("Alert type '{alert_type}' muted for user {user_id} — skipping recovery notice");
+            tracing::debug!("Alert type '{alert_type}' muted for user {user_id} - skipping recovery notice");
         } else {
-            let subject = format!("DockPanel Resolved: {title}");
+            let subject = format!("CyberHunter - Panel Resolved: {title}");
             let html = format!(
                 "<div style=\"font-family:sans-serif;max-width:600px;margin:0 auto\">\
                  <h2 style=\"color:#10b981\">{title}</h2>\
@@ -1634,7 +1634,7 @@ pub async fn resolve_alert(
 // ⚠ MOVED TO THE END OF THE FILE at v2.156.0, and the move is the point.
 // `severity_color_tests` sat at line 136 of 1463. Every pin suite's `prod_lines`
 // helper blanks from the FIRST `#[cfg(test)]` to EOF, so a test module placed
-// mid-file hides everything below it from every `prod_*` arm in every suite —
+// mid-file hides everything below it from every `prod_*` arm in every suite -
 // here that was 91% of this file, including `ssl_renewal_key`,
 // `fire_alert_deduped` and `is_type_muted`. No existing arm was measuring an
 // empty subject yet; the first new one written over this file was, which is how
@@ -1654,7 +1654,7 @@ mod severity_color_tests {
         assert_eq!(severity_color("warning"), "#f59e0b");
     }
 
-    /// `info` and any unrecognised value both fall to the same blue — there is
+    /// `info` and any unrecognised value both fall to the same blue - there is
     /// no third colour to confuse with a real severity, so an unknown string
     /// degrades to the same thing "no severity" always meant.
     #[test]
@@ -1666,7 +1666,7 @@ mod severity_color_tests {
 }
 
 // Appended AFTER `severity_color_tests`, which is already the last thing in this
-// file — so the first `#[cfg(test)]` does not move and no production line drops
+// file - so the first `#[cfg(test)]` does not move and no production line drops
 // below it. See the note above that module.
 
 #[cfg(test)]
@@ -1688,7 +1688,7 @@ mod renewal_success_clears_tests {
         // Names really did stop being covered, and they stay uncovered until a
         // wildcard is re-issued. This one is also RAISED on the same success
         // path, and `fire_alert_deduped` windows on `created_at` regardless of
-        // status — so resolving it here would let its own re-fire land inside
+        // status - so resolving it here would let its own re-fire land inside
         // the 12-hour window and vanish.
         assert!(!renewal_success_clears(ssl_renewal_key::DNS01_DOWNGRADED));
         // The installed certificate is somebody else's; renewing ours says

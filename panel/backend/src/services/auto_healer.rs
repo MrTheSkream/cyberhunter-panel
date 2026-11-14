@@ -12,7 +12,7 @@ use crate::services::notifications;
 /// Cumulative count of auto-healer SSL renewal attempts that succeeded.
 /// Read by the Prometheus exporter and published as
 /// `dockpanel_cert_renewals_total{result="success"}`. In-process atomic
-/// (resets across restart — Prometheus `increase()` handles the reset).
+/// (resets across restart - Prometheus `increase()` handles the reset).
 pub static SSL_RENEWALS_SUCCESS: AtomicU64 = AtomicU64::new(0);
 /// Cumulative count of auto-healer SSL renewal attempts that failed.
 /// Published as `dockpanel_cert_renewals_total{result="failure"}`.
@@ -23,7 +23,7 @@ pub static SSL_RENEWALS_FAILURE: AtomicU64 = AtomicU64::new(0);
 /// Takes the fleet registry and NOT the panel's local `AgentClient`, deliberately.
 /// Every leg of this loop reads rows that name a host and then writes through an
 /// agent, so there is no legitimate reason for it to hold a handle to this box in
-/// particular. Until v2.80.0 it held both and split them four lines apart — the
+/// particular. Until v2.80.0 it held both and split them four lines apart - the
 /// two legs given the local client (`auto_renew_ssl`, `auto_sleep_idle_containers`)
 /// were the two that acted on the wrong machine. Removing the parameter is what
 /// keeps that from being re-introduced by an author who sees one in scope.
@@ -98,7 +98,7 @@ async fn is_enabled(pool: &PgPool) -> bool {
     row.map(|r| r.0 == "true").unwrap_or(false)
 }
 
-/// Restart crashed services and containers — on the host they crashed on.
+/// Restart crashed services and containers - on the host they crashed on.
 ///
 /// Every read here used to be fleet-blind and the restart always went to the
 /// panel's own agent. That combination did not misbehave, and the reason is
@@ -106,8 +106,8 @@ async fn is_enabled(pool: &PgPool) -> bool {
 /// the rows with the oldest `servers` row, so the label was wrong, this function
 /// ignored the label, and the restart landed on the machine the reading actually
 /// came from. **Two bugs that cancel are two bugs.** The alert engine now writes
-/// correct server ids, which ends the accident — nginx dying on a member would
-/// restart nginx on the panel — so this must be scoped in the same ship, and is.
+/// correct server ids, which ends the accident - nginx dying on a member would
+/// restart nginx on the panel - so this must be scoped in the same ship, and is.
 ///
 /// Three properties this now holds, mirroring `auto_clean_disk`:
 /// * **Each firing service is healed on its own agent**, resolved through
@@ -180,7 +180,7 @@ async fn auto_restart_services(pool: &PgPool, agents: &AgentRegistry) {
                         ).bind(server_id).bind(service_name).execute(pool).await;
                         tracing::info!("Auto-healer: {service_name} recovered on {server_name}, cleared exhausted state");
 
-                        // Resolve the associated incident — the one the alert
+                        // Resolve the associated incident - the one the alert
                         // engine opened for THIS service on THIS box, matched by
                         // its exact generated title and scoped to the owner.
                         //
@@ -188,7 +188,7 @@ async fn auto_restart_services(pool: &PgPool, agents: &AgentRegistry) {
                         // user_id: a tenant incident whose title merely contained
                         // a system-service substring ("nginx-edge is down",
                         // "postgres migration") was silently flipped to resolved
-                        // when the panel's own service recovered — turning their
+                        // when the panel's own service recovered - turning their
                         // status page green mid-outage with no incident update to
                         // show for it. Same unscoped-title-match class as the
                         // incidents.rs and uptime.rs resolves.
@@ -219,7 +219,7 @@ async fn auto_restart_services(pool: &PgPool, agents: &AgentRegistry) {
     }
 
     // Find service_down alerts that are currently firing, each carrying the
-    // server it fired on. The row is the authority on the host — the same rule
+    // server it fired on. The row is the authority on the host - the same rule
     // the webhook routes learned at v2.57.0.
     let firing: Vec<(uuid::Uuid, String, uuid::Uuid, String)> = match sqlx::query_as(
         "SELECT a.server_id, a.state_key, s.user_id, s.name \
@@ -248,7 +248,7 @@ async fn auto_restart_services(pool: &PgPool, agents: &AgentRegistry) {
             }
         };
 
-        // GAP 12: Check restart count in last 30 minutes — give up after 3 attempts.
+        // GAP 12: Check restart count in last 30 minutes - give up after 3 attempts.
         // Scoped to this server: a service of the same name on two hosts had
         // shared one budget, so a crash loop on one box would have exhausted
         // healing for a healthy namesake on the other.
@@ -265,12 +265,12 @@ async fn auto_restart_services(pool: &PgPool, agents: &AgentRegistry) {
         .unwrap_or((0,));
 
         if restart_count.0 >= 3 {
-            // Stop healing — service is in a crash loop. Create incident and notify.
+            // Stop healing - service is in a crash loop. Create incident and notify.
             tracing::warn!("Auto-healer gave up on {service_name} after 3 restarts in 30 minutes");
 
             // The owner and name come from the row's own server. This used to
             // be the oldest `servers` row, so a member's crash loop opened an
-            // incident naming the panel — on the panel owner's status page.
+            // incident naming the panel - on the panel owner's status page.
             {
                 let incident_title = format!("Auto-healer exhausted: {} keeps crashing on {}", service_name, server_name);
                 let incident_msg = format!(
@@ -317,7 +317,7 @@ async fn auto_restart_services(pool: &PgPool, agents: &AgentRegistry) {
                 ).await;
             }
 
-            // Clear the firing alert state so we don't keep trying — on THIS
+            // Clear the firing alert state so we don't keep trying - on THIS
             // server only. Unscoped, giving up on a member's nginx also stopped
             // the panel's own nginx from ever being healed again.
             let _ = sqlx::query(
@@ -377,7 +377,7 @@ async fn auto_restart_services(pool: &PgPool, agents: &AgentRegistry) {
         }
 
         // Written against the server's OWNER, not the nil uuid, and stamped
-        // with the server. This row IS the cooldown gate read above — written
+        // with the server. This row IS the cooldown gate read above - written
         // against the nil uuid it violated `fk_activity_logs_user` and failed
         // every time, so the count was always 0 and a crash-looping service was
         // restarted every 120 seconds for ever, with no audit trail of any of it.
@@ -434,7 +434,7 @@ async fn auto_restart_services(pool: &PgPool, agents: &AgentRegistry) {
     // (`DeployedApp`, agent `services/docker_apps.rs`); this asked for `state`
     // and `id`, so the state test could never match "exited" and the emptiness
     // guard could never pass. The alert engine reads the correct field name for
-    // the same payload — in the same subsystem, for the same containers.
+    // the same payload - in the same subsystem, for the same containers.
     for member in agents.online_fleet().await {
         let containers = match member.agent.get("/apps").await {
             Ok(c) => c,
@@ -447,7 +447,7 @@ async fn auto_restart_services(pool: &PgPool, agents: &AgentRegistry) {
 
         // A container the panel stopped on purpose is not something to heal.
         // Without this the healer restarts the operator's deliberate Stop within
-        // 120s — and, now that the alert is suppressed, it does so SILENTLY,
+        // 120s - and, now that the alert is suppressed, it does so SILENTLY,
         // because the spurious alert used to be the only sign it had happened.
         // It is also the half that makes auto-sleep work at all: the sleeper and
         // this loop share one switch and one tick, and this loop runs first.
@@ -466,7 +466,7 @@ async fn auto_restart_services(pool: &PgPool, agents: &AgentRegistry) {
                 continue;
             }
 
-            // Check restart count in last 30 minutes — give up after 3 attempts
+            // Check restart count in last 30 minutes - give up after 3 attempts
             let restart_count: (i64,) = sqlx::query_as(
                 "SELECT COUNT(*) FROM activity_logs \
                  WHERE action = 'auto_heal.container_restart' AND target_name = $1 AND server_id = $2 \
@@ -515,7 +515,7 @@ async fn auto_restart_services(pool: &PgPool, agents: &AgentRegistry) {
     }
 }
 
-/// Free disk space on servers whose disk alert is firing — on THOSE servers.
+/// Free disk space on servers whose disk alert is firing - on THOSE servers.
 ///
 /// This used to read one firing `disk` row with no `server_id` predicate and send
 /// the fixes to the local agent. `alert_state` is keyed per server
@@ -527,7 +527,7 @@ async fn auto_restart_services(pool: &PgPool, agents: &AgentRegistry) {
 ///
 /// Three properties this now holds:
 /// * **Each firing server is healed on its own agent**, resolved through
-///   `AgentRegistry::for_server` — the same primitive every HTTP route already
+///   `AgentRegistry::for_server` - the same primitive every HTTP route already
 ///   uses via `ServerScope`.
 /// * **The cooldown is real.** It used to count `activity_logs` rows written with
 ///   `Uuid::nil()`, which violates `fk_activity_logs_user`, so the insert always
@@ -537,7 +537,7 @@ async fn auto_restart_services(pool: &PgPool, agents: &AgentRegistry) {
 ///   destruction of this size owes them.
 /// * **Recovery goes through the alert engine's own path.** A raw UPDATE to `ok`
 ///   consumed the firing->ok transition without ever calling `resolve_alert`, so
-///   the `alerts` row stayed `firing` for ever — and retention only purges
+///   the `alerts` row stayed `firing` for ever - and retention only purges
 ///   `status = 'resolved'`, making those rows unpurgeable.
 async fn auto_clean_disk(pool: &PgPool, agents: &AgentRegistry) {
     let firing: Vec<(uuid::Uuid, uuid::Uuid, String)> = sqlx::query_as(
@@ -554,7 +554,7 @@ async fn auto_clean_disk(pool: &PgPool, agents: &AgentRegistry) {
         // Cooldown is per server: a fleet where one box is chronically full must
         // not suppress healing on another that has just filled up.
         // Keyed on `server_id`, like the four other cooldown gates in this file.
-        // It used to key on `target_name` holding the server's UUID as text —
+        // It used to key on `target_name` holding the server's UUID as text -
         // which worked, but spent the operator-facing column on a machine
         // identifier, so the audit feed rendered this row as a bare UUID. The
         // column that means "which host" now exists, so the gate uses it and
@@ -588,7 +588,7 @@ async fn auto_clean_disk(pool: &PgPool, agents: &AgentRegistry) {
                 // cannot reach.
                 tracing::warn!(
                     "Auto-heal: disk alert firing on {server_name} ({server_id}) but its \
-                     agent is unreachable ({e}) — NOT cleaning. Refusing to act on a \
+                     agent is unreachable ({e}) - NOT cleaning. Refusing to act on a \
                      different host."
                 );
                 continue;
@@ -604,7 +604,7 @@ async fn auto_clean_disk(pool: &PgPool, agents: &AgentRegistry) {
             .await
             .is_ok();
 
-        // Written against the server's OWNER, not the nil uuid — this row is both
+        // Written against the server's OWNER, not the nil uuid - this row is both
         // the cooldown gate and the operator's only record that this ran. The
         // host now travels in `server_id`, which is what the gate above reads,
         // so `target_name` can say which machine in words.
@@ -635,7 +635,7 @@ async fn auto_clean_disk(pool: &PgPool, agents: &AgentRegistry) {
             .await;
 
         // The reclaim is opt-in and scoped; see `docker-reclaim` in the agent's
-        // diagnostics. It never removes anything DockPanel manages, and never
+        // diagnostics. It never removes anything CyberHunter - Panel manages, and never
         // anything a tenant is only sleeping.
         if reclaim_enabled(pool).await {
             tracing::info!("Auto-heal: reclaiming unmanaged Docker resources on {server_name}");
@@ -690,8 +690,8 @@ async fn auto_clean_disk(pool: &PgPool, agents: &AgentRegistry) {
 
 /// Whether the operator has opted into reclaiming unused Docker resources during
 /// a disk heal. Defaults to **false**: the previous behaviour ran
-/// `docker system prune -af --volumes` — every stopped container, every image not
-/// held by a running one, every unused volume — on a consent screen that said
+/// `docker system prune -af --volumes` - every stopped container, every image not
+/// held by a running one, every unused volume - on a consent screen that said
 /// "cleans logs".
 async fn reclaim_enabled(pool: &PgPool) -> bool {
     sqlx::query_scalar::<_, String>(
@@ -709,10 +709,10 @@ async fn reclaim_enabled(pool: &PgPool) -> bool {
 /// available, falling back to a profile-aware static threshold.
 ///
 /// Two phases per run:
-/// 1. **ARI refresh** — for each SSL site whose suggestion is missing or
+/// 1. **ARI refresh** - for each SSL site whose suggestion is missing or
 ///    stale, fetch `/ssl/{domain}/renewal-info` from the agent and store
 ///    the suggested renewal window.
-/// 2. **Renewal** — for sites whose `ssl_renewal_at` has passed (or whose
+/// 2. **Renewal** - for sites whose `ssl_renewal_at` has passed (or whose
 ///    fallback threshold is hit), call `/ssl/{domain}/renew`.
 ///
 /// The agent reads the prior cert PEM from disk and passes it as the ARI
@@ -721,7 +721,7 @@ async fn reclaim_enabled(pool: &PgPool) -> bool {
 ///
 /// This is the failure that hides best. Issuance has a fallback contact address,
 /// so a box whose owner email cannot be an ACME contact gets its certificate and
-/// looks fine — and then, sixty days later, the renewal loop reaches this branch
+/// looks fine - and then, sixty days later, the renewal loop reaches this branch
 /// every two minutes and says nothing anybody reads. The certificate expires on
 /// a working, unattended server. Deduped to one alert per site per twelve hours:
 /// the cause is a configuration problem, not a transient.
@@ -742,7 +742,7 @@ async fn ssl_renewal_blocked(
         "critical",
         &format!("SSL renewal blocked: {domain}"),
         &format!(
-            "DockPanel cannot renew the certificate for {domain}: {reason}. \
+            "CyberHunter - Panel cannot renew the certificate for {domain}: {reason}. \
              Until this is fixed the certificate will expire and the site will \
              stop loading. Set a contact address under Settings → SSL, or on the \
              site owner's account."
@@ -757,7 +757,7 @@ async fn ssl_renewal_blocked(
 ///
 /// ⚠ Deliberately NOT `ssl_renewal_blocked`. That helper says "SSL renewal
 /// blocked", pages at `critical`, and closes by telling the operator to set a
-/// contact address — three statements that are all false here. Nothing failed
+/// contact address - three statements that are all false here. Nothing failed
 /// and nothing is missing on the account: the panel chose not to aim an HTTP-01
 /// order at a certificate HTTP-01 cannot reproduce. This is the same split
 /// `ssl_renewal_declined_alert` already draws in the scanner, and
@@ -789,7 +789,7 @@ async fn ssl_dns01_declined_alert(
 /// Announce a DNS-01 certificate that was downgraded to a single name on
 /// purpose, in its last week, because it could not be re-ordered over DNS-01.
 ///
-/// `critical` is right — names really did stop being covered — but the wording
+/// `critical` is right - names really did stop being covered - but the wording
 /// must not say "renewal failed", because a certificate WAS installed. The
 /// operator needs to know what is no longer covered, not that nothing happened.
 async fn ssl_dns01_downgraded_alert(
@@ -811,7 +811,7 @@ async fn ssl_dns01_downgraded_alert(
         &format!("SSL certificate downgraded: {domain}"),
         &format!(
             "The certificate for {domain} covered {losing} and could not be re-ordered over \
-             DNS-01 before it expired, so DockPanel issued a single-name certificate for \
+             DNS-01 before it expired, so CyberHunter - Panel issued a single-name certificate for \
              {domain} instead. Any other name it covered is no longer covered. Add the \
              Cloudflare zone and API token under DNS management, then re-issue from the \
              site's SSL tab."
@@ -831,7 +831,7 @@ async fn auto_renew_ssl(pool: &PgPool, agents: &AgentRegistry) {
     // fleet-wide, so for every site on a fleet member the panel asked its own
     // box to renew a certificate for a domain that box does not serve. HTTP-01
     // cannot validate from there, so the certificate simply expired on a live
-    // customer site — unattended, every two minutes, needing no attacker. The
+    // customer site - unattended, every two minutes, needing no attacker. The
     // inverse was worse: a local success (DNS-01, or a same-named vhost on the
     // panel) wrote the LOCAL certificate's expiry onto the remote site's row,
     // pushing it out of the 45-day window so the loop stopped trying, leaving a
@@ -872,31 +872,31 @@ async fn auto_renew_ssl(pool: &PgPool, agents: &AgentRegistry) {
         // below writes: ARI state, the certificate itself, `ssl_expiry`, and a
         // full vhost re-render. Aiming any of them at a host the site does not
         // run on is a cross-host write, so an unreachable server is a reason to
-        // retry on the next tick and never a reason to act somewhere else —
+        // retry on the next tick and never a reason to act somewhere else -
         // the same rule `preview_cleanup` and `backup_policy_executor` follow.
         let agent = match agents.for_server(*server_id).await {
             Ok(a) => a,
             Err(e) => {
                 tracing::warn!(
                     "Auto-heal: site {domain} lives on server {server_id}, which is \
-                     unreachable ({e}) — skipping SSL renewal this cycle. Refusing to \
+                     unreachable ({e}) - skipping SSL renewal this cycle. Refusing to \
                      renew a certificate through a different host."
                 );
                 continue;
             }
         };
 
-        // ⛔ A renewal is a REPLACEMENT — see the same guard in `security_scanner`.
+        // ⛔ A renewal is a REPLACEMENT - see the same guard in `security_scanner`.
         // The agent writes the new certificate over `fullchain.pem`, which is the
         // file an uploaded certificate occupies too, so aiming ACME at a
-        // certificate DockPanel did not issue destroys a paid asset. Asked before
+        // certificate CyberHunter - Panel did not issue destroys a paid asset. Asked before
         // the ARI dance and before any order, so the wasted work is skipped with
         // it. `None` means "not proven foreign" and must still renew: refusing on
         // doubt lets a real certificate lapse.
         if let Some(issuer) = crate::helpers::foreign_cert_issuer(&agent, domain).await {
             tracing::info!(
-                "Auto-heal: NOT renewing {domain} — the installed certificate was issued \
-                 by {issuer}, not by DockPanel. Renewing would replace it."
+                "Auto-heal: NOT renewing {domain} - the installed certificate was issued \
+                 by {issuer}, not by CyberHunter - Panel. Renewing would replace it."
             );
             continue;
         }
@@ -911,7 +911,7 @@ async fn auto_renew_ssl(pool: &PgPool, agents: &AgentRegistry) {
         {
             Ok(Some(e)) => e,
             _ => {
-                tracing::warn!("Auto-heal: cannot renew SSL for {domain} — owner email not found");
+                tracing::warn!("Auto-heal: cannot renew SSL for {domain} - owner email not found");
                 ssl_renewal_blocked(
                     pool,
                     *user_id,
@@ -930,13 +930,13 @@ async fn auto_renew_ssl(pool: &PgPool, agents: &AgentRegistry) {
         let email: String = match crate::routes::ssl::resolve_acme_contact(pool, &owner_email).await {
             Ok(addr) => addr,
             Err(reason) => {
-                tracing::warn!("Auto-heal: cannot renew SSL for {domain} — {reason}");
+                tracing::warn!("Auto-heal: cannot renew SSL for {domain} - {reason}");
                 ssl_renewal_blocked(pool, *user_id, *site_id, domain, &reason).await;
                 continue;
             }
         };
 
-        // Phase 1 — refresh ARI suggestion if stale or missing. Cooldown is
+        // Phase 1 - refresh ARI suggestion if stale or missing. Cooldown is
         // profile-aware so shortlived (6-day) certs poll the CA more often
         // than long-lived ones.
         let needs_ari = ssl_renewal_checked_at
@@ -991,7 +991,7 @@ async fn auto_renew_ssl(pool: &PgPool, agents: &AgentRegistry) {
         // Profile-aware cooldown prevents hammering the CA if renewal keeps
         // failing. Shortlived gets 1h so a failed attempt near expiry doesn't
         // burn the whole renewal window; everything else stays at 6h.
-        // cooldown_hours is a typed i64 — safe to interpolate directly.
+        // cooldown_hours is a typed i64 - safe to interpolate directly.
         let cooldown_hours = profile_cooldown(ssl_profile.as_deref()).num_hours();
         let recent: Option<(i64,)> = sqlx::query_as(&format!(
             "SELECT COUNT(*) FROM activity_logs \
@@ -1055,15 +1055,15 @@ async fn auto_renew_ssl(pool: &PgPool, agents: &AgentRegistry) {
         //
         // ⛔ This refusal ALERTS. The sibling foreign-issuer refusal twelve
         // hundred lines up is a bare `tracing::info!` with no alert, no activity
-        // row and no notification — a precedent this must not inherit, or the
+        // row and no notification - a precedent this must not inherit, or the
         // operator's first news of a certificate nobody can renew is the outage.
         if let crate::helpers::RenewalPlan::Refuse { reason } = &plan {
             // ⚠ A DIFFERENT sentence from the foreign-issuer stop above, on
             // purpose. That guard's line is pinned at exactly one occurrence, and
             // a second copy of its wording here would let either stop satisfy the
-            // arm written for the other — sibling satisfaction, the class this
+            // arm written for the other - sibling satisfaction, the class this
             // project has been bitten by three times in one session before.
-            tracing::warn!("Auto-heal: DNS-01 renewal declined for {domain} — {reason}");
+            tracing::warn!("Auto-heal: DNS-01 renewal declined for {domain} - {reason}");
             ssl_dns01_declined_alert(pool, *user_id, Some(*server_id), *site_id, domain, reason)
                 .await;
             continue;
@@ -1071,7 +1071,7 @@ async fn auto_renew_ssl(pool: &PgPool, agents: &AgentRegistry) {
 
         // ⛔ `post_long`, not `post`. Plain `post` caps at 60s inside
         // `AgentHandle::request`, and a wildcard DNS-01 order budgets ~260s in
-        // the agent alone — so this door would have recorded a false failure,
+        // the agent alone - so this door would have recorded a false failure,
         // skipped the expiry write and the vhost rebuild, and written a cooldown
         // row, while the agent went on to issue the certificate successfully.
         let result: Result<serde_json::Value, String> = match &plan {
@@ -1112,8 +1112,8 @@ async fn auto_renew_ssl(pool: &PgPool, agents: &AgentRegistry) {
         // `uuid::Uuid::nil()`, `fk_activity_logs_user` rejected the insert, and
         // `log_activity` swallowed the error into a warn. `COUNT(*)` was therefore
         // permanently 0, the `if recent > 0 { continue }` above never fired, and a
-        // certificate DockPanel cannot renew was re-ordered from the CA on every
-        // 120-second tick, for ever — by the cooldown whose own comment says it
+        // certificate CyberHunter - Panel cannot renew was re-ordered from the CA on every
+        // 120-second tick, for ever - by the cooldown whose own comment says it
         // exists "to prevent hammering the CA if renewal keeps failing". The agent
         // does not cheaply refuse these: it validates the domain's shape and then
         // places a real ACME order, so this was real load on Let's Encrypt.
@@ -1194,7 +1194,7 @@ async fn auto_renew_ssl(pool: &PgPool, agents: &AgentRegistry) {
                 // back onto the internet of the two.
                 if !site.enabled {
                     tracing::info!(
-                        "Auto-heal: renewed SSL for {} but skipped the vhost rebuild — the site is disabled",
+                        "Auto-heal: renewed SSL for {} but skipped the vhost rebuild - the site is disabled",
                         site.domain
                     );
                 } else if let Err(e) = agent
@@ -1216,7 +1216,7 @@ async fn auto_renew_ssl(pool: &PgPool, agents: &AgentRegistry) {
             // Fire an alert so the user is notified about the SSL renewal failure.
             //
             // The server this alert names is the one the SITE is on. It used to be
-            // `SELECT id FROM servers ORDER BY created_at ASC LIMIT 1` — the oldest
+            // `SELECT id FROM servers ORDER BY created_at ASC LIMIT 1` - the oldest
             // row on the panel, with no filter of any kind, which is the laundering
             // shape this project has been removing since v2.56.0. That row is
             // deterministically the panel's own local server (it is created at
@@ -1228,7 +1228,7 @@ async fn auto_renew_ssl(pool: &PgPool, agents: &AgentRegistry) {
             //
             // Deduped: the attempt cooldown is one hour for short-lived profiles,
             // so an unconditional alert here would page two dozen times a day for
-            // a single stuck certificate — and the security scanner alerts on the
+            // a single stuck certificate - and the security scanner alerts on the
             // same certificate from its own loop.
             notifications::fire_alert_deduped(
                 pool,
@@ -1241,7 +1241,7 @@ async fn auto_renew_ssl(pool: &PgPool, agents: &AgentRegistry) {
                 &format!("SSL renewal failed: {domain}"),
                 &format!(
                     "Auto-healer failed to renew the SSL certificate for {domain}: {details}. \
-                     The certificate may expire soon — check the domain configuration and DNS."
+                     The certificate may expire soon - check the domain configuration and DNS."
                 ),
                 12,
             )
@@ -1334,7 +1334,7 @@ async fn send_weekly_digest(pool: &PgPool) {
 
     let body_html = format!(
         r#"<div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-            <h2 style="color: #4f46e5;">DockPanel Weekly Summary</h2>
+            <h2 style="color: #4f46e5;">CyberHunter - Panel Weekly Summary</h2>
             <p>Here's what happened in the last 7 days:</p>
             <table style="border-collapse: collapse; width: 100%; margin: 16px 0;">
                 <tr><td style="padding: 8px; border-bottom: 1px solid #e5e7eb; font-weight: 600;">Alerts</td><td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">{}</td></tr>
@@ -1343,7 +1343,7 @@ async fn send_weekly_digest(pool: &PgPool) {
                 <tr><td style="padding: 8px; border-bottom: 1px solid #e5e7eb; font-weight: 600;">Deploys</td><td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">{}</td></tr>
                 <tr><td style="padding: 8px; border-bottom: 1px solid #e5e7eb; font-weight: 600;">Security Scans</td><td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">{}</td></tr>
             </table>
-            <p style="color: #6b7280; font-size: 14px;">Log in to your DockPanel dashboard for full details.</p>
+            <p style="color: #6b7280; font-size: 14px;">Log in to your CyberHunter - Panel dashboard for full details.</p>
         </div>"#,
         alerts_7d.0, backups_7d.0, incidents_7d.0, deploys_7d.0, security_scans_7d.0,
     );
@@ -1360,7 +1360,7 @@ async fn send_weekly_digest(pool: &PgPool) {
         if let Err(e) = crate::services::email::send_email(
             pool,
             email,
-            "DockPanel Weekly Summary",
+            "CyberHunter - Panel Weekly Summary",
             &body_html,
         )
         .await
@@ -1379,7 +1379,7 @@ async fn send_weekly_digest(pool: &PgPool) {
 
 /// Retire one backup: remove the archive, then the row that names it.
 ///
-/// Serves all three retention sweeps — `backups` (site schedules), plus
+/// Serves all three retention sweeps - `backups` (site schedules), plus
 /// `database_backups` and `volume_backups` (policies). The site sweep wrote its
 /// own copy of this logic without either guard until v2.123.0: it unlinked a
 /// local path and deleted the row unconditionally, so on a fleet install every
@@ -1410,7 +1410,7 @@ async fn prune_policy_backup(
     if let (Some(row_s), Some(local_s)) = (row_server, local_server) {
         if row_s != local_s {
             tracing::warn!(
-                "Retention: {table} {id} belongs to server {row_s}, not this host — \
+                "Retention: {table} {id} belongs to server {row_s}, not this host - \
                  keeping the row. A local unlink cannot reach it, and deleting the row \
                  would orphan the archive with no record of where it is."
             );
@@ -1421,11 +1421,11 @@ async fn prune_policy_backup(
     match std::fs::remove_file(filepath) {
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            // Already gone — the row is the only thing left to clean up.
+            // Already gone - the row is the only thing left to clean up.
         }
         Err(e) => {
             tracing::warn!(
-                "Retention: could not remove {filepath} ({e}) — keeping the {table} row \
+                "Retention: could not remove {filepath} ({e}) - keeping the {table} row \
                  so the archive stays accounted for."
             );
             return false;
@@ -1450,7 +1450,7 @@ async fn prune_policy_backup(
 async fn run_retention_cleanup(pool: &PgPool) {
     tracing::info!("Running data retention cleanup...");
 
-    // GAP 33: Weekly digest — send summary email on Mondays during cleanup cycle
+    // GAP 33: Weekly digest - send summary email on Mondays during cleanup cycle
     send_weekly_digest(pool).await;
 
     // Phase 4 W4: panel snapshot retention. Always-keep last 3, deletes
@@ -1599,7 +1599,7 @@ async fn run_retention_cleanup(pool: &PgPool) {
     // that exceed the limit (both DB records and local files via filesystem).
 
     // The local server's id. A retention sweep unlinks a path on THIS filesystem,
-    // so it may only act on rows whose backup was written here — see
+    // so it may only act on rows whose backup was written here - see
     // `prune_policy_backup` for what happens to the rest.
     let local_server_id: Option<uuid::Uuid> =
         sqlx::query_scalar("SELECT id FROM servers WHERE is_local = TRUE LIMIT 1")
@@ -1611,7 +1611,7 @@ async fn run_retention_cleanup(pool: &PgPool) {
     // `backups` carries no server of its own, so the owning host is the one that
     // hosts the site: `sites.server_id`. It is NOT NULL
     // (20260319000000_multi_server.sql:76) and is selected as a plain `Uuid` on
-    // purpose — a NULL fails the query and prunes nothing, where an `Option` would
+    // purpose - a NULL fails the query and prunes nothing, where an `Option` would
     // hand `None` to the guard below, which skips on `None` and unlinks locally.
     // Of the two ways to be wrong, only one destroys a record.
     let schedules: Vec<(uuid::Uuid, uuid::Uuid, i32, String, uuid::Uuid)> = sqlx::query_as(
@@ -1674,7 +1674,7 @@ async fn run_retention_cleanup(pool: &PgPool) {
         for (id, filename, db_name, server_id) in &excess_db {
             // `database_backup::backup_dir` nests per database. The old path
             // omitted `{db_name}`, so the unlink could never match a real file
-            // while the DELETE below ran anyway — every dump was orphaned on
+            // while the DELETE below ran anyway - every dump was orphaned on
             // disk and its only record destroyed.
             let filepath = format!("/var/backups/dockpanel/databases/{db_name}/{filename}");
             if prune_policy_backup(pool, "database_backups", *id, &filepath, *server_id, local_server_id).await {
@@ -1743,7 +1743,7 @@ async fn run_retention_cleanup(pool: &PgPool) {
     // reported nothing at all. The first symptom would have been a disk alert a year
     // after install, with no line anywhere naming the cause. Both sibling sweeps in
     // this function (recordings above, and the artifact prune) already report their
-    // outcome — this one was the odd man out.
+    // outcome - this one was the odd man out.
     //
     // `created()` is not implemented on every filesystem and returns Err there, which
     // would have meant "never sweep anything" just as silently, so fall back to
@@ -1773,7 +1773,7 @@ async fn run_retention_cleanup(pool: &PgPool) {
         if !audit_failed.is_empty() {
             tracing::warn!(
                 "Retention: {} audit log file(s) older than 365 days could NOT be removed \
-                 [{}] — if {audit_dir} carries the append-only attribute, unlink is denied \
+                 [{}] - if {audit_dir} carries the append-only attribute, unlink is denied \
                  even to root; clear it with `chattr -a {audit_dir}` and the next sweep \
                  will succeed",
                 audit_failed.len(),
@@ -1784,10 +1784,10 @@ async fn run_retention_cleanup(pool: &PgPool) {
 
     // DB auto-backup: done via direct pg_dump (doesn't need agent client)
     if super::security_hardening::get_setting_bool(pool, "security_db_backup_enabled", true).await {
-        tracing::info!("Triggering DockPanel DB auto-backup...");
+        tracing::info!("Triggering CyberHunter - Panel DB auto-backup...");
         // `bash` and `set -o pipefail` are both load-bearing (lesson #51). The exit
         // status of `pg_dump | gzip` is *gzip's*, and gzip compresses a truncated
-        // stream and exits 0 — so under the previous `sh -c` (which is dash here,
+        // stream and exits 0 - so under the previous `sh -c` (which is dash here,
         // and has no pipefail) a pg_dump that died halfway was written out, this
         // arm matched, and the healer logged "DB auto-backup completed" over a
         // backup that could never be restored. Sibling of the panel_snapshot.rs
@@ -1797,8 +1797,8 @@ async fn run_retention_cleanup(pool: &PgPool) {
             chrono::Utc::now().format("%Y%m%d_%H%M%S")
         );
         // `umask 077` is load-bearing and is NOT tidiness: the `>` redirect
-        // creates the file 0666 & ~umask, so without it this dump — the whole
-        // panel database, `servers.agent_token` in cleartext included — lands
+        // creates the file 0666 & ~umask, so without it this dump - the whole
+        // panel database, `servers.agent_token` in cleartext included - lands
         // 0644 on a host that also runs other people's PHP as www-data.
         match safe_command("bash")
             .args(["-c", &format!(
@@ -1807,7 +1807,7 @@ async fn run_retention_cleanup(pool: &PgPool) {
             .output().await
         {
             Ok(o) if o.status.success() => {
-                // A zero exit is not the success condition — a whole dump is
+                // A zero exit is not the success condition - a whole dump is
                 // (lesson #51 rule 4). pg_dump emits this marker last, so its
                 // absence means the file is short whatever the statuses claimed.
                 // This gates the retention prune below on purpose: pruning to 7
@@ -1822,12 +1822,12 @@ async fn run_retention_cleanup(pool: &PgPool) {
                 if !complete {
                     tracing::warn!(
                         "DB auto-backup discarded: {backup_file} is incomplete \
-                         (completion marker absent) — keeping earlier backups"
+                         (completion marker absent) - keeping earlier backups"
                     );
                     let _ = std::fs::remove_file(&backup_file);
                     return;
                 }
-                tracing::info!("DockPanel DB auto-backup completed");
+                tracing::info!("CyberHunter - Panel DB auto-backup completed");
                 // Cleanup old backups (keep 7)
                 if let Ok(entries) = std::fs::read_dir("/var/backups/dockpanel") {
                     let mut files: Vec<_> = entries
@@ -1874,7 +1874,7 @@ async fn security_ingest_suspicious_events(pool: &PgPool) {
             // The agent stamps every line with the time the command was actually
             // run. Ingesting the backlog as if it happened NOW collapses a queue
             // that may have taken months to build into one instant, which trips the
-            // "N events in M minutes" rule on the first tick — see
+            // "N events in M minutes" rule on the first tick - see
             // `record_suspicious_event_at`. An unparseable or absent timestamp
             // falls back to now, which is the old behaviour and the safe direction
             // for an event we cannot place in time.
@@ -1892,7 +1892,7 @@ async fn security_ingest_suspicious_events(pool: &PgPool) {
             // minutes by default), and tripping it blocks every non-admin for 24
             // hours. `terminal.blocked_command` is emitted by the agent's site
             // blocklist, whose `TERMINAL_BLOCKED_PATTERNS` contains a bare `".."`
-            // SUBSTRING — its own comment admits `echo "done..."` is refused — so
+            // SUBSTRING - its own comment admits `echo "done..."` is refused - so
             // an ordinary tenant produces refusals by accident. Counting those
             // would turn a deliberately blunt blocklist into a self-inflicted
             // outage, which is a worse defect than the silence it replaced.
@@ -1934,12 +1934,12 @@ async fn security_ingest_suspicious_events(pool: &PgPool) {
 
 /// Check canary files for access (Feature 12).
 /// Compares atime (last access) against a stored baseline.
-/// If atime changed, someone accessed the file — trigger alert.
+/// If atime changed, someone accessed the file - trigger alert.
 /// Every path this process watches for canary access, newest set first.
 ///
 /// Two generations live here on purpose. The last four are what the agent's
 /// `/security/canary/setup` used to advertise, and a box armed by hand before
-/// v2.132.0 still carries them — dropping them would silently stop watching a
+/// v2.132.0 still carries them - dropping them would silently stop watching a
 /// tripwire somebody is relying on. The first three are the new plant set
 /// (`CANARY_PLANT_PATHS`, agent `routes/security.rs`), chosen because the agent
 /// can actually write them and this process can actually read them; `/var/www`
@@ -1947,7 +1947,7 @@ async fn security_ingest_suspicious_events(pool: &PgPool) {
 ///
 /// `/etc/.dockpanel-canary` is watchable but NOT plantable: `ProtectSystem=strict`
 /// leaves bare `/etc` read-only for the agent, so it is carried for legacy boxes
-/// only. Do not add it to the plant set — measured under the shipped unit, that
+/// only. Do not add it to the plant set - measured under the shipped unit, that
 /// write fails EROFS.
 pub const CANARY_WATCH_PATHS: [&str; 7] = [
     "/etc/dockpanel/.dockpanel-canary",
@@ -1964,7 +1964,7 @@ pub const CANARY_WATCH_PATHS: [&str; 7] = [
 /// ⚠ Mirrors `CANARY_PLANT_PATHS` in `panel/agent/src/routes/security.rs`. The
 /// two crates cannot share a const, so `canary-arm-pin-e2e.sh` asserts they stay
 /// identical AND that neither ever gains a path outside the agent unit's
-/// `ReadWritePaths=` — which is how the original set came to advertise three
+/// `ReadWritePaths=` - which is how the original set came to advertise three
 /// directories the agent could never write.
 ///
 /// `/etc/.dockpanel-canary` is watched but not listed here on purpose: bare
@@ -1981,13 +1981,13 @@ pub const CANARY_PLANTABLE: [&str; 4] = [
 /// `panel/agent/dockpanel-agent.service` for the agent) replaces `/home` and
 /// `/root` with an empty read-only mount for both daemons.
 ///
-/// A masked path does NOT report `PermissionDenied` — the namespace simply has
+/// A masked path does NOT report `PermissionDenied` - the namespace simply has
 /// nothing there, so it reports `NotFound`, indistinguishable from "nobody
 /// planted it". That is why this list exists rather than an `Err` arm.
 ///
 /// Widening the sandbox is not the answer and was measured too: `ReadWritePaths=/root`
 /// under `ProtectHome=yes` still yields EROFS, so exposing these would mean weakening
-/// ProtectHome itself — a real loss of hardening bought for a tripwire.
+/// ProtectHome itself - a real loss of hardening bought for a tripwire.
 pub const SANDBOX_MASKED_PREFIXES: [&str; 2] = ["/root/", "/home/"];
 
 /// What this process can currently see at one canary path.
@@ -1998,7 +1998,7 @@ pub const SANDBOX_MASKED_PREFIXES: [&str; 2] = ["/root/", "/home/"];
 /// namespace has nothing there, so an `Err` arm keyed on `PermissionDenied`
 /// could never fire for the sandbox case. `Absent` means nobody planted it and
 /// planting it would work. `Unreadable` means it may exist and we cannot see it
-/// — a blind spot rather than an all-clear.
+/// - a blind spot rather than an all-clear.
 #[derive(Debug)]
 pub enum CanaryState {
     Watching,
@@ -2024,7 +2024,7 @@ impl CanaryState {
 /// used to be one loop and no endpoint, and the reason to keep a single
 /// implementation is specific rather than stylistic: if the screen classified a
 /// path differently from the sweeper, the panel would report a tripwire as armed
-/// while the thing that raises the alarm skipped it — the exact failure this
+/// while the thing that raises the alarm skipped it - the exact failure this
 /// feature already had, moved one layer up.
 pub fn classify_canary(path: &str) -> (CanaryState, Option<std::fs::Metadata>) {
     match std::fs::metadata(path) {
@@ -2048,7 +2048,7 @@ async fn security_check_canary_files(pool: &PgPool) {
 
     // How many canaries this tick could actually be examined. A tripwire with nothing
     // on the wire reports "all clear" forever, which is the one answer an intrusion
-    // detector must never give by default — and the Settings toggle renders ON unless
+    // detector must never give by default - and the Settings toggle renders ON unless
     // the operator has explicitly turned it off, so silence read as protection.
     //
     // Until v2.132.0 nothing in the tree planted these files: the writer is the
@@ -2150,7 +2150,7 @@ async fn security_check_canary_files(pool: &PgPool) {
             // it is empty until somebody configures a destination:
             // `get_user_channels` returns `None` for a user with no `alert_rules`
             // row. The tripwire shipped in v2.132.0 could therefore fire on a
-            // stock install and be seen by no one — the trigger reached the
+            // stock install and be seen by no one - the trigger reached the
             // audit log, and `Security.tsx` says in its own comment that that tab
             // is "the only surface where a security_audit_log row is ever seen".
             // A tripwire you have to go looking for is not a tripwire.
@@ -2180,7 +2180,7 @@ async fn security_check_canary_files(pool: &PgPool) {
         static WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
         if !WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
             tracing::warn!(
-                "Canary file monitoring is enabled but NOT ARMED — 0 of {} canary paths are \
+                "Canary file monitoring is enabled but NOT ARMED - 0 of {} canary paths are \
                  being watched, so no alert can ever fire. {} are absent and can be planted \
                  from Settings > Security Hardening > Arm canary files ({}); {} cannot be \
                  watched by this process at all under ProtectHome= and planting them would \
@@ -2200,7 +2200,7 @@ async fn security_check_canary_files(pool: &PgPool) {
         static PARTIAL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
         if !PARTIAL.swap(true, std::sync::atomic::Ordering::Relaxed) {
             tracing::warn!(
-                "Canary monitoring is PARTIAL — watching {examined} of {} paths. {} cannot be \
+                "Canary monitoring is PARTIAL - watching {examined} of {} paths. {} cannot be \
                  observed by this process under ProtectHome= ({}), so an intruder reading them \
                  raises no alert.",
                 canary_paths.len(),
@@ -2243,7 +2243,7 @@ async fn auto_sleep_idle_containers(pool: &PgPool, agents: &AgentRegistry) {
     // domain, so it answered "unknown" and real traffic never counted), the
     // running-check listed the LOCAL host's containers, and the stop was posted
     // to the LOCAL agent. Auto-sleep was quietly inoperative for every fleet
-    // member — the failure looked exactly like "nothing was idle".
+    // member - the failure looked exactly like "nothing was idle".
     let configs: Vec<(String, String, Option<String>, i32, Option<uuid::Uuid>, bool)> = sqlx::query_as(
         "SELECT container_id, container_name, domain, sleep_after_minutes, server_id, gpu_enabled \
          FROM container_sleep_config \
@@ -2262,7 +2262,7 @@ async fn auto_sleep_idle_containers(pool: &PgPool, agents: &AgentRegistry) {
     for (container_id, container_name, domain, threshold_minutes, server_id, gpu_enabled) in &configs {
         // Resolve the host from the row. The backfill gave every existing row a
         // server, so a NULL here means a row written by something that does not
-        // set the column yet — refuse rather than falling back to this box,
+        // set the column yet - refuse rather than falling back to this box,
         // which is the behaviour that made the bug invisible in the first place.
         let agent = match server_id {
             Some(sid) => match agents.for_server(*sid).await {
@@ -2270,7 +2270,7 @@ async fn auto_sleep_idle_containers(pool: &PgPool, agents: &AgentRegistry) {
                 Err(e) => {
                     tracing::warn!(
                         "Auto-sleep: {container_name} lives on server {sid}, which is \
-                         unreachable ({e}) — skipping this cycle rather than acting on \
+                         unreachable ({e}) - skipping this cycle rather than acting on \
                          a different host."
                     );
                     continue;
@@ -2278,7 +2278,7 @@ async fn auto_sleep_idle_containers(pool: &PgPool, agents: &AgentRegistry) {
             },
             None => {
                 tracing::warn!(
-                    "Auto-sleep: {container_name} has no server recorded — skipping. \
+                    "Auto-sleep: {container_name} has no server recorded - skipping. \
                      Guessing a host here would stop a container on the wrong machine."
                 );
                 continue;
@@ -2291,12 +2291,12 @@ async fn auto_sleep_idle_containers(pool: &PgPool, agents: &AgentRegistry) {
         // bootstrap below, or through an admin-only ping endpoint the frontend
         // does not call. So without this lookup, "idle" meant "nobody used the
         // *panel*", and a container serving requests every few seconds was
-        // stopped out from under its users on the timer — verified on a real box
+        // stopped out from under its users on the timer - verified on a real box
         // against a continuous stream of HTTP 200s, which the sleeper then turned
         // into 502s. Ask nginx when the domain last answered, and let that count.
         if let Some(domain) = domain.as_deref().filter(|d| !d.is_empty()) {
             if let Ok(result) = agent.get(&format!("/nginx/last-activity/{domain}")).await {
-                // A domain with no access log yet reports `null` — unknown, not
+                // A domain with no access log yet reports `null` - unknown, not
                 // idle. Leave the stored value alone and let the checks below
                 // decide on what they do know.
                 if let Some(secs) = result.get("seconds_ago").and_then(|v| v.as_u64()) {
@@ -2316,7 +2316,7 @@ async fn auto_sleep_idle_containers(pool: &PgPool, agents: &AgentRegistry) {
 
         // A GPU workload doing headless compute (no HTTP traffic at all) is
         // invisible to the nginx check above, so it looked idle the instant it
-        // stopped answering requests — the exact case `gpu_enabled` was added
+        // stopped answering requests - the exact case `gpu_enabled` was added
         // for and then never consulted (it had no reader anywhere until now).
         // Ask the same agent for its live per-process GPU usage; a process this
         // agent attributes to this container's name counts as activity exactly
@@ -2352,7 +2352,7 @@ async fn auto_sleep_idle_containers(pool: &PgPool, agents: &AgentRegistry) {
         let idle = match last_activity.and_then(|r| r.0) {
             Some(last) => (now - last).num_minutes() >= *threshold_minutes as i64,
             None => {
-                // No activity recorded yet — check if container is running via agent
+                // No activity recorded yet - check if container is running via agent
                 if let Ok(result) = agent.get("/apps").await {
                     if let Some(apps) = result.as_array() {
                         let is_running = apps.iter().any(|a|
@@ -2394,7 +2394,7 @@ async fn auto_sleep_idle_containers(pool: &PgPool, agents: &AgentRegistry) {
                     .execute(pool)
                     .await;
 
-                    // No person initiates an auto-sleep, so the actor is NULL —
+                    // No person initiates an auto-sleep, so the actor is NULL -
                     // the same reasoning the notification below applies to
                     // `user_id`. The container's own runbook lists this case
                     // verbatim as "this is correct behavior".
@@ -2412,7 +2412,7 @@ async fn auto_sleep_idle_containers(pool: &PgPool, agents: &AgentRegistry) {
                     }
 
                     // No user initiates an auto-sleep and `container_sleep_config`
-                    // names no owner, so this genuinely has no user to name — which
+                    // names no owner, so this genuinely has no user to name - which
                     // is what NULL is for. It passed the nil uuid instead, so the
                     // insert was rejected and stopping a customer's container left
                     // no audit record at all.

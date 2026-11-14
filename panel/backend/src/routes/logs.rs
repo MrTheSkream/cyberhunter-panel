@@ -51,7 +51,7 @@ struct StreamTicket {
     scope: String,
 }
 
-/// GET /api/logs — System-wide logs (admin only).
+/// GET /api/logs - System-wide logs (admin only).
 pub async fn system_logs(
     State(_state): State<AppState>,
     AdminUser(_claims): AdminUser,
@@ -76,7 +76,7 @@ pub async fn system_logs(
     Ok(Json(result))
 }
 
-/// GET /api/sites/{id}/logs — Site-specific logs.
+/// GET /api/sites/{id}/logs - Site-specific logs.
 pub async fn site_logs(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -85,7 +85,7 @@ pub async fn site_logs(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     // Asking the wrong host for a site's logs does not fail. That machine has no
     // vhost by this name, so it answers with nothing, and nothing is exactly what a
-    // quiet site looks like — the operator reads "no traffic" instead of "wrong
+    // quiet site looks like - the operator reads "no traffic" instead of "wrong
     // question". The row names the host.
     let (domain, agent) = crate::helpers::site_agent_for_caller(&state, id, &claims).await?;
 
@@ -107,7 +107,7 @@ pub async fn site_logs(
     Ok(Json(result))
 }
 
-/// GET /api/logs/search — Search system logs with grep/regex (admin only).
+/// GET /api/logs/search - Search system logs with grep/regex (admin only).
 pub async fn search_system_logs(
     State(_state): State<AppState>,
     AdminUser(_claims): AdminUser,
@@ -140,7 +140,7 @@ pub async fn search_system_logs(
     Ok(Json(result))
 }
 
-/// GET /api/sites/{id}/logs/search — Search site logs with grep/regex.
+/// GET /api/sites/{id}/logs/search - Search site logs with grep/regex.
 pub async fn search_site_logs(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -180,7 +180,7 @@ pub async fn search_site_logs(
     Ok(Json(result))
 }
 
-/// GET /api/logs/stream/token — Generate a short-lived JWT for WebSocket log streaming.
+/// GET /api/logs/stream/token - Generate a short-lived JWT for WebSocket log streaming.
 pub async fn stream_token(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -247,14 +247,14 @@ pub async fn stream_token(
     })))
 }
 
-/// GET /api/logs/stats — Log aggregation stats for the server in scope (admin only).
+/// GET /api/logs/stats - Log aggregation stats for the server in scope (admin only).
 ///
 /// With no `?domain=` this is the host-wide question its siblings on this page ask,
 /// and the answer belongs to the server the operator has selected.
 ///
 /// With one, it used to be neither authorised nor resolved: the parameter went
 /// straight into the agent path, so no row was ever read and there was nothing to
-/// check the caller against — the browser named the subject and the panel asked it.
+/// check the caller against - the browser named the subject and the panel asked it.
 /// Being admin-only did not cover that. An administrator here is not a superuser;
 /// the shared predicate lets one reach the sites on the machines they operate, and
 /// stops at a server somebody else registered. A parameter is now a lookup key and
@@ -263,13 +263,13 @@ pub async fn stream_token(
 ///
 /// The row read is deliberately pinned to the server in scope, which is what makes
 /// this different from the per-site readers above. Two things force it. A domain is
-/// only unique PER SERVER — the constraint is `(domain, server_id)` — so a
+/// only unique PER SERVER - the constraint is `(domain, server_id)` - so a
 /// domain-keyed read with no server term is ambiguous the moment the same name is
 /// hosted twice, and picking either row would be a guess. And the question itself is
 /// host-shaped: these stats are computed by grepping one machine's nginx logs, so a
 /// site that lives elsewhere has no answer here to give. It is refused rather than
 /// answered with the zeroes a quiet site would produce, and the operator moves the
-/// server picker — the same picker every other control on this page already obeys.
+/// server picker - the same picker every other control on this page already obeys.
 /// Pinning also makes a misdispatch impossible by construction: the host that
 /// answers and the host the row names cannot come apart.
 pub async fn log_stats(
@@ -288,7 +288,7 @@ pub async fn log_stats(
                     .await
                     .map_err(|e| internal_error("log stats", e))?;
 
-            // Identity first, then permission — and the permission half is the one
+            // Identity first, then permission - and the permission half is the one
             // shared decision, not a copy of it living here. The name that goes on
             // the wire is the one it hands back.
             let site_id = row
@@ -308,7 +308,7 @@ pub async fn log_stats(
     Ok(Json(result))
 }
 
-/// GET /api/logs/docker — List managed Docker containers (admin only).
+/// GET /api/logs/docker - List managed Docker containers (admin only).
 pub async fn docker_log_containers(
     State(_state): State<AppState>,
     AdminUser(_claims): AdminUser,
@@ -321,7 +321,7 @@ pub async fn docker_log_containers(
     Ok(Json(result))
 }
 
-/// GET /api/logs/docker/{container} — Docker container logs (admin only).
+/// GET /api/logs/docker/{container} - Docker container logs (admin only).
 pub async fn docker_log_view(
     State(_state): State<AppState>,
     AdminUser(_claims): AdminUser,
@@ -343,7 +343,7 @@ pub async fn docker_log_view(
     Ok(Json(result))
 }
 
-/// GET /api/logs/service/{service} — Systemd service logs (admin only).
+/// GET /api/logs/service/{service} - Systemd service logs (admin only).
 pub async fn service_logs(
     State(_state): State<AppState>,
     AdminUser(_claims): AdminUser,
@@ -365,7 +365,7 @@ pub async fn service_logs(
     Ok(Json(result))
 }
 
-/// GET /api/logs/sizes — Log file sizes (admin only).
+/// GET /api/logs/sizes - Log file sizes (admin only).
 pub async fn log_sizes(
     State(_state): State<AppState>,
     AdminUser(_claims): AdminUser,
@@ -378,7 +378,7 @@ pub async fn log_sizes(
     Ok(Json(result))
 }
 
-/// POST /api/logs/truncate — Truncate a log file (admin only).
+/// POST /api/logs/truncate - Truncate a log file (admin only).
 pub async fn truncate_log(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -419,7 +419,7 @@ pub async fn truncate_log(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// POST /api/logs/check-errors — Scan recent logs for error patterns (admin only).
+/// POST /api/logs/check-errors - Scan recent logs for error patterns (admin only).
 pub async fn check_errors(
     State(_state): State<AppState>,
     AdminUser(_claims): AdminUser,
@@ -451,7 +451,7 @@ pub async fn check_errors(
     })))
 }
 
-/// GET /api/system/processes — Top processes (admin only).
+/// GET /api/system/processes - Top processes (admin only).
 pub async fn processes(
     State(_state): State<AppState>,
     AdminUser(_claims): AdminUser,
@@ -465,7 +465,7 @@ pub async fn processes(
     Ok(Json(result))
 }
 
-/// GET /api/system/network — Network I/O stats (admin only).
+/// GET /api/system/network - Network I/O stats (admin only).
 pub async fn network(
     State(_state): State<AppState>,
     AdminUser(_claims): AdminUser,

@@ -4,7 +4,7 @@ Server memory utilization is above the configured threshold (default 85%) sustai
 
 ## Why this fired
 
-Sampled from `/proc/meminfo`. High memory by itself isn't fatal — Linux uses free RAM for page cache aggressively. The risk is OOM kill, which strikes the largest non-essential process and can take down PHP-FPM, postgres, or the panel agent itself.
+Sampled from `/proc/meminfo`. High memory by itself isn't fatal - Linux uses free RAM for page cache aggressively. The risk is OOM kill, which strikes the largest non-essential process and can take down PHP-FPM, postgres, or the panel agent itself.
 
 ## First check
 
@@ -16,7 +16,7 @@ Sampled from `/proc/meminfo`. High memory by itself isn't fatal — Linux uses f
    dmesg | grep -i 'killed process' | tail -5  # past OOM kills
    cat /proc/swaps  # is swap configured + in use?
    ```
-3. Check PHP-FPM `pm.max_children` — a misconfigured pool can balloon to GB.
+3. Check PHP-FPM `pm.max_children` - a misconfigured pool can balloon to GB.
 
 ## Common causes
 
@@ -25,7 +25,7 @@ Sampled from `/proc/meminfo`. High memory by itself isn't fatal — Linux uses f
 - MySQL/postgres `innodb_buffer_pool_size` / `shared_buffers` set too high
 - Container without a memory limit eating the host
 - Massive log file being read into memory by a tail-style tool
-- Page cache reclaimable — verify `available` is genuinely low, not just `free`
+- Page cache reclaimable - verify `available` is genuinely low, not just `free`
 
 ## Escalation
 

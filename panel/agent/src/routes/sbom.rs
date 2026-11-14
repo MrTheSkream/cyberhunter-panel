@@ -19,7 +19,7 @@ struct SbomRequest {
     image: String,
 }
 
-/// GET /sbom/status — Whether the syft binary is installed.
+/// GET /sbom/status - Whether the syft binary is installed.
 async fn status() -> Json<serde_json::Value> {
     let installed = sbom_scanner::is_installed().await;
     Json(serde_json::json!({
@@ -28,7 +28,7 @@ async fn status() -> Json<serde_json::Value> {
     }))
 }
 
-/// POST /sbom/install — Install syft.
+/// POST /sbom/install - Install syft.
 async fn install() -> Result<Json<serde_json::Value>, ApiErr> {
     sbom_scanner::install_syft()
         .await
@@ -39,7 +39,7 @@ async fn install() -> Result<Json<serde_json::Value>, ApiErr> {
     })))
 }
 
-/// POST /sbom/uninstall — Remove syft binary.
+/// POST /sbom/uninstall - Remove syft binary.
 async fn uninstall() -> Result<Json<serde_json::Value>, ApiErr> {
     sbom_scanner::uninstall_syft()
         .await
@@ -47,7 +47,7 @@ async fn uninstall() -> Result<Json<serde_json::Value>, ApiErr> {
     Ok(Json(serde_json::json!({ "ok": true, "message": "syft removed" })))
 }
 
-/// POST /sbom/scan — Generate an SPDX SBOM for an image. Returns the raw
+/// POST /sbom/scan - Generate an SPDX SBOM for an image. Returns the raw
 /// SPDX JSON document inside { "image": ..., "spdx": <object> } so the
 /// backend can persist it without re-parsing.
 async fn scan(Json(body): Json<SbomRequest>) -> Result<Json<serde_json::Value>, ApiErr> {

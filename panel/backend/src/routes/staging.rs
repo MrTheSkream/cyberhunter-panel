@@ -44,12 +44,12 @@ async fn get_site(state: &AppState, id: Uuid, claims: &Claims) -> Result<Site, A
 /// names its own host, and the pair has to agree.
 ///
 /// `create` now inherits the parent's `server_id`, so nothing here makes a mismatched pair any
-/// more — but it made them for as long as it stamped the row with the caller's scope, and
+/// more - but it made them for as long as it stamped the row with the caller's scope, and
 /// those rows are still in every database that ran that version. This is the guard that
 /// catches them, and it stays after the source is fixed: an invariant nothing enforces at
 /// write time is an invariant that comes back.
 ///
-/// When the two disagree there is nothing to choose between — one of the paths is not there.
+/// When the two disagree there is nothing to choose between - one of the paths is not there.
 /// Refusing says so; substituting either host would rsync one machine's document root into a
 /// directory belonging to a site that is not the one being copied. The mismatch is reported as
 /// a conflict rather than a not-found because the data is inconsistent, not absent.
@@ -76,7 +76,7 @@ async fn same_host_agent(
     crate::helpers::agent_for_site_server(state, staging.server_id, &staging.domain).await
 }
 
-/// POST /api/sites/{id}/staging — Create a staging environment.
+/// POST /api/sites/{id}/staging - Create a staging environment.
 ///
 /// 1. Validate parent site (must be active, not already a staging site)
 /// 2. Generate or validate staging domain
@@ -89,7 +89,7 @@ async fn same_host_agent(
 /// because a brand-new site or stack has a free choice of machine and the caller's selection
 /// is the only thing that expresses it. A staging environment has no such choice: it exists
 /// to be rsynced to and from its parent's document root, and an rsync is one machine's work.
-/// Its host is therefore a property of the parent, not a decision this request gets to make —
+/// Its host is therefore a property of the parent, not a decision this request gets to make -
 /// so it is inherited, not read from the header.
 ///
 /// This is where the divergence `same_host_agent` refuses used to be manufactured: the row
@@ -105,14 +105,14 @@ pub async fn create(
 ) -> Result<(StatusCode, Json<Site>), ApiError> {
     // A staging environment is a `sites` row. The panel has four handlers that
     // write one, and the admission controls the other three enforce were written
-    // into `sites::clone_site` with a comment stating the rule in general terms —
+    // into `sites::clone_site` with a comment stating the rule in general terms -
     // that a handler creating a site "must enforce the SAME admission controls
-    // create() does — otherwise it is a create() with none of the guards". That
+    // create() does - otherwise it is a create() with none of the guards". That
     // fix reached the sibling in its own file and stopped there.
     //
     // So this door stayed open. The per-site uniqueness check below bounds a
     // tenant to one staging environment per parent, which is why this never read
-    // as mass creation — but the bound is per parent, not per tenant, so an
+    // as mass creation - but the bound is per parent, not per tenant, so an
     // account holding N sites could mint N more rows, each with a vhost and a
     // cloned document root, during a declared lockdown.
     //
@@ -165,10 +165,10 @@ pub async fn create(
 
     // Staging only ever clones FILES (`/staging/clone` is an rsync of
     // `/var/www/{domain}`, confirmed by reading the full agent-side staging
-    // surface — there is no database keyword anywhere in it). For a
+    // surface - there is no database keyword anywhere in it). For a
     // WordPress/Laravel/any DB-backed site, that means the staging environment
     // reads and writes the SAME live production database from the moment it's
-    // created — not a copy, not deferred until "Push to Prod", immediately.
+    // created - not a copy, not deferred until "Push to Prod", immediately.
     // The UI copy above this form used to promise a safe place to "test
     // changes before going live" with nothing disclosing that the database
     // half of that promise is false. Block by default rather than silently
@@ -186,7 +186,7 @@ pub async fn create(
         if has_database.is_some() {
             return Err(err(
                 StatusCode::CONFLICT,
-                "This site has an attached database. Staging only clones files — the \
+                "This site has an attached database. Staging only clones files - the \
                  database is NOT isolated, so changes made on staging read and write the \
                  LIVE production database immediately, not a copy.",
             ));
@@ -212,7 +212,7 @@ pub async fn create(
     // clone and the `server_id` written on the new row all have to be the same machine, and
     // that machine is the one production is already on. `server_id` is `Option` on the struct
     // and `NOT NULL` in the schema, so a row predating the backfill would otherwise be bound
-    // as NULL and fail on the INSERT — refuse it here, with the reason, instead.
+    // as NULL and fail on the INSERT - refuse it here, with the reason, instead.
     let server_id = parent.server_id.ok_or_else(|| {
         tracing::warn!(
             "Refusing to create staging for {}: its row names no server",
@@ -226,8 +226,8 @@ pub async fn create(
     let agent =
         crate::helpers::agent_for_site_server(&state, Some(server_id), &parent.domain).await?;
 
-    // Determine staging domain. `body.domain` is arbitrary — it is NOT required to
-    // be a subdomain of the parent — so this is a full domain claim by an ordinary
+    // Determine staging domain. `body.domain` is arbitrary - it is NOT required to
+    // be a subdomain of the parent - so this is a full domain claim by an ordinary
     // tenant, and it must pass the same guard as every other one. Until now it
     // consulted the `sites` table alone: no reserved-domain block (so a tenant who
     // owned one site could claim the panel's own hostname), no git deploys, and no
@@ -248,12 +248,12 @@ pub async fn create(
 
     // Staging always lands on the parent's own server (`same_host_agent`'s whole
     // premise), and `idx_sites_proxy_port_server` is UNIQUE on `(proxy_port,
-    // server_id)` — so binding `parent.proxy_port` verbatim onto a row that
+    // server_id)` - so binding `parent.proxy_port` verbatim onto a row that
     // shares the parent's `server_id` collides with the parent's OWN row every
     // time, deterministically, for every proxy/node/python-runtime site. This
     // was diagnosed and shipped as a migration (`20260818000000_port_uniqueness
     // _server_scope.sql`) the same day the bug was first found, but the fix
-    // here — allocating staging its own port instead of copying the parent's —
+    // here - allocating staging its own port instead of copying the parent's -
     // was never made, so staging a non-static-non-php site has 500'd on this
     // exact constraint ever since. Allocated the same way `sites::create`
     // auto-allocates for node/python (`generate_series(5000, 5999)` scoped to
@@ -323,7 +323,7 @@ pub async fn create(
         agent_body["app_command"] = serde_json::json!(cmd);
     }
     // Multi-IP: a staging environment is a separate name and starts on the
-    // primary address (its row's `ip_id` is NULL). Sent explicitly — the backend
+    // primary address (its row's `ip_id` is NULL). Sent explicitly - the backend
     // never leaves the agent to guess.
     agent_body["bind_ip"] = serde_json::json!(crate::services::server_ips::PRIMARY);
     // The staging row is a new site: its own PHP columns (defaults) drive its pool.
@@ -361,7 +361,7 @@ pub async fn create(
     };
 
     // Status reflects whether the clone actually happened. Both branches used
-    // to write 'active' regardless — the only difference was whether
+    // to write 'active' regardless - the only difference was whether
     // `synced_at` got stamped, so a failed clone looked identical to a working
     // one everywhere except that one timestamp field. `status = 'error'` here
     // matches the pattern the `agent.put` failure branch above already uses.
@@ -399,7 +399,7 @@ pub async fn create(
     Ok((StatusCode::CREATED, Json(updated)))
 }
 
-/// GET /api/sites/{id}/staging — Get staging site for a production site.
+/// GET /api/sites/{id}/staging - Get staging site for a production site.
 ///
 /// Takes no `ServerScope`: the staging row names its own host, and that is the only
 /// host whose disk this may be measured on.
@@ -422,7 +422,7 @@ pub async fn get_staging(
         Some(s) => {
             // A disk-usage figure is a measurement of one specific machine. Read through
             // the caller's handle it measured whichever host the request happened to be
-            // scoped to — on a fleet, some other box's `/var/www/{domain}`, reported as
+            // scoped to - on a fleet, some other box's `/var/www/{domain}`, reported as
             // this environment's size with nothing in the answer to say otherwise. A wrong
             // number here is worse than no number, because a wrong number is believed.
             let agent =
@@ -449,7 +449,7 @@ pub async fn get_staging(
     }
 }
 
-/// POST /api/sites/{id}/staging/sync — Sync production files → staging.
+/// POST /api/sites/{id}/staging/sync - Sync production files → staging.
 ///
 /// Takes no `ServerScope`: both directories in this copy are named by rows, and the rows
 /// decide which machine holds them.
@@ -507,7 +507,7 @@ pub async fn sync_to_staging(
     Ok(Json(serde_json::json!({ "ok": true, "message": format!("Synced {} → {}", parent.domain, staging.domain) })))
 }
 
-/// POST /api/sites/{id}/staging/push — Push staging files → production.
+/// POST /api/sites/{id}/staging/push - Push staging files → production.
 ///
 /// Takes no `ServerScope`: the rows decide the host, and this direction writes over a live
 /// production document root, so the host had better be the right one.
@@ -571,7 +571,7 @@ pub async fn push_to_prod(
     Ok(Json(serde_json::json!({ "ok": true, "message": format!("Pushed {} → {}", staging.domain, parent.domain) })))
 }
 
-/// DELETE /api/sites/{id}/staging — Delete the staging environment.
+/// DELETE /api/sites/{id}/staging - Delete the staging environment.
 ///
 /// Takes no `ServerScope`. The caller's selection had no business here at all: `get_site`
 /// authorises the PARENT, and the row this then deletes is a different one that carries its
@@ -593,7 +593,7 @@ pub async fn destroy(
             .ok_or_else(|| err(StatusCode::NOT_FOUND, "No staging environment found"))?;
 
     // The two calls below are a vhost removal and `/staging/delete-files`, which on the agent
-    // is `remove_dir_all("/var/www/{domain}")` with no ownership check of its own — the agent
+    // is `remove_dir_all("/var/www/{domain}")` with no ownership check of its own - the agent
     // deletes the path it is handed, on the host it is asked. That makes the panel the only
     // thing that decides which machine loses a document root, and it was deciding from the
     // caller's request header while the authority sat unread in the row it had just loaded.
@@ -611,8 +611,8 @@ pub async fn destroy(
         .map_err(|e| agent_error("Staging removal", e))?;
 
     // Delete site files. The row deleted below is the ONLY thing that marks
-    // this domain as occupied — `domain_claim::find_occupant` checks the DB,
-    // never the filesystem — so on failure the row must NOT be deleted, or the
+    // this domain as occupied - `domain_claim::find_occupant` checks the DB,
+    // never the filesystem - so on failure the row must NOT be deleted, or the
     // domain becomes immediately re-claimable by anyone while the previous
     // tenant's files (potentially `wp-config.php`, `.env`, or other
     // credential-bearing files) are still on disk, and nothing that provisions
@@ -627,7 +627,7 @@ pub async fn destroy(
         .await
     {
         tracing::error!(
-            "Staging destroy: file cleanup failed for {} — keeping the site row so the \
+            "Staging destroy: file cleanup failed for {} - keeping the site row so the \
              domain stays claimed rather than releasing it over leftover files: {e}",
             staging.domain
         );

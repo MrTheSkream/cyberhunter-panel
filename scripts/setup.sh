@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# DockPanel Setup
-# Installs DockPanel on a fresh server.
+# CyberHunter - Panel Setup
+# Installs CyberHunter - Panel on a fresh server.
 # Supports: Ubuntu 20+, Debian 11+, CentOS 9+, Rocky 9+, Fedora 39+, Amazon Linux 2023
 # Architectures: x86_64, ARM64 (aarch64)
 #
@@ -99,7 +99,7 @@ error()  { echo -e "  ${RED}✗${NC} $1" >&2; plog "  [FAIL] $1"; }
 info()   { echo -e "  ${CYAN}→${NC} $1";    plog "  [..]   $1"; }
 
 # ── Spinner-wrapped command runner ───────────────────────────────────────
-# run "Label" cmd [args...] — runs cmd with all output captured to the
+# run "Label" cmd [args...] - runs cmd with all output captured to the
 # install log, animating a spinner + live elapsed seconds while it works
 # (falls back to a static line when stdout isn't a terminal). Returns the
 # command's exit code; the caller decides whether that's fatal.
@@ -137,7 +137,7 @@ run() {
 
 # ── Failure box (EXIT trap) ──────────────────────────────────────────────
 # If the installer dies anywhere before the summary, tell the user exactly
-# where it stopped, show the tail of the log, and how to retry — instead of
+# where it stopped, show the tail of the log, and how to retry - instead of
 # cutting off mid-paint.
 CURRENT_STEP_NAME="starting up"
 INSTALL_DONE=0
@@ -147,7 +147,7 @@ on_exit() {
     if [ "$INSTALL_DONE" = "1" ]; then return 0; fi
     echo ""
     echo -e "${RED}${BOLD}╔══════════════════════════════════════════════════════╗${NC}"
-    echo -e "${RED}${BOLD}║           DockPanel install did not finish           ║${NC}"
+    echo -e "${RED}${BOLD}║           CyberHunter - Panel install did not finish           ║${NC}"
     echo -e "${RED}${BOLD}╚══════════════════════════════════════════════════════╝${NC}"
     echo ""
     echo -e "  Stopped during: ${BOLD}${CURRENT_STEP_NAME}${NC} (exit code ${rc})"
@@ -159,7 +159,7 @@ on_exit() {
         echo -e "  Full log:  ${BOLD}${INSTALL_LOG}${NC}"
     fi
     echo ""
-    echo -e "  Re-running the installer is safe — it picks up where it left off:"
+    echo -e "  Re-running the installer is safe - it picks up where it left off:"
     echo -e "    ${BOLD}curl -sL https://dockpanel.dev/install.sh | sudo bash${NC}"
     echo ""
     echo -e "  Stuck? Open an issue: https://github.com/ovexro/dockpanel/issues"
@@ -177,7 +177,7 @@ svc_fail() { SVC_FAIL+=("$1"); }
 # Wait for a unit to come up, and do not confuse "not running" with "could not ask".
 #
 # `systemctl is-active` answers three different questions with two exit codes.
-# During install, dbus can be momentarily unavailable — the call then prints
+# During install, dbus can be momentarily unavailable - the call then prints
 #   Failed to retrieve unit state: Message recipient disconnected from message
 #   bus without replying
 # to stderr, exits non-zero, and says nothing on stdout. A caller that reads only
@@ -189,7 +189,7 @@ svc_fail() { SVC_FAIL+=("$1"); }
 #
 # So read the ANSWER, not the exit code: `active` succeeds, `failed` gives up
 # immediately (waiting cannot help a unit that already failed), and anything else
-# — `activating`, `inactive`, or the empty string we get when the bus is out — is
+# - `activating`, `inactive`, or the empty string we get when the bus is out - is
 # treated as "not yet" and retried inside a bounded window.
 wait_for_unit() {
     local unit="$1" tries="${2:-20}" state
@@ -275,7 +275,7 @@ preflight_checks() {
 
 # ── Package manager ──────────────────────────────────────────────────────
 # Panel-driven updates run apt from inside dockpanel-agent. apt's needrestart
-# hook restarts every unit linked against an upgraded library — and since the
+# hook restarts every unit linked against an upgraded library - and since the
 # agent links libc, an ordinary libc6 upgrade puts dockpanel-agent.service on
 # that list. needrestart then kills the very process that is streaming the
 # update's own progress. The apt transaction survives (safe_command_unsandboxed
@@ -292,10 +292,10 @@ dockpanel_needrestart_override() {
     # Subscript assignment ADDS to the hash the main needrestart.conf already
     # filled in; writing `$nrconf{override_rc} = {...}` here would replace it
     # and silently drop the distro's own exclusions (dbus, display managers…).
-    # No `.service` suffix in the regex — needrestart's own defaults are bare
+    # No `.service` suffix in the regex - needrestart's own defaults are bare
     # prefixes, and this matches whether or not the suffix is present.
     cat > /etc/needrestart/conf.d/99-dockpanel.conf << 'NR_EOF'
-# Managed by DockPanel — do not edit; rewritten by setup.sh/update.sh.
+# Managed by CyberHunter - Panel - do not edit; rewritten by setup.sh/update.sh.
 $nrconf{override_rc}{qr(^dockpanel-agent)} = 0;
 1;
 NR_EOF
@@ -307,7 +307,7 @@ detect_pkg_manager() {
         # Tell apt to wait up to 5 min for the dpkg lock instead of failing
         # immediately. Without this, agent installers (PHP, services, updates)
         # fail with "Could not get lock /var/lib/dpkg/lock-frontend" whenever
-        # unattended-upgrades is running in the background — common on fresh
+        # unattended-upgrades is running in the background - common on fresh
         # Debian 13 boots, where the auto-update kicks off right after install.
         mkdir -p /etc/apt/apt.conf.d
         cat > /etc/apt/apt.conf.d/99-dockpanel-lock-wait.conf << 'APT_EOF'
@@ -324,7 +324,7 @@ APT_EOF
     fi
 }
 
-# Plain installers — meant to be wrapped in `run`, which captures their full
+# Plain installers - meant to be wrapped in `run`, which captures their full
 # output into $INSTALL_LOG (the old versions swallowed output, so failures
 # left nothing to debug with).
 pkg_install() {
@@ -360,7 +360,7 @@ detect_firewall() {
 }
 
 # Allow a port, e.g. `fw_allow 443/tcp`. Returns non-zero when there is no
-# firewall to configure or the rule could not be added — callers must not
+# firewall to configure or the rule could not be added - callers must not
 # assume success, which is exactly what the old code did.
 fw_allow() {
     local port="$1"
@@ -383,7 +383,7 @@ fw_reload() {
 # On Enforcing systems (the RHEL family default) nginx may not open outbound
 # TCP connections unless httpd_can_network_connect is set. The panel vhost
 # proxies to the API on 127.0.0.1:3080 and every site vhost proxies to PHP-FPM
-# or an app container, so without this EVERY request returns 502 — including
+# or an app container, so without this EVERY request returns 502 - including
 # from the box itself. s265 measured it: the boolean alone flipped 502 -> 200.
 # The denial is dontaudit'ed, so nothing appears in ausearch or the journal;
 # there is no breadcrumb to follow, which is why this must be set up front.
@@ -398,14 +398,14 @@ configure_selinux() {
         log "SELinux: nginx may now proxy to the API and to site backends"
         svc_ok "SELinux policy"
     else
-        warn "SELinux is Enforcing and httpd_can_network_connect could not be set —"
+        warn "SELinux is Enforcing and httpd_can_network_connect could not be set -"
         warn "the panel will answer 502 until you run: setsebool -P httpd_can_network_connect on"
         svc_fail "SELinux policy"
     fi
 }
 
 # True when apt has a real installation candidate for a package. `apt-cache
-# show` is NOT enough — on Ubuntu 26.04 `php-opcache` still has a stanza but
+# show` is NOT enough - on Ubuntu 26.04 `php-opcache` still has a stanza but
 # `Candidate: (none)` (OPcache became built-in in PHP 8.5), and one dead
 # package fails an entire apt transaction.
 apt_has_candidate() {
@@ -430,7 +430,7 @@ print_banner() {
 BANNER
     echo -e "${NC}"
     echo -e "  ${BOLD}Your server. Your rules. Your panel.${NC}"
-    echo -e "  Free & open source — https://dockpanel.dev"
+    echo -e "  Free & open source - https://dockpanel.dev"
     echo ""
 }
 
@@ -449,7 +449,7 @@ check_source() {
     fi
     if [ ! -d "$AGENT_SRC/src" ]; then
         error "Cannot find agent source at $AGENT_SRC"
-        error "Run this script from the DockPanel repository root,"
+        error "Run this script from the CyberHunter - Panel repository root,"
         error "or set INSTALL_FROM_RELEASE=1 to download pre-built binaries."
         exit 1
     fi
@@ -459,7 +459,7 @@ detect_os() {
     header "Detecting OS"
 
     if [ ! -f /etc/os-release ]; then
-        error "Cannot detect OS — /etc/os-release not found"
+        error "Cannot detect OS - /etc/os-release not found"
         exit 1
     fi
 
@@ -476,7 +476,7 @@ detect_os() {
             log "Detected: $PRETTY_NAME (Amazon Linux)"
             ;;
         *)
-            warn "Untested OS: ${ID:-unknown} — proceeding anyway"
+            warn "Untested OS: ${ID:-unknown} - proceeding anyway"
             ;;
     esac
 
@@ -521,12 +521,12 @@ install_dependencies() {
     #
     # CRB ("CodeReady Builder", called PowerTools on EL8) must be enabled
     # ALONGSIDE it. EPEL's own installation instructions require it, because
-    # EPEL packages routinely link against libraries EL keeps there — and a
+    # EPEL packages routinely link against libraries EL keeps there - and a
     # missing CRB does not fail loudly, it fails at the point some LATER package
     # is installed. Measured on Rocky 9.8 (s268): `opendkim` and
     # `opendkim-tools` need `libmilter.so.1.0` (sendmail-milter) and
     # `libmemcached.so.11` (libmemcached-awesome), both CRB-only, so the mail
-    # installer died on "nothing provides …" — while a name-availability probe
+    # installer died on "nothing provides …" - while a name-availability probe
     # said all four packages were available, which is how the product came to
     # claim the packages resolved here.
     if [ "$PKG_MGR" != "apt" ]; then
@@ -557,7 +557,7 @@ install_dependencies() {
             pkg_install curl openssl ca-certificates openssh-clients
     fi
 
-    # sshpass — required for PASSWORD-authenticated SFTP backup destinations, which
+    # sshpass - required for PASSWORD-authenticated SFTP backup destinations, which
     # is the mode the panel's destination form offers first. Nothing installed it, so
     # on a fresh box every such destination failed at Test Connection with an opaque
     # 502 ("No such file or directory (os error 2)"); s288 measured SFTP as working
@@ -566,10 +566,10 @@ install_dependencies() {
     # Best-effort ON PURPOSE, and not in BASE_PKGS: on RHEL-family sshpass comes from
     # EPEL, whose enablement above is itself `|| true`, and this script runs under
     # `set -e`. Making it mandatory would turn "no EPEL" into a failed install for
-    # everyone — trading a backup-destination bug for a total install failure. When
+    # everyone - trading a backup-destination bug for a total install failure. When
     # it is missing the agent now says so by name, and key auth is unaffected.
     if ! run "Installing sshpass (password-authenticated SFTP backups)" pkg_install sshpass; then
-        warn "sshpass could not be installed — SFTP backup destinations that authenticate"
+        warn "sshpass could not be installed - SFTP backup destinations that authenticate"
         warn "by PASSWORD will not work. Install it manually, or use an SSH key instead."
     fi
 
@@ -591,7 +591,7 @@ install_dependencies() {
 # Docker's convenience script points each distro at its own repo path under
 # download.docker.com/linux/<distro>. For the RHEL rebuilds that path is a trap:
 # `linux/rocky/9/` EXISTS and serves valid metadata, but upstream fills it with
-# containerd.io and the plugins only — no docker-ce, no docker-ce-cli. So on
+# containerd.io and the plugins only - no docker-ce, no docker-ce-cli. So on
 # Rocky the script cheerfully adds the repo and the very next command dies with
 # `Error: Unable to find a match: docker-ce docker-ce-cli`, aborting the install
 # at step 3 of 15. AlmaLinux fares worse still: it is not in the script's distro
@@ -628,19 +628,19 @@ install_docker() {
                 # rockylinux:9 has no conflicting runtime and installs fine
                 # without it (checked). It is here because RHEL-family CLOUD
                 # images commonly preinstall podman/runc, which containerd.io
-                # obsoletes — and dnf aborts the whole transaction on a conflict
+                # obsoletes - and dnf aborts the whole transaction on a conflict
                 # rather than substituting.
                 run "Installing Docker (docker-ce, el-clone repo)" \
                     bash -c 'dnf install -y --allowerasing docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin'
                 ;;
             *)
-                run "Installing Docker (get.docker.com — takes a minute)" \
+                run "Installing Docker (get.docker.com - takes a minute)" \
                     bash -c 'curl -fsSL https://get.docker.com | sh'
                 ;;
         esac
         systemctl enable --now docker > /dev/null 2>&1
         if ! command -v docker &> /dev/null; then
-            error "Docker installation failed — see $INSTALL_LOG"
+            error "Docker installation failed - see $INSTALL_LOG"
             exit 1
         fi
         log "Docker installed: $(docker --version | head -1)"
@@ -659,7 +659,7 @@ install_nginx() {
         run "Installing Nginx" pkg_install nginx
         systemctl enable --now nginx > /dev/null 2>&1
         if ! command -v nginx &> /dev/null; then
-            error "Nginx installation failed — see $INSTALL_LOG"
+            error "Nginx installation failed - see $INSTALL_LOG"
             exit 1
         fi
         log "Nginx installed"
@@ -693,7 +693,7 @@ install_node() {
                 bash -c "set -o pipefail; curl -fsSL https://rpm.nodesource.com/setup_20.x | bash - && $PKG_MGR install -y nodejs"
         fi
         if ! command -v node &> /dev/null; then
-            error "Node.js installation failed — see $INSTALL_LOG"
+            error "Node.js installation failed - see $INSTALL_LOG"
             exit 1
         fi
         log "Node.js installed: $(node --version)"
@@ -719,7 +719,7 @@ create_directories() {
     # Two different failure modes make this load-bearing, and the `-` prefix is
     # what separates them:
     #   * an UNPREFIXED entry that does not exist fails the namespace mount, and
-    #     the agent does not start at all — loud, and therefore self-correcting.
+    #     the agent does not start at all - loud, and therefore self-correcting.
     #   * a `-`-prefixed entry means "bind IF IT EXISTS". When it is absent
     #     systemd skips it silently, the unit starts and reports success, and
     #     every write under that path fails with `Read-only file system` for the
@@ -728,7 +728,7 @@ create_directories() {
     #
     # This list was hand-copied into setup.sh AND update.sh and drifted (s269:
     # /var/spool/cron reached the unit and setup.sh but never update.sh, so an
-    # upgraded box without a cron spool got a silently unwritable one — the exact
+    # upgraded box without a cron spool got a silently unwritable one - the exact
     # defect s268 had just fixed, re-entering through the upgrade door).
     # Deriving it from the single-source unit removes the drift, not one instance.
     _rwp="$(agent_rwp_dirs)"
@@ -745,7 +745,7 @@ create_directories() {
 generate_secrets() {
     header "Generating Secrets"
 
-    # Agent token (persistent — reuse if exists)
+    # Agent token (persistent - reuse if exists)
     if [ -f "$CONFIG_DIR/agent.token" ]; then
         AGENT_TOKEN=$(cat "$CONFIG_DIR/agent.token")
         log "Agent token: reusing existing"
@@ -809,14 +809,14 @@ setup_database() {
         log "PostgreSQL container created (port $DB_PORT)"
     fi
 
-    # Wait for PostgreSQL to be ready — ON THE TRANSPORT THE PROBE BELOW USES.
+    # Wait for PostgreSQL to be ready - ON THE TRANSPORT THE PROBE BELOW USES.
     #
     # ⚠ A readiness poll that omits the host answers over the container's own
     # unix socket, and the official image runs a SOCKET-ONLY temporary server
     # for the duration of initdb (started with an empty listen_addresses) before
     # it execs the real one. So a socket poll reports the database ready while
-    # nothing is listening on TCP yet — measured at ~1.0-1.1s on an idle box and
-    # over 20s on a loaded one, against a 2s poll grid — and the password probe
+    # nothing is listening on TCP yet - measured at ~1.0-1.1s on an idle box and
+    # over 20s on a loaded one, against a 2s poll grid - and the password probe
     # directly below, which MUST use the bridge address to land on the
     # scram-sha-256 rule, is then refused at the transport layer.
     #
@@ -826,14 +826,14 @@ setup_database() {
     # install's password" and reconciles for no reason, or the ALTER lands in the
     # same window, fails, and the whole install aborts telling a brand-new
     # operator to destroy their volume. Polling the same transport the consumer
-    # uses closes the window by construction — the temporary server cannot answer
+    # uses closes the window by construction - the temporary server cannot answer
     # over TCP at all.
     #
     # The trailing socket check is the no-bridge-address escape hatch: a
     # container on host networking has no address for the loop to poll, and the
     # password probe below cannot run against it either (it degrades to the
     # reconcile). Reaching it costs a full minute of waiting, which is why it is
-    # placed AFTER the loop rather than inside it — an in-loop fallback would
+    # placed AFTER the loop rather than inside it - an in-loop fallback would
     # fire on any box where the address is momentarily absent and silently
     # restore the very race this closes.
     if run "Waiting for PostgreSQL to accept connections" bash -c \
@@ -842,7 +842,7 @@ setup_database() {
              [ -n \"\$h\" ] && docker exec $DB_CONTAINER pg_isready -h \"\$h\" -U dockpanel && exit 0
              sleep 2
          done
-         echo 'no TCP listener after 60s — falling back to a socket check (container has no bridge address?)'
+         echo 'no TCP listener after 60s - falling back to a socket check (container has no bridge address?)'
          docker exec $DB_CONTAINER pg_isready -U dockpanel && exit 0
          exit 1"; then
         log "PostgreSQL ready"
@@ -855,8 +855,8 @@ setup_database() {
     #
     # The container is created ONCE, here, with whatever password this run holds;
     # api.env is not written until several steps later. So an install that dies
-    # in between — a transient download failure is enough, and the failure
-    # message tells the operator "re-running the installer is safe" — leaves a
+    # in between - a transient download failure is enough, and the failure
+    # message tells the operator "re-running the installer is safe" - leaves a
     # container holding password A and no api.env at all. The next run finds no
     # api.env, generates password B, finds the container already present, starts
     # it unchanged, and writes B. The panel then crash-loops for ever on
@@ -868,20 +868,20 @@ setup_database() {
     # Probe first with the target password, so a healthy install does no work and
     # an operator who has already fixed this by hand is not second-guessed. Only
     # when the database genuinely refuses it do we recover the password the
-    # container was created with — the one value guaranteed to still work — and
+    # container was created with - the one value guaranteed to still work - and
     # ALTER the role. Both values are hex, from `openssl rand -hex`, so neither
     # can carry a quote into the SQL.
     # ⚠ THE PROBE MUST ACTUALLY AUTHENTICATE, and the obvious way of writing it
     # does not. The official Postgres image ships a pg_hba that trusts BOTH
     # `local` and `host 127.0.0.1/32`, so `docker exec … psql -U dockpanel`
-    # connects over the container's own socket and succeeds with ANY password —
+    # connects over the container's own socket and succeeds with ANY password -
     # including the wrong one this check exists to detect. Written that way, the
     # branch below never ran, and a box left with mismatched credentials by an
     # interrupted install stayed broken exactly as it did before this check was
     # added: the API crash-looping on "password authentication failed".
     #
     # Only the trailing `host all all all scram-sha-256` rule demands a password,
-    # and the way to land on it from here is the container's own BRIDGE address —
+    # and the way to land on it from here is the container's own BRIDGE address -
     # the same rule the API's TCP connection to the published port lands on.
     # Verified as a two-cell experiment on a real box: over the local socket a
     # deliberately wrong password is ACCEPTED; over the bridge address it is
@@ -894,7 +894,7 @@ setup_database() {
     # to write is idempotent when it already matches.
     if [ -z "$db_probe_host" ] || ! docker exec -e PGPASSWORD="$DB_PASSWORD" "$DB_CONTAINER" \
             psql -h "$db_probe_host" -U dockpanel -d dockpanel -c 'SELECT 1' >/dev/null 2>&1; then
-        warn "Database rejects this install's password — reconciling"
+        warn "Database rejects this install's password - reconciling"
         local container_pw
         container_pw=$(docker inspect "$DB_CONTAINER" \
             --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null \
@@ -907,12 +907,12 @@ setup_database() {
             error "The database will not accept this install's password, and the password"
             error "it was created with could not be recovered. The panel cannot start."
             error ""
-            error "TRY THIS FIRST — re-run the installer. It is safe, it keeps your data,"
+            error "TRY THIS FIRST - re-run the installer. It is safe, it keeps your data,"
             error "and it resolves this on its own in the common case:"
             error "  bash $0"
             error ""
             # ⚠ The by-hand recovery is only actionable once api.env EXISTS, and it
-            # is written by create_services — several steps AFTER this function. On a
+            # is written by create_services - several steps AFTER this function. On a
             # first install that aborts here the file is absent, so printing it
             # unconditionally left "destroy your volume" as the only instruction a
             # brand-new operator could actually follow.
@@ -924,7 +924,7 @@ setup_database() {
                 error "Only if neither works, and it LOSES ALL DATABASE DATA:"
             else
                 error "This install had not yet written $CONFIG_DIR/api.env, so there is no"
-                error "stored password to match by hand. If re-running does not help — and"
+                error "stored password to match by hand. If re-running does not help - and"
                 error "this LOSES ALL DATABASE DATA, which on a first install is none:"
             fi
             error "  docker rm -f $DB_CONTAINER && docker volume rm dockpanel-pgdata"
@@ -936,28 +936,28 @@ setup_database() {
 # ── Download Pre-built Binaries ──────────────────────────────────────────
 INSTALLED_VERSION=""
 
-# fetch_asset <asset-name> <dest> — download to a QUARANTINE temp file next to
+# fetch_asset <asset-name> <dest> - download to a QUARANTINE temp file next to
 # dest, verify its sha256 against the release checksums.txt, and only move it
-# onto the live path AFTER it verifies — so the live executable path never
+# onto the live path AFTER it verifies - so the live executable path never
 # holds unverified bytes (a mismatch aborts without touching the old binary).
 # A checksum MISMATCH is fatal; a missing manifest only warns (availability
 # must not brick an install, integrity must). Sets FETCH_VERIFIED=1/0 so the
 # caller can report honestly whether a checksum was actually compared.
 FETCH_VERIFIED=0
 
-# dp_fetch <url> <out> — download, retrying the failures curl's own --retry will
+# dp_fetch <url> <out> - download, retrying the failures curl's own --retry will
 # not.
 #
 # `--retry` covers connection refusals, timeouts and some HTTP codes. It does NOT
-# cover a connection dropped MID-TRANSFER, which exits 56 — and 56 is precisely
+# cover a connection dropped MID-TRANSFER, which exits 56 - and 56 is precisely
 # what the release CDN has now returned on three separate installs across two
 # sessions, each time aborting the install at the binary download. `curl` grew
 # `--retry-all-errors` for exactly this, but it landed in 7.71 and Ubuntu 20.04,
-# which this installer supports, ships 7.68 — so the loop lives in shell, where
+# which this installer supports, ships 7.68 - so the loop lives in shell, where
 # every supported box can run it.
 #
 # ⚠ `rc=$?` on the line after a bare `if` reads 0, because a false `if` with no
-# `else` is itself a success — the bug that shipped inside the last fix written
+# `else` is itself a success - the bug that shipped inside the last fix written
 # for this same failure. Capture with `|| rc=$?` on the command itself.
 dp_fetch() {
     local url="$1" out="$2" attempt=1 rc=0
@@ -965,7 +965,7 @@ dp_fetch() {
         rc=0
         curl --retry 3 --retry-delay 2 -sfL "$url" -o "$out" || rc=$?
         [ "$rc" -eq 0 ] && return 0
-        plog "  fetch attempt ${attempt}/3 exited ${rc} — $url"
+        plog "  fetch attempt ${attempt}/3 exited ${rc} - $url"
         rm -f "$out"
         attempt=$((attempt + 1))
         [ "$attempt" -le 3 ] && sleep 3
@@ -979,7 +979,7 @@ fetch_asset() {
     FETCH_VERIFIED=0
     if ! run "Downloading ${asset}" dp_fetch "${BASE_URL}/${asset}" "$tmp"; then
         rm -f "$tmp"
-        error "Download failed after 3 attempts: ${asset} — see $INSTALL_LOG"
+        error "Download failed after 3 attempts: ${asset} - see $INSTALL_LOG"
         exit 1
     fi
     if [ -s "$CHECKSUMS_FILE" ]; then
@@ -989,7 +989,7 @@ fetch_asset() {
             got=$(sha256sum "$tmp" | awk '{print $1}')
             if [ "$want" != "$got" ]; then
                 rm -f "$tmp"
-                error "Checksum MISMATCH for ${asset} — refusing to install a corrupt binary"
+                error "Checksum MISMATCH for ${asset} - refusing to install a corrupt binary"
                 plog "expected $want got $got"
                 exit 1
             fi
@@ -1000,13 +1000,13 @@ fetch_asset() {
     mv -f "$tmp" "$dest"
 }
 
-# Truthful post-download line — "verified" ONLY when a checksum was compared.
+# Truthful post-download line - "verified" ONLY when a checksum was compared.
 fetched_msg() {
     local what="$1" path="$2"
     if [ "$FETCH_VERIFIED" = "1" ]; then
         log "${what} downloaded + verified ($(du -h "$path" | cut -f1))"
     else
-        log "${what} downloaded ($(du -h "$path" | cut -f1)) — checksum not verified"
+        log "${what} downloaded ($(du -h "$path" | cut -f1)) - checksum not verified"
     fi
 }
 
@@ -1015,7 +1015,7 @@ download_binaries() {
 
     # Which release to install.
     #
-    # install.sh already reads DOCKPANEL_VERSION and clones that ref — but this,
+    # install.sh already reads DOCKPANEL_VERSION and clones that ref - but this,
     # its only consumer, used to always fetch releases/latest. So
     # `DOCKPANEL_VERSION=v2.31.2 install.sh` produced a v2.31.2 tree running
     # v2.34.2 binaries and printed "Version: v2.34.2" at the end (s261). Unit
@@ -1041,19 +1041,19 @@ download_binaries() {
     INSTALLED_VERSION="$RELEASE_TAG"
     BASE_URL="https://github.com/${GITHUB_REPO}/releases/download/${RELEASE_TAG}"
 
-    # Checksum manifest first — every later download is verified against it.
+    # Checksum manifest first - every later download is verified against it.
     # mktemp (root-owned, O_EXCL, unpredictable) so a local user can't pre-seed
     # a manifest that would make a tampered binary "verify".
     CHECKSUMS_FILE=$(umask 077; mktemp /tmp/dockpanel-checksums.XXXXXX 2>/dev/null || echo "")
     # Through dp_fetch like every other release download, including this file's
     # own. This line kept a bare `curl --retry` after dp_fetch was written eleven
     # lines above it, so the one fetch that decides whether ANY binary gets
-    # verified was the one still exposed to a mid-transfer drop — and its failure
+    # verified was the one still exposed to a mid-transfer drop - and its failure
     # is a warning, so a transient blip silently downgraded the whole install to
     # unverified. The fail-open policy is deliberate and is unchanged: three
     # attempts, then warn and continue.
     if [ -z "$CHECKSUMS_FILE" ] || ! dp_fetch "${BASE_URL}/checksums.txt" "$CHECKSUMS_FILE" 2>/dev/null; then
-        warn "checksums.txt not available — skipping integrity verification"
+        warn "checksums.txt not available - skipping integrity verification"
         : > "$CHECKSUMS_FILE" 2>/dev/null || CHECKSUMS_FILE=""
     fi
 
@@ -1081,7 +1081,7 @@ download_binaries() {
     FE_TARBALL=$(umask 077; mktemp /tmp/dockpanel-frontend.XXXXXX.tar.gz 2>/dev/null || echo /tmp/dockpanel-frontend.tar.gz)
     fetch_asset "dockpanel-frontend.tar.gz" "$FE_TARBALL"
 
-    # Extract frontend — need a target directory
+    # Extract frontend - need a target directory
     local FE_DIR="/opt/dockpanel/frontend"
     mkdir -p "$FE_DIR"
     tar xzf "$FE_TARBALL" -C "$FE_DIR"
@@ -1136,7 +1136,7 @@ build_binaries() {
     fi
 
     # Stop running services so cp can overwrite their binaries (see note in
-    # download_binaries — same "Text file busy" trap).
+    # download_binaries - same "Text file busy" trap).
     if command -v systemctl >/dev/null 2>&1; then
         systemctl stop dockpanel-api dockpanel-agent 2>/dev/null || true
     fi
@@ -1171,12 +1171,12 @@ build_frontend() {
     header "Building Frontend"
 
     if [ ! -d "$FRONTEND_DIR" ]; then
-        warn "Frontend source not found at $FRONTEND_DIR — skipping"
+        warn "Frontend source not found at $FRONTEND_DIR - skipping"
         return
     fi
 
     log "Installing npm dependencies..."
-    # `npm ci` installs EXACTLY the committed package-lock.json — the tree the
+    # `npm ci` installs EXACTLY the committed package-lock.json - the tree the
     # audit gates actually scanned. `npm install` re-resolves and can pull
     # versions no scanner here has ever seen, which silently un-ships a
     # dependency patch. Keep the fallback (a box whose lock has drifted should
@@ -1184,10 +1184,10 @@ build_frontend() {
     # reason: sending both streams to /dev/null is how the RHEL agent install
     # failed for a year printing nothing at all.
     if ! (cd "$FRONTEND_DIR" && npm ci --silent); then
-        warn "npm ci failed (reason above) — falling back to 'npm install'"
+        warn "npm ci failed (reason above) - falling back to 'npm install'"
         warn "Dependencies will be RE-RESOLVED; the tree may differ from the audited lockfile"
         if ! (cd "$FRONTEND_DIR" && npm install --silent); then
-            error "npm install also failed — the frontend build below will likely fail too"
+            error "npm install also failed - the frontend build below will likely fail too"
         fi
     fi
 
@@ -1200,11 +1200,11 @@ build_frontend() {
 create_services() {
     header "Systemd Services"
 
-    # Agent service — deploy from repo (single source of truth: panel/agent/dockpanel-agent.service)
+    # Agent service - deploy from repo (single source of truth: panel/agent/dockpanel-agent.service)
     cp "$AGENT_SRC/dockpanel-agent.service" /etc/systemd/system/dockpanel-agent.service
     chmod 644 /etc/systemd/system/dockpanel-agent.service
 
-    # MCP server — deploy from repo (single source of truth: panel/mcp/dockpanel-mcp.service).
+    # MCP server - deploy from repo (single source of truth: panel/mcp/dockpanel-mcp.service).
     # Installed but deliberately NOT enabled/started: v1 has no settings toggle
     # or mint-key UI yet (session 2), so a fresh install would just log
     # "no panel API key configured" forever. `systemctl enable --now
@@ -1218,7 +1218,7 @@ create_services() {
     # API service
     cat > /etc/systemd/system/dockpanel-api.service << 'EOF'
 [Unit]
-Description=DockPanel API
+Description=CyberHunter - Panel API
 After=network.target docker.service dockpanel-agent.service
 Wants=dockpanel-agent.service
 StartLimitBurst=5
@@ -1245,7 +1245,7 @@ LimitNOFILE=65535
 WantedBy=multi-user.target
 EOF
 
-    # API environment — determine BASE_URL from domain or leave empty for IP access
+    # API environment - determine BASE_URL from domain or leave empty for IP access
     local API_BASE_URL=""
     if [ -n "$PANEL_DOMAIN" ]; then
         API_BASE_URL="https://${PANEL_DOMAIN}"
@@ -1291,7 +1291,7 @@ EOF
 # ── Panel TLS ────────────────────────────────────────────────────────────
 # The panel's very first screen asks the operator to CREATE an admin password.
 # Without a domain there is no Let's Encrypt certificate, and the panel used to
-# serve that screen over plain HTTP — putting the credential on the wire in
+# serve that screen over plain HTTP - putting the credential on the wire in
 # cleartext on the exact path the README advertises. A self-signed certificate
 # is not a trusted certificate, but a browser warning the operator can reason
 # about beats a password nobody can see leaving the machine.
@@ -1308,7 +1308,7 @@ generate_self_signed_panel_cert() {
     mkdir -p "$dir"
     chmod 700 "$dir"
 
-    # Idempotent — never clobber a certificate the operator may have replaced
+    # Idempotent - never clobber a certificate the operator may have replaced
     # with their own, and never regenerate on a re-run (that would invalidate
     # the fingerprint anyone has already accepted in their browser).
     if [ -s "$dir/panel.crt" ] && [ -s "$dir/panel.key" ]; then
@@ -1381,7 +1381,7 @@ configure_nginx() {
     # Drop install-agent.sh into FE_ROOT so the panel's SPA-fallback nginx config
     # serves it via `try_files $uri` (instead of returning the SPA index.html).
     # Backend at panel/backend/src/routes/servers.rs prints `curl … {panel_url}/install-agent.sh`
-    # in the multi-server install command — this is what makes that URL resolve. (#56, v2.8.14)
+    # in the multi-server install command - this is what makes that URL resolve. (#56, v2.8.14)
     if [ -f "$REPO_DIR/scripts/install-agent.sh" ] && [ -d "$FE_ROOT" ]; then
         cp "$REPO_DIR/scripts/install-agent.sh" "$FE_ROOT/install-agent.sh"
         chmod 644 "$FE_ROOT/install-agent.sh"
@@ -1425,7 +1425,7 @@ configure_nginx() {
     ssl_session_timeout 10m;
 "
         else
-            warn "Could not generate a self-signed certificate — the panel will serve plain HTTP on ${PANEL_PORT}"
+            warn "Could not generate a self-signed certificate - the panel will serve plain HTTP on ${PANEL_PORT}"
             info "The admin password you create will NOT be encrypted in transit; prefer PANEL_DOMAIN=..."
         fi
     fi
@@ -1487,10 +1487,10 @@ ${PANEL_TLS_BLOCK}
         proxy_send_timeout 3600s;
     }
 
-    # MCP server (read-only v1; opt-in, see panel/mcp) — exact match, not a
+    # MCP server (read-only v1; opt-in, see panel/mcp) - exact match, not a
     # prefix: Streamable HTTP is one fixed endpoint, not a family of routes
     # like /api/. Not started by default (create_services() installs the unit
-    # but never enables it), so this 502s until an operator opts in — expected
+    # but never enables it), so this 502s until an operator opts in - expected
     # for a surface nobody has turned on yet.
     location = /mcp {
         proxy_pass http://127.0.0.1:3081;
@@ -1516,7 +1516,7 @@ ${PANEL_TLS_BLOCK}
 
     # The document must revalidate, or an update does not reach the operator.
     # Without a cache directive here the browser falls back to HEURISTIC
-    # freshness — roughly a tenth of the age of the file — so on a panel that
+    # freshness - roughly a tenth of the age of the file - so on a panel that
     # has been running for a month, index.html is treated as fresh for about
     # three days. Its script tag names a hashed bundle under /assets/, which is
     # served immutable, and the previous bundle is still on disk because the
@@ -1542,13 +1542,13 @@ ${PANEL_TLS_BLOCK}
     # Hashed bundle filenames, so a year is safe. ONE Cache-Control: the expires
     # directive emits its own (max-age=31536000) on top of any add_header, and
     # the pair went out as two separate header lines saying different things.
-    # Deliberately NOT "always" on the cache header — an error response must not
+    # Deliberately NOT "always" on the cache header - an error response must not
     # be cached, or a 404 during an update would be remembered for a year.
     #
     # The security headers below are a REPEAT, not an addition: a location
     # block's add_headers replace the server block's set outright rather than
     # merging with it, so without them every script and stylesheet this panel
-    # serves goes out with NO nosniff — the one header that matters most for a
+    # serves goes out with NO nosniff - the one header that matters most for a
     # script response, on the only responses that are scripts.
     location /assets/ {
         add_header Cache-Control "public, max-age=31536000, immutable";
@@ -1581,7 +1581,7 @@ NGINXEOF
     # Test and restart (full restart needed to release port bindings from removed default site)
     if nginx -t > /dev/null 2>&1; then
         systemctl restart nginx
-        log "Nginx configured — panel on port $PANEL_PORT"
+        log "Nginx configured - panel on port $PANEL_PORT"
     else
         error "Nginx config test failed"
         nginx -t 2>&1
@@ -1597,17 +1597,17 @@ wait_for_health() {
         'for i in $(seq 1 15); do curl -sf http://127.0.0.1:3080/api/health && exit 0; sleep 2; done; exit 1'; then
         log "API healthy"
     else
-        warn "API not responding on port 3080 yet — check: journalctl -u dockpanel-api -n 20"
+        warn "API not responding on port 3080 yet - check: journalctl -u dockpanel-api -n 20"
     fi
 }
 
 # ── Recommended Services ─────────────────────────────────────────────────
 
-# install_php_set <prefix> — install <prefix>-fpm + <prefix>-cli, then every
+# install_php_set <prefix> - install <prefix>-fpm + <prefix>-cli, then every
 # extension metapackage this apt source actually has a candidate for.
 # A fixed list would fail the whole transaction over one obsolete name:
 # PHP 8.5 (Ubuntu 26.04) absorbed OPcache, so `php-opcache` no longer has an
-# installation candidate there — that single dead package is what broke the
+# installation candidate there - that single dead package is what broke the
 # old all-or-nothing install. Skipped names are reported, not fatal.
 install_php_set() {
     local prefix="$1"
@@ -1625,7 +1625,7 @@ install_php_set() {
     if [ -n "$exts" ]; then
         # shellcheck disable=SC2086
         if ! run "Installing PHP extensions ($(echo $exts | wc -w) packages)" apt-get install -y $exts; then
-            warn "Some PHP extensions failed to install — see $INSTALL_LOG"
+            warn "Some PHP extensions failed to install - see $INSTALL_LOG"
         fi
     fi
     if [ -n "$skipped" ]; then
@@ -1634,7 +1634,7 @@ install_php_set() {
     return 0
 }
 
-# cleanup_php_repo — remove a 3rd-party PHP source that turned out not to
+# cleanup_php_repo - remove a 3rd-party PHP source that turned out not to
 # serve this release. Leaving it behind breaks EVERY later `apt-get update`
 # on the user's box with a 404 (this exact wreckage was found on a fresh
 # Ubuntu 26.04 install after the old installer's failed PPA attempt).
@@ -1653,7 +1653,7 @@ install_php() {
     fi
 
     if [ "$PKG_MGR" = "apt" ]; then
-        # Re-source /etc/os-release — detect_os' copy is local to that function.
+        # Re-source /etc/os-release - detect_os' copy is local to that function.
         local OS_ID="" OS_CODENAME=""
         if [ -f /etc/os-release ]; then
             OS_ID=$(. /etc/os-release && echo "${ID:-}")
@@ -1661,7 +1661,7 @@ install_php() {
         fi
 
         # Step 1: the distro's own PHP. Covers Ubuntu 24.04 (8.3), Ubuntu
-        # 26.04 (8.5), Debian 12 (8.2), Debian 13 (8.4) — modern distros ship
+        # 26.04 (8.5), Debian 12 (8.2), Debian 13 (8.4) - modern distros ship
         # a usable PHP and need no 3rd-party repo at all.
         local PHP_VER=""
         if apt_has_candidate php-fpm && install_php_set php; then
@@ -1669,7 +1669,7 @@ install_php() {
         fi
 
         # Step 2: releases without a usable distro PHP fall back to a
-        # 3rd-party repo (Debian → deb.sury.org, Ubuntu → ppa:ondrej/php) —
+        # 3rd-party repo (Debian → deb.sury.org, Ubuntu → ppa:ondrej/php) -
         # but ONLY after confirming that repo actually publishes for this
         # release (brand-new releases lag), and with cleanup on failure so a
         # dead source can never poison the box's apt state.
@@ -1715,16 +1715,16 @@ install_php() {
             log "PHP ${PHP_VER} installed with FPM"
             svc_ok "PHP ${PHP_VER} (FPM)"
         else
-            warn "PHP could not be installed — WordPress/PHP sites need it; retry later from Settings → Services"
+            warn "PHP could not be installed - WordPress/PHP sites need it; retry later from Settings → Services"
             svc_fail "PHP-FPM"
         fi
     else
         # RHEL/Rocky/Fedora.
         #
         # SELECT THE MODULE STREAM FIRST. `dnf install php-fpm` with no stream
-        # enabled resolves to the NON-MODULAR base package — PHP 8.0.30 on
+        # enabled resolves to the NON-MODULAR base package - PHP 8.0.30 on
         # Rocky 9, older than every stream the box offers (8.1/8.2/8.3) and
-        # end-of-life since November 2023 — and the install summary then
+        # end-of-life since November 2023 - and the install summary then
         # cheerfully prints "PHP 8.0 (FPM)". Measured on a real box at s266,
         # where this installer did exactly that.
         #
@@ -1738,7 +1738,7 @@ install_php() {
             if dnf -y module enable "php:${php_stream}" > /dev/null 2>&1; then
                 info "Selected PHP ${php_stream} (module stream)"
             else
-                warn "Could not enable the php:${php_stream} module stream — falling back to the distro default, which may be end-of-life"
+                warn "Could not enable the php:${php_stream} module stream - falling back to the distro default, which may be end-of-life"
             fi
         fi
 
@@ -1752,7 +1752,7 @@ install_php() {
             log "PHP installed with FPM"
             svc_ok "PHP $(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;' 2>/dev/null) (FPM)"
         else
-            warn "PHP could not be installed — retry later from Settings → Services"
+            warn "PHP could not be installed - retry later from Settings → Services"
             svc_fail "PHP-FPM"
         fi
     fi
@@ -1771,7 +1771,7 @@ install_recommended_services() {
             log "Certbot installed with auto-renewal"
             svc_ok "Certbot"
         else
-            warn "Certbot failed to install — SSL provisioning will not work until it is"
+            warn "Certbot failed to install - SSL provisioning will not work until it is"
             svc_fail "Certbot"
         fi
     else
@@ -1779,19 +1779,19 @@ install_recommended_services() {
         svc_ok "Certbot"
     fi
 
-    # Firewall. Install one only if the box has none — never a second one.
+    # Firewall. Install one only if the box has none - never a second one.
     #
     # s265: this used to install UFW unconditionally. On the RHEL family that
     # put UFW's iptables rules alongside the firewalld nftables rules the
     # distro already had running, and then opened 80/443 in UFW *only*. The
     # packets kept dying at firewalld, so Let's Encrypt could not reach
     # /.well-known/acme-challenge, the panel got no certificate, and it was
-    # unreachable from any browser — while the installer printed
+    # unreachable from any browser - while the installer printed
     # "installed successfully" and an https:// URL. Two firewalls is not a
     # hardening measure, it is an outage nobody can see.
     case "$FW_MGR" in
         firewalld)
-            log "Firewall: firewalld is already active — using it (not installing UFW)"
+            log "Firewall: firewalld is already active - using it (not installing UFW)"
             svc_ok "firewalld"
             ;;
         ufw)
@@ -1808,7 +1808,7 @@ install_recommended_services() {
                 log "UFW installed and enabled"
                 svc_ok "UFW"
             else
-                warn "UFW failed to install — no firewall is active"
+                warn "UFW failed to install - no firewall is active"
                 svc_fail "UFW"
             fi
             ;;
@@ -1823,9 +1823,9 @@ install_recommended_services() {
         fw_reload
         log "Firewall ($FW_MGR): ports $opened allowed"
     elif [ "$FW_MGR" = "none" ]; then
-        log "Firewall: none active — nothing to open"
+        log "Firewall: none active - nothing to open"
     else
-        warn "Firewall ($FW_MGR): could not open 80/443 — the panel may be unreachable"
+        warn "Firewall ($FW_MGR): could not open 80/443 - the panel may be unreachable"
     fi
 
     # Fail2Ban (intrusion prevention)
@@ -1850,7 +1850,7 @@ F2BEOF
             log "Fail2Ban installed with SSH + Nginx jails"
             svc_ok "Fail2Ban"
         else
-            warn "Fail2Ban failed to install — retry later from Settings → Services"
+            warn "Fail2Ban failed to install - retry later from Settings → Services"
             svc_fail "Fail2Ban"
         fi
     else
@@ -1858,11 +1858,11 @@ F2BEOF
         svc_ok "Fail2Ban"
     fi
 
-    # Honest section verdict — never claim "all ready" over a failure.
+    # Honest section verdict - never claim "all ready" over a failure.
     if [ ${#SVC_FAIL[@]} -eq 0 ]; then
         log "All recommended services ready"
     else
-        warn "$(join_comma "${SVC_FAIL[@]}") did not install — the panel still works; retry from Settings → Services"
+        warn "$(join_comma "${SVC_FAIL[@]}") did not install - the panel still works; retry from Settings → Services"
     fi
 }
 
@@ -1875,7 +1875,7 @@ F2BEOF
 # address, so the panel's server_name is never consulted: the FIRST site to
 # get a certificate becomes the de-facto server for the panel's own domain and
 # the panel goes dark from outside. configure_nginx already avoids exactly
-# this on :80 by pinning it to the interface IP — certbot then reintroduces it
+# this on :80 by pinning it to the interface IP - certbot then reintroduces it
 # on :443, which is why the guard there was not enough.
 normalize_panel_listen() {
     local conf="$NGINX_CONF"
@@ -1897,24 +1897,24 @@ normalize_panel_listen() {
     fi
 
     # A RELOAD cannot move an already-bound listener from 0.0.0.0:443 to
-    # <ip>:443 — nginx inherits the old socket and the change silently
+    # <ip>:443 - nginx inherits the old socket and the change silently
     # no-ops, leaving a config on disk that disagrees with what is running.
     # Only a restart rebinds.
     systemctl restart nginx > /dev/null 2>&1 || true
 
     # Trust the socket, not the restart's exit code.
     if command -v ss > /dev/null 2>&1 && ! ss -ltn "( sport = :443 )" 2>/dev/null | grep -c "${bind_ip}:443" >/dev/null; then
-        warn "panel is not listening on ${bind_ip}:443 — a site vhost may shadow it"
+        warn "panel is not listening on ${bind_ip}:443 - a site vhost may shadow it"
     fi
 }
 
 provision_panel_ssl() {
     if [ -z "$PANEL_DOMAIN" ]; then
         if [ "$PANEL_SELF_SIGNED" = "1" ]; then
-            log "No domain set — serving HTTPS on IP:${PANEL_PORT} with a self-signed certificate"
+            log "No domain set - serving HTTPS on IP:${PANEL_PORT} with a self-signed certificate"
             info "Let's Encrypt needs a domain; re-run with PANEL_DOMAIN=... for a trusted certificate"
         else
-            log "No domain set — panel on IP:${PANEL_PORT} (plain HTTP)"
+            log "No domain set - panel on IP:${PANEL_PORT} (plain HTTP)"
         fi
         return
     fi
@@ -1922,7 +1922,7 @@ provision_panel_ssl() {
     header "Panel SSL Certificate"
 
     if ! command -v certbot &> /dev/null; then
-        log "Certbot not found — skipping SSL"
+        log "Certbot not found - skipping SSL"
         return
     fi
 
@@ -1934,12 +1934,12 @@ provision_panel_ssl() {
     else
         # Order these by what actually causes it. s265: a firewall the
         # installer did not configure blocked :80, so the ACME challenge could
-        # never be fetched — and the old hint blamed Cloudflare, which was not
+        # never be fetched - and the old hint blamed Cloudflare, which was not
         # even in the path. Reachability first, proxies last.
-        warn "SSL provisioning failed — the panel is served over plain HTTP for now"
+        warn "SSL provisioning failed - the panel is served over plain HTTP for now"
         info "Let's Encrypt must reach http://${PANEL_DOMAIN}/.well-known/acme-challenge/ from the internet. Check, in order:"
         info "  1. ${PANEL_DOMAIN} resolves to this server's public IP"
-        info "  2. ports 80 and 443 are open — in the OS firewall (${FW_MGR}) AND in any provider firewall"
+        info "  2. ports 80 and 443 are open - in the OS firewall (${FW_MGR}) AND in any provider firewall"
         info "  3. if the domain is proxied by Cloudflare, set SSL mode to 'Full'"
         info "Then retry: certbot --nginx -d $PANEL_DOMAIN"
     fi
@@ -1960,7 +1960,7 @@ print_summary() {
     echo -e "  ${CYAN}$(progress_bar 100)${NC} ${WHITE}100%${NC} ${DIM}${mins}m ${secs}s${NC}"
     echo ""
     echo -e "${GREEN}${BOLD}╔══════════════════════════════════════════════════════╗${NC}"
-    echo -e "${GREEN}${BOLD}║         DockPanel installed successfully!            ║${NC}"
+    echo -e "${GREEN}${BOLD}║         CyberHunter - Panel installed successfully!            ║${NC}"
     echo -e "${GREEN}${BOLD}╚══════════════════════════════════════════════════════╝${NC}"
     echo ""
     if [ -n "$INSTALLED_VERSION" ]; then
@@ -1971,7 +1971,7 @@ print_summary() {
     elif [ -n "$PANEL_DOMAIN" ]; then
         # No certificate was issued. Printing https:// here sends the operator
         # to a URL that cannot answer, and it reads as if the install worked.
-        echo -e "  ${BOLD}Panel URL:${NC}      http://${PANEL_DOMAIN}  ${YELLOW}(no certificate — see below)${NC}"
+        echo -e "  ${BOLD}Panel URL:${NC}      http://${PANEL_DOMAIN}  ${YELLOW}(no certificate - see below)${NC}"
     elif [ "$PANEL_SELF_SIGNED" = "1" ]; then
         echo -e "  ${BOLD}Panel URL:${NC}      https://${SERVER_IP}:${PANEL_PORT}"
     else
@@ -1981,7 +1981,7 @@ print_summary() {
     echo -e "  ${BOLD}First step:${NC}     Open the URL and create your admin account"
     if [ "$PANEL_SELF_SIGNED" = "1" ]; then
         echo ""
-        echo -e "  ${DIM}Your browser will warn once about the certificate — that is expected${NC}"
+        echo -e "  ${DIM}Your browser will warn once about the certificate - that is expected${NC}"
         echo -e "  ${DIM}for an IP address. It is self-signed, and it is there so the admin${NC}"
         echo -e "  ${DIM}password you are about to create is encrypted on the way to the server.${NC}"
         echo -e "  ${DIM}For a trusted certificate: point a domain here, then re-run with${NC}"
@@ -2010,7 +2010,7 @@ print_summary() {
     echo -e "    Container:      ${DB_CONTAINER} (port ${DB_PORT})"
     echo -e "    Connect:        docker exec -it ${DB_CONTAINER} psql -U dockpanel -d dockpanel"
     echo ""
-    # What ACTUALLY installed — never a hardcoded wishlist.
+    # What ACTUALLY installed - never a hardcoded wishlist.
     if [ ${#SVC_OK[@]} -gt 0 ]; then
         echo -e "  ${BOLD}Installed services:${NC}"
         echo -e "    $(join_comma "${SVC_OK[@]}")"
@@ -2053,8 +2053,8 @@ setup_db_backup() {
 # deleted a good older one to make room, and nothing anywhere said a word.
 set -o pipefail
 # umask is load-bearing for the same reason pipefail is: `>` creates the file
-# 0666 & ~umask, so without this the day's dump — the whole panel database,
-# including `servers.agent_token` in cleartext — lands 0644 on a box that also
+# 0666 & ~umask, so without this the day's dump - the whole panel database,
+# including `servers.agent_token` in cleartext - lands 0644 on a box that also
 # runs other people's PHP as www-data.
 umask 077
 BACKUP_DIR="/var/backups/dockpanel/db"
@@ -2067,14 +2067,14 @@ if ! docker exec dockpanel-postgres pg_dump -U dockpanel -d dockpanel | gzip > "
     rm -f "$OUT"
     exit 1
 fi
-# A zero exit is not the success condition — a whole dump is. pg_dump emits this
+# A zero exit is not the success condition - a whole dump is. pg_dump emits this
 # marker near the end; its absence means the file is short whatever exited 0.
 if ! gunzip -c "$OUT" | tail -20 | grep -c 'PostgreSQL database dump complete' >/dev/null; then
     echo "dockpanel db-backup: $OUT is incomplete, discarding" >&2
     rm -f "$OUT"
     exit 1
 fi
-# Keep last 7 days — only ever reached once today's backup is known good, so a
+# Keep last 7 days - only ever reached once today's backup is known good, so a
 # bad run can never evict a good one.
 find "$BACKUP_DIR" -name "*.sql.gz" -mtime +7 -delete
 BKEOF
@@ -2084,7 +2084,7 @@ BKEOF
     #
     # Both greps are load-bearing. The first drops a previous install of THIS
     # script. The second drops the pre-v2.88.0 INLINE dump line, which never
-    # contains "$BACKUP_SCRIPT" — so without it, re-running setup on an older
+    # contains "$BACKUP_SCRIPT" - so without it, re-running setup on an older
     # box kept the unhardened 0644 line AND added this one, giving two daily
     # dumps of the same database, one of them world-readable in mode.
     (crontab -l 2>/dev/null \
@@ -2104,14 +2104,14 @@ main() {
 
     # Start the install log. Prefer /var/log; if it's read-only (hardened /
     # containerized host) fall back to a root-owned, unpredictable, O_EXCL temp
-    # file via mktemp — never a fixed /tmp path a local user could pre-create
+    # file via mktemp - never a fixed /tmp path a local user could pre-create
     # or symlink (the installer runs as root and logs config paths).
     if : > "$INSTALL_LOG" 2>/dev/null; then
         chmod 600 "$INSTALL_LOG" 2>/dev/null || true
     else
         INSTALL_LOG=$(umask 077; mktemp /tmp/dockpanel-install.XXXXXX 2>/dev/null || echo /dev/null)
     fi
-    plog "DockPanel installer started: $(date 2>/dev/null || true)"
+    plog "CyberHunter - Panel installer started: $(date 2>/dev/null || true)"
 
     # No apt/debconf prompt may ever block a piped installer
     export DEBIAN_FRONTEND=noninteractive
@@ -2124,7 +2124,7 @@ main() {
         INSTALL_FROM_RELEASE=1
     fi
 
-    # Ask for the domain UP FRONT — all input happens before the first step,
+    # Ask for the domain UP FRONT - all input happens before the first step,
     # so the install never stops to wait for a human once it starts moving.
     if [ -z "$PANEL_DOMAIN" ]; then
         echo ""
@@ -2142,8 +2142,8 @@ main() {
             read -r PANEL_DOMAIN < /dev/tty || PANEL_DOMAIN=""
         else
             # Fully non-interactive (e.g. piped through SSH without tty).
-            # Skip the prompt — caller should have set PANEL_DOMAIN already.
-            echo "(no tty — continuing without a panel domain; set PANEL_DOMAIN to configure)"
+            # Skip the prompt - caller should have set PANEL_DOMAIN already.
+            echo "(no tty - continuing without a panel domain; set PANEL_DOMAIN to configure)"
             PANEL_DOMAIN=""
         fi
         PANEL_DOMAIN=$(echo "$PANEL_DOMAIN" | tr -d ' ')
@@ -2154,7 +2154,7 @@ main() {
         PANEL_PORT="80"  # Will be upgraded to 443 by certbot
     fi
 
-    # Every conditional step is now known — size the progress bar so it hits
+    # Every conditional step is now known - size the progress bar so it hits
     # 100% exactly at the end (no phantom steps, no 93% → 100% jump).
     TOTAL_STEPS=14
     if [ "$INSTALL_FROM_RELEASE" != "1" ]; then
@@ -2189,7 +2189,7 @@ main() {
     # RHEL: comment out the default server block in nginx.conf, which binds :80
     # and would fight the panel vhost.
     #
-    # This used to be a sed range — `/server {/,/^[[:space:]]*}/` — and that range
+    # This used to be a sed range - `/server {/,/^[[:space:]]*}/` - and that range
     # ends at the FIRST line that is just a closing brace, which inside a server
     # block is the end of its first nested `location`, not the end of the server.
     # So it commented the opening third of the block and left the remainder at

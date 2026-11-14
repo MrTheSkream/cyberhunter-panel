@@ -12,7 +12,7 @@ use super::AppState;
 use crate::services::command_filter;
 // ONE fail-closed reader and ONE writer for the whole crate. These lived here
 // as private helpers, which is why the WordPress auto-update twin never got
-// them — see services/crontab.rs.
+// them - see services/crontab.rs.
 use crate::services::crontab::{read_crontab, write_crontab};
 
 type ApiErr = (StatusCode, Json<serde_json::Value>);
@@ -31,7 +31,7 @@ pub struct CronRequest {
     ///
     /// The panel now sends every cron of the site being synced, enabled or not,
     /// because the payload has to be the authoritative statement of *which lines
-    /// this sync owns* — see [`sync_crons`]. Defaults to `true` so a panel older
+    /// this sync owns* - see [`sync_crons`]. Defaults to `true` so a panel older
     /// than this field still schedules what it sends.
     #[serde(default = "default_true")]
     pub enabled: bool,
@@ -58,11 +58,11 @@ pub fn router() -> Router<AppState> {
         .route("/crons/remove/{id}", delete(remove_cron))
 }
 
-/// POST /crons/sync — Write this site's crons to the system crontab.
+/// POST /crons/sync - Write this site's crons to the system crontab.
 /// Receives a list of crons and writes them atomically.
 ///
 /// **This sync owns only the lines it was sent.** It used to strip every line
-/// carrying `# dockpanel:` — the marker is panel-wide, not per-site — and then
+/// carrying `# dockpanel:` - the marker is panel-wide, not per-site - and then
 /// re-add only the one site the panel was syncing. So any tenant adding, editing
 /// or deleting a single cron on their OWN site silently removed every OTHER
 /// site's jobs from the crontab, box-wide. Nothing errored and nothing was
@@ -77,7 +77,7 @@ async fn sync_crons(
     AxumJson(crons): AxumJson<Vec<CronRequest>>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
     // Read the existing crontab. A read that FAILED must not be mistaken for an
-    // empty crontab — that is how a transient `crontab -l` timeout used to
+    // empty crontab - that is how a transient `crontab -l` timeout used to
     // replace root's entire crontab, operator entries included, with one site's
     // jobs.
     let existing = read_crontab()
@@ -102,8 +102,8 @@ async fn sync_crons(
     // This endpoint used to return 400 for the entire batch on the first bad
     // command, which turned one unusable row into a permanently broken feature:
     // the panel's own WordPress auto-cron was INSERTed straight into the
-    // database with `> /dev/null 2>&1` in it — a pattern this very filter
-    // blocks — so from the moment a WordPress site existed, every subsequent
+    // database with `> /dev/null 2>&1` in it - a pattern this very filter
+    // blocks - so from the moment a WordPress site existed, every subsequent
     // add/edit/delete of ANY cron failed with "Command contains disallowed
     // characters or patterns" and nothing reached the crontab (measured on a
     // fresh Ubuntu 24.04 box, s268).
@@ -111,7 +111,7 @@ async fn sync_crons(
     // The writer is fixed too, but fixing only the writer would leave every
     // install that already has the row broken forever, so the reader has to
     // tolerate it. Skipping keeps the guard's security property exactly as
-    // strong — the command still never reaches the crontab — while costing one
+    // strong - the command still never reaches the crontab - while costing one
     // row instead of the feature.
     let mut skipped: Vec<String> = Vec::new();
     let mut disabled = 0usize;
@@ -161,13 +161,13 @@ async fn sync_crons(
             skipped.join(", ")
         );
     }
-    // Report the skips rather than swallowing them — a job the operator can see
+    // Report the skips rather than swallowing them - a job the operator can see
     // in the UI but which is not in the crontab is the shape that never runs
     // and never says why.
     Ok(Json(serde_json::json!({ "synced": synced, "skipped": skipped })))
 }
 
-/// POST /crons/run — Execute a cron command immediately and return output.
+/// POST /crons/run - Execute a cron command immediately and return output.
 async fn run_cron(
     AxumJson(body): AxumJson<CronRequest>,
 ) -> Result<Json<CronResult>, ApiErr> {
@@ -211,7 +211,7 @@ async fn run_cron(
     }))
 }
 
-/// GET /crons/list — Read dockpanel crons from system crontab.
+/// GET /crons/list - Read dockpanel crons from system crontab.
 async fn list_crons() -> Result<Json<Vec<serde_json::Value>>, ApiErr> {
     // Read-only: a failed read destroys nothing here, so it degrades to an empty
     // listing rather than a 500. The panel's own `crons` rows are the record.
@@ -245,7 +245,7 @@ async fn list_crons() -> Result<Json<Vec<serde_json::Value>>, ApiErr> {
     Ok(Json(crons))
 }
 
-/// DELETE /crons/remove/{id} — Remove a specific cron by ID from crontab.
+/// DELETE /crons/remove/{id} - Remove a specific cron by ID from crontab.
 async fn remove_cron(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
@@ -324,7 +324,7 @@ mod sync_scope_tests {
         assert!(kept.iter().any(|l| l.contains("certbot")), "an operator line was removed");
     }
 
-    /// An id that is a PREFIX of another must not carry it off — the same
+    /// An id that is a PREFIX of another must not carry it off - the same
     /// unanchored-match class as the WordPress auto-update marker.
     #[test]
     fn a_prefix_id_does_not_match_a_longer_one() {

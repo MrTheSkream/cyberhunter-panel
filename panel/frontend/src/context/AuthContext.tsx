@@ -69,7 +69,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = () => {
     api.post("/auth/logout").catch((e) => logger.error("Logout error:", e));
     // The selected server is per-BROWSER, not per-account, and the next account
-    // to sign in here may not own it — a client owns no `servers` row at all, so
+    // to sign in here may not own it - a client owns no `servers` row at all, so
     // an inherited id makes `ServerScope` refuse every request with
     // "Server not found or access denied". Clearing it here stops the leak at
     // the source; `ServerContext` also self-heals a browser that is already dirty.
