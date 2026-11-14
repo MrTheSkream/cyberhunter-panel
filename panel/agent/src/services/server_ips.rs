@@ -164,12 +164,6 @@ pub fn parse_dig_ptr(out: &str) -> Option<String> {
     out.lines().find_map(normalize_hostname)
 }
 
-/// Hostname from `getent hosts <ip>` (`1.2.3.4   name alias…`).
-pub fn parse_getent_ptr(out: &str) -> Option<String> {
-    out.lines()
-        .find_map(|l| l.split_whitespace().nth(1).and_then(normalize_hostname))
-}
-
 /// Parse [`NETPLAN_PATH`]. Only `network.ethernets.<iface>.addresses` is
 /// read; anything else in the file is ignored (and dropped on the next write —
 /// the file is ours). An empty file parses as no managed addresses.
@@ -529,37 +523,58 @@ pub async fn ip_addr(op: &str, ip: Ipv4Addr, prefix: u8, iface: &str) -> Result<
     Ok(())
 }
 
-/// Reverse DNS of `ip` through the system resolver. `dig` is preferred: it
-/// asks DNS only, whereas `getent hosts` consults `/etc/hosts` first and can
-/// return a local alias that is not the PTR receivers see. `getent` is the
-/// fallback only when `dig` is not installed. `None` when there is no PTR.
+/// Where systemd-resolved lists the real upstream servers (the stub file
+/// `/etc/resolv.conf` only names 127.0.0.53).
+const UPSTREAM_RESOLV_CONF: &str = "/run/systemd/resolve/resolv.conf";
+
+/// Upstream nameservers from a resolv.conf, skipping loopback stubs.
+pub fn upstream_nameservers(text: &str) -> Vec<String> {
+    text.lines()
+        .filter_map(|l| {
+            let mut it = l.split_whitespace();
+            (it.next() == Some("nameserver")).then(|| it.next()).flatten()
+        })
+        .filter(|ns| ns.parse::<std::net::IpAddr>().is_ok_and(|a| !a.is_loopback()))
+        .map(str::to_string)
+        .collect()
+}
+
+/// Reverse DNS of `ip` as the outside world sees it. `None` when there is no
+/// PTR (Postfix then keeps `$myhostname` as HELO).
+///
+/// The local stub (systemd-resolved, 127.0.0.53) must NOT be asked: it
+/// synthesizes the machine's own hostname for every address configured on
+/// it, so each IP of the server would "have" the local hostname as PTR and
+/// that would become its HELO. `dig` therefore asks the upstream servers from
+/// [`UPSTREAM_RESOLV_CONF`] directly (in order), and falls back to the
+/// default resolver only when that file is absent (no systemd-resolved).
+/// `getent` is not used for the same reason (it goes through the stub and
+/// `/etc/hosts`).
 pub async fn ptr_lookup(ip: Ipv4Addr) -> Option<String> {
     let ip_s = ip.to_string();
+    let servers = match tokio::fs::read_to_string(UPSTREAM_RESOLV_CONF).await {
+        Ok(t) => upstream_nameservers(&t).into_iter().map(Some).collect::<Vec<_>>(),
+        Err(_) => vec![None],
+    };
     let timeout = std::time::Duration::from_secs(8);
-    let dig = tokio::time::timeout(
-        timeout,
-        safe_command("dig")
-            .args(["+short", "+time=3", "+tries=2", "-x", &ip_s])
-            .output(),
-    )
-    .await;
-    match dig {
-        Ok(Ok(out)) => return parse_dig_ptr(&String::from_utf8_lossy(&out.stdout)),
-        Ok(Err(e)) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Ok(Err(e)) => {
-            tracing::warn!("dig -x {ip} could not run: {e}");
-            return None;
+    for server in servers {
+        let mut cmd = safe_command("dig");
+        cmd.args(["+short", "+time=3", "+tries=2", "-x", &ip_s]);
+        if let Some(ns) = &server {
+            cmd.arg(format!("@{ns}"));
         }
-        Err(_) => {
-            tracing::warn!("dig -x {ip} timed out");
-            return None;
+        match tokio::time::timeout(timeout, cmd.output()).await {
+            // A server that answered (even "no PTR") is authoritative enough.
+            Ok(Ok(out)) if out.status.success() => return parse_dig_ptr(&String::from_utf8_lossy(&out.stdout)),
+            Ok(Ok(_)) => tracing::warn!("dig -x {ip} via {server:?} failed, trying the next server"),
+            Ok(Err(e)) => {
+                tracing::warn!("dig -x {ip} could not run: {e}");
+                return None;
+            }
+            Err(_) => tracing::warn!("dig -x {ip} via {server:?} timed out"),
         }
     }
-    let out = tokio::time::timeout(timeout, safe_command("getent").args(["hosts", &ip_s]).output())
-        .await
-        .ok()?
-        .ok()?;
-    parse_getent_ptr(&String::from_utf8_lossy(&out.stdout))
+    None
 }
 
 #[cfg(test)]
@@ -626,8 +641,13 @@ mod tests {
         assert_eq!(parse_dig_ptr("mail2.Example.fr.\n"), Some("mail2.example.fr".into()));
         assert_eq!(parse_dig_ptr(""), None);
         assert_eq!(parse_dig_ptr(";; connection timed out; no servers could be reached\n"), None);
-        assert_eq!(parse_getent_ptr("192.0.2.107       ip7.example.net\n"), Some("ip7.example.net".into()));
-        assert_eq!(parse_getent_ptr(""), None);
+        assert_eq!(
+            upstream_nameservers(
+                "# x\nnameserver 127.0.0.53\nnameserver 1.1.1.1\nnameserver ::1\nnameserver 2001:4860:4860::8888\nsearch lan\n"
+            ),
+            vec!["1.1.1.1".to_string(), "2001:4860:4860::8888".to_string()]
+        );
+        assert!(upstream_nameservers("nameserver 127.0.0.53\n").is_empty());
         assert!(is_valid_hostname("mail.example.fr"));
         assert!(!is_valid_hostname("-bad.example"));
         assert!(!is_valid_hostname("bad..example"));

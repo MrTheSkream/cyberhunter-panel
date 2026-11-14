@@ -222,10 +222,14 @@ export default function ServerIps() {
     setMessage({ text: "", type: "" });
     const remove = target.managed && !target.is_primary && removeFromSystem;
     try {
-      await api.delete(`/server-ips/${target.id}?remove_from_system=${remove ? "true" : "false"}`);
+      const res = await api.delete<{ ok: boolean; removed_from_system?: boolean }>(
+        `/server-ips/${target.id}?remove_from_system=${remove ? "true" : "false"}`,
+      );
       setIps((prev) => prev.filter((x) => x.id !== target.id));
       setMessage({
-        text: remove ? `${target.ip} removed from the panel and from the network interface` : `${target.ip} removed from the panel`,
+        text: res?.removed_from_system
+          ? `${target.ip} removed from the panel and from the network interface`
+          : `${target.ip} removed from the panel (still configured on the system)`,
         type: "success",
       });
     } catch (e) {

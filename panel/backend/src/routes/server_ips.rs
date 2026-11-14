@@ -604,7 +604,7 @@ pub async fn remove(
         Some("server_ip"), Some(&row.ip), Some(details), None, "warning", claims.key_id,
     ).await;
 
-    Ok(Json(serde_json::json!({ "ok": true })))
+    Ok(Json(serde_json::json!({ "ok": true, "removed_from_system": removed_from_system })))
 }
 
 #[cfg(test)]

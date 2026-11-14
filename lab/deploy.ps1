@@ -1,4 +1,4 @@
-# Déploie la version compilée du fork dans la VM de labo.
+﻿# Déploie la version compilée du fork dans la VM de labo.
 #   .\lab\deploy.ps1                 -> restaure le checkpoint dockpanel-upstream puis déploie
 #   .\lab\deploy.ps1 -NoRestore      -> déploie sur l'état courant de la VM
 # Prérequis : binaires dans lab\out (lab/build.sh release) et frontend compilé (panel\frontend\dist).
@@ -43,8 +43,15 @@ sudo rm -rf "$fe.old" && sudo mv "$fe" "$fe.old" && sudo mv "$fe.new" "$fe"
 sudo systemctl start dockpanel-agent dockpanel-api
 for i in $(seq 1 30); do curl -sf http://127.0.0.1:3080/api/health >/dev/null && break; sleep 2; done
 echo "frontend=$fe"
+for i in $(seq 1 30); do systemctl is-active --quiet dockpanel-agent dockpanel-api && break; sleep 2; done
 systemctl is-active dockpanel-agent dockpanel-api
-curl -s -o /dev/null -w 'panel=%{http_code}\n' -k https://127.0.0.1:8443/
+for i in $(seq 1 30); do c=$(curl -s -o /dev/null -w '%{http_code}' -k https://127.0.0.1:8443/); [ "$c" = 200 ] && break; sleep 2; done
+echo "panel=$c"
+[ "$c" = 200 ]
+# (dernière ligne : PowerShell y ajoute un \r)
 '@
-$remote -replace "`r`n", "`n" | ssh @ssh "lab@$VmIp" 'bash -s'
+$OutputEncoding = New-Object System.Text.UTF8Encoding $false   # pas de BOM vers bash
+$ErrorActionPreference = 'Continue'                              # stderr distant ≠ échec PowerShell
+$remote -replace "`r`n", "`n" | ssh @ssh "lab@$VmIp" "sed '1s/^\xEF\xBB\xBF//' | bash -s"   # PS 5.1 préfixe un BOM malgré $OutputEncoding
+if ($LASTEXITCODE -ne 0) { throw "Déploiement distant en échec ($LASTEXITCODE)" }
 Write-Host "Déployé en $([int]((Get-Date) - $t).TotalSeconds) s."
