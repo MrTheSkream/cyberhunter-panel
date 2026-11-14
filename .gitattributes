@@ -1,0 +1,7 @@
+# Le code part sur des serveurs Linux : fins de ligne LF partout, sauf scripts Windows.
+* text=auto eol=lf
+*.ps1 text eol=crlf
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff2 binary

@@ -1,0 +1,46 @@
+# --- Build Rust ---
+panel/agent/target/
+panel/backend/target/
+panel/cli/target/
+panel/mcp/target/
+/.cargo/
+
+# --- Node / builds front ---
+node_modules/
+panel/frontend/dist/
+website/client/dist/
+docs/book/
+# Copie générée par le prebuild du frontend
+panel/frontend/public/install-agent.sh
+
+# --- Secrets / environnement ---
+.env
+*.env
+!api.env.example
+*.pem
+*.key
+*.cert
+*.crt
+!panel/agent/src/**
+
+# --- Bases locales ---
+*.sqlite
+*.db
+
+# --- Labo Hyper-V (jamais dans git) ---
+*.iso
+*.vhdx
+*.vhd
+*.avhdx
+lab/secrets/
+
+# --- Divers ---
+*.log
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+.claude/settings.local.json
+.claude/worktrees/
