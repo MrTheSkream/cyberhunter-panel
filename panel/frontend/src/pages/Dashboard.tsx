@@ -224,7 +224,7 @@ function Sparkline({ data, color, height = 60 }: { data: number[]; color: string
 
   return (
     <svg viewBox={`0 0 ${width} ${height}`} className="w-full" preserveAspectRatio="none" aria-hidden="true">
-      <polygon points={fillPoints} fill={color} opacity="0.08" />
+      <polygon points={fillPoints} fill={color} opacity="0.16" />
       <polyline points={points} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
     </svg>
   );
@@ -258,6 +258,27 @@ function tempColor(temp: number): string {
   if (temp < 80) return "text-warn-400";
   return "text-danger-400";
 }
+
+// Shared visual vocabulary for the page. Theme tokens only (dark-*, rust-*,
+// accent-*, warn-*, danger-*) and the theme radius scale, so every layout and
+// theme keeps restyling these through index.css.
+const CARD = "bg-dark-800 rounded-xl border border-dark-600 px-5 py-4";
+const CARD_HEAD = "flex items-center justify-between gap-3 pb-3 border-b border-dark-700";
+const CARD_TITLE = "text-[15px] font-semibold text-dark-50";
+const CARD_LINK = "text-[13px] text-rust-400 hover:text-rust-300 transition-colors";
+const ROWS = "divide-y divide-dark-700";
+const BTN = "h-11 px-3.5 rounded-lg border text-sm items-center gap-2 transition-colors";
+const BTN_2ND = "font-medium bg-dark-800 border-dark-600 text-dark-100 hover:bg-dark-700";
+const PILL = "min-h-9 items-center gap-2 px-3 rounded-full border text-xs";
+const DIVIDER = "h-7 w-px bg-dark-600 hidden sm:block";
+const TILE = "rounded-lg border px-3.5 py-3 flex flex-col gap-1 min-w-0 card-interactive";
+const TILE_OK = "bg-dark-800 border-dark-600";
+const TILE_WARN = "bg-warn-500/5 border-warn-500/30";
+const TILE_BAD = "bg-danger-500/5 border-danger-500/30";
+const TILE_LABEL = "font-mono text-[10px] text-dark-300 uppercase tracking-widest";
+const TILE_VALUE = "text-[17px] font-bold";
+const TH = "text-xs font-medium text-dark-400 px-3 first:pl-0 last:pr-0 py-2 border-b border-dark-600";
+const TD = "px-3 first:pl-0 last:pr-0 py-2.5";
 
 export default function Dashboard() {
   // Which machine this page is describing. Every REST read below carries the
@@ -722,49 +743,49 @@ export default function Dashboard() {
   return (
     <div className="p-4 sm:p-6 lg:p-8 animate-fade-up">
       <div className="page-header">
-        <div className="flex items-center gap-3">
-          <div>
-            <h1 className="page-header-title">Dashboard</h1>
-            {/* `system` is an admin-only read, so for anybody else it never
-                arrives - and "Loading..." that never resolves is the visible
-                half of the same defect as the refusal banner. Say what this
-                account is instead. */}
-            <p className="text-xs text-dark-400 mt-0.5">
-              {system?.hostname || (isAdmin ? "Loading..." : user?.email)}
-            </p>
+        <div className="flex flex-col gap-1.5 min-w-0">
+          <div className="flex items-center gap-3 flex-wrap">
+            <h1 className="text-2xl sm:text-[28px] leading-tight font-bold tracking-tight text-dark-50">Dashboard</h1>
+            <span
+              className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md border border-dark-600 bg-dark-800"
+              title={
+                wsConnected
+                  ? "Receiving live metrics via WebSocket"
+                  : isLocal
+                    ? "Polling metrics via HTTP"
+                    : `Polling ${activeServer?.name ?? "this server"} over HTTP every 5s - the live socket reads the panel host only, so it is not used for a remote server`
+              }
+            >
+              <span className={`w-1.5 h-1.5 rounded-full ${wsConnected ? "bg-rust-500 animate-pulse" : "bg-dark-400"}`} />
+              <span className="text-[11px] text-dark-300 font-mono">{wsConnected ? "Live" : "Polling"}</span>
+            </span>
           </div>
-          <span
-            className="flex items-center gap-1.5"
-            title={
-              wsConnected
-                ? "Receiving live metrics via WebSocket"
-                : isLocal
-                  ? "Polling metrics via HTTP"
-                  : `Polling ${activeServer?.name ?? "this server"} over HTTP every 5s - the live socket reads the panel host only, so it is not used for a remote server`
-            }
-          >
-            <span className={`w-1.5 h-1.5 rounded-full ${wsConnected ? "bg-rust-500 animate-pulse" : "bg-dark-400"}`} />
-            <span className="text-[10px] text-dark-400 font-mono">{wsConnected ? "Live" : "Polling"}</span>
-          </span>
+          {/* `system` is an admin-only read, so for anybody else it never
+              arrives - and "Loading..." that never resolves is the visible
+              half of the same defect as the refusal banner. Say what this
+              account is instead. */}
+          <p className="text-[13px] text-dark-300 font-mono break-words">
+            {system?.hostname || (isAdmin ? "Loading..." : user?.email)}
+          </p>
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-2.5 flex-wrap">
           {intel && isVisible("health_banner") && (
-            <Link to={overallStatus.to} title={overallStatus.title} className={`hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-medium hover:opacity-80 transition-opacity ${overallStatus.color}`}>
-              <span className={`w-1.5 h-1.5 rounded-full ${overallStatus.dot} ${overallStatus.dot === "bg-rust-500" ? "animate-pulse" : ""}`} />
+            <Link to={overallStatus.to} title={overallStatus.title} className={`hidden sm:flex ${PILL} font-semibold hover:opacity-80 transition-opacity ${overallStatus.color}`}>
+              <span className={`w-[7px] h-[7px] rounded-full ${overallStatus.dot} ${overallStatus.dot === "bg-rust-500" ? "animate-pulse" : ""}`} />
               {overallStatus.label}
             </Link>
           )}
           {intel && isVisible("health_banner") && (
-            <div className="h-4 w-px bg-dark-600 hidden sm:block" />
+            <div className={DIVIDER} />
           )}
           {onCallSchedules.length > 0 && (
             isAdmin ? (
               <Link
                 to="/alerts"
                 title={`You're on call for: ${onCallSchedules.map(s => s.schedule_name).join(", ")}`}
-                className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-medium hover:opacity-80 transition-opacity bg-rust-500/10 border-rust-500/20 text-rust-400"
+                className={`hidden sm:flex ${PILL} font-medium hover:opacity-80 transition-opacity bg-accent-500/10 border-accent-500/20 text-accent-400`}
               >
-                <span className="w-1.5 h-1.5 rounded-full bg-rust-500" />
+                <span className="w-[7px] h-[7px] rounded-full bg-accent-500" />
                 On call: {onCallSchedules.map(s => s.schedule_name).join(", ")}
               </Link>
             ) : (
@@ -772,29 +793,29 @@ export default function Dashboard() {
               // admin-only - so this is informational only, not a link.
               <span
                 title="You're currently the on-call responder for this schedule"
-                className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-medium bg-rust-500/10 border-rust-500/20 text-rust-400"
+                className={`hidden sm:flex ${PILL} font-medium bg-accent-500/10 border-accent-500/20 text-accent-400`}
               >
-                <span className="w-1.5 h-1.5 rounded-full bg-rust-500" />
+                <span className="w-[7px] h-[7px] rounded-full bg-accent-500" />
                 On call: {onCallSchedules.map(s => s.schedule_name).join(", ")}
               </span>
             )
           )}
           {onCallSchedules.length > 0 && (
-            <div className="h-4 w-px bg-dark-600 hidden sm:block" />
+            <div className={DIVIDER} />
           )}
           <button onClick={() => setShowWidgetConfig(!showWidgetConfig)}
-            className="px-3 py-1.5 bg-dark-800 text-dark-300 hover:bg-dark-700 hover:text-dark-100 border border-dark-600 rounded-lg text-xs transition-colors">
+            className={`inline-flex ${BTN} ${BTN_2ND}`}>
             {showWidgetConfig ? "Done" : "Customize"}
           </button>
-          <div className="h-4 w-px bg-dark-600 hidden sm:block" />
+          <div className={DIVIDER} />
           {/* The same dead end as "Add Site" below, one link earlier and missed
               when that one was fixed: `Apps.tsx` bounces any non-admin straight
               back here, and every handler in `routes/docker_apps.rs` requires
               admin. Docker Apps is an operator capability, so say so by not
               offering it. */}
           {isAdmin && (
-            <Link to="/apps" className="hidden sm:flex px-3 py-1.5 bg-dark-800 text-dark-300 hover:bg-dark-700 hover:text-dark-100 border border-dark-600 rounded-lg text-xs font-medium items-center gap-1.5 transition-colors">
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
+            <Link to="/apps" className={`hidden sm:flex ${BTN} ${BTN_2ND}`}>
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
               Deploy App
             </Link>
           )}
@@ -802,14 +823,14 @@ export default function Dashboard() {
               offering it the shortcut named for exactly that is a dead end -
               it lands on the one refusal the role is defined by. */}
           {user?.role !== "client" && (
-            <Link to="/sites" className="px-3 py-1.5 bg-dark-800 text-dark-300 hover:bg-dark-700 hover:text-dark-100 border border-dark-600 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-colors">
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
+            <Link to="/sites" className={`flex ${BTN} font-semibold bg-rust-500 border-rust-500 text-white hover:bg-rust-600`}>
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
               Add Site
             </Link>
           )}
           {isAdmin && (
-            <Link to={REC_ACTION_ROUTES.diagnostics} className="hidden sm:flex px-3 py-1.5 bg-dark-800 text-dark-300 hover:bg-dark-700 hover:text-dark-100 border border-dark-600 rounded-lg text-xs font-medium items-center gap-1.5 transition-colors">
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M21.75 6.75a4.5 4.5 0 01-4.884 4.484c-1.076-.091-2.264.071-2.95.904l-7.152 8.684a2.548 2.548 0 11-3.586-3.586l8.684-7.152c.833-.686.995-1.874.904-2.95a4.5 4.5 0 016.336-4.486l-3.276 3.276a3.004 3.004 0 002.25 2.25l3.276-3.276c.256.565.398 1.192.398 1.852z" /></svg>
+            <Link to={REC_ACTION_ROUTES.diagnostics} className={`hidden sm:flex ${BTN} ${BTN_2ND}`}>
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M21.75 6.75a4.5 4.5 0 01-4.884 4.484c-1.076-.091-2.264.071-2.95.904l-7.152 8.684a2.548 2.548 0 11-3.586-3.586l8.684-7.152c.833-.686.995-1.874.904-2.95a4.5 4.5 0 016.336-4.486l-3.276 3.276a3.004 3.004 0 002.25 2.25l3.276-3.276c.256.565.398 1.192.398 1.852z" /></svg>
               Diagnostics
             </Link>
           )}
@@ -823,17 +844,17 @@ export default function Dashboard() {
               actually required. */}
           {isAdmin && (sites.total > 0 || appCount > 0) && (
             <>
-              <div className="h-4 w-px bg-dark-600 hidden sm:block" />
-              <button onClick={() => setConfirmAction("nginx")} className="hidden sm:inline-block px-3 py-1.5 bg-dark-800 text-dark-300 hover:bg-dark-700 hover:text-dark-100 border border-dark-600 rounded-lg text-xs transition-colors">
+              <div className={DIVIDER} />
+              <button onClick={() => setConfirmAction("nginx")} className={`hidden sm:inline-flex ${BTN} ${BTN_2ND}`}>
                 Restart Nginx
               </button>
-              <button onClick={() => setConfirmAction("php")} className="hidden sm:inline-block px-3 py-1.5 bg-dark-800 text-dark-300 hover:bg-dark-700 hover:text-dark-100 border border-dark-600 rounded-lg text-xs transition-colors">
+              <button onClick={() => setConfirmAction("php")} className={`hidden sm:inline-flex ${BTN} ${BTN_2ND}`}>
                 Restart PHP
               </button>
             </>
           )}
           {isAdmin && (rebootRequired || sites.total > 0 || appCount > 0) && (
-            <button onClick={() => setConfirmAction("reboot")} className="hidden sm:inline-block px-2.5 py-1.5 bg-danger-500/10 border border-danger-500/20 rounded-lg text-xs text-danger-400 hover:bg-danger-500/20">
+            <button onClick={() => setConfirmAction("reboot")} className={`hidden sm:inline-flex ${BTN} font-semibold bg-danger-500/10 border-danger-500/30 text-danger-400 hover:bg-danger-500/20`}>
               {rebootRequired ? "Reboot required" : "Reboot"}
             </button>
           )}
@@ -842,9 +863,9 @@ export default function Dashboard() {
 
       {/* Feature #6: Widget customization panel */}
       {showWidgetConfig && (
-        <div className="bg-dark-800 rounded-lg border border-dark-500 p-4 mb-4">
-          <h3 className="text-xs font-medium text-dark-300 uppercase font-mono tracking-widest mb-3">Dashboard Widgets</h3>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+        <div className="bg-dark-800 rounded-xl border border-dark-600 px-5 py-[18px] mb-6">
+          <h3 className="text-[11px] font-semibold text-dark-300 uppercase font-mono tracking-widest mb-3.5">Dashboard Widgets</h3>
+          <div className="grid grid-cols-1 min-[420px]:grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-1">
             {/* `hostOnly` marks a widget fed by an admin-only read. Offering a
                 client a checkbox for a panel that can never draw is the same
                 empty promise as a menu entry that refuses - eight of these
@@ -867,15 +888,15 @@ export default function Dashboard() {
               { id: "onboarding", label: "Getting Started", hostOnly: true },
               { id: "bookmarks", label: "Quick Links" },
             ].filter(w => isAdmin || !w.hostOnly).map(w => (
-              <label key={w.id} className="flex items-center gap-2 text-xs text-dark-200 cursor-pointer hover:text-dark-100">
+              <label key={w.id} className="flex items-center gap-2.5 min-h-9 text-[13px] text-dark-100 cursor-pointer hover:text-dark-50">
                 <input type="checkbox" checked={isVisible(w.id)} onChange={() => toggleWidget(w.id)}
-                  className="w-3.5 h-3.5 accent-rust-500" />
+                  className="w-4 h-4 accent-rust-500 shrink-0" />
                 {w.label}
               </label>
             ))}
           </div>
           <button onClick={() => { setWidgetConfig({}); localStorage.removeItem('dp-dashboard-widgets'); }}
-            className="mt-3 text-[10px] text-dark-400 hover:text-dark-200">Reset to defaults</button>
+            className="mt-2.5 py-1.5 text-[13px] text-rust-400 hover:text-rust-300">Reset to defaults</button>
         </div>
       )}
 
@@ -883,15 +904,15 @@ export default function Dashboard() {
 
       {/* Update available banner */}
       {updateInfo?.update_available && updateInfo.update_available_version && (
-        <div className="rounded-lg border border-rust-500/30 bg-rust-500/10 px-4 py-3 mb-6 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <svg className="w-5 h-5 text-rust-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-            <span className="text-sm text-rust-300">
+        <div className="rounded-xl border border-rust-500/30 bg-rust-500/10 px-4 py-3 mb-6 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3 flex-[1_1_260px] min-w-0">
+            <svg className="w-[18px] h-[18px] text-rust-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+            <span className="text-sm text-dark-100">
               <strong>CyberHunter - Panel v{updateInfo.update_available_version}</strong> is available
               <span className="text-dark-400 ml-1">(current: v{updateInfo.current_version})</span>
             </span>
           </div>
-          <Link to="/telemetry?tab=updates" className="px-3 py-1.5 bg-rust-500 hover:bg-rust-600 text-white rounded-lg text-xs font-medium transition-colors whitespace-nowrap">
+          <Link to="/telemetry?tab=updates" className="inline-flex items-center min-h-9 px-3.5 bg-rust-500 hover:bg-rust-600 text-white rounded-lg text-[13px] font-semibold transition-colors whitespace-nowrap">
             View Update
           </Link>
         </div>
@@ -899,15 +920,15 @@ export default function Dashboard() {
 
       {/* Feature #4: Action confirmation bar */}
       {confirmAction && (
-        <div className={`rounded-lg border px-4 py-3 mb-4 flex items-center justify-between ${
-          confirmAction === "reboot" ? "border-danger-500/30 bg-danger-500/5" : "border-warn-500/30 bg-warn-500/5"
+        <div className={`rounded-xl border px-4 py-3 mb-6 flex flex-wrap items-center justify-between gap-3 ${
+          confirmAction === "reboot" ? "border-danger-500/40 bg-danger-500/5" : "border-warn-500/40 bg-warn-500/5"
         }`}>
-          <span className={`text-xs font-mono ${confirmAction === "reboot" ? "text-danger-400" : "text-warn-400"}`}>
+          <span className={`flex-[1_1_260px] text-sm ${confirmAction === "reboot" ? "text-danger-400" : "text-warn-400"}`}>
             {confirmAction === "nginx" ? "Restart Nginx? This will briefly interrupt web traffic." :
              confirmAction === "php" ? "Restart PHP-FPM? Active requests may be interrupted." :
              "Reboot server? All services will be temporarily unavailable."}
           </span>
-          <div className="flex items-center gap-2 shrink-0 ml-4">
+          <div className="flex items-center gap-2 shrink-0">
             <button onClick={async () => {
               const action = confirmAction;
               setConfirmAction(null);
@@ -935,10 +956,10 @@ export default function Dashboard() {
                 setActionMessage({ text: why ? `Could not ${what}: ${why}` : `Could not ${what}`, type: "error" });
                 setTimeout(() => setActionMessage(null), 10000);
               }
-            }} className="px-3 py-1.5 bg-danger-500 text-white text-xs font-bold uppercase tracking-wider hover:bg-danger-600 transition-colors">
+            }} className="min-h-10 px-4 rounded-lg bg-danger-500 text-white text-xs font-bold uppercase tracking-wider hover:bg-danger-600 transition-colors">
               Confirm
             </button>
-            <button onClick={() => setConfirmAction(null)} className="px-3 py-1.5 bg-dark-600 text-dark-200 text-xs font-bold uppercase tracking-wider hover:bg-dark-500 transition-colors">
+            <button onClick={() => setConfirmAction(null)} className="min-h-10 px-3.5 rounded-lg border border-dark-600 bg-transparent text-dark-200 text-xs font-bold uppercase tracking-wider hover:bg-dark-700 transition-colors">
               Cancel
             </button>
           </div>
@@ -947,7 +968,7 @@ export default function Dashboard() {
 
       {/* Feature #4: Action message toast */}
       {actionMessage && (
-        <div className={`rounded-lg border px-4 py-2.5 mb-6 text-sm font-medium ${
+        <div className={`w-fit max-w-full rounded-lg border px-3.5 py-2.5 mb-6 text-sm font-medium ${
           actionMessage.type === "success" ? "bg-rust-500/10 border-rust-500/20 text-rust-400" : "bg-danger-500/10 border-danger-500/20 text-danger-400"
         }`}>
           {actionMessage.text}
@@ -955,7 +976,7 @@ export default function Dashboard() {
       )}
 
       {error && (
-        <div className="bg-danger-500/10 text-danger-400 text-sm px-4 py-3 rounded-lg border border-danger-500/20 mb-6">
+        <div className="bg-danger-500/10 text-danger-400 text-sm px-4 py-3.5 rounded-xl border border-danger-500/30 mb-6">
           <div className="flex items-start gap-3">
             <svg className="w-5 h-5 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
@@ -1003,59 +1024,59 @@ export default function Dashboard() {
 
         if (isCollapsed) {
           return (
-            <div className="mb-6 bg-dark-800 border border-dark-500 rounded-lg px-5 py-3 animate-fade-up flex items-center justify-between">
+            <div className="mb-6 bg-dark-800 border border-dark-600 rounded-xl px-5 py-2 animate-fade-up flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
               <div className="flex items-center gap-3">
-                <span className="text-xs font-medium text-dark-200">Setup: {completed}/{steps.length} complete</span>
-                <div className="flex gap-1">
+                <span className="text-[13px] font-semibold text-dark-100">Setup: {completed}/{steps.length} complete</span>
+                <div className="flex gap-1.5">
                   {steps.map(step => (
                     <div key={step.id} className={`w-2 h-2 rounded-full ${step.check() ? "bg-rust-500" : "bg-dark-600"}`} />
                   ))}
                 </div>
               </div>
-              <div className="flex items-center gap-3">
-                <button onClick={toggleCollapse} className="text-rust-400 hover:text-rust-300 text-xs font-medium">Expand</button>
-                <button onClick={dismissOnboarding} className="text-dark-400 hover:text-dark-300 text-xs">Dismiss</button>
+              <div className="flex items-center gap-1 -mr-2.5">
+                <button onClick={toggleCollapse} className="min-h-9 px-2.5 text-rust-400 hover:text-rust-300 text-[13px] font-medium">Expand</button>
+                <button onClick={dismissOnboarding} className="min-h-9 px-2.5 text-dark-300 hover:text-dark-200 text-[13px]">Dismiss</button>
               </div>
             </div>
           );
         }
 
         return (
-          <div className="mb-6 bg-dark-800 border border-dark-500 rounded-lg p-5 animate-fade-up">
-            <div className="flex items-center justify-between mb-1">
-              <h3 className="text-sm font-bold text-dark-50 typewriter inline-block">Welcome to CyberHunter - Panel</h3>
-              <div className="flex items-center gap-3">
-                <button onClick={toggleCollapse} className="text-dark-300 hover:text-dark-200 text-xs shrink-0">Collapse</button>
-                <button onClick={dismissOnboarding} className="text-dark-300 hover:text-dark-200 text-xs shrink-0">Dismiss</button>
+          <div className="mb-6 bg-dark-800 border border-dark-600 rounded-xl px-5 py-5 sm:px-[22px] animate-fade-up">
+            <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1 mb-1">
+              <h3 className="text-lg font-bold text-dark-50 typewriter inline-block max-w-full">Welcome to CyberHunter - Panel</h3>
+              <div className="flex items-center gap-1 -mr-2.5">
+                <button onClick={toggleCollapse} className="min-h-9 px-2.5 text-dark-300 hover:text-dark-200 text-[13px] shrink-0">Collapse</button>
+                <button onClick={dismissOnboarding} className="min-h-9 px-2.5 text-dark-300 hover:text-dark-200 text-[13px] shrink-0">Dismiss</button>
               </div>
             </div>
-            <p className="text-xs text-dark-300 mb-4">Complete these steps to set up your server. <span className="text-dark-200">{completed}/{steps.length} done</span></p>
+            <p className="text-[13px] text-dark-300 mb-4">Complete these steps to set up your server. <span className="text-rust-400 font-semibold">{completed}/{steps.length} done</span></p>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 stagger-children">
               {steps.map(step => (
                 <Link
                   key={step.id}
                   to={step.link}
-                  className={`border p-4 transition-all hover-lift ${
+                  className={`rounded-lg border p-3.5 flex flex-col gap-2 transition-all hover-lift ${
                     step.check()
                       ? "border-rust-500/30 bg-dark-900/50 opacity-60"
-                      : "border-dark-500 bg-dark-900/50 hover:border-rust-500/40"
+                      : "border-dark-600 bg-dark-900/50 hover:border-rust-500/40"
                   }`}
                 >
-                  <div className="flex items-center gap-2 mb-2">
+                  <div className="flex flex-col items-start gap-2">
                     {step.check() ? (
-                      <div className="w-5 h-5 rounded-full bg-rust-500 flex items-center justify-center">
-                        <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+                      <div className="w-[26px] h-[26px] rounded-full bg-rust-500 flex items-center justify-center">
+                        <svg className="w-3.5 h-3.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
                       </div>
                     ) : (
-                      <div className="w-5 h-5 border border-dark-400 flex items-center justify-center">
-                        <span className="text-[8px] text-dark-300 font-bold">{steps.indexOf(step) + 1}</span>
+                      <div className="w-[26px] h-[26px] rounded-md bg-dark-700 flex items-center justify-center">
+                        <span className="text-xs text-dark-200 font-mono font-semibold">{steps.indexOf(step) + 1}</span>
                       </div>
                     )}
-                    <span className={`text-xs font-medium ${step.check() ? "text-rust-400" : "text-dark-50"}`}>{step.label}</span>
+                    <span className={`text-sm font-semibold ${step.check() ? "text-rust-400" : "text-dark-50"}`}>{step.label}</span>
                   </div>
-                  <p className="text-[10px] text-dark-300 leading-relaxed mb-2">{step.description}</p>
+                  <p className="text-xs text-dark-300 leading-relaxed">{step.description}</p>
                   {!step.check() && (
-                    <span className="text-[10px] text-rust-500 font-medium">Start &rarr;</span>
+                    <span className="mt-auto text-xs text-rust-400 font-semibold">Start &rarr;</span>
                   )}
                 </Link>
               ))}
@@ -1076,9 +1097,9 @@ export default function Dashboard() {
       {isAdmin && !system ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" role="status" aria-live="polite">
           {[...Array(6)].map((_, i) => (
-            <div key={i} className="bg-dark-800 rounded-lg border border-dark-500 p-4 animate-pulse">
-              <div className="h-4 bg-dark-700 rounded w-20 mb-3" />
-              <div className="h-8 bg-dark-700 rounded w-32" />
+            <div key={i} className="bg-dark-800 rounded-xl border border-dark-600 p-[22px] animate-pulse">
+              <div className="h-3 bg-dark-700 rounded-md w-20 mb-4" />
+              <div className="h-10 bg-dark-700 rounded-md w-32" />
             </div>
           ))}
         </div>
@@ -1086,7 +1107,7 @@ export default function Dashboard() {
         <>
           {/* System Information - host-level, so `system &&` rather than relying
               on the outer gate that used to supply it. */}
-          {system && isVisible("system_info") && <div className="hidden sm:grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-px bg-dark-600 border border-dark-500 rounded-lg overflow-hidden mb-6">
+          {system && isVisible("system_info") && <div className="hidden sm:grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-px bg-dark-600 border border-dark-600 rounded-xl overflow-hidden mb-6">
             {[
               ["Hostname", system.hostname],
               ["OS", system.os],
@@ -1095,9 +1116,9 @@ export default function Dashboard() {
               ["Temperature", system.cpu_temp != null ? `${system.cpu_temp.toFixed(0)}°C` : "N/A"],
               ["Processes", system.process_count.toLocaleString()],
             ].map(([label, value]) => (
-              <div key={label} className="bg-dark-800 px-4 py-3 flex flex-col card-interactive">
-                <span className="text-[10px] text-dark-300 uppercase tracking-widest mb-1">{label}</span>
-                <span title={String(value)} className={`text-sm text-dark-50 font-medium truncate ${label === "Temperature" && system.cpu_temp != null ? tempColor(system.cpu_temp) : ""}`}>{value}</span>
+              <div key={label} className="bg-dark-800 px-4 py-3 flex flex-col gap-1 min-w-0 card-interactive">
+                <span className={TILE_LABEL}>{label}</span>
+                <span title={String(value)} className={`text-[13px] text-dark-50 font-medium truncate ${label === "Temperature" && system.cpu_temp != null ? tempColor(system.cpu_temp) : ""}`}>{value}</span>
               </div>
             ))}
           </div>}
@@ -1112,23 +1133,23 @@ export default function Dashboard() {
               { label: "Disk", pct: system.disk_usage_pct, type: "disk" as const, detail: `${system.disk_used_gb.toFixed(0)} / ${system.disk_total_gb.toFixed(0)} GB · ${(system.disk_total_gb - system.disk_used_gb).toFixed(0)} GB free${dockerDiskUsage ? ` · Images: ${dockerDiskUsage}` : ""}`,
                 icon: <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M21.75 17.25v-.228a4.5 4.5 0 0 0-.12-1.03l-2.268-9.64a3.375 3.375 0 0 0-3.285-2.602H7.923a3.375 3.375 0 0 0-3.285 2.602l-2.268 9.64a4.5 4.5 0 0 0-.12 1.03v.228m19.5 0a3 3 0 0 1-3 3H5.25a3 3 0 0 1-3-3m19.5 0a3 3 0 0 0-3-3H5.25a3 3 0 0 0-3 3m16.5 0h.008v.008h-.008v-.008Zm-3 0h.008v.008h-.008v-.008Z" /></svg> },
             ].map(({ label, pct, type, detail, icon }) => (
-              <div key={label} className="border border-dark-600 bg-dark-800 rounded-lg p-5 relative overflow-hidden shadow-lg shadow-black/10 elevation-1">
+              <div key={label} className="border border-dark-600 bg-dark-800 rounded-xl p-5 sm:p-[22px] relative overflow-hidden shadow-lg shadow-black/10 elevation-1">
                 <div className={`absolute inset-0 opacity-[0.03] ${pct < 60 ? "bg-dark-50" : pct < 85 ? "bg-warn-500" : "bg-danger-500"}`} />
-                <div className="relative text-center">
-                  <div className="flex items-center justify-center gap-1.5 text-dark-200 mb-1">
-                    <span className="opacity-60">{icon}</span>
-                    <span className="text-xs uppercase tracking-widest font-medium">{label}</span>
+                <div className="relative flex flex-col gap-3">
+                  <div className="flex items-center gap-2 text-dark-300">
+                    <span className="opacity-70">{icon}</span>
+                    <span className="font-mono text-[11px] uppercase tracking-widest font-medium">{label}</span>
                   </div>
-                  <div className={`text-5xl font-bold font-mono my-2 ${pctColor(pct)}`}>
+                  <div className={`text-[44px] leading-none font-semibold font-mono ${pctColor(pct)}`}>
                     <CountUp value={pct} /><span className="text-xl text-dark-300 ml-0.5">%</span>
                   </div>
-                  <div className="h-2 bg-dark-700 rounded-full overflow-hidden mt-3 mx-auto max-w-[80%]">
+                  <div className="h-2 bg-dark-700 rounded-full overflow-hidden">
                     <div className={`h-full rounded-full transition-all duration-500 ${barColor(pct, type)}`} style={{ width: `${Math.min(pct, 100)}%` }} />
                   </div>
-                  <p className="text-xs text-dark-300 mt-3">{detail}</p>
+                  <p className="text-xs text-dark-300">{detail}</p>
                   {/* Feature #7: Disk full forecast */}
                   {label === "Disk" && diskForecast !== null && diskForecast < 30 && (
-                    <p className={`text-[10px] mt-1 font-medium ${diskForecast < 7 ? "text-danger-400" : "text-warn-400"}`}>
+                    <p className={`-mt-1.5 text-xs font-semibold ${diskForecast < 7 ? "text-danger-400" : "text-warn-400"}`}>
                       Disk full in ~{diskForecast}d at current rate
                     </p>
                   )}
@@ -1147,10 +1168,10 @@ export default function Dashboard() {
                 { label: "Memory", data: metricsHistory.map(p => p.mem), color: "var(--color-accent-500)" },
                 { label: "Disk", data: metricsHistory.map(p => p.disk), color: "var(--color-warn-500)" },
               ].map(({ label, data, color }) => (
-                <div key={label} className="border border-dark-500 bg-dark-800 rounded-lg p-4 elevation-1">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-[10px] uppercase tracking-widest text-dark-300 font-medium">{label} (24h)</span>
-                    <span className="text-xs text-dark-200 font-mono">{data[data.length - 1]?.toFixed(1)}%</span>
+                <div key={label} className="border border-dark-600 bg-dark-800 rounded-xl px-[18px] py-4 elevation-1">
+                  <div className="flex items-center justify-between gap-3 mb-2.5">
+                    <span className="text-[13px] text-dark-200 font-semibold">{label} (24h)</span>
+                    <span className="text-[13px] text-dark-50 font-mono">{data[data.length - 1]?.toFixed(1)}%</span>
                   </div>
                   <Sparkline data={data} color={color} height={48} />
                 </div>
@@ -1159,33 +1180,33 @@ export default function Dashboard() {
           )}
 
           {/* Status Bar - grid of stat cells */}
-          {isVisible("status_bar") && <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-px bg-dark-600 border border-dark-600 rounded-lg overflow-hidden mb-6 shadow-sm shadow-black/5 stagger-children">
+          {isVisible("status_bar") && <div className="grid grid-cols-2 sm:grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-2.5 mb-6 stagger-children">
             {/* The one host-derived cell in an otherwise tenant-safe grid, which is
                 why this bar could not simply be shown or hidden as a whole. */}
             {system && (
-              <div className="bg-dark-800 px-4 py-3 flex flex-col card-interactive">
-                <span className="text-[10px] text-dark-300 uppercase tracking-widest mb-1">Uptime</span>
-                <span className="text-sm text-dark-50 font-medium">{formatUptime(system.uptime_secs)}</span>
+              <div className={`${TILE} ${TILE_OK}`}>
+                <span className={TILE_LABEL}>Uptime</span>
+                <span className={`${TILE_VALUE} text-dark-50`}>{formatUptime(system.uptime_secs)}</span>
               </div>
             )}
-            <Link to="/sites" className="bg-dark-800 px-4 py-3 flex flex-col card-interactive">
-              <span className="text-[10px] text-dark-300 uppercase tracking-widest mb-1">Sites</span>
-              <span className="text-sm text-dark-50 font-medium">{sites.total}{sites.active > 0 && <span className="text-rust-400 ml-1 text-xs">({sites.active} active)</span>}</span>
+            <Link to="/sites" className={`${TILE} ${TILE_OK}`}>
+              <span className={TILE_LABEL}>Sites</span>
+              <span className={`${TILE_VALUE} text-dark-50`}>{sites.total}{sites.active > 0 && <span className="text-rust-400 ml-1 text-xs font-medium">({sites.active} active)</span>}</span>
             </Link>
-            <Link to="/databases" className="bg-dark-800 px-4 py-3 flex flex-col card-interactive">
-              <span className="text-[10px] text-dark-300 uppercase tracking-widest mb-1">Databases</span>
-              <span className="text-sm text-dark-50 font-medium">{dbCount}</span>
+            <Link to="/databases" className={`${TILE} ${TILE_OK}`}>
+              <span className={TILE_LABEL}>Databases</span>
+              <span className={`${TILE_VALUE} text-dark-50`}>{dbCount}</span>
             </Link>
             {/* Feature #1: Docker container overview. Admin-only both ways: the
                 count comes from an admin endpoint, and the cell links to a page
                 that redirects anybody else. Rendered ungated it read "0/0 running"
                 to a client - a number, not a blank, and a false one. */}
             {isAdmin && (
-              <Link to="/apps" className="bg-dark-800 px-4 py-3 flex flex-col card-interactive">
-                <span className="text-[10px] text-dark-300 uppercase tracking-widest mb-1">Docker</span>
-                <span className="text-sm text-dark-50 font-medium">
-                  {dockerInfo?.running ?? 0}<span className="text-xs text-dark-300 font-normal">/{dockerInfo?.total ?? 0}</span>
-                  <span className="text-[10px] text-dark-400 ml-1">running</span>
+              <Link to="/apps" className={`${TILE} ${TILE_OK}`}>
+                <span className={TILE_LABEL}>Docker</span>
+                <span className={`${TILE_VALUE} text-dark-50`}>
+                  {dockerInfo?.running ?? 0}<span className="text-xs text-dark-300 font-medium">/{dockerInfo?.total ?? 0}</span>
+                  <span className="text-xs text-dark-400 font-medium ml-1">running</span>
                 </span>
               </Link>
             )}
@@ -1194,47 +1215,47 @@ export default function Dashboard() {
                   purely from their own alerts, certificates and backups (the host
                   diagnostics term is admin-only since v2.77.0), so /monitoring is
                   both reachable and the right explanation of the number. */}
-              <Link to={isAdmin ? "/security?tab=diagnostics" : "/monitoring"} title={isAdmin ? "View system diagnostics that drive this score" : "View the alerts and certificates behind this score"} className={`px-4 py-3 flex flex-col card-interactive ${
-                intel.health_score < 60 ? "bg-danger-500/5" : "bg-dark-800"
+              <Link to={isAdmin ? "/security?tab=diagnostics" : "/monitoring"} title={isAdmin ? "View system diagnostics that drive this score" : "View the alerts and certificates behind this score"} className={`${TILE} ${
+                intel.health_score < 60 ? TILE_BAD : TILE_OK
               }`}>
-                <span className="text-[10px] text-dark-300 uppercase tracking-widest mb-1">Health</span>
-                <span className={`text-sm font-bold ${
+                <span className={TILE_LABEL}>Health</span>
+                <span className={`${TILE_VALUE} ${
                   intel.health_score >= 90 ? "text-rust-400" :
                   intel.health_score >= 75 ? "text-accent-400" :
                   intel.health_score >= 60 ? "text-warn-400" : "text-danger-400"
                 }`}>{intel.health_score}/100 {intel.grade}</span>
               </Link>
-              <Link to="/monitoring?tab=alerts" className={`px-4 py-3 flex flex-col card-interactive ${
-                intel.firing_alerts > 0 ? "bg-danger-500/5" : "bg-dark-800"
+              <Link to="/monitoring?tab=alerts" className={`${TILE} ${
+                intel.firing_alerts > 0 ? TILE_BAD : TILE_OK
               }`}>
-                <span className="text-[10px] text-dark-300 uppercase tracking-widest mb-1">Alerts</span>
+                <span className={TILE_LABEL}>Alerts</span>
                 {intel.firing_alerts > 0
-                  ? <span className="text-sm text-danger-400 font-bold">{intel.firing_alerts} firing</span>
-                  : <span className="text-sm text-rust-400 font-medium">0</span>
+                  ? <span className={`${TILE_VALUE} text-danger-400`}>{intel.firing_alerts} firing</span>
+                  : <span className={`${TILE_VALUE} text-rust-400`}>0</span>
                 }
               </Link>
-              <Link to="/monitoring?tab=certificates" className="bg-dark-800 px-4 py-3 flex flex-col card-interactive">
-                <span className="text-[10px] text-dark-300 uppercase tracking-widest mb-1">SSL</span>
-                <span className="text-sm text-dark-50 font-medium">{intel.ssl_countdowns.length} certs</span>
+              <Link to="/monitoring?tab=certificates" className={`${TILE} ${TILE_OK}`}>
+                <span className={TILE_LABEL}>SSL</span>
+                <span className={`${TILE_VALUE} text-dark-50`}>{intel.ssl_countdowns.length} certs</span>
               </Link>
-              <Link to="/monitoring?tab=statuspage" className={`px-4 py-3 flex flex-col card-interactive ${
-                intel.open_incidents > 0 ? "bg-danger-500/5" : "bg-dark-800"
+              <Link to="/monitoring?tab=statuspage" className={`${TILE} ${
+                intel.open_incidents > 0 ? TILE_BAD : TILE_OK
               }`}>
-                <span className="text-[10px] text-dark-300 uppercase tracking-widest mb-1">Incidents</span>
+                <span className={TILE_LABEL}>Incidents</span>
                 {intel.open_incidents > 0
-                  ? <span className="text-sm text-danger-400 font-bold">{intel.open_incidents} open</span>
-                  : <span className="text-sm text-rust-400 font-medium">0</span>
+                  ? <span className={`${TILE_VALUE} text-danger-400`}>{intel.open_incidents} open</span>
+                  : <span className={`${TILE_VALUE} text-rust-400`}>0</span>
                 }
               </Link>
               {/* /backup-orchestrator is adminOnly; a client's backups live per-site,
                   so send them where they can actually act on this count. */}
-              <Link to={isAdmin ? "/backup-orchestrator" : "/sites"} className={`px-4 py-3 flex flex-col card-interactive ${
-                intel.stale_backups > 0 ? "bg-warn-500/5" : "bg-dark-800"
+              <Link to={isAdmin ? "/backup-orchestrator" : "/sites"} className={`${TILE} ${
+                intel.stale_backups > 0 ? TILE_WARN : TILE_OK
               }`}>
-                <span className="text-[10px] text-dark-300 uppercase tracking-widest mb-1">Backups</span>
+                <span className={TILE_LABEL}>Backups</span>
                 {intel.stale_backups > 0
-                  ? <span className="text-sm text-warn-400 font-bold">{intel.stale_backups} stale</span>
-                  : <span className="text-sm text-rust-400 font-medium">fresh</span>
+                  ? <span className={`${TILE_VALUE} text-warn-400`}>{intel.stale_backups} stale</span>
+                  : <span className={`${TILE_VALUE} text-rust-400`}>fresh</span>
                 }
               </Link>
             </>}
@@ -1242,34 +1263,34 @@ export default function Dashboard() {
                 this cell asserted "up to date" about a machine it had not asked
                 about. An unhidden blank is honest; an unhidden zero is a claim. */}
             {isAdmin && (
-              <Link to="/updates" className={`px-4 py-3 flex flex-col card-interactive ${
-                updateCount > 0 ? "bg-warn-500/5" : "bg-dark-800"
+              <Link to="/updates" className={`${TILE} ${
+                updateCount > 0 ? TILE_WARN : TILE_OK
               }`}>
-                <span className="text-[10px] text-dark-300 uppercase tracking-widest mb-1">Updates</span>
+                <span className={TILE_LABEL}>Updates</span>
                 {updateCount > 0
-                  ? <span className="text-sm text-warn-400 font-bold">{updateCount} available</span>
-                  : <span className="text-sm text-rust-400 font-medium">up to date</span>
+                  ? <span className={`${TILE_VALUE} text-warn-400`}>{updateCount} available</span>
+                  : <span className={`${TILE_VALUE} text-rust-400`}>up to date</span>
                 }
               </Link>
             )}
             {/* Disk I/O */}
             {diskIo && isVisible("disk_io") && <>
-              <div className="bg-dark-800 px-4 py-3 flex flex-col card-interactive">
-                <span className="text-[10px] text-dark-300 uppercase tracking-widest mb-1">Disk Read</span>
-                <span className="text-sm text-dark-50 font-medium font-mono">{formatRate(diskIo.read_bytes_sec)}</span>
+              <div className={`${TILE} ${TILE_OK}`}>
+                <span className={TILE_LABEL}>Disk Read</span>
+                <span className={`${TILE_VALUE} text-dark-50 font-mono`}>{formatRate(diskIo.read_bytes_sec)}</span>
               </div>
-              <div className="bg-dark-800 px-4 py-3 flex flex-col card-interactive">
-                <span className="text-[10px] text-dark-300 uppercase tracking-widest mb-1">Disk Write</span>
-                <span className="text-sm text-dark-50 font-medium font-mono">{formatRate(diskIo.write_bytes_sec)}</span>
+              <div className={`${TILE} ${TILE_OK}`}>
+                <span className={TILE_LABEL}>Disk Write</span>
+                <span className={`${TILE_VALUE} text-dark-50 font-mono`}>{formatRate(diskIo.write_bytes_sec)}</span>
               </div>
             </>}
             {/* Feature #6: Bandwidth usage summary. Derived from `network`, which
                 `fetchRealtimeData` only fetches for an admin - so this read
                 "0 B / 0 B" to everybody else, host traffic reported as none. */}
             {isAdmin && (
-              <div className="bg-dark-800 px-4 py-3 flex flex-col card-interactive">
-                <span className="text-[10px] text-dark-300 uppercase tracking-widest mb-1">Bandwidth</span>
-                <span className="text-sm text-dark-50 font-medium">
+              <div className={`${TILE} ${TILE_OK}`}>
+                <span className={TILE_LABEL}>Bandwidth</span>
+                <span className={`${TILE_VALUE} text-dark-50`}>
                   <span className="text-dark-400">{"\u2193"}</span>{formatSize(bandwidthTotal.rx)}
                   <span className="text-dark-400 ml-1">{"\u2191"}</span>{formatSize(bandwidthTotal.tx)}
                 </span>
@@ -1278,10 +1299,10 @@ export default function Dashboard() {
             {/* Feature #9: Mail queue widget. `/mail/queue` is admin-gated, so the
                 same false zero - and mail is admin-only end to end anyway. */}
             {isAdmin && (
-              <div className="bg-dark-800 px-4 py-3 flex flex-col card-interactive">
-                <span className="text-[10px] text-dark-300 uppercase tracking-widest mb-1">Mail Queue</span>
-                <span className={`text-sm font-medium ${(mailQueue ?? 0) > 0 ? "text-warn-400" : "text-dark-50"}`}>
-                  {mailQueue ?? 0} <span className="text-[10px] text-dark-400">messages</span>
+              <div className={`${TILE} ${TILE_OK}`}>
+                <span className={TILE_LABEL}>Mail Queue</span>
+                <span className={`${TILE_VALUE} ${(mailQueue ?? 0) > 0 ? "text-warn-400" : "text-dark-50"}`}>
+                  {mailQueue ?? 0} <span className="text-xs text-dark-400 font-medium">messages</span>
                 </span>
               </div>
             )}
@@ -1289,13 +1310,13 @@ export default function Dashboard() {
 
           {/* Reboot Required Warning */}
           {rebootRequired && (
-            <div className="border border-warn-500/50 bg-warn-500/5 p-4 mb-6 flex items-start gap-3">
-              <svg className="w-5 h-5 text-warn-400 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" /></svg>
-              <div className="flex-1">
+            <div className="rounded-xl border border-warn-500/40 bg-warn-500/5 px-4 py-3.5 mb-6 flex flex-wrap items-center gap-3.5">
+              <svg className="w-5 h-5 text-warn-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" /></svg>
+              <div className="flex-[1_1_260px] min-w-0">
                 <p className="text-sm text-warn-400 font-bold">Reboot Required</p>
-                <p className="text-xs text-dark-300 mt-1">Recent package updates (such as a new kernel version) require a reboot to be fully applied.</p>
+                <p className="text-[13px] text-dark-300 mt-0.5">Recent package updates (such as a new kernel version) require a reboot to be fully applied.</p>
               </div>
-              <Link to="/updates" className="px-4 py-2 bg-warn-500 text-dark-900 text-xs font-bold uppercase tracking-wider hover:bg-warn-400 transition-colors shrink-0">
+              <Link to="/updates" className="inline-flex items-center min-h-9 px-3.5 rounded-lg bg-warn-500/15 text-warn-400 text-[13px] font-semibold hover:bg-warn-500/25 transition-colors shrink-0">
                 View Updates
               </Link>
             </div>
@@ -1305,26 +1326,29 @@ export default function Dashboard() {
               was fully built and hardened (v2.185.0/v2.188.0) but had zero frontend
               caller; a single-server install has nothing this adds over the rest of
               the page, so it only renders once there's an actual fleet to show. */}
+          {/* Fleet Health and Sites share a row when both draw; auto-fit lets a
+              lone card take the full width, and the wrapper vanishes when empty. */}
+          <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,340px),1fr))] gap-4 items-start mb-6 empty:hidden">
           {isAdmin && isVisible("fleet") && fleetOverview && fleetOverview.servers.length > 1 && (
-            <div className="bg-dark-800 rounded-lg border border-dark-500 overflow-hidden mb-6">
-              <div className="px-4 py-2.5 border-b border-dark-600 flex justify-between items-center">
-                <h3 className="text-xs font-medium text-dark-300 uppercase font-mono tracking-widest">Fleet Health</h3>
-                <Link to="/servers" className="text-[10px] text-rust-400 hover:text-rust-300">Manage</Link>
+            <div className={CARD}>
+              <div className={CARD_HEAD}>
+                <h3 className={CARD_TITLE}>Fleet Health</h3>
+                <Link to="/servers" className={CARD_LINK}>Manage</Link>
               </div>
-              <div className="divide-y divide-dark-600">
+              <div className={ROWS}>
                 {fleetOverview.servers.map((s) => (
-                  <Link key={s.id} to="/servers" className="px-4 py-2 flex items-center justify-between text-xs hover:bg-dark-700/50 transition-colors">
-                    <div className="flex items-center gap-2 min-w-0">
+                  <Link key={s.id} to="/servers" className="-mx-2 px-2 py-2.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-md hover:bg-dark-700/40 transition-colors">
+                    <div className="flex items-center gap-2.5 min-w-0">
                       <div className={`w-2 h-2 rounded-full shrink-0 ${s.status === "healthy" ? "bg-rust-500" : "bg-warn-500"}`} />
-                      <span className="text-dark-100 font-mono truncate">{s.name}</span>
+                      <span className="text-[13px] text-dark-50 font-mono truncate">{s.name}</span>
                     </div>
-                    <div className="flex items-center gap-3 text-[10px] text-dark-300 shrink-0">
+                    <div className="flex items-center gap-3 text-xs text-dark-300 shrink-0">
                       {s.cpu_pct != null && <span>CPU {s.cpu_pct.toFixed(0)}%</span>}
                       {s.mem_pct != null && <span>Mem {s.mem_pct.toFixed(0)}%</span>}
                       <span>{s.sites} sites</span>
                       {s.firing_alerts > 0
                         ? <span className="text-danger-400 font-bold">{s.firing_alerts} firing</span>
-                        : <span className="text-rust-400">0 firing</span>}
+                        : <span className="text-rust-400 font-semibold">0 firing</span>}
                     </div>
                   </Link>
                 ))}
@@ -1334,46 +1358,49 @@ export default function Dashboard() {
 
           {/* Feature #5: Site Status Mini-Grid */}
           {isVisible("sites_grid") && sitesList.length > 0 && (
-            <div className="bg-dark-800 rounded-lg border border-dark-500 overflow-hidden mb-6">
-              <div className="px-4 py-2.5 border-b border-dark-600 flex justify-between items-center">
-                <h3 className="text-xs font-medium text-dark-300 uppercase font-mono tracking-widest">Sites</h3>
-                <Link to="/sites" className="text-[10px] text-rust-400 hover:text-rust-300">Manage</Link>
+            <div className={CARD}>
+              <div className={`${CARD_HEAD} mb-3`}>
+                <h3 className={CARD_TITLE}>Sites</h3>
+                <Link to="/sites" className={CARD_LINK}>Manage</Link>
               </div>
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-px bg-dark-600">
+              <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-2">
                 {sitesList.slice(0, 12).map((s) => (
-                  <Link key={s.id} to={`/sites/${s.id}`} className="bg-dark-800 px-3 py-2 flex items-center gap-2 hover:bg-dark-700/50 transition-colors">
+                  <Link key={s.id} to={`/sites/${s.id}`} className="min-h-10 px-3 rounded-lg border border-dark-600 bg-dark-900/50 flex items-center gap-2 min-w-0 hover:bg-dark-700/50 transition-colors">
                     <div
                       title={s.enabled === false ? "Disabled" : s.status}
-                      className={`w-2 h-2 rounded-full shrink-0 ${
+                      className={`w-[7px] h-[7px] rounded-full shrink-0 ${
                         s.enabled === false ? "bg-warn-500" : s.status === "active" ? "bg-rust-500" : "bg-dark-500"
                       }`}
                     />
-                    <span className="text-xs text-dark-100 truncate font-mono">{s.domain || s.id}</span>
+                    <span className="text-[13px] font-medium text-dark-100 truncate">{s.domain || s.id}</span>
                   </Link>
                 ))}
               </div>
             </div>
           )}
+          </div>
 
+          {/* Recent Activity and Timeline share a row, same rule as above. */}
+          <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,340px),1fr))] gap-4 items-start mb-6 empty:hidden">
           {/* Feature #2: Recent Activity Feed */}
           {isVisible("activity") && recentActivity.length > 0 && (
-            <div className="bg-dark-800 rounded-lg border border-dark-500 overflow-hidden mb-6">
-              <div className="px-4 py-2.5 border-b border-dark-600 flex justify-between items-center">
-                <h3 className="text-xs font-medium text-dark-300 uppercase font-mono tracking-widest">Recent Activity</h3>
-                <Link to="/logs?tab=audit" className="text-[10px] text-rust-400 hover:text-rust-300">View all</Link>
+            <div className={CARD}>
+              <div className={CARD_HEAD}>
+                <h3 className={CARD_TITLE}>Recent Activity</h3>
+                <Link to="/logs?tab=audit" className={CARD_LINK}>View all</Link>
               </div>
-              <div className="divide-y divide-dark-600">
+              <div className={ROWS}>
                 {recentActivity.map((a, i) => (
-                  <div key={i} className="px-4 py-2 flex items-center justify-between text-xs">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0 ${
+                  <div key={i} className="py-2.5 flex items-center justify-between gap-3 text-xs">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <span className={`px-2 py-0.5 rounded-md font-mono text-[11px] font-medium shrink-0 ${
                         a.action?.includes("create") || a.action?.includes("deploy") ? "bg-rust-500/15 text-rust-400" :
                         a.action?.includes("delete") || a.action?.includes("remove") ? "bg-danger-500/15 text-danger-400" :
                         "bg-dark-700 text-dark-200"
                       }`}>{a.action}</span>
-                      {a.target_name && <span className="text-dark-100 font-mono truncate">{a.target_name}</span>}
+                      {a.target_name && <span className="text-dark-200 font-mono truncate">{a.target_name}</span>}
                     </div>
-                    <span className="text-dark-400 text-[10px] shrink-0 ml-2">{timeAgo(a.created_at)}</span>
+                    <span className="text-dark-400 text-xs shrink-0">{timeAgo(a.created_at)}</span>
                   </div>
                 ))}
               </div>
@@ -1386,29 +1413,30 @@ export default function Dashboard() {
               /api/dashboard/timeline was fully built and hardened but had zero
               frontend caller. */}
           {isVisible("timeline") && timeline.length > 0 && (
-            <div className="bg-dark-800 rounded-lg border border-dark-500 overflow-hidden mb-6">
-              <div className="px-4 py-2.5 border-b border-dark-600 flex justify-between items-center">
-                <h3 className="text-xs font-medium text-dark-300 uppercase font-mono tracking-widest">Timeline</h3>
+            <div className={CARD}>
+              <div className={CARD_HEAD}>
+                <h3 className={CARD_TITLE}>Timeline</h3>
               </div>
-              <div className="divide-y divide-dark-600">
+              <div className={ROWS}>
                 {timeline.slice(0, 10).map((e, i) => (
-                  <div key={i} className="px-4 py-2 flex items-center justify-between text-xs">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0 uppercase ${
+                  <div key={i} className="py-2.5 flex items-center justify-between gap-3 text-xs">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <span className={`px-2 py-0.5 rounded-md font-mono text-[10px] font-medium tracking-wider shrink-0 uppercase ${
                         e.type === "alert" || e.type === "incident" ? "bg-danger-500/15 text-danger-400" :
                         e.type === "security" ? "bg-warn-500/15 text-warn-400" :
                         e.type === "deploy" ? "bg-rust-500/15 text-rust-400" :
                         "bg-dark-700 text-dark-200"
                       }`}>{e.type}</span>
-                      <span className="text-dark-100 font-mono truncate">{e.detail}</span>
-                      {e.target && <span className="text-dark-400 truncate">· {e.target}</span>}
+                      <span className="text-dark-200 font-mono truncate">{e.detail}</span>
+                      {e.target && <span className="text-dark-400 font-mono truncate">· {e.target}</span>}
                     </div>
-                    <span className="text-dark-400 text-[10px] shrink-0 ml-2">{timeAgo(e.created_at)}</span>
+                    <span className="text-dark-400 text-xs shrink-0">{timeAgo(e.created_at)}</span>
                   </div>
                 ))}
               </div>
             </div>
           )}
+          </div>
 
           {/* Active Issues + SSL - side by side when both have content; a solo
               panel spans the full row instead of sitting at half width in an
@@ -1423,40 +1451,42 @@ export default function Dashboard() {
             return (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
               {showIssues && (
-                <div className={`border border-dark-500 bg-dark-800 rounded-lg p-4 ${solo ? "lg:col-span-2" : ""}`}>
-                  <div className="flex items-center justify-between mb-3">
-                    <h3 className="text-xs text-dark-300 uppercase tracking-widest">Active Issues</h3>
-                    <Link to={REC_ACTION_ROUTES.alerts} className="text-xs text-rust-400 hover:text-rust-300">View all</Link>
+                <div className={`${CARD} ${solo ? "lg:col-span-2" : ""}`}>
+                  <div className={CARD_HEAD}>
+                    <h3 className={CARD_TITLE}>Active Issues</h3>
+                    <Link to={REC_ACTION_ROUTES.alerts} className={CARD_LINK}>View all</Link>
                   </div>
-                  <div className="space-y-2">
+                  <div className={ROWS}>
                     {intel.top_issues.slice(0, 4).map((issue, i) => (
-                      <div key={i} className="flex items-start gap-2">
-                        <div className={`w-2 h-2 rounded-full mt-0.5 flex-shrink-0 ${
+                      <div key={i} className="py-2.5 flex items-start gap-2.5">
+                        <div className={`w-2 h-2 rounded-full mt-[5px] flex-shrink-0 ${
                           issue.severity === "critical" ? "bg-danger-500" :
                           issue.severity === "warning" ? "bg-warn-500" : "bg-accent-500"
                         }`} />
-                        <p className="text-xs text-dark-100 leading-tight">{issue.title}</p>
+                        <p className="text-[13px] text-dark-100 leading-snug">{issue.title}</p>
                       </div>
                     ))}
                   </div>
                 </div>
               )}
               {showSsl && (
-                <div className={`border border-dark-500 bg-dark-800 rounded-lg p-4 ${solo ? "lg:col-span-2" : ""}`}>
-                  <h3 className="text-xs text-dark-300 uppercase tracking-widest mb-3">SSL Certificates</h3>
-                  <div className="space-y-2">
+                <div className={`${CARD} ${solo ? "lg:col-span-2" : ""}`}>
+                  <div className={CARD_HEAD}>
+                    <h3 className={CARD_TITLE}>SSL Certificates</h3>
+                  </div>
+                  <div className={ROWS}>
                     {intel.ssl_countdowns.map((ssl, i) => (
-                      <div key={i} className="flex items-center justify-between">
-                        <span className="text-xs text-dark-100 truncate max-w-[200px] flex items-center gap-1.5">
+                      <div key={i} className="py-2.5 flex items-center justify-between gap-3">
+                        <span className="text-[13px] text-dark-100 font-mono truncate max-w-[260px] flex items-center gap-2">
                           {ssl.domain}
                           {/* A stack and a site can share the same domain string;
                               this is the only cue on the tile for which one is
                               expiring. */}
                           {ssl.stack_id && (
-                            <span className="text-[9px] px-1 py-0.5 rounded bg-dark-700 text-dark-300 uppercase tracking-wider shrink-0">Stack</span>
+                            <span className="font-sans text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-accent-500/10 text-accent-400 uppercase tracking-wider shrink-0">Stack</span>
                           )}
                         </span>
-                        <span className={`text-xs ${
+                        <span className={`font-mono text-xs font-semibold shrink-0 ${
                           ssl.severity === "critical" ? "text-danger-400" :
                           ssl.severity === "warning" ? "text-warn-400" :
                           ssl.severity === "info" ? "text-accent-400" : "text-rust-400"
@@ -1472,12 +1502,12 @@ export default function Dashboard() {
 
           {/* Smart Recommendations */}
           {intel && intel.recommendations && intel.recommendations.length > 0 && (
-            <div className="border border-dark-500 bg-dark-800 rounded-lg overflow-hidden mb-6">
-              <div className="px-4 py-2.5 border-b border-dark-600 flex justify-between items-center">
-                <h3 className="text-xs font-medium text-dark-300 uppercase font-mono tracking-widest">Recommendations</h3>
-                <span className="text-[10px] text-dark-400">{intel.recommendations.length} item{intel.recommendations.length !== 1 ? "s" : ""}</span>
+            <div className={`${CARD} mb-6`}>
+              <div className={CARD_HEAD}>
+                <h3 className={CARD_TITLE}>Recommendations</h3>
+                <span className="font-mono text-xs text-dark-400">{intel.recommendations.length} item{intel.recommendations.length !== 1 ? "s" : ""}</span>
               </div>
-              <div className="divide-y divide-dark-600">
+              <div className={ROWS}>
                 {intel.recommendations.map((rec, i) => {
                   // The recommendation itself is worth showing to whoever it is
                   // about - a client whose own site has no recent backup should
@@ -1492,31 +1522,31 @@ export default function Dashboard() {
                   const route = target && isNavVisible(navFlagsFor(target), user?.role ?? "") ? target : undefined;
                   const inner = (
                     <>
-                      <div className={`w-2 h-2 rounded-full mt-0.5 flex-shrink-0 ${
+                      <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
                         rec.severity === "critical" ? "bg-danger-500" :
                         rec.severity === "warning" ? "bg-warn-500" : "bg-accent-500"
                       }`} />
                       <div className="flex-1 min-w-0">
-                        <p className={`text-xs leading-tight ${
+                        <p className={`text-[13px] leading-snug ${
                           rec.severity === "critical" ? "text-danger-400" :
                           rec.severity === "warning" ? "text-warn-400" : "text-dark-100"
                         }`}>{rec.message}</p>
                       </div>
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded uppercase tracking-wider font-bold flex-shrink-0 ${
+                      <span className={`text-[10px] px-2 py-0.5 rounded-md uppercase tracking-wider font-bold flex-shrink-0 ${
                         rec.severity === "critical" ? "bg-danger-500/10 text-danger-400" :
                         rec.severity === "warning" ? "bg-warn-500/10 text-warn-400" : "bg-accent-500/10 text-accent-400"
                       }`}>{rec.severity}</span>
                       {route && (
-                        <svg className="w-3.5 h-3.5 text-dark-400 flex-shrink-0 mt-0.5 group-hover:text-dark-200 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
+                        <svg className="w-4 h-4 text-dark-400 flex-shrink-0 group-hover:text-dark-200 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
                       )}
                     </>
                   );
                   return route ? (
-                    <Link key={i} to={route} className="px-4 py-3 flex items-start gap-3 hover:bg-dark-700/50 transition-colors group">
+                    <Link key={i} to={route} className="-mx-2 px-2 min-h-[44px] py-2 flex items-center gap-2.5 rounded-md hover:bg-dark-700/40 transition-colors group">
                       {inner}
                     </Link>
                   ) : (
-                    <div key={i} className="px-4 py-3 flex items-start gap-3">
+                    <div key={i} className="min-h-[44px] py-2 flex items-center gap-2.5">
                       {inner}
                     </div>
                   );
@@ -1529,19 +1559,19 @@ export default function Dashboard() {
 
           {/* Feature #12: Quick Links / Bookmarks */}
           {(bookmarks.length > 0 || showAddBookmark) && isVisible("bookmarks") && (
-            <div className="bg-dark-800 rounded-lg border border-dark-500 overflow-hidden mb-6">
-              <div className="px-4 py-2.5 border-b border-dark-600 flex justify-between items-center">
-                <h3 className="text-xs font-medium text-dark-300 uppercase font-mono tracking-widest">Quick Links</h3>
-                <button onClick={() => setShowAddBookmark(!showAddBookmark)} className="text-[10px] text-rust-400 hover:text-rust-300">
+            <div className={`${CARD} mb-6`}>
+              <div className={CARD_HEAD}>
+                <h3 className={CARD_TITLE}>Quick Links</h3>
+                <button onClick={() => setShowAddBookmark(!showAddBookmark)} className={`inline-flex items-center min-h-9 px-3 rounded-lg border text-[13px] font-medium transition-colors ${BTN_2ND}`}>
                   {showAddBookmark ? "Cancel" : "+ Add"}
                 </button>
               </div>
               {showAddBookmark && (
-                <div className="px-4 py-3 border-b border-dark-600 flex flex-col sm:flex-row gap-2">
+                <div className="pt-3 flex flex-col sm:flex-row gap-2">
                   <input value={bmLabel} onChange={e => setBmLabel(e.target.value)} placeholder="Label"
-                    className="flex-1 px-2 py-1.5 bg-dark-900 border border-dark-500 rounded text-xs text-dark-100 placeholder-dark-400 min-h-[44px] sm:min-h-0" />
+                    className="flex-1 px-3 py-2 bg-dark-900 border border-dark-600 rounded-lg text-[13px] text-dark-100 placeholder-dark-400 min-h-[44px] sm:min-h-10" />
                   <input value={bmUrl} onChange={e => setBmUrl(e.target.value)} placeholder="/sites or https://..."
-                    className="flex-1 px-2 py-1.5 bg-dark-900 border border-dark-500 rounded text-xs text-dark-100 placeholder-dark-400 min-h-[44px] sm:min-h-0" />
+                    className="flex-[2_1_0%] px-3 py-2 bg-dark-900 border border-dark-600 rounded-lg text-[13px] text-dark-100 placeholder-dark-400 min-h-[44px] sm:min-h-10" />
                   <button onClick={() => {
                     if (bmLabel && bmUrl) {
                       const next = [...bookmarks, { label: bmLabel, url: bmUrl }];
@@ -1549,18 +1579,18 @@ export default function Dashboard() {
                       localStorage.setItem('dp-dashboard-bookmarks', JSON.stringify(next));
                       setBmLabel(""); setBmUrl(""); setShowAddBookmark(false);
                     }
-                  }} className="px-3 py-1.5 bg-rust-500 text-white rounded text-xs min-h-[44px] sm:min-h-0">Add</button>
+                  }} className="px-4 py-2 bg-rust-500 hover:bg-rust-600 text-white rounded-lg text-[13px] font-semibold min-h-[44px] sm:min-h-10 transition-colors">Add</button>
                 </div>
               )}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-px bg-dark-600">
+              <div className="pt-3 grid grid-cols-[repeat(auto-fill,minmax(min(100%,180px),1fr))] gap-2 empty:hidden">
                 {bookmarks.map((bm, i) => (
-                  <div key={i} className="bg-dark-800 px-3 py-2.5 flex items-center justify-between group">
-                    <a href={(() => { const u = String(bm.url || ''); return /^https?:\/\//i.test(u) ? u : /^\/[^/]/.test(u) ? u : '#'; })()} target="_blank" rel="noopener noreferrer" className="text-xs text-dark-100 hover:text-rust-400 truncate">{String(bm.label || '')}</a>
+                  <div key={i} className="min-h-[44px] pl-3.5 pr-1.5 rounded-lg border border-dark-600 bg-dark-900/50 flex items-center justify-between gap-1.5 min-w-0 group">
+                    <a href={(() => { const u = String(bm.url || ''); return /^https?:\/\//i.test(u) ? u : /^\/[^/]/.test(u) ? u : '#'; })()} target="_blank" rel="noopener noreferrer" className="text-[13px] font-medium text-dark-100 hover:text-rust-400 truncate">{String(bm.label || '')}</a>
                     <button onClick={() => {
                       const next = bookmarks.filter((_, j) => j !== i);
                       setBookmarks(next);
                       localStorage.setItem('dp-dashboard-bookmarks', JSON.stringify(next));
-                    }} className="text-dark-500 hover:text-danger-400 text-xs opacity-0 group-hover:opacity-100 ml-2">&times;</button>
+                    }} className="w-8 h-8 shrink-0 rounded-md text-dark-400 hover:text-danger-400 text-base leading-none sm:opacity-60 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity">&times;</button>
                   </div>
                 ))}
               </div>
@@ -1568,41 +1598,41 @@ export default function Dashboard() {
           )}
 
           {/* Network & Processes */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
             {/* Network I/O */}
             {isVisible("network") && network.length > 0 && (
-              <div className="bg-dark-800 rounded-lg border border-dark-500 overflow-x-auto">
-                <div className="px-5 py-3 border-b border-dark-600">
-                  <h3 className="text-xs font-medium text-dark-300 uppercase font-mono tracking-widest">Network I/O</h3>
+              <div className={`${CARD} overflow-x-auto`}>
+                <div className="pb-2">
+                  <h3 className={CARD_TITLE}>Network I/O</h3>
                 </div>
-                <table className="w-full">
+                <table className="w-full text-[13px]">
                   <thead>
-                    <tr className="bg-dark-900">
-                      <th className="text-left text-xs font-medium text-dark-200 uppercase font-mono tracking-widest px-5 py-2">Interface</th>
-                      <th className="text-right text-xs font-medium text-dark-200 uppercase font-mono tracking-widest px-5 py-2">RX</th>
-                      <th className="text-right text-xs font-medium text-dark-200 uppercase font-mono tracking-widest px-5 py-2">TX</th>
+                    <tr>
+                      <th className={`${TH} text-left`}>Interface</th>
+                      <th className={`${TH} text-right`}>RX</th>
+                      <th className={`${TH} text-right`}>TX</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-dark-600">
+                  <tbody className={ROWS}>
                     {network.filter(n => n.rx_bytes > 0 || n.tx_bytes > 0).map((iface) => (
                       <tr key={iface.name} className="hover:bg-dark-700/30 transition-colors">
-                        <td className="px-5 py-2.5 text-sm text-dark-50 font-mono">{iface.name}</td>
-                        <td className="px-5 py-2.5 text-right font-mono">
-                          <div className="text-sm text-rust-400">
+                        <td className={`${TD} text-dark-50 font-mono`}>{iface.name}</td>
+                        <td className={`${TD} text-right font-mono`}>
+                          <div className="text-rust-400">
                             <span className="text-dark-400 mr-0.5">{"\u2193"}</span>
                             {iface.rx_rate != null ? formatRate(iface.rx_rate) : formatSize(iface.rx_bytes)}
                           </div>
                           {iface.rx_rate != null && (
-                            <div className="text-[10px] text-dark-400 mt-0.5">{formatSize(iface.rx_bytes)} total</div>
+                            <div className="text-[11px] text-dark-400 mt-0.5">{formatSize(iface.rx_bytes)} total</div>
                           )}
                         </td>
-                        <td className="px-5 py-2.5 text-right font-mono">
-                          <div className="text-sm text-accent-400">
+                        <td className={`${TD} text-right font-mono`}>
+                          <div className="text-accent-400">
                             <span className="text-dark-400 mr-0.5">{"\u2191"}</span>
                             {iface.tx_rate != null ? formatRate(iface.tx_rate) : formatSize(iface.tx_bytes)}
                           </div>
                           {iface.tx_rate != null && (
-                            <div className="text-[10px] text-dark-400 mt-0.5">{formatSize(iface.tx_bytes)} total</div>
+                            <div className="text-[11px] text-dark-400 mt-0.5">{formatSize(iface.tx_bytes)} total</div>
                           )}
                         </td>
                       </tr>
@@ -1614,30 +1644,30 @@ export default function Dashboard() {
 
             {/* Top Processes */}
             {isVisible("processes") && processes.length > 0 && (
-              <div className="bg-dark-800 rounded-lg border border-dark-500 overflow-x-auto">
-                <div className="px-5 py-3 border-b border-dark-600">
-                  <h3 className="text-xs font-medium text-dark-300 uppercase font-mono tracking-widest">Top Processes</h3>
+              <div className={`${CARD} overflow-x-auto`}>
+                <div className="pb-2">
+                  <h3 className={CARD_TITLE}>Top Processes</h3>
                 </div>
-                <table className="w-full">
+                <table className="w-full text-[13px]">
                   <thead>
-                    <tr className="bg-dark-900">
-                      <th className="text-left text-xs font-medium text-dark-200 uppercase font-mono tracking-widest px-5 py-2">Process</th>
-                      <th className="text-right text-xs font-medium text-dark-200 uppercase font-mono tracking-widest px-5 py-2">PID</th>
-                      <th className="text-right text-xs font-medium text-dark-200 uppercase font-mono tracking-widest px-5 py-2">CPU</th>
-                      <th className="text-right text-xs font-medium text-dark-200 uppercase font-mono tracking-widest px-5 py-2">MEM</th>
+                    <tr>
+                      <th className={`${TH} text-left`}>Process</th>
+                      <th className={`${TH} text-right`}>PID</th>
+                      <th className={`${TH} text-right`}>CPU</th>
+                      <th className={`${TH} text-right`}>MEM</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-dark-600">
+                  <tbody className={ROWS}>
                     {processes.slice(0, 10).map((p) => (
                       <tr key={p.pid} className="hover:bg-dark-700/30 transition-colors">
-                        <td className="px-5 py-2 text-sm text-dark-50 font-mono truncate max-w-[200px]">{p.name}</td>
-                        <td className="px-5 py-2 text-sm text-dark-200 text-right font-mono">{p.pid}</td>
-                        <td className="px-5 py-2 text-sm text-right font-mono">
+                        <td className={`${TD} text-dark-50 font-mono truncate max-w-[200px]`}>{p.name}</td>
+                        <td className={`${TD} text-dark-200 text-right font-mono`}>{p.pid}</td>
+                        <td className={`${TD} text-right font-mono`}>
                           <span className={p.cpu_pct > 50 ? "text-danger-400 font-medium" : "text-dark-200"}>
                             {p.cpu_pct.toFixed(1)}%
                           </span>
                         </td>
-                        <td className="px-5 py-2 text-sm text-dark-200 text-right font-mono">{p.mem_mb.toFixed(0)} MB</td>
+                        <td className={`${TD} text-dark-200 text-right font-mono`}>{p.mem_mb.toFixed(0)} MB</td>
                       </tr>
                     ))}
                   </tbody>
