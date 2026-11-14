@@ -65,7 +65,6 @@ Add-VMDvdDrive -VMName $VmName -Path $IsoPath
 Set-VMFirmware -VMName $VmName -FirstBootDevice (Get-VMDvdDrive -VMName $VmName)
 # MAC statique : l'IP ne bouge pas même si la carte est recréée
 Set-VMNetworkAdapter -VMName $VmName -StaticMacAddress '00155DFA0010'
-Enable-VMIntegrationService -VMName $VmName -Name 'Guest Service Interface'
 
 Get-VM -Name $VmName | Format-List Name, State, Generation, ProcessorCount, MemoryStartup, CheckpointType
 @"
