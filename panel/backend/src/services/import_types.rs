@@ -145,6 +145,15 @@ pub fn classify_job(v: &Value) -> JobPoll {
     }
 }
 
+/// A job error as the operator reads it. W1 prefixes a disk refusal with
+/// `insufficient_disk:`.
+pub fn describe_job_error(e: &str) -> String {
+    match e.strip_prefix("insufficient_disk:") {
+        Some(rest) => format!("Not enough disk space: {}", rest.trim()),
+        None => e.to_string(),
+    }
+}
+
 /// Human progress line: `extract: 1.2 GB / 3.4 GB (35%) - message`.
 pub fn progress_message(phase: &str, done: u64, total: u64, message: &str) -> String {
     let mut out = if phase.is_empty() { "working".to_string() } else { phase.to_string() };
@@ -211,6 +220,17 @@ impl StallClock {
 /// breaker open) do not fail the item by themselves: they count toward the
 /// stall window like any other silence.
 pub async fn wait_job(ctx: &ImportCtx, job_id: &str, step: &str, label: &str) -> Result<Value, String> {
+    poll_job(&ctx.agent, job_id, |msg| (ctx.progress)(step, label, "in_progress", Some(msg))).await
+}
+
+/// The polling loop of [`wait_job`], without an [`ImportCtx`] (the analysis
+/// job runs before any import exists). `on_progress` gets a line each time the
+/// job moves.
+pub async fn poll_job<F: FnMut(String)>(
+    agent: &crate::services::agent::AgentHandle,
+    job_id: &str,
+    mut on_progress: F,
+) -> Result<Value, String> {
     use crate::services::agent::AgentError;
 
     if job_id.is_empty()
@@ -223,19 +243,14 @@ pub async fn wait_job(ctx: &ImportCtx, job_id: &str, step: &str, label: &str) ->
     let mut last_error: Option<String> = None;
 
     loop {
-        match ctx.agent.get(&path).await {
+        match agent.get(&path).await {
             Ok(v) => match classify_job(&v) {
                 JobPoll::Done(report) => return Ok(report),
-                JobPoll::Failed(e) => return Err(e),
+                JobPoll::Failed(e) => return Err(describe_job_error(&e)),
                 JobPoll::Running { phase, bytes_done, bytes_total, message, updated_at } => {
                     last_error = None;
                     if clock.observe(Instant::now(), &phase, bytes_done, updated_at) {
-                        (ctx.progress)(
-                            step,
-                            label,
-                            "in_progress",
-                            Some(progress_message(&phase, bytes_done, bytes_total, &message)),
-                        );
+                        on_progress(progress_message(&phase, bytes_done, bytes_total, &message));
                     }
                 }
             },
@@ -292,6 +307,12 @@ mod tests {
             JobPoll::Failed("insufficient_disk".into())
         );
         assert_eq!(classify_job(&json!({ "state": "failed" })), JobPoll::Failed("the agent job failed".into()));
+    }
+
+    #[test]
+    fn a_disk_refusal_reads_as_one() {
+        assert_eq!(describe_job_error("insufficient_disk: need 3 GB, 1 GB free"), "Not enough disk space: need 3 GB, 1 GB free");
+        assert_eq!(describe_job_error("tar failed"), "tar failed");
     }
 
     #[test]

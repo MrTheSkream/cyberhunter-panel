@@ -229,6 +229,15 @@ const FETCH_AGENT_TIMEOUT_SECS: u64 = 1860;
 /// same way a wrong guess in a manually-copied filename already would; this
 /// only makes a failure message that echoes the path read like a real backup
 /// name instead of a bare UUID.
+/// The job id of an asynchronous analysis (`{id, job_id}` without sites), or
+/// `None` when the agent answered with the inventory itself.
+pub(crate) fn analysis_job_id(resp: &serde_json::Value) -> Option<String> {
+    if resp.get("sites").is_some() {
+        return None;
+    }
+    resp.get("job_id").and_then(|j| j.as_str()).filter(|j| !j.is_empty()).map(str::to_string)
+}
+
 /// The source recorded on the row after analysis: the agent's verdict
 /// (`inventory.source`) when it names a known panel, else what was asked for.
 pub(crate) fn detected_source(inventory: &serde_json::Value, requested: &str) -> String {
@@ -384,12 +393,17 @@ pub async fn analyze(
             }
         }
 
+        // `async: true` (W1): a HestiaCP analysis reads every blob and takes
+        // minutes, so the agent answers 202 `{id, job_id}` and the inventory
+        // arrives as the job's report. An agent that ignores the flag answers
+        // with the inventory itself, as before.
         let agent_body = serde_json::json!({
             "path": path_owned.clone(),
             "source": source_owned.clone(),
+            "async": true,
         });
 
-        match agent
+        let analysis = match agent
             .post_long(
                 "/migration/analyze",
                 Some(agent_body),
@@ -397,6 +411,25 @@ pub async fn analyze(
             )
             .await
         {
+            Ok(resp) => match analysis_job_id(&resp) {
+                Some(job) => crate::services::import_types::poll_job(&agent, &job, |_| {})
+                    .await
+                    .map(|mut inv| {
+                        // The staging id every later agent call needs.
+                        if inv.get("id").is_none()
+                            && let (Some(o), Some(sid)) = (inv.as_object_mut(), resp.get("id"))
+                        {
+                            o.insert("id".into(), sid.clone());
+                        }
+                        inv
+                    })
+                    .map_err(|e| ledger::redact(&e)),
+                None => Ok(resp),
+            },
+            Err(e) => Err(e.to_string()),
+        };
+
+        match analysis {
             Ok(inventory) => {
                 // `auto` is resolved by the agent: the row records what the
                 // archive actually is, so the list and the import loop never
@@ -1775,6 +1808,14 @@ mod import_loop_tests {
         assert!(n.contains(&"8.3".to_string()) && n.contains(&"8.4".to_string()));
         assert!(!n.iter().any(|v| v == "bogus"));
         assert_eq!(n.iter().filter(|v| *v == "8.3").count(), 1);
+    }
+
+    #[test]
+    fn an_async_analysis_is_told_apart_from_an_inventory() {
+        assert_eq!(analysis_job_id(&json!({ "id": "a", "job_id": "j1" })).as_deref(), Some("j1"));
+        assert_eq!(analysis_job_id(&json!({ "id": "a", "sites": [], "job_id": "j1" })), None);
+        assert_eq!(analysis_job_id(&json!({ "id": "a", "sites": [] })), None);
+        assert_eq!(analysis_job_id(&json!({ "id": "a", "job_id": "" })), None);
     }
 
     #[test]
