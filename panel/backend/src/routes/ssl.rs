@@ -390,8 +390,7 @@ pub async fn provision(
     // may place a second, apex-only order after the first one fails, which does
     // not fit the 60s quick budget.
     let agent_path = format!("/ssl/provision/{}", site.domain);
-    let result = agent
-        .post_long(&agent_path, Some(agent_body), HTTP01_MULTI_NAME_TIMEOUT_SECS)
+    let result = crate::helpers::post_http01_order(&agent, &agent_path, agent_body)
         .await
         .map_err(|e| acme_failure_or(&site.domain, "SSL provisioning", e))?;
     let warnings = crate::helpers::log_agent_warnings(&site.domain, &result);
@@ -789,10 +788,6 @@ pub async fn status(
 /// expiry write and wrote a cooldown row. A budget below the agent's own wait is
 /// not a timeout, it is a guaranteed false failure.
 pub(crate) const DNS01_ORDER_TIMEOUT_SECS: u64 = 300;
-
-/// HTTP-01 order with extra names (05-import-hestia W3-S): the agent may place a
-/// second, apex-only order after the first is declined, each up to ~120s.
-pub(crate) const HTTP01_MULTI_NAME_TIMEOUT_SECS: u64 = 270;
 
 /// Renew a certificate over DNS-01, against the name it was actually issued for.
 ///

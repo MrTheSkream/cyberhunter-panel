@@ -1659,6 +1659,21 @@ pub(crate) fn add_vhost_description(body: &mut serde_json::Value, site: &crate::
     body["hsts"] = serde_json::json!(site.hsts);
 }
 
+/// HTTP-01 order with extra names (05-import-hestia W3-S): the agent may place a
+/// second, apex-only order after the first is declined, each up to ~120s.
+pub(crate) const HTTP01_MULTI_NAME_TIMEOUT_SECS: u64 = 270;
+
+/// POST an HTTP-01 provision body that may carry extra names, with the budget
+/// of two orders (the 60s quick budget does not fit a declined order followed
+/// by the apex-only retry).
+pub(crate) async fn post_http01_order(
+    agent: &crate::services::agent::AgentHandle,
+    path: &str,
+    body: serde_json::Value,
+) -> Result<serde_json::Value, crate::services::agent::AgentError> {
+    agent.post_long(path, Some(body), HTTP01_MULTI_NAME_TIMEOUT_SECS).await
+}
+
 /// Everything an HTTP-01 order for the site's own domain adds to its body: the
 /// extra names, the apex-only fallback (an alias that does not point here must
 /// not cost the domain its certificate), and the vhost description.
