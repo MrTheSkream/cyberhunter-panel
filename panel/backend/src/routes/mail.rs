@@ -68,6 +68,9 @@ pub struct MailAccount {
     pub quota_mb: i32,
     pub enabled: bool,
     pub forward_to: Option<String>,
+    /// With `forward_to`: the mailbox also keeps a copy (05-import-hestia W4-B).
+    #[sqlx(default)]
+    pub keep_copy: bool,
     pub autoresponder_enabled: bool,
     pub autoresponder_subject: Option<String>,
     pub autoresponder_body: Option<String>,
@@ -117,6 +120,8 @@ pub struct UpdateAccountRequest {
     pub quota_mb: Option<i32>,
     pub enabled: Option<bool>,
     pub forward_to: Option<String>,
+    /// Forward AND keep a copy in this mailbox.
+    pub keep_copy: Option<bool>,
     pub autoresponder_enabled: Option<bool>,
     pub autoresponder_subject: Option<String>,
     pub autoresponder_body: Option<String>,
@@ -846,7 +851,7 @@ pub async fn list_accounts(
     mail_domain_identity(&state.db, domain_id, &claims).await?;
 
     let accounts: Vec<MailAccount> = sqlx::query_as(
-        "SELECT id, domain_id, email, display_name, quota_mb, enabled, forward_to, \
+        "SELECT id, domain_id, email, display_name, quota_mb, enabled, forward_to, keep_copy, \
          autoresponder_enabled, autoresponder_subject, autoresponder_body, created_at \
          FROM mail_accounts WHERE domain_id = $1 ORDER BY email",
     )
@@ -902,7 +907,7 @@ pub async fn create_account(
     let account: MailAccount = sqlx::query_as(
         "INSERT INTO mail_accounts (domain_id, email, password_hash, display_name, quota_mb) \
          VALUES ($1, $2, $3, $4, $5) \
-         RETURNING id, domain_id, email, display_name, quota_mb, enabled, forward_to, \
+         RETURNING id, domain_id, email, display_name, quota_mb, enabled, forward_to, keep_copy, \
          autoresponder_enabled, autoresponder_subject, autoresponder_body, created_at",
     )
     .bind(domain_id)
@@ -998,6 +1003,15 @@ pub async fn update_account(
         }
         sqlx::query("UPDATE mail_accounts SET forward_to = $1, updated_at = NOW() WHERE id = $2")
             .bind(if forward.is_empty() { None } else { Some(forward.as_str()) })
+            .bind(account_id)
+            .execute(&state.db)
+            .await
+            .map_err(|e| internal_error("update account", e))?;
+    }
+
+    if let Some(keep) = body.keep_copy {
+        sqlx::query("UPDATE mail_accounts SET keep_copy = $1, updated_at = NOW() WHERE id = $2")
+            .bind(keep)
             .bind(account_id)
             .execute(&state.db)
             .await
@@ -2696,27 +2710,27 @@ async fn mail_alias_agent_for_caller(
 /// knows which address is its primary one, so `agent_primary` is its answer to
 /// `GET /system/ips`, or `None` when that could not be asked.
 async fn mail_sync_payload(
-    state: &AppState,
+    db: &sqlx::PgPool,
     server_id: Uuid,
     agent_primary: Option<&str>,
 ) -> Result<serde_json::Value, sqlx::Error> {
     // Same rows as `SELECT domain, enabled, catch_all FROM mail_domains WHERE
     // server_id = $1 ORDER BY domain`, plus what the send-address resolution needs.
-    let domains = crate::services::server_ips::mail_ip_rows_for_server(&state.db, server_id).await?;
+    let domains = crate::services::server_ips::mail_ip_rows_for_server(db, server_id).await?;
 
     let declared: Vec<crate::services::server_ips::DeclaredIp> =
         sqlx::query_as("SELECT id, ip, public_ip, ptr FROM server_ips WHERE server_id = $1")
             .bind(server_id)
-            .fetch_all(&state.db)
+            .fetch_all(db)
             .await?;
 
-    let accounts: Vec<(String, String, i32, bool, Option<String>)> = sqlx::query_as(
-        "SELECT a.email, a.password_hash, a.quota_mb, a.enabled, a.forward_to \
+    let accounts: Vec<SyncAccountRow> = sqlx::query_as(
+        "SELECT a.email, a.password_hash, a.quota_mb, a.enabled, a.forward_to, a.keep_copy \
          FROM mail_accounts a JOIN mail_domains md ON md.id = a.domain_id \
          WHERE md.server_id = $1 ORDER BY a.email",
     )
     .bind(server_id)
-    .fetch_all(&state.db)
+    .fetch_all(db)
     .await?;
 
     let aliases: Vec<(String, String)> = sqlx::query_as(
@@ -2725,17 +2739,20 @@ async fn mail_sync_payload(
          WHERE md.server_id = $1 ORDER BY al.source_email",
     )
     .bind(server_id)
-    .fetch_all(&state.db)
+    .fetch_all(db)
     .await?;
 
     Ok(build_sync_payload(&domains, &accounts, &aliases, &declared, agent_primary))
 }
 
+/// `(email, password_hash, quota_mb, enabled, forward_to, keep_copy)`.
+type SyncAccountRow = (String, String, i32, bool, Option<String>, bool);
+
 /// The `/mail/sync` body from already-loaded rows. Pure, so the shape the agent
 /// consumes is pinned by unit tests.
 fn build_sync_payload(
     domains: &[crate::services::server_ips::MailIpRow],
-    accounts: &[(String, String, i32, bool, Option<String>)],
+    accounts: &[SyncAccountRow],
     aliases: &[(String, String)],
     declared: &[crate::services::server_ips::DeclaredIp],
     agent_primary: Option<&str>,
@@ -2749,8 +2766,9 @@ fn build_sync_payload(
                 "send_ip": send_ip, "helo": helo,
             })
         }).collect::<Vec<_>>(),
-        "accounts": accounts.iter().map(|(email, hash, quota, enabled, fwd)| serde_json::json!({
-            "email": email, "password_hash": hash, "quota_mb": quota, "enabled": enabled, "forward_to": fwd
+        "accounts": accounts.iter().map(|(email, hash, quota, enabled, fwd, keep_copy)| serde_json::json!({
+            "email": email, "password_hash": hash, "quota_mb": quota, "enabled": enabled, "forward_to": fwd,
+            "keep_copy": keep_copy,
         })).collect::<Vec<_>>(),
         "aliases": aliases.iter().map(|(src, dst)| serde_json::json!({
             "source": src, "destination": dst
@@ -2814,9 +2832,19 @@ pub(crate) async fn sync_mail_config_report(
     server_id: Uuid,
     agent: &AgentHandle,
 ) -> Result<SyncReport, ApiError> {
+    sync_mail_config_report_db(&state.db, server_id, agent).await
+}
+
+/// [`sync_mail_config_report`] from a bare pool - the only part of the state
+/// it reads. Used by the HestiaCP import executor, which has no `AppState`.
+pub(crate) async fn sync_mail_config_report_db(
+    db: &sqlx::PgPool,
+    server_id: Uuid,
+    agent: &AgentHandle,
+) -> Result<SyncReport, ApiError> {
     let unscoped: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM mail_domains WHERE server_id IS NULL")
-            .fetch_one(&state.db)
+            .fetch_one(db)
             .await
             .map_err(|e| internal_error("count unscoped mail domains", e))?;
 
@@ -2843,7 +2871,7 @@ pub(crate) async fn sync_mail_config_report(
     // never did, and widening that here would be a behaviour change hiding inside
     // a security fix.
     let agent_primary = agent_primary_ip(agent).await;
-    let payload = match mail_sync_payload(state, server_id, agent_primary.as_deref()).await {
+    let payload = match mail_sync_payload(db, server_id, agent_primary.as_deref()).await {
         Ok(p) => p,
         Err(e) => {
             tracing::warn!("Mail sync for server {server_id}: gathering configuration failed: {e}");
@@ -2925,6 +2953,51 @@ pub(crate) async fn sync_mail_config(
     sync_mail_config_report(state, server_id, agent).await.map(|_| ())
 }
 
+/// Record an imported DKIM key on its domain row: the private half encrypted
+/// exactly as `create_domain` stores a generated one (same column, so the
+/// credential re-encryption sweep already covers it).
+pub(crate) async fn store_dkim_key(
+    db: &sqlx::PgPool,
+    domain_id: Uuid,
+    selector: &str,
+    private_pem: &str,
+    public_key: Option<&str>,
+    jwt_secret: &str,
+) -> Result<(), String> {
+    let enc = crate::services::secrets_crypto::encrypt_credential(private_pem, jwt_secret)
+        .map_err(|_| "encryption failed".to_string())?;
+    sqlx::query(
+        "UPDATE mail_domains SET dkim_private_key = $1, dkim_public_key = $2, dkim_selector = $3, \
+         updated_at = NOW() WHERE id = $4",
+    )
+    .bind(&enc)
+    .bind(public_key)
+    .bind(selector)
+    .bind(domain_id)
+    .execute(db)
+    .await
+    .map(|_| ())
+    .map_err(|e| format!("database error: {e}"))
+}
+
+/// [`sync_mail_config`] from a bare pool, reporting whether the agent applied
+/// the rebuild (the import executor records it).
+pub(crate) async fn sync_mail_config_db(
+    db: &sqlx::PgPool,
+    server_id: Uuid,
+    agent: &AgentHandle,
+) -> Result<(), String> {
+    match sync_mail_config_report_db(db, server_id, agent).await {
+        Ok(SyncReport::Applied(_)) => Ok(()),
+        Ok(SyncReport::GatherFailed(e)) => Err(format!("the mail configuration could not be gathered: {e}")),
+        Ok(SyncReport::AgentFailed(e)) => Err(agent_failure_text(&e)),
+        Err((status, body)) => Err(format!(
+            "mail sync refused ({status}): {}",
+            body.0.get("error").and_then(|m| m.as_str()).unwrap_or("")
+        )),
+    }
+}
+
 /// Multi-IP: a mail domain in automatic mode sends from the address of the
 /// same-named site, so creating, deleting or renaming that site changes where
 /// its mail leaves from. Re-sync the server when any of `domains` names such a
@@ -2997,7 +3070,7 @@ fn is_valid_mail_address(addr: &str, extra_allowed: &str) -> bool {
 /// exactly one `@`, and a local part that is not made only of dots. It refuses
 /// the three degenerate forms that are path components or map keys and nothing
 /// else, so it cannot reject a mailbox an install already has.
-fn is_wellformed_address(addr: &str, extra_allowed: &str) -> bool {
+pub(crate) fn is_wellformed_address(addr: &str, extra_allowed: &str) -> bool {
     if !is_valid_mail_address(addr, extra_allowed) || addr.matches('@').count() != 1 {
         return false;
     }
@@ -3017,7 +3090,7 @@ fn is_wellformed_address(addr: &str, extra_allowed: &str) -> bool {
 /// `@` somewhere - so a bare local name rode along beside a valid address and was
 /// written into `virtual_alias_maps` verbatim. Checking per element is the only
 /// form of the question that means anything for a list.
-fn is_wellformed_address_list(list: &str, extra_allowed: &str) -> bool {
+pub(crate) fn is_wellformed_address_list(list: &str, extra_allowed: &str) -> bool {
     !list.trim().is_empty()
         && list
             .split(',')
@@ -3092,7 +3165,7 @@ fn bcrypt_crypt(password: &str) -> String {
 /// Failure to ask is not failure to know something important: an unreachable
 /// agent returns an empty list, and [`dovecot_password_hash_for`] keeps the
 /// strong default in that case.
-async fn agent_password_schemes(agent: &crate::services::agent::AgentHandle) -> Vec<String> {
+pub(crate) async fn agent_password_schemes(agent: &crate::services::agent::AgentHandle) -> Vec<String> {
     agent
         .get("/mail/status")
         .await
@@ -3382,6 +3455,20 @@ mod send_ip_payload_tests {
         let p = build_sync_payload(&[row("a.lab", Some(("10.0.0.2", None)), None)], &[], &[], &[], None);
         assert!(p["primary_helo"].is_null());
         assert_eq!(p["domains"][0]["send_ip"], "10.0.0.2");
+    }
+
+    /// 05-import-hestia W4-B: the agent needs `keep_copy` beside `forward_to`
+    /// to write `email -> email,forward` instead of a forward-only row.
+    #[test]
+    fn each_account_carries_its_keep_copy_flag() {
+        let accounts = vec![
+            ("a@d.be".to_string(), "{X}h".to_string(), 10, true, Some("x@o.org".to_string()), true),
+            ("b@d.be".to_string(), "{X}h".to_string(), 10, true, Some("y@o.org".to_string()), false),
+        ];
+        let p = build_sync_payload(&[], &accounts, &[], &[], None);
+        assert_eq!(p["accounts"][0]["forward_to"], "x@o.org");
+        assert_eq!(p["accounts"][0]["keep_copy"], true);
+        assert_eq!(p["accounts"][1]["keep_copy"], false);
     }
 }
 

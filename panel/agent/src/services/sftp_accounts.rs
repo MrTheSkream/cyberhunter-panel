@@ -39,6 +39,243 @@ pub fn sftp_groupname(gid: i32) -> String {
     format!("sftpg{gid}")
 }
 
+// --- import-hestia (05) W4-S: custom SFTP account names ---
+
+/// System and service accounts a custom SFTP name may never take, even when
+/// absent from this box's `/etc/passwd` (a package installed later would
+/// collide with a jailed tenant account of the same name).
+const RESERVED_USERNAMES: &[&str] = &[
+    "root", "daemon", "bin", "sys", "sync", "games", "man", "lp", "mail", "news", "uucp",
+    "proxy", "www-data", "backup", "list", "irc", "gnats", "nobody", "nogroup", "sshd",
+    "messagebus", "syslog", "systemd-network", "systemd-resolve", "systemd-timesync",
+    "_apt", "nginx", "apache", "apache2", "httpd", "postfix", "postdrop", "dovecot",
+    "dovenull", "vmail", "opendkim", "rspamd", "redis", "mysql", "mariadb", "postgres",
+    "docker", "ftp", "sftp", "admin", "administrator", "dockpanel", "cyberhunter",
+    "clamav", "bind", "named", "pdns", "fail2ban", "ubuntu", "debian", "operator",
+    SFTP_GROUP,
+];
+
+/// `^[a-z_][a-z0-9_.-]{0,31}$` - the shape every Linux tool accepts as an
+/// account name (D6), checked by hand rather than by a regex dependency.
+pub fn is_valid_custom_username(name: &str) -> bool {
+    let b = name.as_bytes();
+    !b.is_empty()
+        && b.len() <= 32
+        && (b[0].is_ascii_lowercase() || b[0] == b'_')
+        && b[1..]
+            .iter()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, b'_' | b'.' | b'-'))
+}
+
+/// Why a requested SFTP name cannot be used for `uid`, decided without
+/// touching the system (pure, tested). `None` = acceptable so far; the caller
+/// still asks `getent`.
+pub fn username_static_conflict(name: &str, uid: i32) -> Option<&'static str> {
+    if !is_valid_custom_username(name) {
+        return Some("invalid");
+    }
+    if RESERVED_USERNAMES.contains(&name) {
+        return Some("reserved");
+    }
+    // `sftp<digits>` and `sftpg<digits>` are the panel's own namespace: only
+    // this uid's own default name is allowed, never another allocation's.
+    for prefix in ["sftpg", "sftp"] {
+        if let Some(rest) = name.strip_prefix(prefix) {
+            if !rest.is_empty() && rest.bytes().all(|c| c.is_ascii_digit()) {
+                return if prefix == "sftp" && rest == uid.to_string() { None } else { Some("panel_namespace") };
+            }
+        }
+    }
+    None
+}
+
+/// Does `getent <db> <name>` know this name?
+async fn getent_has(db: &str, name: &str) -> bool {
+    safe_command("getent")
+        .args([db, name])
+        .output()
+        .await
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Why [`provision`] refused: a name problem the caller can fix (400 / 409),
+/// or a provisioning failure (500).
+#[derive(Debug)]
+pub enum ProvisionError {
+    InvalidUsername(String),
+    UsernameTaken(String),
+    Failed(String),
+}
+
+impl From<String> for ProvisionError {
+    fn from(e: String) -> Self {
+        ProvisionError::Failed(e)
+    }
+}
+
+/// Account name of `uid` (the owner marker's `User=`, else `sftp<uid>`).
+pub fn account_name(uid: i32) -> String {
+    crate::services::ownership::sftp_account_name(uid)
+}
+
+/// Resolve and check the account name `provision` will create.
+async fn resolve_username(uid: i32, requested: Option<&str>) -> Result<String, ProvisionError> {
+    let default = sftp_username(uid);
+    let name = match requested.map(str::trim).filter(|n| !n.is_empty()) {
+        None => return Ok(default),
+        Some(n) if n == default => return Ok(default),
+        Some(n) => n.to_string(),
+    };
+    match username_static_conflict(&name, uid) {
+        Some("invalid") => {
+            return Err(ProvisionError::InvalidUsername(format!(
+                "Invalid SFTP username {name:?}: lowercase letters, digits, '_', '.', '-', \
+                 starting with a letter or '_', at most 32 characters"
+            )))
+        }
+        Some(why) => {
+            return Err(ProvisionError::UsernameTaken(format!(
+                "SFTP username {name:?} is not available ({why})"
+            )))
+        }
+        None => {}
+    }
+    if getent_has("passwd", &name).await || getent_has("group", &name).await {
+        return Err(ProvisionError::UsernameTaken(format!(
+            "SFTP username {name:?} already exists on this server"
+        )));
+    }
+    Ok(name)
+}
+
+/// The owner marker body: whole-line `Domain=` (read by
+/// [`crate::services::ownership::sftp_user`]) and `User=`.
+pub fn owner_marker_body(domain: &str, username: &str) -> String {
+    format!("Domain={domain}\nUser={username}\n")
+}
+
+/// `$<id>$...` crypt(3) hash accepted by [`set_password_hash`], with the
+/// scheme name reported back. Pure (tested); the value itself is never logged.
+pub fn crypt_hash_scheme(hash: &str) -> Result<&'static str, String> {
+    if hash.is_empty() || hash.len() > 255 {
+        return Err("hash length out of range".into());
+    }
+    if hash.bytes().any(|c| matches!(c, b':' | b' ' | b'\n' | b'\r' | b'\t' | b'\0')) {
+        return Err("hash contains a forbidden character".into());
+    }
+    let rest = hash.strip_prefix('$').ok_or("not a crypt(3) hash")?;
+    let (id, body) = rest.split_once('$').ok_or("not a crypt(3) hash")?;
+    let scheme = match id {
+        "y" => "yescrypt",
+        "gy" => "gost-yescrypt",
+        "7" => "scrypt",
+        "6" => "sha512crypt",
+        "5" => "sha256crypt",
+        "2a" | "2b" | "2x" | "2y" => "bcrypt",
+        "1" => "md5crypt",
+        _ => return Err("unknown crypt(3) scheme".into()),
+    };
+    if body.is_empty()
+        || !body
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'/' | b'$' | b',' | b'=' | b'-'))
+    {
+        return Err("malformed crypt(3) hash".into());
+    }
+    Ok(scheme)
+}
+
+/// Why a hash could not be applied. Either way the account stays locked.
+#[derive(Debug)]
+pub enum HashApplyError {
+    /// The platform's crypt(3) cannot verify this scheme (or the hash is malformed).
+    Unsupported(String),
+    Failed(String),
+}
+
+/// Does this box's crypt(3) know the hash's scheme? Asked through Perl's
+/// `crypt`, which is libc's/libxcrypt's - the very function PAM calls. The
+/// hash goes on stdin, never in argv. `None` = could not tell (no Perl).
+async fn platform_supports_hash(hash: &str) -> Option<bool> {
+    use tokio::io::AsyncWriteExt;
+    const PROBE: &str = r#"my $h = <STDIN>; chomp $h; my ($id) = $h =~ /^\$([^\$]+)\$/; my $r = crypt("probe", $h); exit((defined $r && defined $id && index($r, "\$$id\$") == 0) ? 0 : 3);"#;
+    let mut child = safe_command("perl")
+        .args(["-e", PROBE])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .ok()?;
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(format!("{hash}\n").as_bytes()).await;
+    }
+    let status = tokio::time::timeout(std::time::Duration::from_secs(20), child.wait()).await.ok()?.ok()?;
+    match status.code() {
+        Some(0) => Some(true),
+        Some(3) => Some(false),
+        _ => None,
+    }
+}
+
+/// Lock `uid`'s account (`usermod -L`). Best-effort, logged.
+pub async fn lock_account(uid: i32) {
+    let username = account_name(uid);
+    match safe_command_unsandboxed("usermod", &[]).args(["-L", &username]).output().await {
+        Ok(o) if o.status.success() => {}
+        Ok(o) => tracing::warn!("usermod -L {username} failed: {}", String::from_utf8_lossy(&o.stderr).trim()),
+        Err(e) => tracing::warn!("usermod -L {username} failed to run: {e}"),
+    }
+}
+
+/// Apply an existing crypt(3) hash (a HestiaCP `FTP_MD5`, yescrypt `$y$`) to
+/// `uid`'s account with `chpasswd -e`.
+///
+/// The `<user>:<hash>` line reaches `chpasswd` on its stdin through a 0600
+/// file under `/var/lib/dockpanel` (root only), never as an argument: the
+/// privileged escape ([`safe_command_unsandboxed`]) cannot pass a pipe, and an
+/// argument would sit in the transient unit's command line. The file is
+/// removed whatever the outcome. The hash is never logged.
+pub async fn set_password_hash(uid: i32, crypt_hash: &str) -> Result<(), HashApplyError> {
+    crypt_hash_scheme(crypt_hash).map_err(HashApplyError::Unsupported)?;
+    if platform_supports_hash(crypt_hash).await == Some(false) {
+        return Err(HashApplyError::Unsupported(
+            "this server's crypt(3) cannot verify the hash scheme".into(),
+        ));
+    }
+    let username = account_name(uid);
+    let dir = std::path::Path::new("/var/lib/dockpanel/sftp-chpasswd");
+    std::fs::create_dir_all(dir).map_err(|e| HashApplyError::Failed(format!("create {}: {e}", dir.display())))?;
+    let _ = std::fs::set_permissions(dir, std::os::unix::fs::PermissionsExt::from_mode(0o700));
+    let path = dir.join(format!("{}.in", uuid::Uuid::new_v4().simple()));
+    let write = || -> std::io::Result<()> {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&path)?;
+        f.write_all(format!("{username}:{crypt_hash}\n").as_bytes())
+    };
+    if let Err(e) = write() {
+        let _ = std::fs::remove_file(&path);
+        return Err(HashApplyError::Failed(format!("could not stage the hash: {e}")));
+    }
+    let path_s = path.to_string_lossy().to_string();
+    let out = safe_command_unsandboxed("sh", &[])
+        .args(["-c", "exec chpasswd -e < \"$1\"", "sh", &path_s])
+        .output()
+        .await;
+    let _ = std::fs::remove_file(&path);
+    match out {
+        Ok(o) if o.status.success() => Ok(()),
+        Ok(o) => Err(HashApplyError::Failed(format!(
+            "chpasswd -e failed for {username}: {}",
+            String::from_utf8_lossy(&o.stderr).trim()
+        ))),
+        Err(e) => Err(HashApplyError::Failed(format!("chpasswd failed to run: {e}"))),
+    }
+}
+// --- end import-hestia (05) ---
+
 fn jail_root(domain: &str) -> String {
     format!("/var/dockpanel-sftp/{domain}")
 }
@@ -76,8 +313,21 @@ async fn mount_unit_name(content_dir: &str) -> Result<String, String> {
 /// NOT idempotent on the user/mount-unit steps (`enable_sftp` on the backend
 /// already no-ops when `sftp_enabled` is already true, so this only ever runs
 /// once per site).
-pub async fn provision(domain: &str, uid: i32, gid: i32) -> Result<(), String> {
-    let username = sftp_username(uid);
+///
+/// `requested_username` (05-import-hestia D6): a custom account name instead
+/// of `sftp<uid>`, checked by [`resolve_username`] before anything is created
+/// and recorded in the owner marker for every later operation.
+pub async fn provision(
+    domain: &str,
+    uid: i32,
+    gid: i32,
+    requested_username: Option<&str>,
+) -> Result<(), ProvisionError> {
+    let username = resolve_username(uid, requested_username).await?;
+    provision_as(domain, uid, gid, username).await.map_err(ProvisionError::Failed)
+}
+
+async fn provision_as(domain: &str, uid: i32, gid: i32, username: String) -> Result<(), String> {
     let groupname = sftp_groupname(gid);
     let site_dir = format!("/var/www/{domain}");
     if !std::path::Path::new(&site_dir).exists() {
@@ -210,7 +460,7 @@ pub async fn provision(domain: &str, uid: i32, gid: i32) -> Result<(), String> {
     if let Err(e) = std::fs::create_dir_all(OWNER_MARKER_DIR) {
         return Err(format!("Failed to create {OWNER_MARKER_DIR}: {e}"));
     }
-    if let Err(e) = std::fs::write(owner_marker_path(uid), format!("Domain={domain}\n")) {
+    if let Err(e) = std::fs::write(owner_marker_path(uid), owner_marker_body(domain, &username)) {
         return Err(format!("Failed to write owner marker for uid {uid}: {e}"));
     }
 
@@ -232,7 +482,8 @@ pub async fn deprovision(domain: &str, uid: i32, gid: i32, last_sftp_site: bool)
         ));
     }
 
-    let username = sftp_username(uid);
+    // Read from the marker BEFORE it is removed below (custom names, D6).
+    let username = account_name(uid);
     let groupname = sftp_groupname(gid);
     let site_dir = format!("/var/www/{domain}");
 
@@ -294,7 +545,7 @@ pub async fn deprovision(domain: &str, uid: i32, gid: i32, last_sftp_site: bool)
     // deletion's own later pool-file removal (`nginx.rs::delete_site`) finds
     // nothing left and is a no-op, exactly like every other `if path.exists()`
     // step there already tolerates.
-    for version in ["8.1", "8.2", "8.3", "8.4", "8.5"] {
+    for &version in crate::services::php_pool::PHP_VERSIONS {
         let pool_path = format!("/etc/php/{version}/fpm/pool.d/{}.conf", domain.replace('.', "_"));
         if std::path::Path::new(&pool_path).exists() {
             if let Err(e) = std::fs::remove_file(&pool_path) {
@@ -364,7 +615,7 @@ pub async fn deprovision(domain: &str, uid: i32, gid: i32, last_sftp_site: bool)
 /// (unlike plaintext) is not sensitive to pass as a `usermod -p` argument;
 /// that is the entire reason hashing exists.
 pub async fn set_password(uid: i32, plaintext: &str) -> Result<(), String> {
-    let username = sftp_username(uid);
+    let username = account_name(uid);
     // NOT `ShaCrypt::hash_password()` - its auto-generated salt is
     // `password_hash`'s generic RECOMMENDED_SALT_LEN (16 RAW BYTES), which
     // base64-encodes to 22 characters. SHA-crypt's own spec caps the salt at
@@ -453,6 +704,58 @@ async fn reload_sshd_validated() -> Result<(), String> {
 mod tests {
     use super::*;
     use sha_crypt::PasswordVerifier;
+
+    // ── Custom names and hash import (05-import-hestia W4-S) ───────────
+
+    #[test]
+    fn hestia_ftp_names_are_valid_custom_usernames() {
+        for ok in ["adm-jim_x", "adm-jim_101jeux", "_svc", "a", "a.b-c_d9"] {
+            assert!(is_valid_custom_username(ok), "{ok}");
+        }
+        let long = "a".repeat(33);
+        for bad in ["", "Adm", "9abc", "-abc", ".abc", "a b", "a:b", "a/b", "a$", long.as_str()] {
+            assert!(!is_valid_custom_username(bad), "{bad:?}");
+        }
+        assert!(is_valid_custom_username(&"a".repeat(32)));
+    }
+
+    #[test]
+    fn reserved_names_and_the_panel_namespace_are_refused() {
+        assert_eq!(username_static_conflict("root", 2001), Some("reserved"));
+        assert_eq!(username_static_conflict("www-data", 2001), Some("reserved"));
+        assert_eq!(username_static_conflict("vmail", 2001), Some("reserved"));
+        assert_eq!(username_static_conflict("sftp2002", 2001), Some("panel_namespace"));
+        assert_eq!(username_static_conflict("sftpg2001", 2001), Some("panel_namespace"));
+        assert_eq!(username_static_conflict("sftp2001", 2001), None, "the uid's own default");
+        assert_eq!(username_static_conflict("sftpuser", 2001), None, "not digits: an ordinary name");
+        assert_eq!(username_static_conflict("adm-jim_x", 2001), None);
+        assert_eq!(username_static_conflict("Bad", 2001), Some("invalid"));
+    }
+
+    #[test]
+    fn the_owner_marker_keeps_the_domain_line_and_names_the_user() {
+        let body = owner_marker_body("x.tld", "adm-jim_x");
+        assert!(body.lines().any(|l| l == "Domain=x.tld"));
+        assert_eq!(crate::services::ownership::marker_user(&body).as_deref(), Some("adm-jim_x"));
+    }
+
+    #[test]
+    fn crypt_hashes_are_classified_by_scheme() {
+        // Synthetic shapes only - not real hashes.
+        assert_eq!(crypt_hash_scheme("$y$j9T$abcdefgh$ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789./ab"), Ok("yescrypt"));
+        assert_eq!(crypt_hash_scheme("$6$saltsalt$abc./XYZ"), Ok("sha512crypt"));
+        assert_eq!(crypt_hash_scheme("$6$rounds=5000$saltsalt$abc"), Ok("sha512crypt"));
+        assert_eq!(crypt_hash_scheme("$2y$10$abcdefghijklmnopqrstuv"), Ok("bcrypt"));
+        assert_eq!(crypt_hash_scheme("$1$salt$abc"), Ok("md5crypt"));
+        assert_eq!(crypt_hash_scheme("$gy$j9T$a$b"), Ok("gost-yescrypt"));
+        for bad in [
+            "", "plain", "$9$x$y", "$y$", "$y$a b", "$y$a:b", "$y$a\nb", "*", "!$6$a$b",
+            "{BLF-CRYPT}$2y$10$abc",
+        ] {
+            assert!(crypt_hash_scheme(bad).is_err(), "{bad:?}");
+        }
+        assert!(crypt_hash_scheme(&format!("$6${}", "a".repeat(260))).is_err());
+    }
 
     /// The live-verified bug this pins: `$6$rounds=5000$8mwPPcuR8m7wfnYuiMKDK.$...`
     /// (a real hash this code produced before the fix) has a 22-character

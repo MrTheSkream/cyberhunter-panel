@@ -288,6 +288,31 @@ pub fn sftp_user(uid: i32, domain: &str) -> Owner {
     )
 }
 
+/// The Linux account name recorded for the allocated SFTP uid `uid`.
+///
+/// A site may carry a custom SFTP name (05-import-hestia D6: a HestiaCP
+/// `FTP_USER` is kept), so `sftp<uid>` is no longer derivable from the uid
+/// alone. `provision` writes `User=<name>` beside `Domain=<d>` in the same
+/// marker; every later operation (password, password hash, teardown) resolves
+/// the name here, from the uid, never from a name a request carried. A marker
+/// written before custom names existed has no `User=` line: the default name.
+pub fn sftp_account_name(uid: i32) -> String {
+    std::fs::read_to_string(crate::services::sftp_accounts::owner_marker_path(uid))
+        .ok()
+        .and_then(|c| marker_user(&c))
+        .unwrap_or_else(|| crate::services::sftp_accounts::sftp_username(uid))
+}
+
+/// `User=<name>` of an SFTP owner marker, if present and well-formed.
+pub fn marker_user(content: &str) -> Option<String> {
+    content
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("User="))
+        .map(str::trim)
+        .filter(|n| crate::services::sftp_accounts::is_valid_custom_username(n))
+        .map(str::to_string)
+}
+
 /// Does the Traefik dynamic route file at `path` route `domain`?
 ///
 /// Both the plain and the TLS router emit the same `rule:` line, so one marker
@@ -579,6 +604,18 @@ mod tests {
         );
         assert_eq!(systemd_unit(&p, "example.community"), Owner::Ours);
         assert_eq!(systemd_unit(&p, "example.com"), Owner::Theirs);
+    }
+
+    #[test]
+    fn an_sftp_marker_names_its_user_and_an_old_one_names_none() {
+        assert_eq!(marker_user("Domain=x.tld\nUser=adm-jim_x\n").as_deref(), Some("adm-jim_x"));
+        assert_eq!(marker_user("Domain=x.tld\n"), None);
+        // A malformed name is not trusted: the caller falls back to sftp<uid>.
+        assert_eq!(marker_user("Domain=x.tld\nUser=Root;rm\n"), None);
+        // The extra line does not disturb the whole-line domain match.
+        let (_d, p) = tmpfile("Domain=x.tld\nUser=adm-jim_x\n");
+        assert_eq!(owner_by_lines(&p, &["Domain=x.tld".to_string()]), Owner::Ours);
+        assert_eq!(owner_by_lines(&p, &["Domain=adm-jim_x".to_string()]), Owner::Theirs);
     }
 
     #[test]

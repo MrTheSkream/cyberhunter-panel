@@ -65,6 +65,10 @@ pub struct SyncAccount {
     pub quota_mb: i32,
     pub enabled: bool,
     pub forward_to: Option<String>,
+    /// With `forward_to`: deliver to this mailbox AND forward (Hestia `FWD`
+    /// without `FWD_ONLY`). Absent = forward only, the historical behaviour.
+    #[serde(default)]
+    pub keep_copy: bool,
 }
 
 #[derive(Deserialize)]
@@ -175,21 +179,300 @@ pub fn router() -> Router<AppState> {
 }
 
 // --- import-hestia (05) ---
-// STUB(W4): step-0 skeletons (501); W4 replaces them (contract W4-A).
+// Contract W4-A. Mail of a staged HestiaCP backup. Parsing lives in
+// `services::hestia_mail`; nothing here logs a hash or a key.
+
+#[derive(Deserialize)]
+struct HestiaDomainRequest {
+    migration_id: String,
+    domain: String,
+}
+
+fn coded(status: StatusCode, msg: &str, code: &str) -> ApiErr {
+    (status, Json(serde_json::json!({ "error": msg, "code": code })))
+}
+
+fn valid_mail_domain(domain: &str) -> bool {
+    !domain.contains("..") && super::is_valid_domain(domain)
+}
 
 /// POST /mail/hestia/secrets
-async fn hestia_secrets() -> ApiErr {
-    super::not_implemented()
+///
+/// The ONLY route that returns mail secrets (mailbox hashes, DKIM private
+/// key), for the backend's import executor, which stores them encrypted /
+/// as Dovecot does. Never logged, here or by the caller.
+async fn hestia_secrets(
+    Json(body): Json<HestiaDomainRequest>,
+) -> Result<Json<serde_json::Value>, ApiErr> {
+    let domain = body.domain.trim().to_ascii_lowercase();
+    if !valid_mail_domain(&domain) {
+        return Err(err(StatusCode::BAD_REQUEST, "Invalid domain format"));
+    }
+    let secrets = crate::services::hestia_mail::read_domain(&body.migration_id, &domain)
+        .map_err(|e| coded(StatusCode::NOT_FOUND, &e, "not_in_backup"))?;
+    Ok(Json(serde_json::to_value(&secrets).unwrap_or_else(|_| serde_json::json!({}))))
+}
+
+#[derive(Deserialize)]
+struct DkimImportRequest {
+    domain: String,
+    selector: String,
+    private_key_pem: String,
+}
+
+/// RSA modulus size from `openssl rsa -pubin -noout -text` (public half only).
+fn rsa_bits(text: &str) -> Option<u32> {
+    let i = text.find("Public-Key: (")?;
+    text[i + 13..].split_whitespace().next()?.parse().ok()
 }
 
 /// POST /mail/dkim/import
-async fn dkim_import() -> ApiErr {
-    super::not_implemented()
+///
+/// Installs an existing DKIM key (Hestia's, selector kept) instead of
+/// generating one: `/etc/dockpanel/dkim/<d>/<selector>.private` (0600,
+/// `opendkim`), its `.public`, then the signing tables. RSA >= 1024 bits.
+async fn dkim_import(
+    Json(body): Json<DkimImportRequest>,
+) -> Result<Json<serde_json::Value>, ApiErr> {
+    let domain = body.domain.trim().to_ascii_lowercase();
+    let selector = body.selector.trim();
+    if !valid_mail_domain(&domain) {
+        return Err(err(StatusCode::BAD_REQUEST, "Invalid domain format"));
+    }
+    if !crate::services::hestia_mail::is_valid_selector(selector) {
+        return Err(err(StatusCode::BAD_REQUEST, "Invalid selector format"));
+    }
+    let pem = body.private_key_pem.trim();
+    if pem.len() > 16 * 1024 || !pem.starts_with("-----BEGIN") || !pem.contains("PRIVATE KEY-----") {
+        return Err(err(StatusCode::BAD_REQUEST, "private_key_pem is not a PEM private key"));
+    }
+
+    let key_dir = format!("{DKIM_KEYS_DIR}/{domain}");
+    tokio::fs::create_dir_all(&key_dir).await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &format!("Failed to create DKIM dir: {e}")))?;
+    let private_path = format!("{key_dir}/{selector}.private");
+    let public_path = format!("{key_dir}/{selector}.public");
+    let tmp_key = format!("{private_path}.import");
+    let tmp_pub = format!("{public_path}.import");
+
+    // Staged 0600 from the first byte, never world-readable.
+    let write = {
+        let tmp_key = tmp_key.clone();
+        let pem = format!("{pem}\n");
+        tokio::task::spawn_blocking(move || -> std::io::Result<()> {
+            use std::io::Write;
+            use std::os::unix::fs::OpenOptionsExt;
+            let _ = std::fs::remove_file(&tmp_key);
+            let mut f = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&tmp_key)?;
+            f.write_all(pem.as_bytes())
+        })
+        .await
+    };
+    let cleanup = |a: &str, b: &str| {
+        let _ = std::fs::remove_file(a);
+        let _ = std::fs::remove_file(b);
+    };
+    if !matches!(write, Ok(Ok(()))) {
+        cleanup(&tmp_key, &tmp_pub);
+        return Err(err(StatusCode::INTERNAL_SERVER_ERROR, "Failed to stage the DKIM key"));
+    }
+
+    let out = safe_command("openssl")
+        .args(["rsa", "-in", &tmp_key, "-pubout", "-out", &tmp_pub])
+        .output()
+        .await;
+    if !matches!(&out, Ok(o) if o.status.success()) {
+        cleanup(&tmp_key, &tmp_pub);
+        return Err(err(StatusCode::BAD_REQUEST, "private_key_pem is not a usable RSA key"));
+    }
+    let bits = safe_command("openssl")
+        .args(["rsa", "-pubin", "-in", &tmp_pub, "-noout", "-text"])
+        .output()
+        .await
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| rsa_bits(&String::from_utf8_lossy(&o.stdout)));
+    match bits {
+        Some(b) if b >= 1024 => {}
+        _ => {
+            cleanup(&tmp_key, &tmp_pub);
+            return Err(err(StatusCode::BAD_REQUEST, "DKIM key must be RSA of at least 1024 bits"));
+        }
+    }
+    let public_key = match tokio::fs::read_to_string(&tmp_pub).await {
+        Ok(p) => p,
+        Err(e) => {
+            cleanup(&tmp_key, &tmp_pub);
+            return Err(err(StatusCode::INTERNAL_SERVER_ERROR, &format!("Failed to read public key: {e}")));
+        }
+    };
+    if tokio::fs::rename(&tmp_key, &private_path).await.is_err()
+        || tokio::fs::rename(&tmp_pub, &public_path).await.is_err()
+    {
+        cleanup(&tmp_key, &tmp_pub);
+        return Err(err(StatusCode::INTERNAL_SERVER_ERROR, "Failed to install the DKIM key"));
+    }
+    let _ = safe_command("chmod").args(["600", &private_path]).output().await;
+    let _ = safe_command("chown").args(["opendkim:opendkim", &private_path]).output().await;
+    if let Err(e) = rebuild_dkim_tables().await {
+        tracing::warn!("DKIM key imported for {domain} but tables not rebuilt: {e}");
+    }
+    tracing::info!("DKIM key imported for {domain} (selector: {selector})");
+    Ok(Json(serde_json::json!({ "public_key": public_key, "selector": selector })))
 }
 
-/// POST /mail/hestia/import-maildir
-async fn hestia_import_maildir() -> ApiErr {
-    super::not_implemented()
+#[derive(Deserialize)]
+struct MaildirImportRequest {
+    migration_id: String,
+    domain: String,
+    account: String,
+}
+
+/// POST /mail/hestia/import-maildir -> 202 `{job_id}`
+///
+/// Extracts `<account>/` of `mail/<d>/accounts.tar.{gz,zst}` into
+/// `/var/vmail/<d>/<account>/` (strip 1, `--keep-newer-files`: a relaunch
+/// never overwrites what Dovecot wrote since), `chown -R vmail:vmail`, then
+/// `doveadm force-resync` (non-fatal). Report `{bytes, messages_estimate}`.
+async fn hestia_import_maildir(
+    Json(body): Json<MaildirImportRequest>,
+) -> Result<(StatusCode, Json<serde_json::Value>), ApiErr> {
+    let domain = body.domain.trim().to_ascii_lowercase();
+    let account = body.account.trim().to_ascii_lowercase();
+    if !valid_mail_domain(&domain) {
+        return Err(err(StatusCode::BAD_REQUEST, "Invalid domain format"));
+    }
+    if !crate::services::hestia_mail::is_valid_account(&account) {
+        return Err(err(StatusCode::BAD_REQUEST, "Invalid account"));
+    }
+    crate::services::migration::staging_dir(&body.migration_id)
+        .map_err(|e| err(StatusCode::BAD_REQUEST, &e))?;
+    let key = format!("{account}@{domain}");
+    let migration_id = body.migration_id.clone();
+    let job_id = crate::services::migration_jobs::spawn("maildir", &key, move |job| async move {
+        import_maildir_job(job, migration_id, domain, account).await
+    });
+    Ok((StatusCode::ACCEPTED, Json(serde_json::json!({ "job_id": job_id }))))
+}
+
+/// Stream one blob member into `tar -x` for one account; returns bytes read.
+async fn extract_account(
+    job: &crate::services::migration_jobs::JobHandle,
+    migration_id: &str,
+    member: &str,
+    account: &str,
+    dest: &str,
+) -> Result<u64, String> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut reader = crate::services::migration::spawn_member_reader(migration_id, member).await?;
+    let mut src = reader.stdout.take().ok_or("member reader has no stdout")?;
+    let mut tar = safe_command("tar")
+        .args([
+            "-x", "--no-same-owner", "--keep-newer-files", "--strip-components=1",
+            "-C", dest, "--", account,
+        ])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|e| format!("tar failed to start: {e}"))?;
+    let mut sink = tar.stdin.take().ok_or("tar has no stdin")?;
+    let mut buf = vec![0u8; 256 * 1024];
+    let mut done: u64 = 0;
+    let mut last = std::time::Instant::now();
+    loop {
+        let n = src.read(&mut buf).await.map_err(|e| format!("read failed: {e}"))?;
+        if n == 0 {
+            break;
+        }
+        if sink.write_all(&buf[..n]).await.is_err() {
+            break; // tar exited early: its status says why
+        }
+        done += n as u64;
+        if last.elapsed() >= std::time::Duration::from_secs(2) {
+            job.progress("extract", done, 0, account);
+            last = std::time::Instant::now();
+        }
+    }
+    drop(sink);
+    let out = tar.wait_with_output().await.map_err(|e| format!("tar failed: {e}"))?;
+    let reader_ok = reader.wait().await.map(|s| s.success()).unwrap_or(false);
+    if !out.status.success() {
+        let e = String::from_utf8_lossy(&out.stderr);
+        return Err(format!("tar failed for {member}: {}", e.trim().chars().take(400).collect::<String>()));
+    }
+    if !reader_ok {
+        return Err(format!("could not read {member} from the backup"));
+    }
+    Ok(done)
+}
+
+async fn import_maildir_job(
+    job: crate::services::migration_jobs::JobHandle,
+    migration_id: String,
+    domain: String,
+    account: String,
+) -> Result<serde_json::Value, String> {
+    let dest = format!("{VMAIL_DIR}/{domain}/{account}");
+    tokio::fs::create_dir_all(&dest).await.map_err(|e| format!("Failed to create {dest}: {e}"))?;
+    job.progress("extract", 0, 0, &account);
+
+    let mut bytes = None;
+    let mut first_err = None;
+    for member in crate::services::hestia_mail::maildir_blob_candidates(&migration_id, &domain) {
+        match extract_account(&job, &migration_id, &member, &account, &dest).await {
+            Ok(b) => {
+                bytes = Some(b);
+                break;
+            }
+            Err(e) => {
+                if first_err.is_none() {
+                    first_err = Some(e);
+                }
+            }
+        }
+    }
+    let Some(bytes) = bytes else {
+        return Err(first_err.unwrap_or_else(|| "no maildir archive in the backup".into()));
+    };
+
+    job.progress("chown", bytes, bytes, &account);
+    let out = safe_command("chown").args(["-R", "vmail:vmail", &dest]).output().await;
+    if !matches!(&out, Ok(o) if o.status.success()) {
+        return Err(format!("chown -R vmail:vmail {dest} failed"));
+    }
+
+    job.progress("resync", bytes, bytes, &account);
+    let user = format!("{account}@{domain}");
+    match safe_command("doveadm").args(["force-resync", "-u", &user, "*"]).output().await {
+        Ok(o) if o.status.success() => {}
+        Ok(o) => job.warn(format!(
+            "doveadm force-resync for {user} failed (Dovecot rebuilds its indexes on first access): {}",
+            String::from_utf8_lossy(&o.stderr).trim().chars().take(200).collect::<String>()
+        )),
+        Err(e) => job.warn(format!("doveadm force-resync for {user} could not run: {e}")),
+    }
+
+    let messages = {
+        let p = std::path::PathBuf::from(&dest);
+        tokio::task::spawn_blocking(move || crate::services::hestia_mail::count_messages(&p))
+            .await
+            .unwrap_or(0)
+    };
+    Ok(serde_json::json!({ "bytes": bytes, "messages_estimate": messages }))
+}
+
+#[cfg(test)]
+mod hestia_import_tests {
+    use super::rsa_bits;
+
+    #[test]
+    fn rsa_size_is_read_from_the_public_text() {
+        assert_eq!(rsa_bits("Public-Key: (2048 bit)\nModulus:\n    00:ab"), Some(2048));
+        assert_eq!(rsa_bits("RSA Public-Key: (1024 bit)\n"), Some(1024));
+        assert_eq!(rsa_bits("garbage"), None);
+    }
 }
 // --- end import-hestia (05) ---
 
@@ -1150,6 +1433,24 @@ fn local_part_is_safe(addr: &str) -> bool {
     }
 }
 
+/// The `virtual_alias_maps` row of a mailbox that forwards, if any.
+///
+/// Forward only: `email<TAB>fwd` (the mailbox receives nothing). With
+/// `keep_copy`: `email<TAB>email,fwd` - the address expands to itself AND the
+/// target, so the local mailbox keeps a copy (Postfix does not re-expand an
+/// address that appears in its own expansion).
+fn forward_alias_line(acc: &SyncAccount) -> Option<String> {
+    let fwd = acc.forward_to.as_deref().map(str::trim).filter(|f| !f.is_empty())?;
+    if !acc.enabled {
+        return None;
+    }
+    Some(if acc.keep_copy {
+        format!("{}\t{},{}", acc.email, acc.email, fwd)
+    } else {
+        format!("{}\t{}", acc.email, fwd)
+    })
+}
+
 async fn sync_config(
     Json(body): Json<SyncRequest>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
@@ -1271,13 +1572,7 @@ async fn sync_config(
         .map(|a| format!("{}\t{}", a.source, a.destination))
         .collect();
     // Add forwarding from accounts
-    for acc in &body.accounts {
-        if let Some(fwd) = &acc.forward_to {
-            if !fwd.is_empty() && acc.enabled {
-                alias_lines.push(format!("{}\t{}", acc.email, fwd));
-            }
-        }
-    }
+    alias_lines.extend(body.accounts.iter().filter_map(forward_alias_line));
     write_file_atomic(POSTFIX_VIRTUAL_ALIAS, &alias_lines.join("\n")).await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &format!("Failed to write virtual_alias_maps: {e}")))?;
 
@@ -2942,7 +3237,47 @@ mod tests {
             quota_mb: 100,
             enabled,
             forward_to: None,
+            keep_copy: false,
         }
+    }
+
+    // ── Forward + local copy (05-import-hestia W4-B) ───────────────────
+
+    #[test]
+    fn a_forward_without_copy_is_the_historical_single_target_row() {
+        let mut a = account("info@d.be", true);
+        a.forward_to = Some("x@other.org".into());
+        assert_eq!(forward_alias_line(&a).as_deref(), Some("info@d.be\tx@other.org"));
+    }
+
+    #[test]
+    fn a_forward_with_copy_also_delivers_to_the_mailbox_itself() {
+        let mut a = account("info@d.be", true);
+        a.forward_to = Some("x@other.org".into());
+        a.keep_copy = true;
+        assert_eq!(forward_alias_line(&a).as_deref(), Some("info@d.be\tinfo@d.be,x@other.org"));
+    }
+
+    #[test]
+    fn no_forward_or_a_disabled_mailbox_gives_no_row_even_with_copy() {
+        let mut a = account("info@d.be", true);
+        a.keep_copy = true;
+        assert_eq!(forward_alias_line(&a), None);
+        a.forward_to = Some("  ".into());
+        assert_eq!(forward_alias_line(&a), None);
+        a.forward_to = Some("x@other.org".into());
+        a.enabled = false;
+        assert_eq!(forward_alias_line(&a), None);
+    }
+
+    #[test]
+    fn keep_copy_defaults_to_false_for_an_older_backend() {
+        let a: SyncAccount = serde_json::from_value(serde_json::json!({
+            "email": "a@d.be", "password_hash": "{PLAIN}x", "quota_mb": 1, "enabled": true,
+            "forward_to": "b@e.be"
+        }))
+        .unwrap();
+        assert!(!a.keep_copy);
     }
 
     /// Look up a key the way Postfix does: the full address first, then
