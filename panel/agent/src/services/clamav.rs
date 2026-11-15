@@ -46,6 +46,9 @@ pub const SETTINGS: &[(&str, &str)] = &[
     ("MaxFileSize", "25M"),
     ("MaxScanSize", "100M"),
     ("StreamMaxLength", "26M"),
+    // Debian ships `EnableVersionCommand false` (clamav 1.5): without VERSION the
+    // panel cannot show the signature version and date.
+    ("EnableVersionCommand", "yes"),
     ("ConcurrentDatabaseReload", "no"),
     ("LocalSocketMode", "660"),
     ("LocalSocketGroup", "clamav"),
@@ -831,7 +834,8 @@ MaxThreads 12\n\
 MaxFileSize 25M\n\
 StreamMaxLength 25M\n\
 maxthreads 4\n\
-MaxScanSize 100M\n";
+MaxScanSize 100M\n\
+EnableVersionCommand false\n";
 
     #[test]
     fn settings_replace_in_place_drop_duplicates_and_append_missing() {
@@ -846,6 +850,7 @@ MaxScanSize 100M\n";
         assert_eq!(out.matches("MaxThreads 2").count(), 1);
         assert!(!out.to_lowercase().contains("maxthreads 4"), "duplicate dropped");
         assert!(out.ends_with("ConcurrentDatabaseReload no\n"), "missing key appended");
+        assert!(out.contains("EnableVersionCommand yes") && !out.contains("EnableVersionCommand false"));
         for (k, v) in SETTINGS {
             let n = out.lines().filter(|l| !l.starts_with('#') && l.split_whitespace().next() == Some(k)).count();
             assert_eq!(n, 1, "{k} once");
