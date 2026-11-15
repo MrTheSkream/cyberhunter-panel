@@ -68,7 +68,22 @@ pub struct CreateDbRequest {
     pub stack_id: Option<Uuid>,
     pub name: String,
     pub engine: Option<String>,
+    /// `container` (default) or `local` (shared local MariaDB server, 05-import-hestia).
+    pub kind: Option<String>,
 }
+
+/// `container_name` the agent's `/db-backups/*` endpoints expect for a database:
+/// `"local"` routes them to the shared local MariaDB server (W2-A).
+pub(crate) fn container_ref(kind: &str, name: &str) -> String {
+    if kind == "local" {
+        "local".to_string()
+    } else {
+        format!("dockpanel-db-{name}")
+    }
+}
+
+/// `SELECT` list matching [`Database`], for a `databases d` alias.
+const DB_COLUMNS: &str = "d.id, d.site_id, d.stack_id, d.name, d.engine, d.db_user, d.container_id, d.port, d.created_at, d.kind, d.imported_hash";
 
 #[derive(serde::Serialize, sqlx::FromRow)]
 pub struct Database {
@@ -81,6 +96,10 @@ pub struct Database {
     pub container_id: Option<String>,
     pub port: Option<i32>,
     pub created_at: chrono::DateTime<chrono::Utc>,
+    /// `container` or `local`.
+    pub kind: String,
+    /// The password is only known as the hash imported from HestiaCP.
+    pub imported_hash: bool,
 }
 
 /// GET /api/databases - List all databases for the current user.
@@ -100,16 +119,16 @@ pub async fn list(
     // non-null owner FK (chk_databases_owner), so each row matches at most one
     // owner across the two joins and COALESCE picks whichever is present - one
     // query covers site-owned and stack-owned databases without a UNION.
-    let dbs: Vec<Database> = sqlx::query_as(
-        "SELECT d.id, d.site_id, d.stack_id, d.name, d.engine, d.db_user, d.container_id, d.port, d.created_at \
+    let dbs: Vec<Database> = sqlx::query_as(&format!(
+        "SELECT {DB_COLUMNS} \
          FROM databases d \
          LEFT JOIN sites s ON d.site_id = s.id \
          LEFT JOIN docker_stacks st ON d.stack_id = st.id \
          WHERE (COALESCE(s.user_id, st.user_id) = $1 OR EXISTS (SELECT 1 FROM users u, servers sv \
          WHERE u.id = $1 AND u.role = 'admin' AND sv.id = COALESCE(s.server_id, st.server_id) \
          AND (sv.is_local OR sv.user_id = u.id))) \
-         AND COALESCE(s.server_id, st.server_id) = $2 ORDER BY d.created_at DESC LIMIT $3 OFFSET $4",
-    )
+         AND COALESCE(s.server_id, st.server_id) = $2 ORDER BY d.created_at DESC LIMIT $3 OFFSET $4"
+    ))
     .bind(claims.sub)
     .bind(server_id)
     .bind(limit)
@@ -181,21 +200,28 @@ pub async fn create(
     let agent =
         crate::helpers::agent_for_site_server(&state, owner_server_id, &owner_label).await?;
 
+    let kind = body.kind.as_deref().unwrap_or("container");
+    if !["container", "local"].contains(&kind) {
+        return Err(err(StatusCode::BAD_REQUEST, "kind must be container or local"));
+    }
+
     // Hard per-account cap on total databases (independent of reseller quota) so a
     // single tenant cannot exhaust the shared, host-wide DB port pool / host RAM.
     // Counts both site-owned and stack-owned rows (COALESCE - chk_databases_owner
-    // guarantees exactly one of the two joins matches per row).
+    // guarantees exactly one of the two joins matches per row). Only CONTAINERS count
+    // (05-import-hestia D1): a `local` database uses no port and no container, and
+    // an imported HestiaCP account brings 30 of them at once.
     let (db_count,): (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM databases d \
          LEFT JOIN sites s ON d.site_id = s.id \
          LEFT JOIN docker_stacks st ON d.stack_id = st.id \
-         WHERE COALESCE(s.user_id, st.user_id) = $1",
+         WHERE COALESCE(s.user_id, st.user_id) = $1 AND d.kind = 'container'",
     )
     .bind(claims.sub)
     .fetch_one(&state.db)
     .await
     .map_err(|e| internal_error("create databases", e))?;
-    if db_count >= MAX_DATABASES_PER_USER {
+    if kind == "container" && db_count >= MAX_DATABASES_PER_USER {
         return Err(err(
             StatusCode::FORBIDDEN,
             &format!("Database limit reached ({MAX_DATABASES_PER_USER} per account)"),
@@ -274,6 +300,10 @@ pub async fn create(
         ));
     }
 
+    if kind == "local" {
+        return create_local(&state, &claims, &agent, &body, owner_server_id, engine).await;
+    }
+
     // Generate password and find available port
     let password = uuid::Uuid::new_v4().to_string().replace('-', "");
     let port = find_available_port(&state, engine).await?;
@@ -293,7 +323,7 @@ pub async fn create(
     let db_record: Database = match sqlx::query_as(
         "INSERT INTO databases (site_id, stack_id, name, engine, db_user, db_password_enc, container_id, port) \
          VALUES ($1, $2, $3, $4, $5, $6, '', $7) \
-         RETURNING id, site_id, stack_id, name, engine, db_user, container_id, port, created_at",
+         RETURNING id, site_id, stack_id, name, engine, db_user, container_id, port, created_at, kind, imported_hash",
     )
     .bind(body.site_id)
     .bind(body.stack_id)
@@ -365,6 +395,94 @@ pub async fn create(
     Ok((StatusCode::CREATED, Json(db_record)))
 }
 
+/// `true` when the shared local MariaDB server answers on this host.
+async fn local_server_running(agent: &crate::services::agent::AgentHandle) -> bool {
+    agent
+        .get("/localdb/status")
+        .await
+        .ok()
+        .and_then(|v| v.get("running").and_then(|r| r.as_bool()))
+        .unwrap_or(false)
+}
+
+/// POST /api/databases with `kind: "local"`: a database on the shared local
+/// MariaDB server of the site's host, with a generated password shown once.
+async fn create_local(
+    state: &AppState,
+    claims: &crate::auth::Claims,
+    agent: &crate::services::agent::AgentHandle,
+    body: &CreateDbRequest,
+    server_id: Option<Uuid>,
+    engine: &str,
+) -> Result<(StatusCode, Json<Database>), ApiError> {
+    let site_id = body
+        .site_id
+        .ok_or_else(|| err(StatusCode::BAD_REQUEST, "A local database belongs to a site"))?;
+    if !matches!(engine, "mariadb" | "mysql") {
+        return Err(err(StatusCode::BAD_REQUEST, "A local database uses MariaDB"));
+    }
+    if !local_server_running(agent).await {
+        return Err(crate::error::err_coded(
+            StatusCode::CONFLICT,
+            "The local MariaDB server is not installed on this server",
+            "local_db_not_installed",
+        ));
+    }
+    // One namespace per SERVER on the shared instance (checked here, not by index).
+    let taken: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM databases d JOIN sites s ON s.id = d.site_id \
+         WHERE d.kind = 'local' AND (d.name = $1 OR d.db_user = $1) AND s.server_id IS NOT DISTINCT FROM $2)",
+    )
+    .bind(&body.name)
+    .bind(server_id)
+    .fetch_one(&state.db)
+    .await
+    .map_err(|e| internal_error("create databases", e))?;
+    if taken {
+        return Err(err(StatusCode::CONFLICT, "A local database with this name already exists on this server"));
+    }
+
+    let password = uuid::Uuid::new_v4().to_string().replace('-', "");
+    let encrypted = crate::services::secrets_crypto::encrypt_credential(&password, &state.config.jwt_secret)
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &format!("Encryption failed: {e}")))?;
+    // Agent FIRST, row second: the agent refuses (409) a schema or account that
+    // already exists on the server (e.g. one left by a deleted site), so no panel
+    // row can ever point at a database it did not create. No port to reserve here.
+    let agent_body = serde_json::json!({ "name": body.name, "db_user": body.name, "password": password });
+    agent
+        .post("/localdb/databases", Some(agent_body))
+        .await
+        .map_err(|e| agent_error("Database creation", e))?;
+    let row: Database = match sqlx::query_as(
+        "INSERT INTO databases (site_id, name, engine, db_user, db_password_enc, container_id, port, kind, imported_hash) \
+         VALUES ($1, $2, 'mariadb', $2, $3, NULL, NULL, 'local', false) \
+         RETURNING id, site_id, stack_id, name, engine, db_user, container_id, port, created_at, kind, imported_hash",
+    )
+    .bind(site_id)
+    .bind(&body.name)
+    .bind(&encrypted)
+    .fetch_one(&state.db)
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            let _ = agent
+                .post(
+                    &format!("/localdb/databases/{}/drop", body.name),
+                    Some(serde_json::json!({ "db_user": body.name, "drop_user_if_unused": true })),
+                )
+                .await;
+            return Err(internal_error("create databases", e));
+        }
+    };
+    crate::services::activity::log_activity(
+        &state.db, claims.sub, &claims.email, "database.create",
+        Some("database"), Some(&body.name), Some("local"), None, claims.key_id,
+    ).await;
+    tracing::info!("Local database created: {}", body.name);
+    Ok((StatusCode::CREATED, Json(row)))
+}
+
 /// GET /api/databases/{id}/credentials - Get database connection details.
 pub async fn credentials(
     State(state): State<AppState>,
@@ -373,8 +491,8 @@ pub async fn credentials(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     // Admin-widened to match create()/list() - see the v2.216.0 audit note on list().
     // LEFT JOIN both owner tables + COALESCE, same pattern as list() - see its comment.
-    let row: Option<(String, String, String, Option<i32>, Option<String>)> = sqlx::query_as(
-        "SELECT d.name, d.engine, d.db_password_enc, d.port, d.container_id \
+    let row: Option<(String, String, String, Option<i32>, Option<String>, String, String, bool)> = sqlx::query_as(
+        "SELECT d.name, d.engine, d.db_password_enc, d.port, d.container_id, d.kind, d.db_user, d.imported_hash \
          FROM databases d \
          LEFT JOIN sites s ON d.site_id = s.id \
          LEFT JOIN docker_stacks st ON d.stack_id = st.id \
@@ -388,8 +506,36 @@ pub async fn credentials(
     .await
     .map_err(|e| internal_error("credentials", e))?;
 
-    let (name, engine, password_enc, port, container_id) =
+    let (name, engine, password_enc, port, container_id, kind, db_user, imported_hash) =
         row.ok_or_else(|| err(StatusCode::NOT_FOUND, "Database not found"))?;
+
+    if kind == "local" {
+        let known = !imported_hash && !password_enc.is_empty();
+        let password = known.then(|| {
+            crate::services::secrets_crypto::decrypt_credential_or_legacy(&password_enc, &state.config.jwt_secret)
+        });
+        let connection_string = password
+            .as_ref()
+            .map(|p| format!("mysql://{db_user}:{p}@localhost:3306/{name}"));
+        return Ok(Json(serde_json::json!({
+            "kind": "local",
+            "host": "localhost",
+            "port": 3306,
+            "socket": "/run/mysqld/mysqld.sock",
+            "database": name,
+            "username": db_user,
+            "user": db_user,
+            "password": password,
+            "password_known": known,
+            "engine": engine,
+            "connection_string": connection_string,
+            "note": if known {
+                "Shared local MariaDB server: connect through localhost (socket) or 127.0.0.1:3306."
+            } else {
+                "The password was imported as a hash and is not known to the panel. The site keeps working with its old password; reset it to get a new one."
+            },
+        })));
+    }
 
     // Decrypt password (with legacy plaintext fallback for pre-encryption records)
     let password = crate::services::secrets_crypto::decrypt_credential_or_legacy(&password_enc, &state.config.jwt_secret);
@@ -433,9 +579,9 @@ pub async fn remove(
     // container is orphaned on its own host with its row already gone.
     // Admin-widened to match create()/list() - see the v2.216.0 audit note on list().
     // LEFT JOIN both owner tables + COALESCE, same pattern as list() - see its comment.
-    let db: Option<(Uuid, String, Option<String>, Option<Uuid>, String)> = sqlx::query_as(
+    let db: Option<(Uuid, String, Option<String>, Option<Uuid>, String, String, String)> = sqlx::query_as(
         "SELECT d.id, d.name, d.container_id, COALESCE(s.server_id, st.server_id), \
-         COALESCE(s.domain, st.name) FROM databases d \
+         COALESCE(s.domain, st.name), d.kind, d.db_user FROM databases d \
          LEFT JOIN sites s ON d.site_id = s.id \
          LEFT JOIN docker_stacks st ON d.stack_id = st.id \
          WHERE d.id = $1 AND (COALESCE(s.user_id, st.user_id) = $2 OR EXISTS (SELECT 1 FROM users u, servers sv \
@@ -448,14 +594,22 @@ pub async fn remove(
     .await
     .map_err(|e| internal_error("remove databases", e))?;
 
-    let (_, name, container_id, owner_server_id, owner_label) =
+    let (_, name, container_id, owner_server_id, owner_label, kind, db_user) =
         db.ok_or_else(|| err(StatusCode::NOT_FOUND, "Database not found"))?;
 
     let agent =
         crate::helpers::agent_for_site_server(&state, owner_server_id, &owner_label).await?;
 
-    // Remove container via agent (must succeed before DB deletion)
-    if let Some(cid) = &container_id {
+    if kind == "local" {
+        // Drop the database on the shared server first (must succeed before the row goes).
+        agent
+            .post(
+                &format!("/localdb/databases/{name}/drop"),
+                Some(serde_json::json!({ "db_user": db_user, "drop_user_if_unused": true })),
+            )
+            .await
+            .map_err(|e| agent_error("Database removal", e))?;
+    } else if let Some(cid) = &container_id {
         let agent_path = format!("/databases/{cid}");
         agent.delete(&agent_path).await
             .map_err(|e| agent_error("Database removal", e))?;
@@ -468,11 +622,11 @@ pub async fn remove(
         .await
         .map_err(|e| internal_error("remove databases", e))?;
 
-    // Decrement reseller database counter
-    let _ = sqlx::query(
+    // Decrement reseller database counter (local databases never reserve a slot)
+    if kind != "local" { let _ = sqlx::query(
         "UPDATE reseller_profiles SET used_databases = GREATEST(used_databases - 1, 0), updated_at = NOW() \
          WHERE user_id = (SELECT reseller_id FROM users WHERE id = $1 AND reseller_id IS NOT NULL)"
-    ).bind(claims.sub).execute(&state.db).await;
+    ).bind(claims.sub).execute(&state.db).await; }
 
     purge_dumps_if_unclaimed(&state, &agent, &name, owner_server_id).await;
 
@@ -576,15 +730,16 @@ async fn get_db_info(
     state: &AppState,
     id: Uuid,
     user_id: Uuid,
-) -> Result<(String, String, String, i32, Option<Uuid>), ApiError> {
+) -> Result<DbInfo, ApiError> {
     // Admin-widened to match create()/list() - see the v2.216.0 audit note on list().
     // This is the shared chokepoint for tables/table_schema/query/table_indexes/
     // foreign_keys/schema_overview/update_pitr_config/pitr_restore/reset_password/
     // dumps/import - one fix here covers all 11 callers.
     // LEFT JOIN both owner tables + COALESCE, same pattern as list() - see its comment.
-    let row: Option<(String, String, String, Option<i32>, Option<String>, Option<Uuid>)> = sqlx::query_as(
+    #[allow(clippy::type_complexity)]
+    let row: Option<(String, String, String, Option<i32>, Option<String>, Option<Uuid>, String, String, bool)> = sqlx::query_as(
         "SELECT d.name, d.engine, d.db_password_enc, d.port, d.container_id, \
-         COALESCE(s.server_id, st.server_id) \
+         COALESCE(s.server_id, st.server_id), d.kind, d.db_user, d.imported_hash \
          FROM databases d \
          LEFT JOIN sites s ON d.site_id = s.id \
          LEFT JOIN docker_stacks st ON d.stack_id = st.id \
@@ -598,7 +753,7 @@ async fn get_db_info(
     .await
     .map_err(|e| internal_error("remove databases", e))?;
 
-    let (name, engine, password_enc, port, container_id, site_server_id) =
+    let (name, engine, password_enc, port, container_id, site_server_id, kind, db_user, imported_hash) =
         row.ok_or_else(|| err(StatusCode::NOT_FOUND, "Database not found"))?;
     // Security (H1, v2.19.0): every exec/reset path resolves the target container by
     // the (per-site, NON-unique) name `dockpanel-db-{name}`. create() inserts the row
@@ -608,13 +763,68 @@ async fn get_db_info(
     // Docker's global name uniqueness guarantees a row with a NON-EMPTY container_id
     // owns its uniquely-named container, so refusing to operate on an empty container_id
     // closes the cross-tenant reset/query race for every get_db_info caller at once.
-    if container_id.as_deref().unwrap_or("").is_empty() {
+    // A `local` row has no container by design (chk_databases_local_shape); its name
+    // is unique per server on the shared instance, checked at creation and import.
+    if kind != "local" && container_id.as_deref().unwrap_or("").is_empty() {
         return Err(err(StatusCode::NOT_FOUND, "Database not found"));
     }
-    let port = port.unwrap_or(5432);
+    let port = port.unwrap_or(if kind == "local" { 3306 } else { 5432 });
     // Decrypt password for agent use (with legacy plaintext fallback)
     let password = crate::services::secrets_crypto::decrypt_credential_or_legacy(&password_enc, &state.config.jwt_secret);
-    Ok((name, engine, password, port, site_server_id))
+    Ok(DbInfo { name, engine, password, port, server_id: site_server_id, kind, db_user, imported_hash })
+}
+
+/// One database as the handlers below need it (see [`get_db_info`]).
+struct DbInfo {
+    name: String,
+    engine: String,
+    /// Decrypted; empty for an imported `local` row whose password is unknown.
+    password: String,
+    #[allow(dead_code)]
+    port: i32,
+    server_id: Option<Uuid>,
+    kind: String,
+    db_user: String,
+    #[allow(dead_code)]
+    imported_hash: bool,
+}
+
+impl DbInfo {
+    fn is_local(&self) -> bool {
+        self.kind == "local"
+    }
+}
+
+/// Run one SQL statement against a database: through the shared local server's
+/// temporary per-database account (`/localdb/query`) or inside its container.
+async fn run_sql(
+    agent: &crate::services::agent::AgentHandle,
+    db: &DbInfo,
+    sql: &str,
+) -> Result<serde_json::Value, AgentError> {
+    if db.is_local() {
+        agent
+            .post("/localdb/query", Some(serde_json::json!({ "database": db.name, "sql": sql })))
+            .await
+    } else {
+        agent
+            .post(
+                "/databases/query",
+                Some(serde_json::json!({
+                    "container": format!("dockpanel-db-{}", db.name),
+                    "engine": db.engine,
+                    "user": db.name,
+                    "password": db.password,
+                    "database": db.name,
+                    "sql": sql,
+                })),
+            )
+            .await
+    }
+}
+
+fn local_unavailable(what: &str) -> ApiError {
+    err(StatusCode::BAD_REQUEST, &format!("{what} is not available for local databases"))
 }
 
 /// GET /api/databases/{id}/tables - List tables in the database.
@@ -623,9 +833,9 @@ pub async fn tables(
     AuthUser(claims): AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let (name, engine, password, _port, site_server_id) =
-        get_db_info(&state, id, claims.sub).await?;
-    let agent = crate::helpers::agent_for_site_server(&state, site_server_id, &name).await?;
+    let info = get_db_info(&state, id, claims.sub).await?;
+    let (name, engine) = (info.name.clone(), info.engine.clone());
+    let agent = crate::helpers::agent_for_site_server(&state, info.server_id, &name).await?;
 
     let sql = match engine.as_str() {
         "mysql" | "mariadb" => {
@@ -644,21 +854,7 @@ pub async fn tables(
         }
     };
 
-    let container = format!("dockpanel-db-{name}");
-    let agent_body = serde_json::json!({
-        "container": container,
-        "engine": engine,
-        "user": name,
-        "password": password,
-        "database": name,
-        "sql": sql,
-    });
-
-    agent
-        .post("/databases/query", Some(agent_body))
-        .await
-        .map(Json)
-        .map_err(sql_error)
+    run_sql(&agent, &info, &sql).await.map(Json).map_err(sql_error)
 }
 
 /// The one charset any table name is interpolated under.
@@ -690,9 +886,9 @@ pub async fn table_schema(
         return Err(err(StatusCode::BAD_REQUEST, "Invalid table name"));
     }
 
-    let (name, engine, password, _port, site_server_id) =
-        get_db_info(&state, id, claims.sub).await?;
-    let agent = crate::helpers::agent_for_site_server(&state, site_server_id, &name).await?;
+    let info = get_db_info(&state, id, claims.sub).await?;
+    let (name, engine) = (info.name.clone(), info.engine.clone());
+    let agent = crate::helpers::agent_for_site_server(&state, info.server_id, &name).await?;
 
     // Interpolated, not bound. `29d959b` rewrote these two statements to use `?`/`$1`
     // for injection safety and sent the values under a `"params"` key - but the agent
@@ -717,21 +913,7 @@ pub async fn table_schema(
         ),
     };
 
-    let container = format!("dockpanel-db-{name}");
-    let agent_body = serde_json::json!({
-        "container": container,
-        "engine": engine,
-        "user": name,
-        "password": password,
-        "database": name,
-        "sql": sql,
-    });
-
-    agent
-        .post("/databases/query", Some(agent_body))
-        .await
-        .map(Json)
-        .map_err(sql_error)
+    run_sql(&agent, &info, &sql).await.map(Json).map_err(sql_error)
 }
 
 #[derive(serde::Deserialize)]
@@ -756,8 +938,9 @@ pub async fn query(
         ));
     }
 
-    let (name, engine, password, _port, site_server_id) =
-        get_db_info(&state, id, claims.sub).await?;
+    let info = get_db_info(&state, id, claims.sub).await?;
+    let name = info.name.clone();
+    let site_server_id = info.server_id;
     // The host comes from the site's row, never from the caller's server switcher. This
     // request body carries the tenant's DECRYPTED database password to the agent, which
     // puts it in a `docker exec -e MYSQL_PWD=…` child process; sent to a machine the
@@ -766,21 +949,7 @@ pub async fn query(
     // "not found" that reads like an ordinary error.
     let agent = crate::helpers::agent_for_site_server(&state, site_server_id, &name).await?;
 
-    let container = format!("dockpanel-db-{name}");
-    let agent_body = serde_json::json!({
-        "container": container,
-        "engine": engine,
-        "user": name,
-        "password": password,
-        "database": name,
-        "sql": body.sql,
-    });
-
-    agent
-        .post("/databases/query", Some(agent_body))
-        .await
-        .map(Json)
-        .map_err(sql_error)
+    run_sql(&agent, &info, &body.sql).await.map(Json).map_err(sql_error)
 }
 
 /// GET /api/databases/{id}/indexes/{table} - Get indexes for a table.
@@ -793,9 +962,9 @@ pub async fn table_indexes(
         return Err(err(StatusCode::BAD_REQUEST, "Invalid table name"));
     }
 
-    let (name, engine, password, _port, site_server_id) =
-        get_db_info(&state, id, claims.sub).await?;
-    let agent = crate::helpers::agent_for_site_server(&state, site_server_id, &name).await?;
+    let info = get_db_info(&state, id, claims.sub).await?;
+    let (name, engine) = (info.name.clone(), info.engine.clone());
+    let agent = crate::helpers::agent_for_site_server(&state, info.server_id, &name).await?;
 
     let sql = match engine.as_str() {
         "mysql" | "mariadb" => format!(
@@ -814,17 +983,7 @@ pub async fn table_indexes(
         ),
     };
 
-    let container = format!("dockpanel-db-{name}");
-    let agent_body = serde_json::json!({
-        "container": container,
-        "engine": engine,
-        "user": name,
-        "password": password,
-        "database": name,
-        "sql": sql,
-    });
-
-    agent.post("/databases/query", Some(agent_body)).await.map(Json).map_err(sql_error)
+    run_sql(&agent, &info, &sql).await.map(Json).map_err(sql_error)
 }
 
 /// GET /api/databases/{id}/foreign-keys - Get all foreign key relationships.
@@ -833,9 +992,9 @@ pub async fn foreign_keys(
     AuthUser(claims): AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let (name, engine, password, _port, site_server_id) =
-        get_db_info(&state, id, claims.sub).await?;
-    let agent = crate::helpers::agent_for_site_server(&state, site_server_id, &name).await?;
+    let info = get_db_info(&state, id, claims.sub).await?;
+    let (name, engine) = (info.name.clone(), info.engine.clone());
+    let agent = crate::helpers::agent_for_site_server(&state, info.server_id, &name).await?;
 
     let sql = match engine.as_str() {
         "mysql" | "mariadb" =>
@@ -863,17 +1022,7 @@ pub async fn foreign_keys(
              ORDER BY tc.table_name, kcu.column_name".to_string(),
     };
 
-    let container = format!("dockpanel-db-{name}");
-    let agent_body = serde_json::json!({
-        "container": container,
-        "engine": engine,
-        "user": name,
-        "password": password,
-        "database": name,
-        "sql": sql,
-    });
-
-    agent.post("/databases/query", Some(agent_body)).await.map(Json).map_err(sql_error)
+    run_sql(&agent, &info, &sql).await.map(Json).map_err(sql_error)
 }
 
 /// GET /api/databases/{id}/schema-overview - Full schema overview for visual browser.
@@ -883,13 +1032,12 @@ pub async fn schema_overview(
     AuthUser(claims): AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let (name, engine, password, _port, site_server_id) =
-        get_db_info(&state, id, claims.sub).await?;
+    let info = get_db_info(&state, id, claims.sub).await?;
+    let (name, engine) = (info.name.clone(), info.engine.clone());
     // Both halves of the join below go through this one handle, so it has to be the
     // site's own host - otherwise the two concurrent queries carry the decrypted
     // password to a foreign machine twice over.
-    let agent = crate::helpers::agent_for_site_server(&state, site_server_id, &name).await?;
-    let container = format!("dockpanel-db-{name}");
+    let agent = crate::helpers::agent_for_site_server(&state, info.server_id, &name).await?;
 
     // Execute all queries concurrently
     let tables_sql = match engine.as_str() {
@@ -927,14 +1075,8 @@ pub async fn schema_overview(
     };
 
     let (tables_res, fk_res) = tokio::join!(
-        agent.post("/databases/query", Some(serde_json::json!({
-            "container": &container, "engine": &engine, "user": &name,
-            "password": &password, "database": &name, "sql": &tables_sql,
-        }))),
-        agent.post("/databases/query", Some(serde_json::json!({
-            "container": &container, "engine": &engine, "user": &name,
-            "password": &password, "database": &name, "sql": &fk_sql,
-        })))
+        run_sql(&agent, &info, &tables_sql),
+        run_sql(&agent, &info, &fk_sql),
     );
 
     let tables = tables_res.map_err(sql_error)?;
@@ -1042,8 +1184,8 @@ pub async fn pitr_config(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     // Verify ownership - admin-widened to match create()/list() (v2.216.0 audit note).
     // Owner is either a site or a stack (chk_databases_owner enforces exactly one).
-    let _db: (String,) = sqlx::query_as(
-        "SELECT name FROM databases WHERE id = $1 AND (\
+    let db_row: (String, String) = sqlx::query_as(
+        "SELECT name, kind FROM databases WHERE id = $1 AND (\
          site_id IN (SELECT s.id FROM sites s WHERE s.user_id = $2 OR EXISTS \
          (SELECT 1 FROM users u, servers sv WHERE u.id = $2 AND u.role = 'admin' \
          AND sv.id = s.server_id AND (sv.is_local OR sv.user_id = u.id))) \
@@ -1055,6 +1197,9 @@ pub async fn pitr_config(
         .fetch_optional(&state.db).await
         .map_err(|e| internal_error("pitr config", e))?
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "Database not found"))?;
+    if db_row.1 == "local" {
+        return Err(local_unavailable("Point-in-time recovery"));
+    }
 
     let config: Option<(bool, i32, Option<chrono::DateTime<chrono::Utc>>, Option<chrono::DateTime<chrono::Utc>>, i64)> =
         sqlx::query_as(
@@ -1094,8 +1239,11 @@ pub async fn update_pitr_config(
     // Ownership + container-readiness check (get_db_info also enforces the H1 guard).
     // No agent call on this path - the handler only persists the intent flag (see the
     // note below), so the server id this now returns has nothing to dispatch.
-    let (name, _engine, _password, _port, _site_server_id) =
-        get_db_info(&state, id, claims.sub).await?;
+    let info = get_db_info(&state, id, claims.sub).await?;
+    if info.is_local() {
+        return Err(local_unavailable("Point-in-time recovery"));
+    }
+    let name = info.name;
     let enabled = body.pitr_enabled.unwrap_or(false);
     let hours = body.retention_hours.unwrap_or(24).max(1).min(720);
 
@@ -1140,7 +1288,9 @@ pub async fn pitr_restore(
     Json(_body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     // Ownership + container-readiness check (get_db_info also enforces the H1 guard).
-    let _ = get_db_info(&state, id, claims.sub).await?;
+    if get_db_info(&state, id, claims.sub).await?.is_local() {
+        return Err(local_unavailable("Point-in-time recovery"));
+    }
 
     // Honesty (v2.19.0): point-in-time restore was never functional and used to LIE.
     // The postgres branch only wrote a WAL restore-point marker (pg_create_restore_point
@@ -1164,8 +1314,9 @@ pub async fn reset_password(
     headers: axum::http::HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     // Fetch current db info with ownership check (returns decrypted old password)
-    let (name, engine, old_password, _port, site_server_id) =
-        get_db_info(&state, id, claims.sub).await?;
+    let info = get_db_info(&state, id, claims.sub).await?;
+    let (name, engine, old_password, site_server_id) =
+        (info.name.clone(), info.engine.clone(), info.password.clone(), info.server_id);
 
     // The host MUST come from the site's row here, and this is the handler where taking
     // it from the request header did the most damage. Container names are
@@ -1187,27 +1338,38 @@ pub async fn reset_password(
     // Generate a new random password (same pattern as create())
     let new_password = uuid::Uuid::new_v4().to_string().replace('-', "");
 
-    // Reset password in the actual database container via the agent
-    let container = format!("dockpanel-db-{name}");
-    let agent_body = serde_json::json!({
-        "container": container,
-        "engine": engine,
-        "user": name,
-        "old_password": old_password,
-        "new_password": new_password,
-    });
+    if info.is_local() {
+        // Root sets it on the shared server (works for an imported hash too).
+        agent
+            .post(
+                &format!("/localdb/databases/{name}/password"),
+                Some(serde_json::json!({ "db_user": info.db_user, "new_password": new_password })),
+            )
+            .await
+            .map_err(|e| agent_error("Database password reset", e))?;
+    } else {
+        // Reset password in the actual database container via the agent
+        let container = format!("dockpanel-db-{name}");
+        let agent_body = serde_json::json!({
+            "container": container,
+            "engine": engine,
+            "user": name,
+            "old_password": old_password,
+            "new_password": new_password,
+        });
 
-    agent
-        .post("/databases/reset-password", Some(agent_body))
-        .await
-        .map_err(|e| agent_error("Database password reset", e))?;
+        agent
+            .post("/databases/reset-password", Some(agent_body))
+            .await
+            .map_err(|e| agent_error("Database password reset", e))?;
+    }
 
     // Encrypt the new password
     let encrypted = crate::services::secrets_crypto::encrypt_credential(&new_password, &state.config.jwt_secret)
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &format!("Encryption failed: {e}")))?;
 
     // Update the encrypted password in the panel database
-    sqlx::query("UPDATE databases SET db_password_enc = $1 WHERE id = $2")
+    sqlx::query("UPDATE databases SET db_password_enc = $1, imported_hash = false WHERE id = $2")
         .bind(&encrypted)
         .bind(id)
         .execute(&state.db)
@@ -1272,9 +1434,9 @@ pub async fn dumps(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     require_admin(&claims.role)?;
 
-    let (name, engine, _password, _port, site_server_id) =
-        get_db_info(&state, id, claims.sub).await?;
-    let agent = crate::helpers::agent_for_site_server(&state, site_server_id, &name).await?;
+    let info = get_db_info(&state, id, claims.sub).await?;
+    let (name, engine) = (info.name.clone(), info.engine.clone());
+    let agent = crate::helpers::agent_for_site_server(&state, info.server_id, &name).await?;
 
     let listing = agent
         .get(&format!("/db-backups/{name}/list"))
@@ -1381,8 +1543,8 @@ pub async fn import(
         ));
     }
 
-    let (name, engine, password, _port, site_server_id) =
-        get_db_info(&state, id, claims.sub).await?;
+    let info = get_db_info(&state, id, claims.sub).await?;
+    let (name, engine, site_server_id) = (info.name.clone(), info.engine.clone(), info.server_id);
 
     // The same rule the listing shows, ENFORCED. A caller that posts a filename the UI
     // greyed out gets the same sentence the UI displayed, rather than a failure from
@@ -1398,10 +1560,10 @@ pub async fn import(
     let agent = crate::helpers::agent_for_site_server(&state, site_server_id, &name).await?;
 
     let agent_body = serde_json::json!({
-        "container_name": format!("dockpanel-db-{name}"),
+        "container_name": container_ref(&info.kind, &name),
         "db_type": engine,
-        "user": name,
-        "password": password,
+        "user": if info.is_local() { info.db_user.clone() } else { name.clone() },
+        "password": info.password,
     });
 
     // ⛔ The timeout is taken HERE rather than read off the error that comes back, and
@@ -1470,27 +1632,113 @@ pub async fn import(
 }
 
 // --- import-hestia (05) ---
-// STUB(W2): step-0 skeleton handlers (501); the owner replaces them (contract W2-B / W5-R).
+// Shared local MariaDB server (contract W2-B / W5-R).
 
-/// GET /api/databases/local/status
-pub async fn local_status(AuthUser(_claims): AuthUser) -> Result<Json<serde_json::Value>, ApiError> {
-    Err(crate::error::err_coded(StatusCode::NOT_IMPLEMENTED, "not implemented yet", "not_implemented"))
+/// GET /api/databases/local/status - state of the shared local MariaDB server of
+/// the selected host (no secret in it; any signed-in user, the create form needs it).
+pub async fn local_status(
+    AuthUser(_claims): AuthUser,
+    ServerScope(_server_id, agent): ServerScope,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    agent
+        .get("/localdb/status")
+        .await
+        .map(Json)
+        .map_err(|e| agent_error("Local MariaDB status", e))
 }
 
-/// POST /api/databases/local/install
-pub async fn local_install(AuthUser(_claims): AuthUser) -> Result<Json<serde_json::Value>, ApiError> {
-    Err(crate::error::err_coded(StatusCode::NOT_IMPLEMENTED, "not implemented yet", "not_implemented"))
+/// POST /api/databases/local/install - install MariaDB 11.4 (admin; up to 15 min).
+pub async fn local_install(
+    State(state): State<AppState>,
+    AuthUser(claims): AuthUser,
+    ServerScope(server_id, agent): ServerScope,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    require_admin(&claims.role)?;
+    // The install may outlast the panel's 300 s request ceiling (TimeoutLayer and
+    // nginx `proxy_read_timeout`). It runs in its own task so the agent call is not
+    // dropped with the request; past 270 s the answer says it is still running.
+    // The agent side is idempotent, so pressing Install again is harmless.
+    let call = tokio::spawn({
+        let agent = agent.clone();
+        async move { agent.post_long("/localdb/install", None, 900).await }
+    });
+    let result = match tokio::time::timeout(
+        std::time::Duration::from_secs(crate::services::agent::DB_RESTORE_TIMEOUT_SECS),
+        call,
+    )
+    .await
+    {
+        Ok(Ok(inner)) => inner.map_err(|e| agent_error("Local MariaDB install", e))?,
+        Ok(Err(e)) => {
+            return Err(err(StatusCode::INTERNAL_SERVER_ERROR, &format!("install task failed: {e}")))
+        }
+        Err(_elapsed) => serde_json::json!({
+            "success": true,
+            "pending": true,
+            "message": "The installation is still running on the server. Refresh the status in a few minutes.",
+            "version": null,
+        }),
+    };
+    crate::services::activity::log_activity_on_server(
+        &state.db, claims.sub, &claims.email, "database.local_install",
+        Some("database"), Some("local"), None, None, Some(server_id), claims.key_id,
+    ).await;
+    Ok(Json(result))
 }
 
-/// PUT /api/databases/local/config
-pub async fn local_set_config(AuthUser(_claims): AuthUser) -> Result<Json<serde_json::Value>, ApiError> {
-    Err(crate::error::err_coded(StatusCode::NOT_IMPLEMENTED, "not implemented yet", "not_implemented"))
+#[derive(serde::Deserialize)]
+pub struct LocalConfigRequest {
+    pub sql_mode: Option<String>,
+}
+
+/// `sql_mode` accepted for the shared server (`^[A-Z0-9_,]*$`; empty = non strict).
+fn is_valid_sql_mode(m: &str) -> bool {
+    m.len() <= 1024 && m.bytes().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == b'_' || c == b',')
+}
+
+/// PUT /api/databases/local/config - `sql_mode` of the shared server (admin;
+/// restarts MariaDB). `null` = MariaDB 11.4 defaults.
+pub async fn local_set_config(
+    State(state): State<AppState>,
+    AuthUser(claims): AuthUser,
+    ServerScope(server_id, agent): ServerScope,
+    Json(body): Json<LocalConfigRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    require_admin(&claims.role)?;
+    if let Some(m) = &body.sql_mode {
+        if !is_valid_sql_mode(m) {
+            return Err(err(StatusCode::BAD_REQUEST, "sql_mode may contain A-Z, 0-9, _ and commas only"));
+        }
+    }
+    agent
+        .post_long("/localdb/config", Some(serde_json::json!({ "sql_mode": body.sql_mode })), 180)
+        .await
+        .map_err(|e| agent_error("Local MariaDB configuration", e))?;
+    crate::services::activity::log_activity_on_server(
+        &state.db, claims.sub, &claims.email, "database.local_config",
+        Some("database"), Some("local"), body.sql_mode.as_deref(), None, Some(server_id), claims.key_id,
+    ).await;
+    Ok(Json(serde_json::json!({ "ok": true, "sql_mode": body.sql_mode })))
 }
 // --- end import-hestia (05) ---
 
 #[cfg(test)]
 mod tests {
-    use super::is_reserved_db_name;
+    use super::{container_ref, is_reserved_db_name, is_valid_sql_mode};
+
+    #[test]
+    fn container_ref_routes_local_rows_to_the_shared_server() {
+        assert_eq!(container_ref("local", "adm-jim_x.be"), "local");
+        assert_eq!(container_ref("container", "wp"), "dockpanel-db-wp");
+    }
+
+    #[test]
+    fn sql_mode_charset() {
+        assert!(is_valid_sql_mode(""));
+        assert!(is_valid_sql_mode("NO_ENGINE_SUBSTITUTION,NO_ZERO_DATE"));
+        assert!(!is_valid_sql_mode("x"));
+        assert!(!is_valid_sql_mode("A' OR 1"));
+    }
 
     #[test]
     fn reserved_db_names_rejected_case_insensitive() {

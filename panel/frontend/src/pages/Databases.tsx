@@ -26,18 +26,45 @@ interface Database {
   container_id: string | null;
   port: number | null;
   created_at: string;
+  /** "local" = a database on the host's shared MariaDB server; missing means container. */
+  kind?: "container" | "local";
+  /** True when the password is only known as a hash imported from HestiaCP. */
+  imported_hash?: boolean;
 }
 
+// Container rows carry no `kind` (treat missing as container); local rows answer
+// with `kind: "local"`, a socket, and a password that may be unknown.
 interface Credentials {
+  kind?: "container" | "local";
   host: string;
   port: number;
+  socket?: string;
   database: string;
   username: string;
-  password: string;
+  password: string | null;
+  password_known?: boolean;
   engine: string;
-  connection_string: string;
-  internal_host: string;
+  connection_string: string | null;
+  internal_host?: string;
+  note?: string;
 }
+
+interface LocalDbStatus {
+  installed: boolean;
+  running: boolean;
+  version: string | null;
+  socket: string;
+  bind: string;
+  supports_uca1400: boolean;
+  databases: number;
+  sql_mode: string | null;
+  sql_mode_effective: string | null;
+}
+
+const isLocalDb = (db: Database) => db.kind === "local";
+
+const LOCAL_NOT_INSTALLED_MSG =
+  "The shared local MariaDB server is not installed on this server. An admin can install it from the Local MariaDB server card at the top of this page.";
 
 interface QueryResult {
   columns: string[];
@@ -890,6 +917,226 @@ chmod 600 ${dir}/dump.sql.gz`}
   );
 }
 
+/* ─── Shared local MariaDB server ───────────────────────────────── */
+
+function LocalServerCard({
+  status,
+  failed,
+  isAdmin,
+  onChanged,
+}: {
+  status: LocalDbStatus | null;
+  failed: boolean;
+  isAdmin: boolean;
+  onChanged: () => void;
+}) {
+  const [installing, setInstalling] = useState(false);
+  const [error, setError] = useState("");
+  const [done, setDone] = useState("");
+  const [modeDraft, setModeDraft] = useState("");
+  // undefined = nothing pending; null = reset to MariaDB defaults; string = explicit mode.
+  const [pendingMode, setPendingMode] = useState<string | null | undefined>(undefined);
+  const [savingMode, setSavingMode] = useState(false);
+
+  const configuredMode = status?.sql_mode ?? null;
+  useEffect(() => {
+    setModeDraft(configuredMode ?? "");
+  }, [configuredMode]);
+
+  if (failed) {
+    return (
+      <p className="text-xs text-dark-400 mb-4">Local MariaDB server: status unavailable.</p>
+    );
+  }
+  if (!status) return null;
+
+  const handleInstall = async () => {
+    setError("");
+    setDone("");
+    setInstalling(true);
+    try {
+      const res = await api.post<{ success: boolean; message: string; version: string | null }>(
+        "/databases/local/install"
+      );
+      if (res.success) {
+        setDone(res.message || `Installed${res.version ? ` (${res.version})` : ""}.`);
+      } else {
+        setError(res.message || "Install failed");
+      }
+      onChanged();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Install failed");
+    } finally {
+      setInstalling(false);
+    }
+  };
+
+  const modeValid = /^[A-Z0-9_,]*$/.test(modeDraft);
+
+  const applyMode = async () => {
+    if (pendingMode === undefined) return;
+    const value = pendingMode;
+    setPendingMode(undefined);
+    setError("");
+    setDone("");
+    setSavingMode(true);
+    try {
+      const res = await api.put<{ ok: boolean; sql_mode: string | null }>("/databases/local/config", {
+        sql_mode: value,
+      });
+      setDone(
+        res.sql_mode === null
+          ? "sql_mode reset to MariaDB defaults. The shared server was restarted."
+          : `sql_mode set to "${res.sql_mode || "(empty, non strict)"}". The shared server was restarted.`
+      );
+      onChanged();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to update sql_mode");
+    } finally {
+      setSavingMode(false);
+    }
+  };
+
+  const dot = !status.installed ? "bg-dark-500" : status.running ? "bg-accent-400" : "bg-danger-500";
+  const stateLabel = !status.installed ? "Not installed" : status.running ? "Running" : "Stopped";
+
+  return (
+    <div className="bg-dark-800 rounded-lg border border-dark-500 px-5 py-4 mb-6">
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+        <h2 className="text-xs font-medium text-dark-300 uppercase font-mono tracking-widest">
+          Local MariaDB server
+        </h2>
+        <span className="flex items-center gap-1.5 text-sm text-dark-100">
+          <span className={`w-2 h-2 rounded-full ${dot}`} />
+          {stateLabel}
+        </span>
+        {status.installed && (
+          <>
+            <span className="text-xs text-dark-300">
+              Version <span className="font-mono text-dark-100">{status.version || "unknown"}</span>
+            </span>
+            <span className="text-xs text-dark-300">
+              <span className="font-mono text-dark-100">{status.databases}</span> database{status.databases === 1 ? "" : "s"}
+            </span>
+            <span className="text-xs text-dark-300">
+              uca1400 collations{" "}
+              <span className={status.supports_uca1400 ? "text-accent-400" : "text-warn-400"}>
+                {status.supports_uca1400 ? "supported" : "not supported"}
+              </span>
+            </span>
+            <span className="text-xs text-dark-300">
+              Bind <span className="font-mono text-dark-100">{status.bind}</span>
+            </span>
+          </>
+        )}
+        {isAdmin && !status.installed && (
+          <button
+            onClick={handleInstall}
+            disabled={installing}
+            className="ml-auto flex items-center gap-2 px-3 py-1.5 bg-rust-500 text-white rounded-lg text-xs font-medium hover:bg-rust-600 disabled:opacity-50 transition-colors"
+          >
+            {installing && <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
+            {installing ? "Installing..." : "Install"}
+          </button>
+        )}
+      </div>
+
+      {status.installed && (
+        <p className="text-xs text-dark-400 mt-2">
+          Effective sql_mode:{" "}
+          <span className="font-mono text-dark-200 break-all">
+            {status.sql_mode_effective === null ? "unknown" : status.sql_mode_effective || "(empty, non strict)"}
+          </span>
+        </p>
+      )}
+
+      {installing && (
+        <p className="text-xs text-dark-400 mt-2">
+          Installing MariaDB on this server. This can take several minutes, leave this page open.
+        </p>
+      )}
+
+      {isAdmin && status.installed && (
+        <div className="mt-3 pt-3 border-t border-dark-600">
+          <label htmlFor="local-sql-mode" className="block text-xs font-medium text-dark-200 mb-1">
+            sql_mode{" "}
+            <span className="text-dark-400 font-normal">
+              (configured: {configuredMode === null ? "MariaDB defaults" : configuredMode || "empty, non strict"})
+            </span>
+          </label>
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              id="local-sql-mode"
+              type="text"
+              value={modeDraft}
+              onChange={(e) => setModeDraft(e.target.value.toUpperCase())}
+              placeholder="Empty = non strict"
+              spellCheck={false}
+              className="flex-1 min-w-[16rem] px-3 py-1.5 bg-dark-900 border border-dark-500 rounded-lg text-xs font-mono text-dark-100 focus:outline-none focus:border-dark-400"
+            />
+            <button
+              type="button"
+              onClick={() => setPendingMode(modeDraft)}
+              disabled={savingMode || !modeValid}
+              className="px-3 py-1.5 rounded-lg text-xs font-medium bg-rust-500/15 text-rust-400 hover:bg-rust-500/25 disabled:opacity-50 transition-colors"
+            >
+              Save
+            </button>
+            <button
+              type="button"
+              onClick={() => setPendingMode(null)}
+              disabled={savingMode}
+              className="px-3 py-1.5 rounded-lg text-xs font-medium bg-dark-700 text-dark-200 hover:bg-dark-600 disabled:opacity-50 transition-colors"
+            >
+              Use MariaDB defaults
+            </button>
+            {savingMode && (
+              <span className="w-3.5 h-3.5 border-2 border-dark-400/30 border-t-dark-200 rounded-full animate-spin" />
+            )}
+          </div>
+          {!modeValid && (
+            <p className="text-xs text-danger-400 mt-1">
+              Only uppercase letters, digits, underscores and commas are allowed.
+            </p>
+          )}
+          {pendingMode !== undefined && (
+            <div className="flex flex-wrap items-center gap-2 mt-2">
+              <span className="text-xs text-warn-400">
+                Restarts the shared MariaDB server, all local databases are briefly unavailable. Continue?
+              </span>
+              <button
+                type="button"
+                onClick={applyMode}
+                className="px-2 py-1 bg-danger-600 text-white rounded text-xs hover:bg-danger-700"
+              >
+                Yes
+              </button>
+              <button
+                type="button"
+                onClick={() => setPendingMode(undefined)}
+                className="px-2 py-1 bg-dark-600 text-dark-100 rounded text-xs hover:bg-dark-500"
+              >
+                No
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {error && (
+        <div className="mt-3 bg-danger-500/10 text-danger-400 text-xs px-3 py-2 rounded-lg border border-danger-500/20">
+          {error}
+        </div>
+      )}
+      {done && (
+        <div className="mt-3 bg-accent-500/10 text-accent-400 text-xs px-3 py-2 rounded-lg border border-accent-500/20">
+          {done}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ─── Main Databases Page ───────────────────────────────────────── */
 
 export default function Databases() {
@@ -909,7 +1156,13 @@ export default function Databases() {
   const [stackId, setStackId] = useState("");
   const [dbName, setDbName] = useState("");
   const [engine, setEngine] = useState("postgres");
+  const [serverKind, setServerKind] = useState<"container" | "local">("container");
   const [submitting, setSubmitting] = useState(false);
+
+  // Shared local MariaDB server status. Fetched apart from the list so an offline
+  // or older agent (501) only hides the card instead of failing the page.
+  const [localStatus, setLocalStatus] = useState<LocalDbStatus | null>(null);
+  const [localStatusFailed, setLocalStatusFailed] = useState(false);
 
   // Delete state
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -959,10 +1212,34 @@ export default function Databases() {
     }
   };
 
+  const fetchLocalStatus = useCallback(async () => {
+    try {
+      const st = await api.get<LocalDbStatus>("/databases/local/status");
+      setLocalStatus(st);
+      setLocalStatusFailed(false);
+    } catch {
+      setLocalStatus(null);
+      setLocalStatusFailed(true);
+    }
+  }, []);
+
   useEffect(() => {
     fetchData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAdmin]);
+
+  useEffect(() => {
+    fetchLocalStatus();
+  }, [fetchLocalStatus]);
+
+  // The "Server" choice only applies to a Site-owned MariaDB/MySQL database.
+  const canChooseServer =
+    ownerType === "site" && !!siteId && (engine === "mariadb" || engine === "mysql");
+  const localInstalled = localStatus?.installed === true;
+  // Falls back to a container if the local option stopped being valid (owner,
+  // engine or install state changed after the operator picked it).
+  const effectiveKind: "container" | "local" =
+    canChooseServer && serverKind === "local" && localInstalled ? "local" : "container";
 
   const handleCreate = async (e: FormEvent) => {
     e.preventDefault();
@@ -975,13 +1252,24 @@ export default function Databases() {
         stack_id: ownerType === "stack" ? stackId : undefined,
         name: dbName,
         engine,
+        kind: effectiveKind,
       });
       setShowForm(false);
-      setSuccessMsg(`Database "${dbName}" created`);
+      setSuccessMsg(
+        effectiveKind === "local"
+          ? `Database "${dbName}" created on the shared local MariaDB server`
+          : `Database "${dbName}" created`
+      );
       setDbName("");
       fetchData();
+      if (effectiveKind === "local") fetchLocalStatus();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create database");
+      if (err instanceof ApiError && err.code === "local_db_not_installed") {
+        setError(LOCAL_NOT_INSTALLED_MSG);
+        fetchLocalStatus();
+      } else {
+        setError(err instanceof Error ? err.message : "Failed to create database");
+      }
     } finally {
       setSubmitting(false);
     }
@@ -1039,6 +1327,8 @@ export default function Databases() {
         `/databases/${id}/reset-password`
       );
       setPwResetSuccess(res.password);
+      // A reset clears `imported_hash` on local rows; refresh so the badge goes away.
+      fetchData();
       // Show the new credentials panel with refreshed data
       setCredentialsId(id);
       setCredentials(null);
@@ -1133,6 +1423,13 @@ export default function Databases() {
       </div>
 
       <div className="p-6 lg:p-8">
+
+      <LocalServerCard
+        status={localStatus}
+        failed={localStatusFailed}
+        isAdmin={isAdmin}
+        onChanged={fetchLocalStatus}
+      />
 
       {error && (
         <div role="alert" className="bg-danger-500/10 text-danger-400 text-sm px-4 py-3 rounded-lg border border-danger-500/20 mb-4">
@@ -1281,6 +1578,42 @@ export default function Databases() {
               <p className="text-xs text-dark-300 mt-1">MySQL, MariaDB, or PostgreSQL</p>
             </div>
           </div>
+          {canChooseServer && (
+            <div>
+              <span className="block text-sm font-medium text-dark-100 mb-1">Server</span>
+              <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Database server">
+                {(["container", "local"] as const).map((k) => {
+                  const disabled = k === "local" && !localInstalled;
+                  return (
+                    <button
+                      key={k}
+                      type="button"
+                      role="radio"
+                      aria-checked={effectiveKind === k}
+                      disabled={disabled}
+                      onClick={() => setServerKind(k)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                        effectiveKind === k
+                          ? "bg-rust-500/10 text-rust-400 border-rust-500/30"
+                          : "text-dark-300 border-dark-600 hover:text-dark-100 hover:border-dark-400"
+                      }`}
+                    >
+                      {k === "container" ? "Dedicated container" : "Shared local MariaDB"}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="text-xs text-dark-300 mt-1">
+                {!localInstalled
+                  ? localStatusFailed
+                    ? "Local MariaDB server status unavailable, so only a dedicated container is offered."
+                    : "The shared local MariaDB server is not installed on this server, so only a dedicated container is available."
+                  : effectiveKind === "local"
+                    ? "Created on the host's shared MariaDB server (localhost:3306, socket). No container is started."
+                    : "Runs in its own Docker container with a dedicated port."}
+              </p>
+            </div>
+          )}
           <div className="flex gap-3">
             <button
               type="submit"
@@ -1365,7 +1698,25 @@ export default function Databases() {
                   return displayed.map((db) => (
                   <tr key={db.id} className="hover:bg-dark-700/30 transition-colors">
                     <td className="px-5 py-4 text-sm font-medium text-dark-50 font-mono">
-                      {db.name}
+                      <span className="flex flex-wrap items-center gap-1.5">
+                        {db.name}
+                        {isLocalDb(db) && (
+                          <span
+                            className="px-1.5 py-0.5 bg-accent-500/10 text-accent-400 rounded text-[10px] font-medium font-sans uppercase tracking-wide"
+                            title="On the shared local MariaDB server of this host"
+                          >
+                            Local
+                          </span>
+                        )}
+                        {db.imported_hash && (
+                          <span
+                            className="px-1.5 py-0.5 bg-warn-500/10 text-warn-400 rounded text-[10px] font-medium font-sans uppercase tracking-wide"
+                            title="Imported with a password hash only. The panel does not know the password; reset it to get a new one."
+                          >
+                            Imported hash
+                          </span>
+                        )}
+                      </span>
                     </td>
                     <td className="px-5 py-4 text-sm text-dark-200">
                       {engineLabels[db.engine] || db.engine}
@@ -1374,7 +1725,7 @@ export default function Databases() {
                       {getOwnerLabel(db)}
                     </td>
                     <td className="px-5 py-4 text-sm text-dark-200 font-mono hidden sm:table-cell">
-                      {db.port || "-"}
+                      {isLocalDb(db) ? "3306 (local)" : db.port || "-"}
                     </td>
                     <td className="px-5 py-4 text-sm text-dark-200 hidden lg:table-cell">
                       {formatDate(db.created_at)}
@@ -1402,6 +1753,7 @@ export default function Databases() {
                             Import
                           </button>
                         )}
+                        {!isLocalDb(db) && (
                         <button
                           onClick={async () => {
                             try {
@@ -1429,6 +1781,7 @@ export default function Databases() {
                         >
                           PITR
                         </button>
+                        )}
                         <button
                           onClick={() => handleResetPassword(db.id)}
                           disabled={resettingPw === db.id}
@@ -1534,7 +1887,8 @@ export default function Databases() {
                     Connection Details
                   </h3>
 
-                  {/* Connection string */}
+                  {/* Connection string (may be absent, e.g. local DB with an unknown password) */}
+                  {credentials.connection_string && (
                   <div className="mb-4">
                     <label className="block text-xs font-medium text-dark-200 mb-1">
                       Connection String
@@ -1545,7 +1899,7 @@ export default function Databases() {
                       </code>
                       <button
                         onClick={() =>
-                          copyToClipboard(credentials.connection_string, "connection_string")
+                          copyToClipboard(credentials.connection_string ?? "", "connection_string")
                         }
                         className="shrink-0 px-3 py-2 bg-dark-700 text-dark-200 rounded-lg text-xs hover:bg-dark-600 transition-colors"
                       >
@@ -1553,6 +1907,7 @@ export default function Databases() {
                       </button>
                     </div>
                   </div>
+                  )}
 
                   {/* Individual fields.
                       Two of these carry a `hint`, because two of them are the reason
@@ -1564,17 +1919,45 @@ export default function Databases() {
                       here is the whole fix: the field was inviting a connection
                       attempt that cannot succeed, and then saying nothing when it
                       failed. GitHub #107. */}
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                    {[
-                      { label: "Host", value: credentials.host, key: "host",
-                        hint: "From a shell on this server. The port is published on the host's loopback only, so this will not work from inside another container or from off-box." },
+                  {(() => {
+                    const local = credentials.kind === "local";
+                    const pwKnown = credentials.password_known !== false && credentials.password != null;
+                    const fields: { label: string; value: string; key: string; hint?: string; unknown?: boolean }[] = [
+                      local
+                        ? { label: "Host", value: credentials.host, key: "host",
+                            hint: "The shared MariaDB server listens on this server's loopback only." }
+                        : { label: "Host", value: credentials.host, key: "host",
+                            hint: "From a shell on this server. The port is published on the host's loopback only, so this will not work from inside another container or from off-box." },
                       { label: "Port", value: String(credentials.port), key: "port" },
+                      ...(local && credentials.socket
+                        ? [{ label: "Socket", value: credentials.socket, key: "socket" }]
+                        : []),
                       { label: "Database", value: credentials.database, key: "database" },
                       { label: "Username", value: credentials.username, key: "username" },
-                      { label: "Password", value: credentials.password, key: "password" },
-                      { label: "Internal Host", value: credentials.internal_host, key: "internal_host",
-                        hint: "The Docker container's name - for docker exec, docker logs and the CLI. It is not a hostname you can connect to." },
-                    ].map((field: { label: string; value: string; key: string; hint?: string }) => (
+                      pwKnown
+                        ? { label: "Password", value: credentials.password ?? "", key: "password" }
+                        : { label: "Password", value: "Unknown (imported hash). Reset it to get a new one.", key: "password", unknown: true },
+                      ...(!local && credentials.internal_host
+                        ? [{ label: "Internal Host", value: credentials.internal_host, key: "internal_host",
+                            hint: "The Docker container's name - for docker exec, docker logs and the CLI. It is not a hostname you can connect to." }]
+                        : []),
+                    ];
+                    return (
+                  <>
+                  {credentials.note && (
+                    <p className="text-xs text-dark-300 mb-3 leading-snug">{credentials.note}</p>
+                  )}
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                    {fields.map((field) => field.unknown ? (
+                      <div key={field.key}>
+                        <label className="block text-xs font-medium text-dark-200 mb-1">
+                          {field.label}
+                        </label>
+                        <p className="bg-dark-900 border border-warn-500/20 rounded px-2 py-1.5 text-xs text-warn-400 leading-snug">
+                          {field.value}
+                        </p>
+                      </div>
+                    ) : (
                       <div key={field.key}>
                         <label className="block text-xs font-medium text-dark-200 mb-1">
                           {field.label}
@@ -1605,6 +1988,9 @@ export default function Databases() {
                       </div>
                     ))}
                   </div>
+                  </>
+                    );
+                  })()}
                 </div>
               ) : null}
             </div>

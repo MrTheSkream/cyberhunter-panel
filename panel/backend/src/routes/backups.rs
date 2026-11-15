@@ -76,8 +76,8 @@ pub async fn site_database_specs(
     jwt_secret: &str,
     site_id: Uuid,
 ) -> SiteDatabases {
-    let rows: Vec<(String, String, String, String, Option<String>)> = sqlx::query_as(
-        "SELECT name, engine, db_user, db_password_enc, container_id \
+    let rows: Vec<(String, String, String, String, Option<String>, String)> = sqlx::query_as(
+        "SELECT name, engine, db_user, db_password_enc, container_id, kind \
          FROM databases WHERE site_id = $1 ORDER BY name",
     )
     .bind(site_id)
@@ -91,13 +91,14 @@ pub async fn site_database_specs(
     let mut specs = Vec::new();
     let mut unavailable = Vec::new();
 
-    for (name, engine, db_user, password_enc, container_id) in rows {
+    for (name, engine, db_user, password_enc, container_id, kind) in rows {
         // Mirror the get_db_info guard (v2.19.0 H1): a row with an EMPTY
         // container_id has no confirmed container of its own, and resolving it
         // by the non-unique name `dockpanel-db-{name}` could reach a container
         // that is not this tenant's. Never dump one - but never drop it
         // silently either; it is counted as expected and reported.
-        if container_id.as_deref().unwrap_or("").is_empty() {
+        // A `local` row (shared local MariaDB server) has no container by design.
+        if kind != "local" && container_id.as_deref().unwrap_or("").is_empty() {
             unavailable.push((
                 name,
                 "database is not fully provisioned yet (no container), so it could not be backed up".to_string(),
@@ -111,7 +112,7 @@ pub async fn site_database_specs(
         );
 
         specs.push(serde_json::json!({
-            "container_name": format!("dockpanel-db-{name}"),
+            "container_name": crate::routes::databases::container_ref(&kind, &name),
             "db_name": name,
             "db_type": engine,
             "user": db_user,

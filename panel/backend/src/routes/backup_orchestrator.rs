@@ -907,8 +907,8 @@ pub async fn create_db_backup(
     Json(req): Json<CreateDbBackupRequest>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
     // Fetch database details (join with sites for user ownership and server_id)
-    let row: Option<(Uuid, String, String, String, String, Option<Uuid>)> = sqlx::query_as(
-        "SELECT d.id, d.name, d.engine, d.db_user, d.db_password_enc, s.server_id \
+    let row: Option<(Uuid, String, String, String, String, Option<Uuid>, String)> = sqlx::query_as(
+        "SELECT d.id, d.name, d.engine, d.db_user, d.db_password_enc, s.server_id, d.kind \
          FROM databases d JOIN sites s ON d.site_id = s.id \
          WHERE d.id = $1 AND s.user_id = $2"
     )
@@ -916,7 +916,7 @@ pub async fn create_db_backup(
     .fetch_optional(&state.db).await
     .map_err(|e| internal_error("create db backup", e))?;
 
-    let (db_id, db_name, engine, user, password_enc, server_id) =
+    let (db_id, db_name, engine, user, password_enc, server_id, kind) =
         row.ok_or_else(|| err(StatusCode::NOT_FOUND, "Database not found"))?;
 
     // Dump on the host the SITE lives on. This handler already held the answer: the
@@ -947,7 +947,7 @@ pub async fn create_db_backup(
     let password = crate::services::secrets_crypto::decrypt_credential_or_legacy(&password_enc, &state.config.jwt_secret);
 
     // Container name follows convention: dockpanel-db-{name}
-    let container_name = format!("dockpanel-db-{db_name}");
+    let container_name = crate::routes::databases::container_ref(&kind, &db_name);
 
     // Manual (ad-hoc) DB backups are not encrypted: there is no manual-encryption toggle -
     // only policy-driven backups encrypt (via backup_policy_executor). The previous read of
@@ -1110,20 +1110,20 @@ pub async fn restore_db_backup(
     ).await?;
 
     // Fetch database credentials (join with sites for user/password)
-    let creds: Option<(String, String, String)> = sqlx::query_as(
-        "SELECT d.engine, d.db_user, d.db_password_enc FROM databases d WHERE d.id = $1"
+    let creds: Option<(String, String, String, String)> = sqlx::query_as(
+        "SELECT d.engine, d.db_user, d.db_password_enc, d.kind FROM databases d WHERE d.id = $1"
     )
     .bind(backup.database_id)
     .fetch_optional(&state.db).await
     .map_err(|e| internal_error("restore db backup", e))?;
 
-    let (_engine, user, password_enc) =
+    let (_engine, user, password_enc, kind) =
         creds.ok_or_else(|| err(StatusCode::NOT_FOUND, "Database not found"))?;
 
     // Decrypt the database password (handles both encrypted and legacy plaintext)
     let password = crate::services::secrets_crypto::decrypt_credential_or_legacy(&password_enc, &state.config.jwt_secret);
 
-    let container_name = format!("dockpanel-db-{}", backup.db_name);
+    let container_name = crate::routes::databases::container_ref(&kind, &backup.db_name);
 
     // Get encryption key if backup is encrypted. Policy-encrypted DB backups are encrypted by
     // backup_policy_executor with a key derived from the process JWT secret; the restore MUST
