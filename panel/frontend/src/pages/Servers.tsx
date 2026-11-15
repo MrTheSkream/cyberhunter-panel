@@ -56,14 +56,15 @@ export default function Servers() {
 
   const executeDelete = useCallback(async () => {
     if (!pendingDelete) return;
+    const { id } = pendingDelete;
     setPendingDelete(null);
     try {
-      await api.delete(`/servers/${pendingDelete.id}`);
+      await api.delete(`/servers/${id}`);
       await refreshServers();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Failed to delete server");
     }
-  }, [refreshServers]);
+  }, [pendingDelete, refreshServers]);
 
   const executeRotate = useCallback(async () => {
     if (!pendingRotate) return;

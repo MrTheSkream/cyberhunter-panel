@@ -223,7 +223,7 @@ function Sparkline({ data, color, height = 60 }: { data: number[]; color: string
   const fillPoints = `0,${height} ${points} ${width},${height}`;
 
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} className="w-full" preserveAspectRatio="none" aria-hidden="true">
+    <svg viewBox={`0 0 ${width} ${height}`} className="w-full block" style={{ height }} preserveAspectRatio="none" aria-hidden="true">
       <polygon points={fillPoints} fill={color} opacity="0.16" />
       <polyline points={points} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
     </svg>
@@ -259,26 +259,47 @@ function tempColor(temp: number): string {
   return "text-danger-400";
 }
 
-// Shared visual vocabulary for the page. Theme tokens only (dark-*, rust-*,
-// accent-*, warn-*, danger-*) and the theme radius scale, so every layout and
-// theme keeps restyling these through index.css.
-const CARD = "bg-dark-800 rounded-xl border border-dark-600 px-5 py-4";
-const CARD_HEAD = "flex items-center justify-between gap-3 pb-3 border-b border-dark-700";
+// Shared visual vocabulary for the page, measured from the dashboard mockup.
+// Theme tokens only (dark-*, rust-*, accent-*, warn-*, danger-*) and the theme
+// radius scale, so every layout and theme keeps restyling these through
+// index.css.
+//
+// The type escapes on purpose. Every theme but terminal rewrites `.font-mono`
+// to Inter, `.uppercase` to none and `tracking-wider/widest` to normal
+// (index.css, "clean SaaS typography"), which flattened the mockup's mono,
+// upper-case micro-labels and numbers into body text. These arbitrary
+// utilities emit the same CSS without matching those selectors.
+const MONO = "font-[family-name:var(--font-mono)]";
+const CAPS = "[text-transform:uppercase]";
+// The mockup's 14px and 10px corners sit 2px under the theme's xl and lg steps;
+// `max` keeps the square-cornered theme square.
+const R14 = "rounded-[max(0px,calc(var(--radius-xl)-2px))]!";
+const R10 = "rounded-[max(0px,calc(var(--radius-lg)-2px))]!";
+const CARD = "bg-dark-800 rounded-xl! border border-dark-700 shadow-none! px-5 py-[18px] flex flex-col min-w-0";
+const CARD_HEAD = "flex items-center justify-between gap-3 pb-2";
 const CARD_TITLE = "text-[15px] font-semibold text-dark-50";
 const CARD_LINK = "text-[13px] text-rust-400 hover:text-rust-300 transition-colors";
-const ROWS = "divide-y divide-dark-700";
-const BTN = "h-11 px-3.5 rounded-lg border text-sm items-center gap-2 transition-colors";
-const BTN_2ND = "font-medium bg-dark-800 border-dark-600 text-dark-100 hover:bg-dark-700";
-const PILL = "min-h-9 items-center gap-2 px-3 rounded-full border text-xs";
-const DIVIDER = "h-7 w-px bg-dark-600 hidden sm:block";
-const TILE = "rounded-lg border px-3.5 py-3 flex flex-col gap-1 min-w-0 card-interactive";
-const TILE_OK = "bg-dark-800 border-dark-600";
+// Every row draws its own top rule, as the mockup does, so the first one also
+// separates the list from its heading. Set from the parent so no row carries a
+// `border-dark-*` class of its own: the clean theme rounds those.
+const ROWS = "flex flex-col [&>*]:border-t [&>*]:border-dark-700";
+// Inner tiles (setup steps, sites, quick links): a step lighter than the card.
+const INNER = "bg-dark-700/25 border border-dark-700";
+const BTN = `h-11 px-3.5 ${R10} border shadow-none! text-[14px] items-center gap-2 transition-colors`;
+const BTN_2ND_COLORS = "bg-dark-800 border-dark-700 text-dark-100 hover:bg-dark-700";
+const BTN_2ND = `font-medium ${BTN_2ND_COLORS}`;
+const PILL = "min-h-9 items-center gap-[7px] px-3 rounded-full border text-[12px]";
+const DIVIDER = "h-7 w-px bg-dark-700 hidden sm:block";
+const TILE = "rounded-lg! border shadow-none! px-3.5 py-3 flex flex-col gap-1 min-w-0 card-interactive";
+const TILE_OK = "bg-dark-800 border-dark-700";
 const TILE_WARN = "bg-warn-500/5 border-warn-500/30";
 const TILE_BAD = "bg-danger-500/5 border-danger-500/30";
-const TILE_LABEL = "font-mono text-[10px] text-dark-300 uppercase tracking-widest";
+const TILE_LABEL = `${MONO} text-[10px] text-dark-400 ${CAPS} tracking-[0.1em]`;
 const TILE_VALUE = "text-[17px] font-bold";
-const TH = "text-xs font-medium text-dark-400 px-3 first:pl-0 last:pr-0 py-2 border-b border-dark-600";
-const TD = "px-3 first:pl-0 last:pr-0 py-2.5";
+const TILE_SUB = "text-[12px] font-medium";
+const TH = "text-left text-[13px] font-medium text-dark-400 pr-3 last:pr-0 py-2 border-b border-dark-700";
+const TD = "pr-3 last:pr-0 py-2.5 align-top border-b border-dark-700";
+const TD_PROC = "pr-3 last:pr-0 py-[9px] border-b border-dark-700";
 
 export default function Dashboard() {
   // Which machine this page is describing. Every REST read below carries the
@@ -741,13 +762,13 @@ export default function Dashboard() {
   }, [network]);
 
   return (
-    <div className="p-4 sm:p-6 lg:p-8 animate-fade-up">
-      <div className="page-header">
+    <div className="max-w-[1440px] mx-auto px-[clamp(16px,3vw,40px)] pt-7 pb-14 flex flex-col gap-5 text-[14px] leading-[normal] animate-fade-up">
+      <header className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex flex-col gap-1.5 min-w-0">
           <div className="flex items-center gap-3 flex-wrap">
-            <h1 className="text-2xl sm:text-[28px] leading-tight font-bold tracking-tight text-dark-50">Dashboard</h1>
+            <h1 className="text-[28px] leading-[normal] font-bold tracking-[-0.01em] text-dark-50">Dashboard</h1>
             <span
-              className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md border border-dark-600 bg-dark-800"
+              className={`inline-flex items-center gap-1.5 px-2 py-[3px] rounded-sm! border border-dark-700 shadow-none! bg-dark-800 ${MONO} text-[11px] text-dark-300`}
               title={
                 wsConnected
                   ? "Receiving live metrics via WebSocket"
@@ -757,14 +778,14 @@ export default function Dashboard() {
               }
             >
               <span className={`w-1.5 h-1.5 rounded-full ${wsConnected ? "bg-rust-500 animate-pulse" : "bg-dark-400"}`} />
-              <span className="text-[11px] text-dark-300 font-mono">{wsConnected ? "Live" : "Polling"}</span>
+              <span>{wsConnected ? "Live" : "Polling"}</span>
             </span>
           </div>
           {/* `system` is an admin-only read, so for anybody else it never
               arrives - and "Loading..." that never resolves is the visible
               half of the same defect as the refusal banner. Say what this
               account is instead. */}
-          <p className="text-[13px] text-dark-300 font-mono break-words">
+          <p className={`text-[13px] text-dark-300 ${MONO} break-words`}>
             {system?.hostname || (isAdmin ? "Loading..." : user?.email)}
           </p>
         </div>
@@ -823,7 +844,7 @@ export default function Dashboard() {
               offering it the shortcut named for exactly that is a dead end -
               it lands on the one refusal the role is defined by. */}
           {user?.role !== "client" && (
-            <Link to="/sites" className={`flex ${BTN} font-semibold bg-rust-500 border-rust-500 text-white hover:bg-rust-600`}>
+            <Link to="/sites" className={`flex ${BTN} px-4 font-semibold bg-rust-500 border-rust-500 text-white hover:bg-rust-600`}>
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
               Add Site
             </Link>
@@ -859,13 +880,13 @@ export default function Dashboard() {
             </button>
           )}
         </div>
-      </div>
+      </header>
 
       {/* Feature #6: Widget customization panel */}
       {showWidgetConfig && (
-        <div className="bg-dark-800 rounded-xl border border-dark-600 px-5 py-[18px] mb-6">
-          <h3 className="text-[11px] font-semibold text-dark-300 uppercase font-mono tracking-widest mb-3.5">Dashboard Widgets</h3>
-          <div className="grid grid-cols-1 min-[420px]:grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-1">
+        <div className={`bg-dark-800 ${R14} border border-dark-700 shadow-none! px-5 py-[18px] flex flex-col gap-3.5`}>
+          <h3 className={`text-[11px] font-semibold text-dark-300 ${CAPS} ${MONO} tracking-[0.1em]`}>Dashboard Widgets</h3>
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,200px),1fr))] gap-x-4 gap-y-2">
             {/* `hostOnly` marks a widget fed by an admin-only read. Offering a
                 client a checkbox for a panel that can never draw is the same
                 empty promise as a menu entry that refuses - eight of these
@@ -895,8 +916,10 @@ export default function Dashboard() {
               </label>
             ))}
           </div>
-          <button onClick={() => { setWidgetConfig({}); localStorage.removeItem('dp-dashboard-widgets'); }}
-            className="mt-2.5 py-1.5 text-[13px] text-rust-400 hover:text-rust-300">Reset to defaults</button>
+          <div>
+            <button onClick={() => { setWidgetConfig({}); localStorage.removeItem('dp-dashboard-widgets'); }}
+              className="py-1.5 text-[13px] text-rust-400 hover:text-rust-300">Reset to defaults</button>
+          </div>
         </div>
       )}
 
@@ -904,15 +927,13 @@ export default function Dashboard() {
 
       {/* Update available banner */}
       {updateInfo?.update_available && updateInfo.update_available_version && (
-        <div className="rounded-xl border border-rust-500/30 bg-rust-500/10 px-4 py-3 mb-6 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3 flex-[1_1_260px] min-w-0">
-            <svg className="w-[18px] h-[18px] text-rust-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-            <span className="text-sm text-dark-100">
-              <strong>CyberHunter - Panel v{updateInfo.update_available_version}</strong> is available
-              <span className="text-dark-400 ml-1">(current: v{updateInfo.current_version})</span>
-            </span>
-          </div>
-          <Link to="/telemetry?tab=updates" className="inline-flex items-center min-h-9 px-3.5 bg-rust-500 hover:bg-rust-600 text-white rounded-lg text-[13px] font-semibold transition-colors whitespace-nowrap">
+        <div className="rounded-lg border border-rust-500/30 bg-rust-500/10 px-4 py-3 flex flex-wrap items-center gap-3">
+          <svg className="w-[18px] h-[18px] text-rust-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+          <span className="flex-[1_1_260px] min-w-0 text-dark-100">
+            <strong>CyberHunter - Panel v{updateInfo.update_available_version}</strong> is available
+            <span className="text-dark-400 ml-1">(current: v{updateInfo.current_version})</span>
+          </span>
+          <Link to="/telemetry?tab=updates" className="inline-flex items-center min-h-9 px-3.5 bg-rust-500/20 hover:bg-rust-500/30 text-rust-300 rounded-md text-[13px] font-semibold transition-colors whitespace-nowrap">
             View Update
           </Link>
         </div>
@@ -920,15 +941,15 @@ export default function Dashboard() {
 
       {/* Feature #4: Action confirmation bar */}
       {confirmAction && (
-        <div className={`rounded-xl border px-4 py-3 mb-6 flex flex-wrap items-center justify-between gap-3 ${
+        <div className={`rounded-lg border px-4 py-3 flex flex-wrap items-center gap-3 ${
           confirmAction === "reboot" ? "border-danger-500/40 bg-danger-500/5" : "border-warn-500/40 bg-warn-500/5"
         }`}>
-          <span className={`flex-[1_1_260px] text-sm ${confirmAction === "reboot" ? "text-danger-400" : "text-warn-400"}`}>
+          <span className="flex-[1_1_260px] text-dark-100">
             {confirmAction === "nginx" ? "Restart Nginx? This will briefly interrupt web traffic." :
              confirmAction === "php" ? "Restart PHP-FPM? Active requests may be interrupted." :
              "Reboot server? All services will be temporarily unavailable."}
           </span>
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-3 shrink-0">
             <button onClick={async () => {
               const action = confirmAction;
               setConfirmAction(null);
@@ -956,10 +977,10 @@ export default function Dashboard() {
                 setActionMessage({ text: why ? `Could not ${what}: ${why}` : `Could not ${what}`, type: "error" });
                 setTimeout(() => setActionMessage(null), 10000);
               }
-            }} className="min-h-10 px-4 rounded-lg bg-danger-500 text-white text-xs font-bold uppercase tracking-wider hover:bg-danger-600 transition-colors">
+            }} className={`min-h-10 px-4 rounded-md! bg-danger-500 text-white text-[12px] font-bold ${CAPS} tracking-[0.06em] hover:bg-danger-600 transition-colors`}>
               Confirm
             </button>
-            <button onClick={() => setConfirmAction(null)} className="min-h-10 px-3.5 rounded-lg border border-dark-600 bg-transparent text-dark-200 text-xs font-bold uppercase tracking-wider hover:bg-dark-700 transition-colors">
+            <button onClick={() => setConfirmAction(null)} className="min-h-10 px-3.5 rounded-md! border border-dark-600 bg-transparent text-dark-200 text-[13px] hover:bg-dark-700 transition-colors">
               Cancel
             </button>
           </div>
@@ -968,7 +989,7 @@ export default function Dashboard() {
 
       {/* Feature #4: Action message toast */}
       {actionMessage && (
-        <div className={`w-fit max-w-full rounded-lg border px-3.5 py-2.5 mb-6 text-sm font-medium ${
+        <div className={`self-start max-w-full ${R10} border px-3.5 py-2.5 font-medium ${
           actionMessage.type === "success" ? "bg-rust-500/10 border-rust-500/20 text-rust-400" : "bg-danger-500/10 border-danger-500/20 text-danger-400"
         }`}>
           {actionMessage.text}
@@ -976,15 +997,15 @@ export default function Dashboard() {
       )}
 
       {error && (
-        <div className="bg-danger-500/10 text-danger-400 text-sm px-4 py-3.5 rounded-xl border border-danger-500/30 mb-6">
+        <div className="bg-danger-500/10 text-danger-400 px-4 py-3.5 rounded-lg border border-danger-500/30">
           <div className="flex items-start gap-3">
-            <svg className="w-5 h-5 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <svg className="w-5 h-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
             </svg>
             <div>
               <p className="font-medium">{error}</p>
               {error.includes("Agent offline") && (
-                <p className="text-xs text-dark-300 mt-1 font-mono">
+                <p className={`text-[12px] text-dark-300 mt-1 ${MONO}`}>
                   Run: <span className="text-dark-100">systemctl restart dockpanel-agent</span>
                 </p>
               )}
@@ -1024,12 +1045,12 @@ export default function Dashboard() {
 
         if (isCollapsed) {
           return (
-            <div className="mb-6 bg-dark-800 border border-dark-600 rounded-xl px-5 py-2 animate-fade-up flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+            <div className="bg-dark-800 border border-dark-700 rounded-xl! shadow-none! px-5 py-2 animate-fade-up flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
               <div className="flex items-center gap-3">
                 <span className="text-[13px] font-semibold text-dark-100">Setup: {completed}/{steps.length} complete</span>
                 <div className="flex gap-1.5">
                   {steps.map(step => (
-                    <div key={step.id} className={`w-2 h-2 rounded-full ${step.check() ? "bg-rust-500" : "bg-dark-600"}`} />
+                    <div key={step.id} className={`size-2 rounded-full ${step.check() ? "bg-rust-500" : "bg-dark-600"}`} />
                   ))}
                 </div>
               </div>
@@ -1042,24 +1063,26 @@ export default function Dashboard() {
         }
 
         return (
-          <div className="mb-6 bg-dark-800 border border-dark-600 rounded-xl px-5 py-5 sm:px-[22px] animate-fade-up">
-            <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1 mb-1">
-              <h3 className="text-lg font-bold text-dark-50 typewriter inline-block max-w-full">Welcome to CyberHunter - Panel</h3>
+          <div className="bg-dark-800 border border-dark-700 rounded-xl! shadow-none! px-5 py-5 sm:px-[22px] flex flex-col gap-4 animate-fade-up">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="flex flex-col gap-1 min-w-0">
+                <h3 className="text-[18px] font-bold text-dark-50">Welcome to CyberHunter - Panel</h3>
+                <p className="text-[13px] text-dark-300">Complete these steps to set up your server. <span className="text-rust-400 font-semibold">{completed}/{steps.length} done</span></p>
+              </div>
               <div className="flex items-center gap-1 -mr-2.5">
                 <button onClick={toggleCollapse} className="min-h-9 px-2.5 text-dark-300 hover:text-dark-200 text-[13px] shrink-0">Collapse</button>
                 <button onClick={dismissOnboarding} className="min-h-9 px-2.5 text-dark-300 hover:text-dark-200 text-[13px] shrink-0">Dismiss</button>
               </div>
             </div>
-            <p className="text-[13px] text-dark-300 mb-4">Complete these steps to set up your server. <span className="text-rust-400 font-semibold">{completed}/{steps.length} done</span></p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 stagger-children">
+            <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,190px),1fr))] gap-3 stagger-children">
               {steps.map(step => (
                 <Link
                   key={step.id}
                   to={step.link}
-                  className={`rounded-lg border p-3.5 flex flex-col gap-2 transition-all hover-lift ${
+                  className={`rounded-lg! border p-3.5 flex flex-col gap-2 transition-all hover-lift ${INNER} ${
                     step.check()
-                      ? "border-rust-500/30 bg-dark-900/50 opacity-60"
-                      : "border-dark-600 bg-dark-900/50 hover:border-rust-500/40"
+                      ? "opacity-60"
+                      : "hover:border-rust-500/40"
                   }`}
                 >
                   <div className="flex flex-col items-start gap-2">
@@ -1068,15 +1091,15 @@ export default function Dashboard() {
                         <svg className="w-3.5 h-3.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
                       </div>
                     ) : (
-                      <div className="w-[26px] h-[26px] rounded-md bg-dark-700 flex items-center justify-center">
-                        <span className="text-xs text-dark-200 font-mono font-semibold">{steps.indexOf(step) + 1}</span>
+                      <div className="w-[26px] h-[26px] rounded-[min(7px,var(--radius-md))] bg-dark-700 flex items-center justify-center">
+                        <span className={`text-[12px] text-dark-200 ${MONO} font-semibold`}>{steps.indexOf(step) + 1}</span>
                       </div>
                     )}
-                    <span className={`text-sm font-semibold ${step.check() ? "text-rust-400" : "text-dark-50"}`}>{step.label}</span>
+                    <span className={`font-semibold ${step.check() ? "text-rust-400" : "text-dark-50"}`}>{step.label}</span>
                   </div>
-                  <p className="text-xs text-dark-300 leading-relaxed">{step.description}</p>
+                  <p className="text-[12px] text-dark-300 leading-[1.45]">{step.description}</p>
                   {!step.check() && (
-                    <span className="mt-auto text-xs text-rust-400 font-semibold">Start &rarr;</span>
+                    <span className="mt-auto text-[12px] text-rust-400 font-semibold">Start &rarr;</span>
                   )}
                 </Link>
               ))}
@@ -1095,9 +1118,9 @@ export default function Dashboard() {
           has something loading. Everything below now renders for every role, and
           the host-level pieces carry their own `system &&` / `isAdmin &&`. */}
       {isAdmin && !system ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" role="status" aria-live="polite">
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,260px),1fr))] gap-4" role="status" aria-live="polite">
           {[...Array(6)].map((_, i) => (
-            <div key={i} className="bg-dark-800 rounded-xl border border-dark-600 p-[22px] animate-pulse">
+            <div key={i} className="bg-dark-800 rounded-xl! border border-dark-700 shadow-none! p-[22px] animate-pulse">
               <div className="h-3 bg-dark-700 rounded-md w-20 mb-4" />
               <div className="h-10 bg-dark-700 rounded-md w-32" />
             </div>
@@ -1107,7 +1130,7 @@ export default function Dashboard() {
         <>
           {/* System Information - host-level, so `system &&` rather than relying
               on the outer gate that used to supply it. */}
-          {system && isVisible("system_info") && <div className="hidden sm:grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-px bg-dark-600 border border-dark-600 rounded-xl overflow-hidden mb-6">
+          {system && isVisible("system_info") && <div className={`hidden sm:grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-px bg-dark-700 border border-dark-700 shadow-none! ${R14} overflow-hidden`}>
             {[
               ["Hostname", system.hostname],
               ["OS", system.os],
@@ -1116,7 +1139,7 @@ export default function Dashboard() {
               ["Temperature", system.cpu_temp != null ? `${system.cpu_temp.toFixed(0)}°C` : "N/A"],
               ["Processes", system.process_count.toLocaleString()],
             ].map(([label, value]) => (
-              <div key={label} className="bg-dark-800 px-4 py-3 flex flex-col gap-1 min-w-0 card-interactive">
+              <div key={label} className="bg-dark-800 rounded-none! px-4 py-3 flex flex-col gap-1 min-w-0 card-interactive">
                 <span className={TILE_LABEL}>{label}</span>
                 <span title={String(value)} className={`text-[13px] text-dark-50 font-medium truncate ${label === "Temperature" && system.cpu_temp != null ? tempColor(system.cpu_temp) : ""}`}>{value}</span>
               </div>
@@ -1124,7 +1147,7 @@ export default function Dashboard() {
           </div>}
 
           {/* Resource Metrics - 3 column. Host CPU/memory/disk: admin-only data. */}
-          {system && isVisible("metrics") && <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6 stagger-children">
+          {system && isVisible("metrics") && <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,260px),1fr))] gap-4 stagger-children">
             {[
               { label: "CPU Usage", pct: system.cpu_usage, type: "cpu" as const, detail: `${system.cpu_count} cores${system.load_avg_1 !== undefined ? ` · Load ${system.load_avg_1?.toFixed(2)}` : ""}`,
                 icon: <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><rect x="6" y="6" width="12" height="12" rx="1" /><path d="M9 1v4m6-4v4M9 19v4m6-4v4M1 9h4m-4 6h4M19 9h4m-4 6h4" strokeLinecap="round" /></svg> },
@@ -1133,23 +1156,23 @@ export default function Dashboard() {
               { label: "Disk", pct: system.disk_usage_pct, type: "disk" as const, detail: `${system.disk_used_gb.toFixed(0)} / ${system.disk_total_gb.toFixed(0)} GB · ${(system.disk_total_gb - system.disk_used_gb).toFixed(0)} GB free${dockerDiskUsage ? ` · Images: ${dockerDiskUsage}` : ""}`,
                 icon: <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M21.75 17.25v-.228a4.5 4.5 0 0 0-.12-1.03l-2.268-9.64a3.375 3.375 0 0 0-3.285-2.602H7.923a3.375 3.375 0 0 0-3.285 2.602l-2.268 9.64a4.5 4.5 0 0 0-.12 1.03v.228m19.5 0a3 3 0 0 1-3 3H5.25a3 3 0 0 1-3-3m19.5 0a3 3 0 0 0-3-3H5.25a3 3 0 0 0-3 3m16.5 0h.008v.008h-.008v-.008Zm-3 0h.008v.008h-.008v-.008Z" /></svg> },
             ].map(({ label, pct, type, detail, icon }) => (
-              <div key={label} className="border border-dark-600 bg-dark-800 rounded-xl p-5 sm:p-[22px] relative overflow-hidden shadow-lg shadow-black/10 elevation-1">
+              <div key={label} className="border border-dark-700 bg-dark-800 rounded-xl! shadow-none! p-5 sm:p-[22px] relative overflow-hidden">
                 <div className={`absolute inset-0 opacity-[0.03] ${pct < 60 ? "bg-dark-50" : pct < 85 ? "bg-warn-500" : "bg-danger-500"}`} />
                 <div className="relative flex flex-col gap-3">
                   <div className="flex items-center gap-2 text-dark-300">
                     <span className="opacity-70">{icon}</span>
-                    <span className="font-mono text-[11px] uppercase tracking-widest font-medium">{label}</span>
+                    <span className={`${MONO} text-[11px] ${CAPS} tracking-[0.1em]`}>{label}</span>
                   </div>
-                  <div className={`text-[44px] leading-none font-semibold font-mono ${pctColor(pct)}`}>
-                    <CountUp value={pct} /><span className="text-xl text-dark-300 ml-0.5">%</span>
+                  <div className={`text-[44px] leading-none font-semibold ${MONO} ${pctColor(pct)}`}>
+                    <CountUp value={pct} />%
                   </div>
                   <div className="h-2 bg-dark-700 rounded-full overflow-hidden">
                     <div className={`h-full rounded-full transition-all duration-500 ${barColor(pct, type)}`} style={{ width: `${Math.min(pct, 100)}%` }} />
                   </div>
-                  <p className="text-xs text-dark-300">{detail}</p>
+                  <p className="text-[12px] text-dark-300">{detail}</p>
                   {/* Feature #7: Disk full forecast */}
                   {label === "Disk" && diskForecast !== null && diskForecast < 30 && (
-                    <p className={`-mt-1.5 text-xs font-semibold ${diskForecast < 7 ? "text-danger-400" : "text-warn-400"}`}>
+                    <p className={`text-[12px] font-semibold ${diskForecast < 7 ? "text-danger-400" : "text-warn-400"}`}>
                       Disk full in ~{diskForecast}d at current rate
                     </p>
                   )}
@@ -1162,16 +1185,16 @@ export default function Dashboard() {
 
           {/* Historical Charts */}
           {isVisible("charts") && metricsHistory.length >= 2 && (
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6 animate-fade-up">
+            <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,260px),1fr))] gap-4 animate-fade-up">
               {[
                 { label: "CPU", data: metricsHistory.map(p => p.cpu), color: "var(--color-rust-500)" },
                 { label: "Memory", data: metricsHistory.map(p => p.mem), color: "var(--color-accent-500)" },
                 { label: "Disk", data: metricsHistory.map(p => p.disk), color: "var(--color-warn-500)" },
               ].map(({ label, data, color }) => (
-                <div key={label} className="border border-dark-600 bg-dark-800 rounded-xl px-[18px] py-4 elevation-1">
-                  <div className="flex items-center justify-between gap-3 mb-2.5">
-                    <span className="text-[13px] text-dark-200 font-semibold">{label} (24h)</span>
-                    <span className="text-[13px] text-dark-50 font-mono">{data[data.length - 1]?.toFixed(1)}%</span>
+                <div key={label} className={`border border-dark-700 bg-dark-800 shadow-none! ${R14} px-[18px] py-4 flex flex-col gap-2.5`}>
+                  <div className="flex items-center justify-between gap-3 text-[13px]">
+                    <span className="text-dark-200 font-semibold">{label} (24h)</span>
+                    <span className={`text-dark-50 ${MONO}`}>{data[data.length - 1]?.toFixed(1)}%</span>
                   </div>
                   <Sparkline data={data} color={color} height={48} />
                 </div>
@@ -1180,7 +1203,7 @@ export default function Dashboard() {
           )}
 
           {/* Status Bar - grid of stat cells */}
-          {isVisible("status_bar") && <div className="grid grid-cols-2 sm:grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-2.5 mb-6 stagger-children">
+          {isVisible("status_bar") && <div className="grid grid-cols-2 sm:grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-2.5 stagger-children">
             {/* The one host-derived cell in an otherwise tenant-safe grid, which is
                 why this bar could not simply be shown or hidden as a whole. */}
             {system && (
@@ -1191,7 +1214,7 @@ export default function Dashboard() {
             )}
             <Link to="/sites" className={`${TILE} ${TILE_OK}`}>
               <span className={TILE_LABEL}>Sites</span>
-              <span className={`${TILE_VALUE} text-dark-50`}>{sites.total}{sites.active > 0 && <span className="text-rust-400 ml-1 text-xs font-medium">({sites.active} active)</span>}</span>
+              <span className={`${TILE_VALUE} text-dark-50`}>{sites.total}{sites.active > 0 && <span className={`text-rust-400 ml-1 ${TILE_SUB}`}>({sites.active} active)</span>}</span>
             </Link>
             <Link to="/databases" className={`${TILE} ${TILE_OK}`}>
               <span className={TILE_LABEL}>Databases</span>
@@ -1205,8 +1228,8 @@ export default function Dashboard() {
               <Link to="/apps" className={`${TILE} ${TILE_OK}`}>
                 <span className={TILE_LABEL}>Docker</span>
                 <span className={`${TILE_VALUE} text-dark-50`}>
-                  {dockerInfo?.running ?? 0}<span className="text-xs text-dark-300 font-medium">/{dockerInfo?.total ?? 0}</span>
-                  <span className="text-xs text-dark-400 font-medium ml-1">running</span>
+                  {dockerInfo?.running ?? 0}<span className={`text-dark-400 ${TILE_SUB}`}>/{dockerInfo?.total ?? 0}</span>
+                  <span className={`text-dark-400 ml-1 ${TILE_SUB}`}>running</span>
                 </span>
               </Link>
             )}
@@ -1277,11 +1300,11 @@ export default function Dashboard() {
             {diskIo && isVisible("disk_io") && <>
               <div className={`${TILE} ${TILE_OK}`}>
                 <span className={TILE_LABEL}>Disk Read</span>
-                <span className={`${TILE_VALUE} text-dark-50 font-mono`}>{formatRate(diskIo.read_bytes_sec)}</span>
+                <span className={`${TILE_VALUE} text-dark-50`}>{formatRate(diskIo.read_bytes_sec)}</span>
               </div>
               <div className={`${TILE} ${TILE_OK}`}>
                 <span className={TILE_LABEL}>Disk Write</span>
-                <span className={`${TILE_VALUE} text-dark-50 font-mono`}>{formatRate(diskIo.write_bytes_sec)}</span>
+                <span className={`${TILE_VALUE} text-dark-50`}>{formatRate(diskIo.write_bytes_sec)}</span>
               </div>
             </>}
             {/* Feature #6: Bandwidth usage summary. Derived from `network`, which
@@ -1291,8 +1314,8 @@ export default function Dashboard() {
               <div className={`${TILE} ${TILE_OK}`}>
                 <span className={TILE_LABEL}>Bandwidth</span>
                 <span className={`${TILE_VALUE} text-dark-50`}>
-                  <span className="text-dark-400">{"\u2193"}</span>{formatSize(bandwidthTotal.rx)}
-                  <span className="text-dark-400 ml-1">{"\u2191"}</span>{formatSize(bandwidthTotal.tx)}
+                  <span className="text-dark-400">{"↓"}</span>{formatSize(bandwidthTotal.rx)}
+                  <span className="text-dark-400 ml-1">{"↑"}</span>{formatSize(bandwidthTotal.tx)}
                 </span>
               </div>
             )}
@@ -1302,7 +1325,7 @@ export default function Dashboard() {
               <div className={`${TILE} ${TILE_OK}`}>
                 <span className={TILE_LABEL}>Mail Queue</span>
                 <span className={`${TILE_VALUE} ${(mailQueue ?? 0) > 0 ? "text-warn-400" : "text-dark-50"}`}>
-                  {mailQueue ?? 0} <span className="text-xs text-dark-400 font-medium">messages</span>
+                  {mailQueue ?? 0} <span className={`text-dark-400 ${TILE_SUB}`}>messages</span>
                 </span>
               </div>
             )}
@@ -1310,13 +1333,13 @@ export default function Dashboard() {
 
           {/* Reboot Required Warning */}
           {rebootRequired && (
-            <div className="rounded-xl border border-warn-500/40 bg-warn-500/5 px-4 py-3.5 mb-6 flex flex-wrap items-center gap-3.5">
+            <div className="rounded-lg border border-warn-500/30 bg-warn-500/5 px-4 py-3.5 flex flex-wrap items-center gap-3.5">
               <svg className="w-5 h-5 text-warn-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" /></svg>
-              <div className="flex-[1_1_260px] min-w-0">
-                <p className="text-sm text-warn-400 font-bold">Reboot Required</p>
-                <p className="text-[13px] text-dark-300 mt-0.5">Recent package updates (such as a new kernel version) require a reboot to be fully applied.</p>
+              <div className="flex-[1_1_300px] min-w-0 flex flex-col gap-0.5">
+                <p className="text-warn-400 font-bold">Reboot Required</p>
+                <p className="text-[13px] text-dark-300">Recent package updates (such as a new kernel version) require a reboot to be fully applied.</p>
               </div>
-              <Link to="/updates" className="inline-flex items-center min-h-9 px-3.5 rounded-lg bg-warn-500/15 text-warn-400 text-[13px] font-semibold hover:bg-warn-500/25 transition-colors shrink-0">
+              <Link to="/updates" className="inline-flex items-center min-h-9 px-3.5 rounded-md bg-warn-500/15 text-warn-400 text-[13px] font-semibold hover:bg-warn-500/25 transition-colors shrink-0">
                 View Updates
               </Link>
             </div>
@@ -1328,7 +1351,7 @@ export default function Dashboard() {
               the page, so it only renders once there's an actual fleet to show. */}
           {/* Fleet Health and Sites share a row when both draw; auto-fit lets a
               lone card take the full width, and the wrapper vanishes when empty. */}
-          <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,340px),1fr))] gap-4 items-start mb-6 empty:hidden">
+          <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,340px),1fr))] gap-4 items-start empty:hidden">
           {isAdmin && isVisible("fleet") && fleetOverview && fleetOverview.servers.length > 1 && (
             <div className={CARD}>
               <div className={CARD_HEAD}>
@@ -1337,12 +1360,10 @@ export default function Dashboard() {
               </div>
               <div className={ROWS}>
                 {fleetOverview.servers.map((s) => (
-                  <Link key={s.id} to="/servers" className="-mx-2 px-2 py-2.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-md hover:bg-dark-700/40 transition-colors">
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <div className={`w-2 h-2 rounded-full shrink-0 ${s.status === "healthy" ? "bg-rust-500" : "bg-warn-500"}`} />
-                      <span className="text-[13px] text-dark-50 font-mono truncate">{s.name}</span>
-                    </div>
-                    <div className="flex items-center gap-3 text-xs text-dark-300 shrink-0">
+                  <Link key={s.id} to="/servers" className="py-2.5 flex flex-wrap items-center gap-2.5 hover:bg-dark-700/40 transition-colors">
+                    <div className={`size-2 rounded-full shrink-0 ${s.status === "healthy" ? "bg-rust-500" : "bg-warn-500"}`} />
+                    <span className={`text-[13px] text-dark-50 ${MONO} truncate flex-[1_1_120px] min-w-0`}>{s.name}</span>
+                    <div className="flex items-center gap-2.5 text-[12px] text-dark-300 shrink-0">
                       {s.cpu_pct != null && <span>CPU {s.cpu_pct.toFixed(0)}%</span>}
                       {s.mem_pct != null && <span>Mem {s.mem_pct.toFixed(0)}%</span>}
                       <span>{s.sites} sites</span>
@@ -1358,14 +1379,14 @@ export default function Dashboard() {
 
           {/* Feature #5: Site Status Mini-Grid */}
           {isVisible("sites_grid") && sitesList.length > 0 && (
-            <div className={CARD}>
-              <div className={`${CARD_HEAD} mb-3`}>
+            <div className={`${CARD} gap-3`}>
+              <div className="flex items-center justify-between gap-3">
                 <h3 className={CARD_TITLE}>Sites</h3>
                 <Link to="/sites" className={CARD_LINK}>Manage</Link>
               </div>
               <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-2">
                 {sitesList.slice(0, 12).map((s) => (
-                  <Link key={s.id} to={`/sites/${s.id}`} className="min-h-10 px-3 rounded-lg border border-dark-600 bg-dark-900/50 flex items-center gap-2 min-w-0 hover:bg-dark-700/50 transition-colors">
+                  <Link key={s.id} to={`/sites/${s.id}`} className={`min-h-10 px-3 ${R10} ${INNER} flex items-center gap-2 min-w-0 hover:bg-dark-700/50 transition-colors`}>
                     <div
                       title={s.enabled === false ? "Disabled" : s.status}
                       className={`w-[7px] h-[7px] rounded-full shrink-0 ${
@@ -1381,7 +1402,7 @@ export default function Dashboard() {
           </div>
 
           {/* Recent Activity and Timeline share a row, same rule as above. */}
-          <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,340px),1fr))] gap-4 items-start mb-6 empty:hidden">
+          <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,340px),1fr))] gap-4 items-start empty:hidden">
           {/* Feature #2: Recent Activity Feed */}
           {isVisible("activity") && recentActivity.length > 0 && (
             <div className={CARD}>
@@ -1391,16 +1412,14 @@ export default function Dashboard() {
               </div>
               <div className={ROWS}>
                 {recentActivity.map((a, i) => (
-                  <div key={i} className="py-2.5 flex items-center justify-between gap-3 text-xs">
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <span className={`px-2 py-0.5 rounded-md font-mono text-[11px] font-medium shrink-0 ${
-                        a.action?.includes("create") || a.action?.includes("deploy") ? "bg-rust-500/15 text-rust-400" :
-                        a.action?.includes("delete") || a.action?.includes("remove") ? "bg-danger-500/15 text-danger-400" :
-                        "bg-dark-700 text-dark-200"
-                      }`}>{a.action}</span>
-                      {a.target_name && <span className="text-dark-200 font-mono truncate">{a.target_name}</span>}
-                    </div>
-                    <span className="text-dark-400 text-xs shrink-0">{timeAgo(a.created_at)}</span>
+                  <div key={i} className="py-2.5 flex flex-wrap items-center gap-2.5 text-[12px]">
+                    <span className={`px-2 py-[3px] rounded-sm ${MONO} text-[11px] shrink-0 ${
+                      a.action?.includes("create") || a.action?.includes("deploy") ? "bg-rust-500/15 text-rust-400" :
+                      a.action?.includes("delete") || a.action?.includes("remove") ? "bg-danger-500/15 text-danger-400" :
+                      "bg-dark-700 text-dark-200"
+                    }`}>{a.action}</span>
+                    {a.target_name && <span className={`flex-[1_1_120px] min-w-0 text-dark-200 ${MONO} truncate`}>{a.target_name}</span>}
+                    <span className="ml-auto text-dark-400 shrink-0">{timeAgo(a.created_at)}</span>
                   </div>
                 ))}
               </div>
@@ -1419,18 +1438,18 @@ export default function Dashboard() {
               </div>
               <div className={ROWS}>
                 {timeline.slice(0, 10).map((e, i) => (
-                  <div key={i} className="py-2.5 flex items-center justify-between gap-3 text-xs">
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <span className={`px-2 py-0.5 rounded-md font-mono text-[10px] font-medium tracking-wider shrink-0 uppercase ${
-                        e.type === "alert" || e.type === "incident" ? "bg-danger-500/15 text-danger-400" :
-                        e.type === "security" ? "bg-warn-500/15 text-warn-400" :
-                        e.type === "deploy" ? "bg-rust-500/15 text-rust-400" :
-                        "bg-dark-700 text-dark-200"
-                      }`}>{e.type}</span>
-                      <span className="text-dark-200 font-mono truncate">{e.detail}</span>
-                      {e.target && <span className="text-dark-400 font-mono truncate">· {e.target}</span>}
-                    </div>
-                    <span className="text-dark-400 text-xs shrink-0">{timeAgo(e.created_at)}</span>
+                  <div key={i} className="py-2.5 flex flex-wrap items-center gap-2.5 text-[12px]">
+                    <span className={`px-2 py-[3px] rounded-sm ${MONO} text-[10px] tracking-[0.08em] shrink-0 ${CAPS} ${
+                      e.type === "alert" || e.type === "incident" ? "bg-danger-500/15 text-danger-400" :
+                      e.type === "security" ? "bg-warn-500/15 text-warn-400" :
+                      e.type === "deploy" ? "bg-rust-500/15 text-rust-400" :
+                      "bg-dark-700 text-dark-200"
+                    }`}>{e.type}</span>
+                    <span className={`flex-[1_1_140px] min-w-0 text-dark-200 ${MONO} truncate`}>
+                      {e.detail}
+                      {e.target && <span className="text-dark-400"> · {e.target}</span>}
+                    </span>
+                    <span className="text-dark-400 shrink-0">{timeAgo(e.created_at)}</span>
                   </div>
                 ))}
               </div>
@@ -1449,7 +1468,7 @@ export default function Dashboard() {
             if (!showIssues && !showSsl) return null;
             const solo = showIssues !== showSsl;
             return (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
               {showIssues && (
                 <div className={`${CARD} ${solo ? "lg:col-span-2" : ""}`}>
                   <div className={CARD_HEAD}>
@@ -1459,11 +1478,11 @@ export default function Dashboard() {
                   <div className={ROWS}>
                     {intel.top_issues.slice(0, 4).map((issue, i) => (
                       <div key={i} className="py-2.5 flex items-start gap-2.5">
-                        <div className={`w-2 h-2 rounded-full mt-[5px] flex-shrink-0 ${
+                        <div className={`size-2 rounded-full mt-[5px] flex-shrink-0 ${
                           issue.severity === "critical" ? "bg-danger-500" :
                           issue.severity === "warning" ? "bg-warn-500" : "bg-accent-500"
                         }`} />
-                        <p className="text-[13px] text-dark-100 leading-snug">{issue.title}</p>
+                        <p className="text-[13px] text-dark-100">{issue.title}</p>
                       </div>
                     ))}
                   </div>
@@ -1476,17 +1495,17 @@ export default function Dashboard() {
                   </div>
                   <div className={ROWS}>
                     {intel.ssl_countdowns.map((ssl, i) => (
-                      <div key={i} className="py-2.5 flex items-center justify-between gap-3">
-                        <span className="text-[13px] text-dark-100 font-mono truncate max-w-[260px] flex items-center gap-2">
+                      <div key={i} className="py-2.5 flex items-center justify-between gap-2.5">
+                        <span className={`text-[13px] text-dark-100 ${MONO} truncate flex items-center gap-2.5 min-w-0`}>
                           {ssl.domain}
                           {/* A stack and a site can share the same domain string;
                               this is the only cue on the tile for which one is
                               expiring. */}
                           {ssl.stack_id && (
-                            <span className="font-sans text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-accent-500/10 text-accent-400 uppercase tracking-wider shrink-0">Stack</span>
+                            <span className={`font-sans text-[10px] font-semibold px-[7px] py-0.5 rounded-sm bg-accent-500/10 text-accent-400 ${CAPS} tracking-[0.08em] shrink-0`}>Stack</span>
                           )}
                         </span>
-                        <span className={`font-mono text-xs font-semibold shrink-0 ${
+                        <span className={`${MONO} text-[12px] font-semibold shrink-0 ${
                           ssl.severity === "critical" ? "text-danger-400" :
                           ssl.severity === "warning" ? "text-warn-400" :
                           ssl.severity === "info" ? "text-accent-400" : "text-rust-400"
@@ -1502,10 +1521,10 @@ export default function Dashboard() {
 
           {/* Smart Recommendations */}
           {intel && intel.recommendations && intel.recommendations.length > 0 && (
-            <div className={`${CARD} mb-6`}>
+            <div className={CARD}>
               <div className={CARD_HEAD}>
                 <h3 className={CARD_TITLE}>Recommendations</h3>
-                <span className="font-mono text-xs text-dark-400">{intel.recommendations.length} item{intel.recommendations.length !== 1 ? "s" : ""}</span>
+                <span className={`${MONO} text-[12px] text-dark-400`}>{intel.recommendations.length} item{intel.recommendations.length !== 1 ? "s" : ""}</span>
               </div>
               <div className={ROWS}>
                 {intel.recommendations.map((rec, i) => {
@@ -1522,19 +1541,19 @@ export default function Dashboard() {
                   const route = target && isNavVisible(navFlagsFor(target), user?.role ?? "") ? target : undefined;
                   const inner = (
                     <>
-                      <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                      <div className={`size-2 rounded-full flex-shrink-0 ${
                         rec.severity === "critical" ? "bg-danger-500" :
                         rec.severity === "warning" ? "bg-warn-500" : "bg-accent-500"
                       }`} />
-                      <div className="flex-1 min-w-0">
-                        <p className={`text-[13px] leading-snug ${
+                      <div className="flex-[1_1_240px] min-w-0">
+                        <p className={`text-[13px] ${
                           rec.severity === "critical" ? "text-danger-400" :
                           rec.severity === "warning" ? "text-warn-400" : "text-dark-100"
                         }`}>{rec.message}</p>
                       </div>
-                      <span className={`text-[10px] px-2 py-0.5 rounded-md uppercase tracking-wider font-bold flex-shrink-0 ${
-                        rec.severity === "critical" ? "bg-danger-500/10 text-danger-400" :
-                        rec.severity === "warning" ? "bg-warn-500/10 text-warn-400" : "bg-accent-500/10 text-accent-400"
+                      <span className={`text-[10px] px-2 py-[3px] rounded-sm ${CAPS} tracking-[0.08em] font-bold flex-shrink-0 ${
+                        rec.severity === "critical" ? "bg-danger-500/15 text-danger-400" :
+                        rec.severity === "warning" ? "bg-warn-500/15 text-warn-400" : "bg-accent-500/15 text-accent-400"
                       }`}>{rec.severity}</span>
                       {route && (
                         <svg className="w-4 h-4 text-dark-400 flex-shrink-0 group-hover:text-dark-200 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
@@ -1542,11 +1561,11 @@ export default function Dashboard() {
                     </>
                   );
                   return route ? (
-                    <Link key={i} to={route} className="-mx-2 px-2 min-h-[44px] py-2 flex items-center gap-2.5 rounded-md hover:bg-dark-700/40 transition-colors group">
+                    <Link key={i} to={route} className="min-h-[44px] py-2 flex flex-wrap items-center gap-2.5 hover:bg-dark-700/40 transition-colors group">
                       {inner}
                     </Link>
                   ) : (
-                    <div key={i} className="min-h-[44px] py-2 flex items-center gap-2.5">
+                    <div key={i} className="min-h-[44px] py-2 flex flex-wrap items-center gap-2.5">
                       {inner}
                     </div>
                   );
@@ -1559,19 +1578,19 @@ export default function Dashboard() {
 
           {/* Feature #12: Quick Links / Bookmarks */}
           {(bookmarks.length > 0 || showAddBookmark) && isVisible("bookmarks") && (
-            <div className={`${CARD} mb-6`}>
-              <div className={CARD_HEAD}>
+            <div className={`${CARD} gap-3`}>
+              <div className="flex items-center justify-between gap-3">
                 <h3 className={CARD_TITLE}>Quick Links</h3>
-                <button onClick={() => setShowAddBookmark(!showAddBookmark)} className={`inline-flex items-center min-h-9 px-3 rounded-lg border text-[13px] font-medium transition-colors ${BTN_2ND}`}>
+                <button onClick={() => setShowAddBookmark(!showAddBookmark)} className={`inline-flex items-center min-h-9 px-3 rounded-md! border shadow-none! text-[13px] transition-colors ${BTN_2ND_COLORS}`}>
                   {showAddBookmark ? "Cancel" : "+ Add"}
                 </button>
               </div>
               {showAddBookmark && (
-                <div className="pt-3 flex flex-col sm:flex-row gap-2">
+                <div className="flex flex-col sm:flex-row gap-2">
                   <input value={bmLabel} onChange={e => setBmLabel(e.target.value)} placeholder="Label"
-                    className="flex-1 px-3 py-2 bg-dark-900 border border-dark-600 rounded-lg text-[13px] text-dark-100 placeholder-dark-400 min-h-[44px] sm:min-h-10" />
+                    className="flex-1 min-w-0 px-3 py-2 bg-dark-900 border border-dark-600 rounded-md! text-[13px] text-dark-100 placeholder-dark-400 min-h-[44px] sm:min-h-10" />
                   <input value={bmUrl} onChange={e => setBmUrl(e.target.value)} placeholder="/sites or https://..."
-                    className="flex-[2_1_0%] px-3 py-2 bg-dark-900 border border-dark-600 rounded-lg text-[13px] text-dark-100 placeholder-dark-400 min-h-[44px] sm:min-h-10" />
+                    className="flex-[2_1_0%] min-w-0 px-3 py-2 bg-dark-900 border border-dark-600 rounded-md! text-[13px] text-dark-100 placeholder-dark-400 min-h-[44px] sm:min-h-10" />
                   <button onClick={() => {
                     if (bmLabel && bmUrl) {
                       const next = [...bookmarks, { label: bmLabel, url: bmUrl }];
@@ -1579,18 +1598,18 @@ export default function Dashboard() {
                       localStorage.setItem('dp-dashboard-bookmarks', JSON.stringify(next));
                       setBmLabel(""); setBmUrl(""); setShowAddBookmark(false);
                     }
-                  }} className="px-4 py-2 bg-rust-500 hover:bg-rust-600 text-white rounded-lg text-[13px] font-semibold min-h-[44px] sm:min-h-10 transition-colors">Add</button>
+                  }} className="px-4 py-2 bg-rust-500 hover:bg-rust-600 text-white rounded-md! font-semibold min-h-[44px] sm:min-h-10 transition-colors">Add</button>
                 </div>
               )}
-              <div className="pt-3 grid grid-cols-[repeat(auto-fill,minmax(min(100%,180px),1fr))] gap-2 empty:hidden">
+              <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,180px),1fr))] gap-2 empty:hidden">
                 {bookmarks.map((bm, i) => (
-                  <div key={i} className="min-h-[44px] pl-3.5 pr-1.5 rounded-lg border border-dark-600 bg-dark-900/50 flex items-center justify-between gap-1.5 min-w-0 group">
+                  <div key={i} className={`min-h-[44px] pl-3.5 pr-1.5 ${R10} ${INNER} flex items-center justify-between gap-1.5 min-w-0 group`}>
                     <a href={(() => { const u = String(bm.url || ''); return /^https?:\/\//i.test(u) ? u : /^\/[^/]/.test(u) ? u : '#'; })()} target="_blank" rel="noopener noreferrer" className="text-[13px] font-medium text-dark-100 hover:text-rust-400 truncate">{String(bm.label || '')}</a>
                     <button onClick={() => {
                       const next = bookmarks.filter((_, j) => j !== i);
                       setBookmarks(next);
                       localStorage.setItem('dp-dashboard-bookmarks', JSON.stringify(next));
-                    }} className="w-8 h-8 shrink-0 rounded-md text-dark-400 hover:text-danger-400 text-base leading-none sm:opacity-60 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity">&times;</button>
+                    }} className="w-8 h-8 shrink-0 rounded-md text-dark-400 hover:text-danger-400 text-[16px] leading-none sm:opacity-60 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity">&times;</button>
                   </div>
                 ))}
               </div>
@@ -1598,80 +1617,80 @@ export default function Dashboard() {
           )}
 
           {/* Network & Processes */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+          <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,340px),1fr))] gap-4 items-start empty:hidden">
             {/* Network I/O */}
             {isVisible("network") && network.length > 0 && (
-              <div className={`${CARD} overflow-x-auto`}>
-                <div className="pb-2">
-                  <h3 className={CARD_TITLE}>Network I/O</h3>
-                </div>
-                <table className="w-full text-[13px]">
-                  <thead>
-                    <tr>
-                      <th className={`${TH} text-left`}>Interface</th>
-                      <th className={`${TH} text-right`}>RX</th>
-                      <th className={`${TH} text-right`}>TX</th>
-                    </tr>
-                  </thead>
-                  <tbody className={ROWS}>
-                    {network.filter(n => n.rx_bytes > 0 || n.tx_bytes > 0).map((iface) => (
-                      <tr key={iface.name} className="hover:bg-dark-700/30 transition-colors">
-                        <td className={`${TD} text-dark-50 font-mono`}>{iface.name}</td>
-                        <td className={`${TD} text-right font-mono`}>
-                          <div className="text-rust-400">
-                            <span className="text-dark-400 mr-0.5">{"\u2193"}</span>
-                            {iface.rx_rate != null ? formatRate(iface.rx_rate) : formatSize(iface.rx_bytes)}
-                          </div>
-                          {iface.rx_rate != null && (
-                            <div className="text-[11px] text-dark-400 mt-0.5">{formatSize(iface.rx_bytes)} total</div>
-                          )}
-                        </td>
-                        <td className={`${TD} text-right font-mono`}>
-                          <div className="text-accent-400">
-                            <span className="text-dark-400 mr-0.5">{"\u2191"}</span>
-                            {iface.tx_rate != null ? formatRate(iface.tx_rate) : formatSize(iface.tx_bytes)}
-                          </div>
-                          {iface.tx_rate != null && (
-                            <div className="text-[11px] text-dark-400 mt-0.5">{formatSize(iface.tx_bytes)} total</div>
-                          )}
-                        </td>
+              <div className={`${CARD} gap-2`}>
+                <h3 className={CARD_TITLE}>Network I/O</h3>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-[13px]">
+                    <thead className="bg-transparent!">
+                      <tr>
+                        <th className={TH}>Interface</th>
+                        <th className={TH}>RX</th>
+                        <th className={TH}>TX</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {network.filter(n => n.rx_bytes > 0 || n.tx_bytes > 0).map((iface) => (
+                        <tr key={iface.name} className="hover:bg-dark-700/30 transition-colors">
+                          <td className={`${TD} text-dark-50 ${MONO}`}>{iface.name}</td>
+                          <td className={TD}>
+                            <div className={`text-rust-400 ${MONO}`}>
+                              <span className="mr-0.5">{"↓"}</span>
+                              {iface.rx_rate != null ? formatRate(iface.rx_rate) : formatSize(iface.rx_bytes)}
+                            </div>
+                            {iface.rx_rate != null && (
+                              <div className="text-[11px] text-dark-400 mt-0.5">{formatSize(iface.rx_bytes)} total</div>
+                            )}
+                          </td>
+                          <td className={TD}>
+                            <div className={`text-accent-400 ${MONO}`}>
+                              <span className="mr-0.5">{"↑"}</span>
+                              {iface.tx_rate != null ? formatRate(iface.tx_rate) : formatSize(iface.tx_bytes)}
+                            </div>
+                            {iface.tx_rate != null && (
+                              <div className="text-[11px] text-dark-400 mt-0.5">{formatSize(iface.tx_bytes)} total</div>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
 
             {/* Top Processes */}
             {isVisible("processes") && processes.length > 0 && (
-              <div className={`${CARD} overflow-x-auto`}>
-                <div className="pb-2">
-                  <h3 className={CARD_TITLE}>Top Processes</h3>
-                </div>
-                <table className="w-full text-[13px]">
-                  <thead>
-                    <tr>
-                      <th className={`${TH} text-left`}>Process</th>
-                      <th className={`${TH} text-right`}>PID</th>
-                      <th className={`${TH} text-right`}>CPU</th>
-                      <th className={`${TH} text-right`}>MEM</th>
-                    </tr>
-                  </thead>
-                  <tbody className={ROWS}>
-                    {processes.slice(0, 10).map((p) => (
-                      <tr key={p.pid} className="hover:bg-dark-700/30 transition-colors">
-                        <td className={`${TD} text-dark-50 font-mono truncate max-w-[200px]`}>{p.name}</td>
-                        <td className={`${TD} text-dark-200 text-right font-mono`}>{p.pid}</td>
-                        <td className={`${TD} text-right font-mono`}>
-                          <span className={p.cpu_pct > 50 ? "text-danger-400 font-medium" : "text-dark-200"}>
-                            {p.cpu_pct.toFixed(1)}%
-                          </span>
-                        </td>
-                        <td className={`${TD} text-dark-200 text-right font-mono`}>{p.mem_mb.toFixed(0)} MB</td>
+              <div className={`${CARD} gap-2`}>
+                <h3 className={CARD_TITLE}>Top Processes</h3>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-[13px]">
+                    <thead className="bg-transparent!">
+                      <tr>
+                        <th className={TH}>Process</th>
+                        <th className={TH}>PID</th>
+                        <th className={TH}>CPU</th>
+                        <th className={TH}>MEM</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {processes.slice(0, 10).map((p) => (
+                        <tr key={p.pid} className="hover:bg-dark-700/30 transition-colors">
+                          <td className={`${TD_PROC} text-dark-50 ${MONO} truncate max-w-[200px]`}>{p.name}</td>
+                          <td className={`${TD_PROC} text-dark-300 ${MONO}`}>{p.pid}</td>
+                          <td className={`${TD_PROC} ${MONO}`}>
+                            <span className={p.cpu_pct > 50 ? "text-danger-400 font-medium" : "text-dark-50"}>
+                              {p.cpu_pct.toFixed(1)}%
+                            </span>
+                          </td>
+                          <td className={`${TD_PROC} text-dark-300 ${MONO}`}>{p.mem_mb.toFixed(0)} MB</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
           </div>
