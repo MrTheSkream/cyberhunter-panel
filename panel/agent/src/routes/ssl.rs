@@ -78,6 +78,22 @@ fn checked_pool(
     }
 }
 
+/// The extra names a renewal keeps when its caller named none: those the
+/// current certificate covers that the vhost still serves (never the domain,
+/// never a wildcard, at most `ssl::MAX_EXTRA_NAMES`). Pure.
+fn kept_names(domain: &str, current_pem: Option<&str>, served: &[String]) -> Vec<String> {
+    let Some(names) = current_pem.and_then(|p| ssl::cert_covers_domain(p, domain).ok()) else {
+        return Vec::new();
+    };
+    served
+        .iter()
+        .filter(|s| !s.starts_with('*') && !s.eq_ignore_ascii_case(domain))
+        .filter(|s| names.iter().any(|n| n.eq_ignore_ascii_case(s)))
+        .take(ssl::MAX_EXTRA_NAMES)
+        .cloned()
+        .collect()
+}
+
 /// 05-import-hestia (W3-S): what a provision/renew body adds for a site's
 /// other names and for the vhost the certificate door re-renders. All
 /// optional; absent = as before (a single-name order, settings read back
@@ -491,7 +507,21 @@ async fn renew(
     let cert_path = format!("/etc/dockpanel/ssl/{domain}/fullchain.pem");
     let replaces_pem = tokio::fs::read_to_string(&cert_path).await.ok();
 
-    let extra = body.names.extra(&domain)?;
+    // A caller that does not say which names to renew (an older panel, the
+    // security scanner, a stack) keeps the names the current certificate
+    // covers AND the vhost still serves, with the apex-only fallback: a
+    // renewal must not silently drop `www.` (05-import-hestia D3).
+    let (extra, fallback) = match body.names.extra_names {
+        Some(_) => (body.names.extra(&domain)?, body.names.fallback_apex_only),
+        None => {
+            let served = std::fs::read_to_string(crate::services::nginx::vhost_target(&domain).path())
+                .map(|v| crate::services::apache::aliases_in_nginx_config(&v, &domain))
+                .unwrap_or_default();
+            let kept = kept_names(&domain, replaces_pem.as_deref(), &served);
+            let fallback = !kept.is_empty();
+            (kept, fallback)
+        }
+    };
     let opts = ssl::ProvisionOpts {
         profile: body.profile.as_deref(),
         replaces_pem: replaces_pem.as_deref(),
@@ -503,12 +533,12 @@ async fn renew(
         //    replace a stranger's certificate.
         replace_foreign: false,
         extra_names: &extra,
-        fallback_apex_only: body.names.fallback_apex_only,
+        fallback_apex_only: fallback,
     };
 
     // A declined multi-name order followed by the apex-only retry is two
     // orders: give it twice the budget.
-    let budget = if !extra.is_empty() && body.names.fallback_apex_only { 240 } else { 120 };
+    let budget = if !extra.is_empty() && fallback { 240 } else { 120 };
     let cert_info = tokio::time::timeout(
         Duration::from_secs(budget),
         ssl::provision_cert(&account, &domain, Some(&opts)),
@@ -890,6 +920,28 @@ mod renew_request_tests {
         assert!(body.proxy_port.is_none());
         assert!(body.php_socket.is_none());
         assert!(body.profile.is_none());
+    }
+
+    // 05-import-hestia W3-S: a renewal that names no extra names keeps the
+    // ones the current certificate covers and the vhost still serves.
+    #[test]
+    fn an_unnamed_renewal_keeps_the_covered_and_served_names() {
+        let key = rcgen::KeyPair::generate().unwrap();
+        let sans = vec!["x.tld".to_string(), "www.x.tld".to_string(), "old.x.tld".to_string()];
+        let pem = rcgen::CertificateParams::new(sans).unwrap().self_signed(&key).unwrap().pem();
+        let served = vec!["www.x.tld".to_string(), "new.tld".to_string()];
+        assert_eq!(kept_names("x.tld", Some(&pem), &served), vec!["www.x.tld".to_string()]);
+        assert!(kept_names("x.tld", None, &served).is_empty());
+        assert!(kept_names("other.tld", Some(&pem), &served).is_empty());
+        let body: RenewRequest = serde_json::from_str(r#"{"email":"ops@example.com"}"#).unwrap();
+        assert!(body.names.extra_names.is_none());
+        let body: RenewRequest = serde_json::from_str(
+            r#"{"email":"ops@example.com","extra_names":["www.x.tld"],"fallback_apex_only":true,"hsts":false}"#,
+        )
+        .unwrap();
+        assert_eq!(body.names.extra("x.tld").unwrap(), vec!["www.x.tld".to_string()]);
+        assert!(body.names.fallback_apex_only);
+        assert_eq!(body.names.hsts, Some(false));
     }
 
     // And the site payload is unchanged: a caller that CAN describe the vhost

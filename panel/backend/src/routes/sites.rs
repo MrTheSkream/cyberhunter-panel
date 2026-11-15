@@ -3736,12 +3736,21 @@ pub async fn rename_domain(
              THEN '/etc/dockpanel/ssl/' || $1 || '/fullchain.pem' ELSE ssl_cert_path END, \
          ssl_key_path = CASE WHEN ssl_key_path LIKE $4 \
              THEN '/etc/dockpanel/ssl/' || $1 || '/privkey.pem' ELSE ssl_key_path END, \
+         aliases = CASE WHEN aliases IS NULL THEN NULL ELSE ARRAY( \
+             SELECT CASE WHEN right(a, length($5) + 1) = '.' || $5 \
+                 THEN left(a, length(a) - length($5)) || $1 ELSE a END \
+             FROM unnest(aliases) AS a \
+             WHERE a <> $1) END, \
          updated_at = NOW() WHERE id = $2",
     )
         .bind(&new_domain)
         .bind(id)
         .bind(format!("/etc/dockpanel/ssl/{old_domain}/%"))
         .bind(format!("/etc/dockpanel/ssl/{old_domain}/%"))
+        // Managed aliases follow the rename the agent applied to the vhost
+        // (`www.<old>` becomes `www.<new>`), so `canonical_host = www` still
+        // names a served host and the next rebuild is not refused.
+        .bind(&old_domain)
         .execute(&state.db)
         .await
         .map_err(|e| internal_error("rename domain", e))?;
