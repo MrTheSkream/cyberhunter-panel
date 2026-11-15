@@ -1,4 +1,5 @@
 pub mod activity;
+pub mod antivirus;
 pub mod agent_checkin;
 pub mod alerts;
 pub mod agent_updates;
@@ -1328,6 +1329,23 @@ pub fn router() -> Router<AppState> {
         .route("/api/security/unverified-users", get(security::unverified_users))
         .route("/api/security/users/{id}/verify-email", post(security::verify_user_email))
         // Security Scanning
+        // Antivirus (ClamAV, feature 5)
+        .route("/api/antivirus/status", get(antivirus::status))
+        .route("/api/antivirus/install", post(antivirus::install))
+        .route("/api/antivirus/jobs/{job_id}", get(antivirus::job))
+        .route("/api/antivirus/uninstall", post(antivirus::uninstall))
+        .route("/api/antivirus/mail", post(antivirus::mail))
+        .route("/api/antivirus/schedule", put(antivirus::put_schedule))
+        .route("/api/antivirus/site-status", get(antivirus::site_status))
+        .route("/api/antivirus/scan", post(antivirus::scan))
+        .route("/api/antivirus/scans", get(antivirus::scans))
+        .route("/api/antivirus/detections", get(antivirus::detections))
+        .route("/api/antivirus/detections/{id}/quarantine", post(antivirus::detection_quarantine))
+        .route("/api/antivirus/detections/{id}/restore", post(antivirus::detection_restore))
+        .route("/api/antivirus/detections/{id}/delete", post(antivirus::detection_delete))
+        .route("/api/antivirus/detections/{id}/ignore", post(antivirus::detection_ignore))
+        .route("/api/antivirus/quarantine", get(antivirus::quarantine_list))
+        .route("/api/antivirus/quarantine/{quarantine_id}/delete", post(antivirus::quarantine_delete))
         .route("/api/security/scan", post(security_scans::trigger_scan))
         .route("/api/security/scans", get(security_scans::list_scans))
         .route("/api/security/scans/{id}", get(security_scans::get_scan))

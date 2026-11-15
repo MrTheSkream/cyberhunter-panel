@@ -27,6 +27,36 @@ use uuid::Uuid;
 use crate::routes::mail::{is_wellformed_address, is_wellformed_address_list};
 use crate::services::import_types::{wait_job, ImportCtx, ItemOutcome, ItemStatus};
 
+/// Manual action of the import report (contract 06 A-H): HestiaCP scanned the mail of
+/// some imported domains for viruses (`ANTIVIRUS='yes'`, exposed by the agent as
+/// `"antivirus": true` in the inventory's `mail_domains`); here it is one switch per
+/// server. Counted over the mail domains this import brought in (ledger `mail_domain`
+/// rows that finished), so a run that did not import mail says nothing.
+pub fn antivirus_manual_action(
+    rows: &[crate::services::migration_ledger::LedgerRow],
+    inventory: Option<&serde_json::Value>,
+) -> Option<String> {
+    let imported: BTreeSet<String> = rows
+        .iter()
+        .filter(|r| r.kind == "mail_domain")
+        .filter(|r| crate::services::migration_ledger::COMPLETED.contains(&r.status.as_str()))
+        .map(|r| r.key.trim().to_ascii_lowercase())
+        .collect();
+    let n = inventory?
+        .get("mail_domains")?
+        .as_array()?
+        .iter()
+        .filter(|d| d.get("antivirus").and_then(|v| v.as_bool()) == Some(true))
+        .filter_map(|d| d.get("domain").and_then(|v| v.as_str()))
+        .map(|d| d.trim().to_ascii_lowercase())
+        .collect::<BTreeSet<String>>()
+        .intersection(&imported)
+        .count();
+    (n > 0).then(|| {
+        format!("Enable mail antivirus (Mail > Spam Filter): HestiaCP scanned mail for {n} domain(s)")
+    })
+}
+
 /// The panel's largest quota (`create_account` clamps to it): "unlimited".
 pub const UNLIMITED_QUOTA_MB: i32 = 1_048_576;
 
@@ -637,6 +667,35 @@ async fn import_mail_domain_inner(ctx: &ImportCtx, domain: &str) -> Vec<(String,
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn hestia_mail_antivirus_becomes_one_manual_action() {
+        use crate::services::migration_ledger::LedgerRow;
+        let row = |key: &str, status: &str| LedgerRow {
+            kind: "mail_domain".into(),
+            key: key.into(),
+            status: status.into(),
+            message: String::new(),
+            details: serde_json::json!({}),
+            attempts: 1,
+            updated_at: chrono::Utc::now(),
+        };
+        let inv = serde_json::json!({ "mail_domains": [
+            { "domain": "a.be", "antivirus": true },
+            { "domain": "B.be", "antivirus": true },
+            { "domain": "c.be", "antivirus": false },
+            { "domain": "d.be", "antivirus": true },
+            { "domain": "e.be" }
+        ]});
+        let rows = vec![row("a.be", "done"), row("b.be", "warning"), row("c.be", "done"), row("d.be", "failed")];
+        assert_eq!(
+            antivirus_manual_action(&rows, Some(&inv)).as_deref(),
+            Some("Enable mail antivirus (Mail > Spam Filter): HestiaCP scanned mail for 2 domain(s)")
+        );
+        assert_eq!(antivirus_manual_action(&rows[2..], Some(&inv)), None);
+        assert_eq!(antivirus_manual_action(&rows, None), None);
+        assert_eq!(antivirus_manual_action(&[], Some(&inv)), None);
+    }
+
     #[test]
     fn an_early_failure_keeps_the_domain_ours() {
         let mut out = vec![
