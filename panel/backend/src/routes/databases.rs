@@ -445,7 +445,15 @@ async fn create_local(
     let password = uuid::Uuid::new_v4().to_string().replace('-', "");
     let encrypted = crate::services::secrets_crypto::encrypt_credential(&password, &state.config.jwt_secret)
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &format!("Encryption failed: {e}")))?;
-    let row: Database = sqlx::query_as(
+    // Agent FIRST, row second: the agent refuses (409) a schema or account that
+    // already exists on the server (e.g. one left by a deleted site), so no panel
+    // row can ever point at a database it did not create. No port to reserve here.
+    let agent_body = serde_json::json!({ "name": body.name, "db_user": body.name, "password": password });
+    agent
+        .post("/localdb/databases", Some(agent_body))
+        .await
+        .map_err(|e| agent_error("Database creation", e))?;
+    let row: Database = match sqlx::query_as(
         "INSERT INTO databases (site_id, name, engine, db_user, db_password_enc, container_id, port, kind, imported_hash) \
          VALUES ($1, $2, 'mariadb', $2, $3, NULL, NULL, 'local', false) \
          RETURNING id, site_id, stack_id, name, engine, db_user, container_id, port, created_at, kind, imported_hash",
@@ -455,13 +463,18 @@ async fn create_local(
     .bind(&encrypted)
     .fetch_one(&state.db)
     .await
-    .map_err(|e| internal_error("create databases", e))?;
-
-    let agent_body = serde_json::json!({ "name": body.name, "db_user": body.name, "password": password });
-    if let Err(e) = agent.post("/localdb/databases", Some(agent_body)).await {
-        let _ = sqlx::query("DELETE FROM databases WHERE id = $1").bind(row.id).execute(&state.db).await;
-        return Err(agent_error("Database creation", e));
-    }
+    {
+        Ok(r) => r,
+        Err(e) => {
+            let _ = agent
+                .post(
+                    &format!("/localdb/databases/{}/drop", body.name),
+                    Some(serde_json::json!({ "db_user": body.name, "drop_user_if_unused": true })),
+                )
+                .await;
+            return Err(internal_error("create databases", e));
+        }
+    };
     crate::services::activity::log_activity(
         &state.db, claims.sub, &claims.email, "database.create",
         Some("database"), Some(&body.name), Some("local"), None, claims.key_id,
@@ -1641,10 +1654,31 @@ pub async fn local_install(
     ServerScope(server_id, agent): ServerScope,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     require_admin(&claims.role)?;
-    let result = agent
-        .post_long("/localdb/install", None, 900)
-        .await
-        .map_err(|e| agent_error("Local MariaDB install", e))?;
+    // The install may outlast the panel's 300 s request ceiling (TimeoutLayer and
+    // nginx `proxy_read_timeout`). It runs in its own task so the agent call is not
+    // dropped with the request; past 270 s the answer says it is still running.
+    // The agent side is idempotent, so pressing Install again is harmless.
+    let call = tokio::spawn({
+        let agent = agent.clone();
+        async move { agent.post_long("/localdb/install", None, 900).await }
+    });
+    let result = match tokio::time::timeout(
+        std::time::Duration::from_secs(crate::services::agent::DB_RESTORE_TIMEOUT_SECS),
+        call,
+    )
+    .await
+    {
+        Ok(Ok(inner)) => inner.map_err(|e| agent_error("Local MariaDB install", e))?,
+        Ok(Err(e)) => {
+            return Err(err(StatusCode::INTERNAL_SERVER_ERROR, &format!("install task failed: {e}")))
+        }
+        Err(_elapsed) => serde_json::json!({
+            "success": true,
+            "pending": true,
+            "message": "The installation is still running on the server. Refresh the status in a few minutes.",
+            "version": null,
+        }),
+    };
     crate::services::activity::log_activity_on_server(
         &state.db, claims.sub, &claims.email, "database.local_install",
         Some("database"), Some("local"), None, None, Some(server_id), claims.key_id,

@@ -417,8 +417,11 @@ async fn add_mariadb_org_repo() -> Result<(), String> {
     {
         return Err(format!("mariadb.org has no repository for {id} {codename}"));
     }
+    // The Release probe comes first: a suite mariadb.org does not publish must fall
+    // back to the distribution package, not leave a broken apt source behind.
     let script = format!(
-        "set -e; mkdir -p /etc/apt/keyrings; \
+        "set -e; curl -fsSI https://deb.mariadb.org/11.4/{id}/dists/{codename}/Release >/dev/null; \
+         mkdir -p /etc/apt/keyrings; \
          curl -fsSL -o /etc/apt/keyrings/mariadb-keyring.pgp https://mariadb.org/mariadb_release_signing_key.pgp; \
          printf 'X-Repolib-Name: MariaDB\\nTypes: deb\\nURIs: https://deb.mariadb.org/11.4/{id}\\nSuites: {codename}\\nComponents: main\\nSigned-By: /etc/apt/keyrings/mariadb-keyring.pgp\\n' \
            > /etc/apt/sources.list.d/mariadb.sources"
@@ -1118,14 +1121,9 @@ async fn import_into(
     let candidates = dump_members(name);
     let ordered: Vec<String> = match &req.file {
         Some(f) if candidates.contains(f) => vec![f.clone()],
-        _ => {
-            let staged = crate::services::migration::staging_dir(&req.migration_id).ok();
-            let mut v = candidates.to_vec();
-            if let Some(dir) = staged {
-                v.sort_by_key(|m| !dir.join(m).exists());
-            }
-            v
-        }
+        // Without it: `.gz` then `.zst`. A missing member makes the reader exit
+        // non-zero before any byte, which moves on to the next name.
+        _ => candidates.to_vec(),
     };
     let mut last_err = String::from("no dump found for this database in the archive");
     for member in &ordered {
