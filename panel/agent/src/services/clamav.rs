@@ -64,8 +64,10 @@ pub const CHUNK: usize = 64 * 1024;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 const SIMPLE_TIMEOUT: Duration = Duration::from_secs(3);
 const WRITE_TIMEOUT: Duration = Duration::from_secs(30);
-/// A large archive can take a while to unpack and scan.
-const SCAN_REPLY_TIMEOUT: Duration = Duration::from_secs(300);
+/// Reply to one file (at most 25 MB). Long enough for a big archive, short
+/// enough that one stuck file cannot hold a scan for long: after it the scan
+/// checks clamd with `PING` and moves on.
+pub const SCAN_REPLY_TIMEOUT: Duration = Duration::from_secs(120);
 const MAX_REPLY: usize = 4096;
 const SYSTEMCTL_TIMEOUT: Duration = Duration::from_secs(120);
 
@@ -76,11 +78,17 @@ const SYSTEMCTL_TIMEOUT: Duration = Duration::from_secs(120);
 pub struct AvErr {
     pub status: u16,
     pub msg: String,
+    /// Machine-readable `code` of the JSON error, when the contract has one.
+    pub code: Option<&'static str>,
 }
 
 impl AvErr {
     pub fn new(status: u16, msg: impl Into<String>) -> Self {
-        Self { status, msg: msg.into() }
+        Self { status, msg: msg.into(), code: None }
+    }
+    pub fn with_code(mut self, code: &'static str) -> Self {
+        self.code = Some(code);
+        self
     }
     pub fn bad(msg: impl Into<String>) -> Self {
         Self::new(400, msg)
@@ -776,20 +784,37 @@ pub async fn set_mail(enable: bool) -> Result<bool, AvErr> {
     crate::services::apache::write_file(RSPAMD_AV_CONF, &content)
         .await
         .map_err(AvErr::internal)?;
-    if let Err(e) = configtest().await {
-        let rollback = match &previous {
-            Some(p) => crate::services::apache::write_file(RSPAMD_AV_CONF, p).await,
-            None => crate::services::apache::remove_file(RSPAMD_AV_CONF).await,
-        };
-        if let Err(r) = rollback {
-            tracing::error!("antivirus: rollback of {RSPAMD_AV_CONF} failed: {r}");
-        }
-        return Err(AvErr::internal(format!("Rspamd rejected the antivirus configuration: {e}")));
-    }
     // A new group membership only reaches a restarted process.
     let action = if restart { "restart" } else { "reload" };
-    systemctl(&[action, "rspamd"]).await.map_err(AvErr::internal)?;
+    let rollback = async {
+        match &previous {
+            Some(p) => crate::services::apache::write_file(RSPAMD_AV_CONF, p).await,
+            None => crate::services::apache::remove_file(RSPAMD_AV_CONF).await,
+        }
+    };
+    check_activate_or_rollback(configtest(), systemctl(&[action, "rspamd"]), rollback).await?;
     Ok(mail_enabled())
+}
+
+/// Runs `check`, then `activate`; when either fails, runs `rollback` (put the
+/// previous file back, or remove it) and returns the error. Futures are lazy:
+/// `activate` does nothing unless `check` passed, `rollback` unless one failed.
+async fn check_activate_or_rollback(
+    check: impl std::future::Future<Output = Result<(), String>>,
+    activate: impl std::future::Future<Output = Result<(), String>>,
+    rollback: impl std::future::Future<Output = Result<(), String>>,
+) -> Result<(), AvErr> {
+    let err = match check.await {
+        Err(e) => format!("Rspamd rejected the antivirus configuration: {e}"),
+        Ok(()) => match activate.await {
+            Ok(()) => return Ok(()),
+            Err(e) => e,
+        },
+    };
+    if let Err(r) = rollback.await {
+        tracing::error!("antivirus: rollback of {RSPAMD_AV_CONF} failed: {r}");
+    }
+    Err(AvErr::internal(err))
 }
 
 #[cfg(test)]
@@ -966,6 +991,34 @@ MaxScanSize 100M\n";
         std::fs::write(dir.join("bytecode.cvd"), b"x").unwrap();
         assert_eq!(db_files_present(&dir), 3);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn rspamd_activation_failure_rolls_back() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        let rolled = AtomicU32::new(0);
+        let activated = AtomicU32::new(0);
+        let rb = || async {
+            rolled.fetch_add(1, Ordering::SeqCst);
+            Ok::<(), String>(())
+        };
+        let act = |r: Result<(), String>| async {
+            activated.fetch_add(1, Ordering::SeqCst);
+            r
+        };
+        // All good: no rollback.
+        check_activate_or_rollback(async { Ok(()) }, act(Ok(())), rb()).await.unwrap();
+        assert_eq!((activated.load(Ordering::SeqCst), rolled.load(Ordering::SeqCst)), (1, 0));
+        // configtest fails: not activated, rolled back.
+        let e = check_activate_or_rollback(async { Err("bad".into()) }, act(Ok(())), rb()).await.unwrap_err();
+        assert_eq!((e.status, e.msg.as_str()), (500, "Rspamd rejected the antivirus configuration: bad"));
+        assert_eq!((activated.load(Ordering::SeqCst), rolled.load(Ordering::SeqCst)), (1, 1));
+        // reload fails after a good configtest: rolled back too, error kept.
+        let e = check_activate_or_rollback(async { Ok(()) }, act(Err("systemctl reload rspamd failed: x".into())), rb())
+            .await
+            .unwrap_err();
+        assert_eq!((e.status, e.msg.as_str()), (500, "systemctl reload rspamd failed: x"));
+        assert_eq!((activated.load(Ordering::SeqCst), rolled.load(Ordering::SeqCst)), (2, 2));
     }
 
     #[test]

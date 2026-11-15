@@ -861,6 +861,9 @@ pub const SUPPRESSIBLE_ALERT_TYPES: &[&str] = &[
     "security",
     "image_scan",
     "wp_vuln_scan",
+    "malware",
+    "av_signatures",
+    "av_down",
     "slow_response",
 ];
 

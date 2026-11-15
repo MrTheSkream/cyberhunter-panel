@@ -130,12 +130,26 @@ pub fn may_scan(is_admin: bool, site_id: Option<Uuid>) -> bool {
 }
 
 /// Quarantine ids are uuids, or `legacy:<name>` for files quarantined before feature 5.
+///
+/// A legacy name is the file name the old quarantine used: any bytes but `/` and NUL
+/// (spaces, non-ASCII, `..` inside a name), not `.` nor `..`, at most 255 bytes. The id
+/// arrives percent-decoded by the `Path` extractor and only ever travels to the agent
+/// inside a JSON body, never in a URL.
 pub fn valid_quarantine_id(id: &str) -> bool {
+    if let Some(name) = id.strip_prefix(LEGACY_QUARANTINE_PREFIX) {
+        return !name.is_empty()
+            && name.len() <= 255
+            && name != "."
+            && name != ".."
+            && !name.bytes().any(|b| b == b'/' || b == 0);
+    }
     !id.is_empty()
         && id.len() <= 300
         && !id.contains("..")
         && id.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | ':' | '.'))
 }
+
+const LEGACY_QUARANTINE_PREFIX: &str = "legacy:";
 
 pub fn clamp_limit(limit: Option<i64>) -> i64 {
     limit.unwrap_or(50).clamp(1, 500)
@@ -662,6 +676,9 @@ async fn act(
     let new_status = transition(action, &det.status).map_err(|m| err(StatusCode::CONFLICT, m))?;
 
     let mut quarantine_id = det.quarantine_id.clone();
+    // Agent refusals pass through `agent_error` as they are: 409 `sha256_mismatch`
+    // ("The file changed since it was scanned": the detection stays as it is and the
+    // user rescans) and 413 (file too large to quarantine) keep their status and message.
     if action != Action::Ignore {
         let agent = crate::helpers::agent_for_site_server(&state, Some(server_id), &domain).await?;
         let ctx = format!("Antivirus {}", action.verb());
@@ -670,7 +687,12 @@ async fn act(
                 let v = agent
                     .post(
                         "/antivirus/quarantine",
-                        Some(json!({ "domain": domain, "path": det.file_path, "signature": det.signature })),
+                        Some(json!({
+                            "domain": domain,
+                            "path": det.file_path,
+                            "signature": det.signature,
+                            "sha256": det.sha256,
+                        })),
                     )
                     .await
                     .map_err(|e| agent_error(&ctx, e))?;
@@ -694,7 +716,10 @@ async fn act(
             }
             (Action::Delete, _) => {
                 agent
-                    .post("/antivirus/delete", Some(json!({ "domain": domain, "path": det.file_path })))
+                    .post(
+                        "/antivirus/delete",
+                        Some(json!({ "domain": domain, "path": det.file_path, "sha256": det.sha256 })),
+                    )
                     .await
                     .map_err(|e| agent_error(&ctx, e))?;
             }
@@ -729,16 +754,35 @@ async fn act(
         .map_err(|e| internal_error("antivirus ignore", e))?;
         tx.commit().await.map_err(|e| internal_error("antivirus ignore", e))?;
     } else {
-        sqlx::query(
-            "UPDATE av_detections SET status = $2, quarantine_id = $3, handled_by = $4, handled_at = now() WHERE id = $1",
+        // The agent already acted: a failed or lost update must not turn into an error
+        // for a file that really was moved. Guarded by the status read above, so a scan
+        // that closed the row meanwhile is not overwritten; the next full scan fixes the
+        // state either way (`closes_unseen`).
+        let updated = sqlx::query(
+            "UPDATE av_detections SET status = $2, quarantine_id = $3, handled_by = $4, handled_at = now() \
+             WHERE id = $1 AND status = ANY($5)",
         )
         .bind(det.id)
         .bind(new_status)
         .bind(&quarantine_id)
         .bind(claims.sub)
+        .bind(vec![det.status.clone()])
         .execute(&state.db)
-        .await
-        .map_err(|e| internal_error("antivirus detection update", e))?;
+        .await;
+        match updated {
+            Ok(r) if r.rows_affected() == 1 => {}
+            Ok(_) => tracing::error!(
+                detection = %det.id,
+                "Antivirus {}: the agent acted but the detection changed meanwhile (was '{}'), not updated",
+                action.verb(),
+                det.status
+            ),
+            Err(e) => tracing::error!(
+                detection = %det.id,
+                "Antivirus {}: the agent acted but the detection could not be updated: {e}",
+                action.verb()
+            ),
+        }
     }
 
     av_scanner::refresh_site_alert(&state.db, det.site_id).await;
@@ -793,7 +837,30 @@ mod tests {
         assert!(!valid_quarantine_id(""));
         assert!(!valid_quarantine_id("../../etc/passwd"));
         assert!(!valid_quarantine_id("a/b"));
-        assert!(!valid_quarantine_id("legacy:..x"));
+        assert!(!valid_quarantine_id("x..y"));
+    }
+
+    #[test]
+    fn legacy_quarantine_names_are_any_file_name() {
+        // Names the old quarantine really produced.
+        assert!(valid_quarantine_id("legacy:..x"));
+        assert!(valid_quarantine_id("legacy:a..b.php"));
+        assert!(valid_quarantine_id("legacy:1731650000_my shell (1).php"));
+        assert!(valid_quarantine_id("legacy:fichier-été_日本.php"));
+        assert!(valid_quarantine_id("legacy:.htaccess"));
+        assert!(valid_quarantine_id("legacy:a:b"));
+        assert!(valid_quarantine_id(&format!("legacy:{}", "a".repeat(255))));
+        // Never a path, never the directory itself.
+        assert!(!valid_quarantine_id("legacy:"));
+        assert!(!valid_quarantine_id("legacy:."));
+        assert!(!valid_quarantine_id("legacy:.."));
+        assert!(!valid_quarantine_id("legacy:../x"));
+        assert!(!valid_quarantine_id("legacy:a/b"));
+        assert!(!valid_quarantine_id("legacy:a\0b"));
+        assert!(!valid_quarantine_id(&format!("legacy:{}", "a".repeat(256))));
+        // 255 bytes, not chars: 128 two-byte chars are 256 bytes.
+        assert!(!valid_quarantine_id(&format!("legacy:{}", "é".repeat(128))));
+        assert!(valid_quarantine_id(&format!("legacy:{}", "é".repeat(127))));
     }
 
     #[test]

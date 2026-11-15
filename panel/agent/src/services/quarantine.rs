@@ -39,6 +39,8 @@ const META: &str = "meta.json";
 const FILE: &str = "file";
 /// Legacy files above this are listed without a sha256.
 const LEGACY_HASH_LIMIT: u64 = 64 * 1024 * 1024;
+/// Larger files are not quarantined (they would be read twice and copied).
+pub const MAX_QUARANTINE: u64 = 100 * 1024 * 1024;
 
 /// What `meta.json` holds.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -81,6 +83,26 @@ fn now_rfc3339() -> String {
 }
 
 const OUTSIDE: &str = "The path must be a file inside the site directory, without symbolic links";
+
+/// 409 when the file is no longer the one that was scanned.
+fn sha_mismatch() -> AvErr {
+    AvErr::conflict("The file changed since it was scanned").with_code("sha256_mismatch")
+}
+
+/// The optional `sha256` of a request, lowercased; 400 unless 64 hex digits.
+fn expected_sha(s: Option<&str>) -> Result<Option<String>, AvErr> {
+    let Some(s) = s else { return Ok(None) };
+    let s = s.trim().to_ascii_lowercase();
+    if s.len() != 64 || !s.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(AvErr::bad("Invalid sha256"));
+    }
+    Ok(Some(s))
+}
+
+/// The name `leaf` still designates the inode `st` (nothing swapped in).
+fn same_leaf(parent: &OwnedFd, leaf: &OsString, st: &std::fs::Metadata) -> Result<bool, AvErr> {
+    Ok(matches!(leaf_metadata(parent, leaf)?, Some(m) if (m.dev(), m.ino()) == (st.dev(), st.ino())))
+}
 
 // ── Safe resolution ─────────────────────────────────────────────────────────
 
@@ -260,8 +282,23 @@ pub fn quarantine_at(
     path: &str,
     signature: Option<String>,
 ) -> Result<serde_json::Value, AvErr> {
-    quarantine_impl(qroot, www, site, path, signature, false)
+    quarantine_impl(qroot, www, site, path, signature, None, false)
 }
+
+/// Same, refusing (409 `sha256_mismatch`, file untouched) a file whose
+/// content is not `expected` (the sha256 it had when it was scanned).
+pub fn quarantine_checked_at(
+    qroot: &Path,
+    www: &Path,
+    site: &str,
+    path: &str,
+    signature: Option<String>,
+    expected: Option<&str>,
+) -> Result<serde_json::Value, AvErr> {
+    quarantine_impl(qroot, www, site, path, signature, expected, false)
+}
+
+const TOO_LARGE: &str = "File too large to quarantine (over 100 MB)";
 
 /// `force_copy` exercises the cross-mount branch in tests.
 fn quarantine_impl(
@@ -270,12 +307,27 @@ fn quarantine_impl(
     site: &str,
     path: &str,
     signature: Option<String>,
+    expected: Option<&str>,
     force_copy: bool,
 ) -> Result<serde_json::Value, AvErr> {
+    let expected = expected_sha(expected)?;
     let (parent, leaf) = resolve(www, site, path)?;
     let mut src = open_regular(&parent, &leaf)?;
     let st = src.metadata().map_err(|e| AvErr::internal(e.to_string()))?;
-    let (sha256, size) = sha256_reader(&mut src).map_err(|e| AvErr::internal(format!("read failed: {e}")))?;
+    if st.len() > MAX_QUARANTINE {
+        return Err(AvErr::new(413, TOO_LARGE));
+    }
+    // Bounded: a file growing meanwhile is not read past the limit.
+    let (sha256, size) = sha256_reader(&mut (&mut src).take(MAX_QUARANTINE + 1))
+        .map_err(|e| AvErr::internal(format!("read failed: {e}")))?;
+    if size > MAX_QUARANTINE {
+        return Err(AvErr::new(413, TOO_LARGE));
+    }
+    if let Some(exp) = &expected {
+        if *exp != sha256 || !same_leaf(&parent, &leaf, &st)? {
+            return Err(sha_mismatch());
+        }
+    }
     let original_path = if site.is_empty() { www.to_path_buf() } else { www.join(site) }
         .join(site_relative(www, site, path)?)
         .to_string_lossy()
@@ -464,13 +516,25 @@ fn restore_impl(qroot: &Path, www: &Path, id: &str, force_copy: bool) -> Result<
     Ok(meta.original_path)
 }
 
-/// Deletes a file of a site for good (same path checks).
-pub fn delete_at(www: &Path, site: &str, path: &str) -> Result<(), AvErr> {
+/// Deletes a file of a site for good (same path checks). With `expected`,
+/// a file whose sha256 differs is left alone (409 `sha256_mismatch`).
+pub fn delete_at(www: &Path, site: &str, path: &str, expected: Option<&str>) -> Result<(), AvErr> {
+    let expected = expected_sha(expected)?;
     let (parent, leaf) = resolve(www, site, path)?;
-    match leaf_metadata(&parent, &leaf)? {
-        None => return Err(AvErr::not_found("File not found")),
-        Some(m) if !m.file_type().is_file() => return Err(AvErr::bad("Not a regular file")),
-        Some(_) => {}
+    match &expected {
+        None => match leaf_metadata(&parent, &leaf)? {
+            None => return Err(AvErr::not_found("File not found")),
+            Some(m) if !m.file_type().is_file() => return Err(AvErr::bad("Not a regular file")),
+            Some(_) => {}
+        },
+        Some(exp) => {
+            let mut f = open_regular(&parent, &leaf)?;
+            let st = f.metadata().map_err(|e| AvErr::internal(format!("stat failed: {e}")))?;
+            let (sha, _) = sha256_reader(&mut f).map_err(|e| AvErr::internal(format!("read failed: {e}")))?;
+            if *exp != sha || !same_leaf(&parent, &leaf, &st)? {
+                return Err(sha_mismatch());
+            }
+        }
     }
     rustix::fs::unlinkat(&parent, leaf.as_os_str(), AtFlags::empty())
         .map_err(|e| AvErr::internal(format!("Cannot delete the file: {e}")))
@@ -555,11 +619,16 @@ pub fn list_at(qroot: &Path) -> Vec<serde_json::Value> {
 
 // ── Production entry points ─────────────────────────────────────────────────
 
-pub fn quarantine(domain: &str, path: &str, signature: Option<String>) -> Result<serde_json::Value, AvErr> {
+pub fn quarantine(
+    domain: &str,
+    path: &str,
+    signature: Option<String>,
+    expected_sha256: Option<&str>,
+) -> Result<serde_json::Value, AvErr> {
     if !valid_domain(domain) {
         return Err(AvErr::bad("Invalid domain"));
     }
-    quarantine_at(Path::new(QUARANTINE_ROOT), Path::new(WWW_ROOT), domain, path, signature)
+    quarantine_checked_at(Path::new(QUARANTINE_ROOT), Path::new(WWW_ROOT), domain, path, signature, expected_sha256)
 }
 
 /// The security scanner's caller: any file under `/var/www`, the site being
@@ -580,11 +649,11 @@ pub fn restore(id: &str) -> Result<String, AvErr> {
     restore_at(Path::new(QUARANTINE_ROOT), Path::new(WWW_ROOT), id)
 }
 
-pub fn delete(domain: &str, path: &str) -> Result<(), AvErr> {
+pub fn delete(domain: &str, path: &str, expected_sha256: Option<&str>) -> Result<(), AvErr> {
     if !valid_domain(domain) {
         return Err(AvErr::bad("Invalid domain"));
     }
-    delete_at(Path::new(WWW_ROOT), domain, path)
+    delete_at(Path::new(WWW_ROOT), domain, path, expected_sha256)
 }
 
 pub fn purge(id: &str) -> Result<(), AvErr> {
@@ -657,7 +726,7 @@ mod tests {
         std::os::unix::fs::symlink(s.root.join("outside/secret"), s.www().join("a.tld/public/leaf")).unwrap();
         let e = quarantine_at(&s.q(), &s.www(), "a.tld", &s.p("www/a.tld/public/leaf"), None).unwrap_err();
         assert_eq!(e.status, 400);
-        assert_eq!(delete_at(&s.www(), "a.tld", &s.p("www/a.tld/public/leaf")).unwrap_err().status, 400);
+        assert_eq!(delete_at(&s.www(), "a.tld", &s.p("www/a.tld/public/leaf"), None).unwrap_err().status, 400);
         // Site root itself a symlink to another site.
         std::fs::write(s.www().join("b.tld/x"), b"x").unwrap();
         std::os::unix::fs::symlink(s.www().join("b.tld"), s.www().join("c.tld")).unwrap();
@@ -727,7 +796,7 @@ mod tests {
         let _ = std::os::unix::fs::chown(&f, Some(1234), Some(2345));
         let before = std::fs::metadata(&f).unwrap();
 
-        let item = quarantine_impl(&s.q(), &s.www(), "a.tld", &f.to_string_lossy(), None, true).unwrap();
+        let item = quarantine_impl(&s.q(), &s.www(), "a.tld", &f.to_string_lossy(), None, None, true).unwrap();
         assert!(!f.exists());
         let id = item["quarantine_id"].as_str().unwrap().to_string();
         assert_eq!(item["uid"], before.uid());
@@ -793,10 +862,57 @@ mod tests {
         let s = Scratch::new("del");
         let f = s.www().join("a.tld/public/x.php");
         std::fs::write(&f, b"x").unwrap();
-        assert_eq!(delete_at(&s.www(), "a.tld", &s.p("www/b.tld/../a.tld/public/x.php")).unwrap_err().status, 400);
-        delete_at(&s.www(), "a.tld", &f.to_string_lossy()).unwrap();
+        assert_eq!(delete_at(&s.www(), "a.tld", &s.p("www/b.tld/../a.tld/public/x.php"), None).unwrap_err().status, 400);
+        delete_at(&s.www(), "a.tld", &f.to_string_lossy(), None).unwrap();
         assert!(!f.exists());
-        assert_eq!(delete_at(&s.www(), "a.tld", &f.to_string_lossy()).unwrap_err().status, 404);
+        assert_eq!(delete_at(&s.www(), "a.tld", &f.to_string_lossy(), None).unwrap_err().status, 404);
+    }
+
+    fn sha_of(b: &[u8]) -> String {
+        use sha2::Digest;
+        hex::encode(sha2::Sha256::digest(b))
+    }
+
+    #[test]
+    fn quarantine_and_delete_refuse_a_file_changed_since_the_scan() {
+        let s = Scratch::new("exp");
+        let f = s.www().join("a.tld/public/evil.php");
+        std::fs::write(&f, b"changed content").unwrap();
+        let p = f.to_string_lossy().into_owned();
+        let stale = sha_of(b"scanned content");
+        let e = quarantine_checked_at(&s.q(), &s.www(), "a.tld", &p, None, Some(&stale)).unwrap_err();
+        assert_eq!(
+            (e.status, e.msg.as_str(), e.code),
+            (409, "The file changed since it was scanned", Some("sha256_mismatch"))
+        );
+        let e = delete_at(&s.www(), "a.tld", &p, Some(&stale)).unwrap_err();
+        assert_eq!((e.status, e.code), (409, Some("sha256_mismatch")));
+        // Untouched, nothing in the quarantine.
+        assert_eq!(std::fs::read(&f).unwrap(), b"changed content");
+        assert!(list_at(&s.q()).is_empty());
+        // A malformed hash is a bad request, not a mismatch.
+        assert_eq!(delete_at(&s.www(), "a.tld", &p, Some("abc")).unwrap_err().status, 400);
+        assert!(f.exists());
+        // Matching hash (any case): accepted.
+        let good = sha_of(b"changed content").to_ascii_uppercase();
+        let item = quarantine_checked_at(&s.q(), &s.www(), "a.tld", &p, None, Some(&good)).unwrap();
+        assert!(!f.exists());
+        restore_at(&s.q(), &s.www(), item["quarantine_id"].as_str().unwrap()).unwrap();
+        delete_at(&s.www(), "a.tld", &p, Some(&good)).unwrap();
+        assert!(!f.exists());
+    }
+
+    #[test]
+    fn files_over_100_mb_are_not_quarantined() {
+        let s = Scratch::new("big");
+        let f = s.www().join("a.tld/big.zip");
+        // Sparse: refused on its size, before any read.
+        std::fs::File::create(&f).unwrap().set_len(MAX_QUARANTINE + 1).unwrap();
+        let e = quarantine_at(&s.q(), &s.www(), "a.tld", &f.to_string_lossy(), None).unwrap_err();
+        assert_eq!((e.status, e.msg.as_str()), (413, TOO_LARGE));
+        assert_eq!(TOO_LARGE, "File too large to quarantine (over 100 MB)");
+        assert_eq!(std::fs::metadata(&f).unwrap().len(), MAX_QUARANTINE + 1);
+        assert!(list_at(&s.q()).is_empty());
     }
 
     #[test]

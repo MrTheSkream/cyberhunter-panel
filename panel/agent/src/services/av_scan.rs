@@ -253,11 +253,20 @@ pub async fn run(h: JobHandle, www: PathBuf, domain: String, sock: PathBuf) -> R
                 h.warn(format!("{path}: {error}"));
             }
             Item::File { path, size, sha256, data } => {
+                // A transport error on one file (reply timeout, connection
+                // dropped) is that file's error when clamd still answers
+                // PING; only clamd itself being down past the retry window
+                // fails the scan.
                 let mut first_failure: Option<Instant> = None;
                 let reply = loop {
                     match clamav::instream_at(&sock, &data).await {
-                        Ok(r) => break r,
+                        Ok(r) => break Some(r),
                         Err(e) => {
+                            if clamav::ping_at(&sock).await {
+                                tally.errors += 1;
+                                h.warn(format!("{path}: clamd could not scan this file: {e}"));
+                                break None;
+                            }
                             let since = *first_failure.get_or_insert_with(Instant::now);
                             if since.elapsed() > CLAMD_RETRY_WINDOW {
                                 return Err(format!("clamd stopped responding during the scan: {e}"));
@@ -267,7 +276,7 @@ pub async fn run(h: JobHandle, www: PathBuf, domain: String, sock: PathBuf) -> R
                         }
                     }
                 };
-                if let Some(w) = tally.record(&path, size, &sha256, &reply) {
+                if let Some(w) = reply.and_then(|r| tally.record(&path, size, &sha256, &r)) {
                     h.warn(w);
                 }
             }
@@ -397,17 +406,11 @@ mod tests {
         assert_eq!(t.infected[0]["path"], "/p0");
     }
 
-    /// End to end against a fake clamd that flags "EICAR".
-    #[tokio::test]
-    async fn scan_job_reports_detections() {
+    /// A fake clamd on a fresh socket: answers PING and VERSION, decodes the
+    /// INSTREAM framing for real, flags "EICAR", and drops the connection
+    /// without a reply on "BOOM" (a file that makes the scan fail).
+    fn fake_clamd() -> (PathBuf, PathBuf) {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let d = scratch("job");
-        let www = d.join("www");
-        std::fs::create_dir_all(www.join("s.tld/public")).unwrap();
-        std::fs::write(www.join("s.tld/public/ok.php"), b"<?php echo 1;").unwrap();
-        std::fs::write(www.join("s.tld/public/bad.php"), b"X5O EICAR test").unwrap();
-        let big = std::fs::File::create(www.join("s.tld/big.zip")).unwrap();
-        big.set_len(MAX_FILE + 10).unwrap();
         let sockdir = PathBuf::from(format!("/tmp/dpas{}", &uuid::Uuid::new_v4().simple().to_string()[..8]));
         std::fs::create_dir_all(&sockdir).unwrap();
         let sock = sockdir.join("c.sock");
@@ -424,6 +427,10 @@ mod tests {
                         }
                         cmd.push(b);
                     }
+                    if cmd == b"zPING" {
+                        s.write_all(b"PONG\0").await.unwrap();
+                        return;
+                    }
                     if cmd == b"zVERSION" {
                         s.write_all(b"ClamAV 1.4.3/27450/Sat Nov 15 03:12:00 2026\0").await.unwrap();
                         return;
@@ -438,6 +445,9 @@ mod tests {
                         s.read_exact(&mut buf).await.unwrap();
                         payload.extend_from_slice(&buf);
                     }
+                    if payload.windows(4).any(|w| w == b"BOOM") {
+                        return;
+                    }
                     let r: &[u8] = if payload.windows(5).any(|w| w == b"EICAR") {
                         b"stream: Eicar-Test-Signature FOUND\0"
                     } else {
@@ -447,10 +457,14 @@ mod tests {
                 });
             }
         });
-        let w = www.clone();
-        let sk = sock.clone();
-        let id = migration_jobs::spawn("av_scan_test", &d.to_string_lossy(), move |h| async move {
-            run(h, w, "s.tld".into(), sk).await
+        (sockdir, sock)
+    }
+
+    /// Runs the scan job of `www/<domain>` against `sock` to its end.
+    async fn run_job(www: &Path, domain: &str, sock: &Path) -> serde_json::Value {
+        let (w, d, sk) = (www.to_path_buf(), domain.to_string(), sock.to_path_buf());
+        let id = migration_jobs::spawn("av_scan_test", &www.to_string_lossy(), move |h| async move {
+            run(h, w, d, sk).await
         });
         let mut v = serde_json::Value::Null;
         for _ in 0..500 {
@@ -460,6 +474,21 @@ mod tests {
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
+        v
+    }
+
+    /// End to end against a fake clamd that flags "EICAR".
+    #[tokio::test]
+    async fn scan_job_reports_detections() {
+        let d = scratch("job");
+        let www = d.join("www");
+        std::fs::create_dir_all(www.join("s.tld/public")).unwrap();
+        std::fs::write(www.join("s.tld/public/ok.php"), b"<?php echo 1;").unwrap();
+        std::fs::write(www.join("s.tld/public/bad.php"), b"X5O EICAR test").unwrap();
+        let big = std::fs::File::create(www.join("s.tld/big.zip")).unwrap();
+        big.set_len(MAX_FILE + 10).unwrap();
+        let (sockdir, sock) = fake_clamd();
+        let v = run_job(&www, "s.tld", &sock).await;
         assert_eq!(v["state"], "done", "{v}");
         let r = &v["report"];
         assert_eq!(r["domain"], "s.tld");
@@ -475,6 +504,30 @@ mod tests {
         assert_eq!(inf[0]["size"], 14);
         assert_eq!(v["bytes_done"], 3);
         assert_eq!(v["bytes_total"], 3);
+        let _ = std::fs::remove_dir_all(&d);
+        let _ = std::fs::remove_dir_all(&sockdir);
+    }
+
+    /// One file clamd fails on while it still answers PING: counted as an
+    /// error, the scan goes on with the others.
+    #[tokio::test]
+    async fn one_failing_file_does_not_fail_the_scan() {
+        let d = scratch("boom");
+        let www = d.join("www");
+        std::fs::create_dir_all(www.join("s.tld/public")).unwrap();
+        std::fs::write(www.join("s.tld/public/ok.php"), b"<?php echo 1;").unwrap();
+        std::fs::write(www.join("s.tld/public/stuck.bin"), b"..BOOM..").unwrap();
+        std::fs::write(www.join("s.tld/public/bad.php"), b"X5O EICAR test").unwrap();
+        let (sockdir, sock) = fake_clamd();
+        let v = run_job(&www, "s.tld", &sock).await;
+        assert_eq!(v["state"], "done", "{v}");
+        let r = &v["report"];
+        assert_eq!(r["files_scanned"], 2);
+        assert_eq!(r["files_errors"], 1);
+        assert_eq!(r["infected"].as_array().unwrap().len(), 1);
+        let warnings = v.to_string();
+        assert!(warnings.contains("stuck.bin"), "{v}");
+        assert!(!warnings.contains("BOOM"), "no file content in the warning: {v}");
         let _ = std::fs::remove_dir_all(&d);
         let _ = std::fs::remove_dir_all(&sockdir);
     }

@@ -1,7 +1,8 @@
 //! Antivirus routes (feature 5, contract A-1 to A-7), plus the neutral
 //! `GET /jobs/{job_id}` over `migration_jobs`.
 //!
-//! Errors are always `{ "error": "..." }` with 400/404/409/412/500: bodies are
+//! Errors are always `{ "error": "..." }` (plus `"code"` for some) with
+//! 400/404/409/412/413/500: bodies are
 //! parsed by hand so a malformed one answers JSON too, not axum's text.
 
 use axum::{
@@ -21,7 +22,11 @@ type Reply = (StatusCode, Json<serde_json::Value>);
 
 fn fail(e: AvErr) -> Reply {
     let status = StatusCode::from_u16(e.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-    (status, Json(serde_json::json!({ "error": e.msg })))
+    let body = match e.code {
+        Some(code) => serde_json::json!({ "error": e.msg, "code": code }),
+        None => serde_json::json!({ "error": e.msg }),
+    };
+    (status, Json(body))
 }
 
 fn ok(v: serde_json::Value) -> Reply {
@@ -126,6 +131,10 @@ struct FileBody {
     path: String,
     #[serde(default)]
     signature: Option<String>,
+    /// sha256 the file had when it was scanned: when given, the agent refuses
+    /// (409 `sha256_mismatch`) a file whose content changed since.
+    #[serde(default)]
+    sha256: Option<String>,
 }
 
 /// POST /antivirus/quarantine (A-7)
@@ -136,7 +145,7 @@ async fn quarantine_file(body: Bytes) -> Reply {
     };
     let domain = b.domain.trim().to_ascii_lowercase();
     let signature = b.signature.map(|s| s.chars().filter(|c| !c.is_control()).take(256).collect::<String>());
-    match blocking(move || quarantine::quarantine(&domain, &b.path, signature)).await {
+    match blocking(move || quarantine::quarantine(&domain, &b.path, signature, b.sha256.as_deref())).await {
         Ok(item) => ok(serde_json::json!({ "quarantine_id": item["quarantine_id"].clone(), "item": item })),
         Err(e) => fail(e),
     }
@@ -166,7 +175,7 @@ async fn delete_file(body: Bytes) -> Reply {
         Err(r) => return r,
     };
     let domain = b.domain.trim().to_ascii_lowercase();
-    match blocking(move || quarantine::delete(&domain, &b.path)).await {
+    match blocking(move || quarantine::delete(&domain, &b.path, b.sha256.as_deref())).await {
         Ok(()) => ok(serde_json::json!({ "ok": true })),
         Err(e) => fail(e),
     }
@@ -189,5 +198,28 @@ async fn quarantine_list() -> Reply {
     match blocking(|| Ok(quarantine::list())).await {
         Ok(items) => ok(serde_json::Value::Array(items)),
         Err(e) => fail(e),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn error_bodies_carry_the_code_only_when_set() {
+        let (st, Json(v)) = fail(AvErr::conflict("The file changed since it was scanned").with_code("sha256_mismatch"));
+        assert_eq!(st, StatusCode::CONFLICT);
+        assert_eq!(v, serde_json::json!({"error": "The file changed since it was scanned", "code": "sha256_mismatch"}));
+        let (st, Json(v)) = fail(AvErr::new(413, "File too large to quarantine (over 100 MB)"));
+        assert_eq!(st, StatusCode::PAYLOAD_TOO_LARGE);
+        assert_eq!(v, serde_json::json!({"error": "File too large to quarantine (over 100 MB)"}));
+    }
+
+    #[test]
+    fn file_body_sha256_is_optional() {
+        let b: FileBody = parse(&Bytes::from_static(br#"{"domain":"a.tld","path":"/var/www/a.tld/x"}"#)).ok().unwrap();
+        assert!(b.sha256.is_none());
+        let b: FileBody = parse(&Bytes::from_static(br#"{"domain":"a.tld","path":"/x","sha256":"ab"}"#)).ok().unwrap();
+        assert_eq!(b.sha256.as_deref(), Some("ab"));
     }
 }

@@ -38,6 +38,9 @@ const STATUS_TIMEOUT: Duration = Duration::from_secs(10);
 const JOB_STALL: Duration = Duration::from_secs(15 * 60);
 /// Delay before a scan the agent could not start yet is tried again.
 const RETRY_AFTER: Duration = Duration::from_secs(60);
+/// After a 409 (a scan already runs on the agent), the whole server waits this long:
+/// otherwise every tick would claim and bounce the next queued scan of that server.
+const BUSY_BACKOFF: Duration = Duration::from_secs(30);
 /// Tries for a refusal that should be temporary (412: clamd not responding,
 /// transport error). A 409 (another scan running) is retried without limit.
 const MAX_TEMPORARY_TRIES: u32 = 15;
@@ -287,7 +290,7 @@ pub async fn refresh_site_alert(pool: &PgPool, site_id: Uuid) {
     let Some((domain, owner, open)) = site else { return };
     let key = format!("av:{site_id}");
     if open > 0 {
-        notifications::fire_alert_deduped(
+        fire_av_alert(
             pool,
             owner,
             None,
@@ -304,7 +307,7 @@ pub async fn refresh_site_alert(pool: &PgPool, site_id: Uuid) {
         )
         .await;
     } else {
-        notifications::resolve_alert(
+        resolve_av_alert(
             pool,
             owner,
             None,
@@ -316,6 +319,90 @@ pub async fn refresh_site_alert(pool: &PgPool, site_id: Uuid) {
         )
         .await;
     }
+}
+
+/// `resolve_alert`, then the acknowledged rows of the same subject too: `resolve_alert`
+/// only closes `firing` ones, and an acknowledged alert whose condition is over would
+/// otherwise keep muting its return in [`fire_av_alert`].
+#[allow(clippy::too_many_arguments)]
+async fn resolve_av_alert(
+    pool: &PgPool,
+    user_id: Uuid,
+    server_id: Option<Uuid>,
+    site_id: Option<Uuid>,
+    alert_type: &str,
+    state_key: &str,
+    title: &str,
+    message: &str,
+) {
+    notifications::resolve_alert(pool, user_id, server_id, site_id, alert_type, state_key, title, message).await;
+    if let Err(e) = sqlx::query(
+        "UPDATE alerts SET status = 'resolved', resolved_at = NOW() \
+         WHERE user_id = $1 AND server_id IS NOT DISTINCT FROM $2 AND site_id IS NOT DISTINCT FROM $3 \
+         AND alert_type = $4 AND state_key = $5 AND status = 'acknowledged'",
+    )
+    .bind(user_id)
+    .bind(server_id)
+    .bind(site_id)
+    .bind(alert_type)
+    .bind(state_key)
+    .execute(pool)
+    .await
+    {
+        tracing::warn!("Antivirus: could not close acknowledged '{alert_type}' alerts: {e}");
+    }
+}
+
+/// Whether an earlier alert of the same subject mutes a new one: only while it is still
+/// open (firing or acknowledged) and younger than the window. A resolved alert never
+/// does, so a condition that comes back after being fixed is announced again.
+pub fn alert_mutes(status: &str, created_at: DateTime<Utc>, now: DateTime<Utc>, within_hours: i64) -> bool {
+    matches!(status, "firing" | "acknowledged") && now - created_at < ChronoDuration::hours(within_hours)
+}
+
+/// `fire_alert_deduped` for the antivirus alerts, deduplicated on OPEN alerts only.
+///
+/// `fire_alert_deduped` counts every alert of the window, resolved ones included: a site
+/// cleaned and re-infected within 12 hours, or a clamd that came back and fell again,
+/// would raise nothing. Same subject as there: `(alert_type, site_id, state_key)`.
+#[allow(clippy::too_many_arguments)]
+async fn fire_av_alert(
+    pool: &PgPool,
+    user_id: Uuid,
+    server_id: Option<Uuid>,
+    site_id: Option<Uuid>,
+    alert_type: &str,
+    state_key: &str,
+    severity: &str,
+    title: &str,
+    message: &str,
+    within_hours: i64,
+) {
+    let recent: Vec<(String, DateTime<Utc>)> = match sqlx::query_as(
+        "SELECT status, created_at FROM alerts \
+         WHERE alert_type = $1 AND site_id IS NOT DISTINCT FROM $2 AND state_key = $3 \
+         AND status <> 'resolved' AND created_at > NOW() - make_interval(hours => $4::int)",
+    )
+    .bind(alert_type)
+    .bind(site_id)
+    .bind(state_key)
+    .bind(within_hours.clamp(0, i32::MAX as i64) as i32)
+    .fetch_all(pool)
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            // Same direction as `fire_alert_deduped`: a failed read does not mute.
+            tracing::warn!("Antivirus: could not read recent '{alert_type}' alerts: {e}");
+            Vec::new()
+        }
+    };
+    let now = Utc::now();
+    if recent.iter().any(|(status, at)| alert_mutes(status, *at, now, within_hours)) {
+        return;
+    }
+    notifications::fire_alert(pool, user_id, server_id, site_id, alert_type, state_key, severity, title, message)
+        .await;
 }
 
 /// The human message of an agent refusal (`{"error": "..."}`), without the transport framing.
@@ -356,6 +443,8 @@ struct State {
     retries: HashMap<Uuid, Retry>,
     /// server_id -> since when an installed clamd does not answer.
     down_since: HashMap<Uuid, Instant>,
+    /// server_id -> no scan is started there before this (the agent said 409: busy).
+    busy_until: HashMap<Uuid, Instant>,
 }
 
 pub async fn run(pool: PgPool, agents: AgentRegistry, mut shutdown_rx: tokio::sync::broadcast::Receiver<()>) {
@@ -450,10 +539,38 @@ async fn start_queued(pool: &PgPool, agents: &AgentRegistry, st: &mut State) {
             return;
         }
     };
+    if queued.is_empty() {
+        return;
+    }
+    // Servers with a scan `running` in the database that this task does not follow
+    // (claimed but not settled): the agent would answer 409 for it. Bounded in age so a
+    // row a failed UPDATE left behind cannot block its server forever.
+    let running: HashSet<Uuid> = match sqlx::query_as::<_, (Uuid,)>(&format!(
+        "SELECT DISTINCT server_id FROM av_scans WHERE status = 'running' \
+         AND started_at > now() - INTERVAL '{} seconds'",
+        JOB_STALL.as_secs() + 5 * 60
+    ))
+    .fetch_all(pool)
+    .await
+    {
+        Ok(r) => r.into_iter().map(|(s,)| s).collect(),
+        Err(e) => {
+            tracing::warn!("Antivirus: could not read running scans: {e}");
+            return;
+        }
+    };
     let now = Instant::now();
+    st.busy_until.retain(|_, t| *t > now);
     let mut tried: HashSet<Uuid> = HashSet::new();
     for (scan_id, server_id, site_id, domain) in queued {
-        if st.active.contains_key(&server_id) || tried.contains(&server_id) {
+        if tried.contains(&server_id)
+            || server_blocked(
+                st.active.contains_key(&server_id),
+                running.contains(&server_id),
+                st.busy_until.get(&server_id).copied(),
+                now,
+            )
+        {
             continue;
         }
         if st.retries.get(&scan_id).and_then(|r| r.not_before).is_some_and(|t| t > now) {
@@ -514,7 +631,10 @@ async fn start_queued(pool: &PgPool, agents: &AgentRegistry, st: &mut State) {
             Err(e) => {
                 let why = agent_refusal(&e);
                 match start_refusal(&e) {
-                    Refusal::Busy => requeue(pool, st, scan_id, &why, false).await,
+                    Refusal::Busy => {
+                        st.busy_until.insert(server_id, Instant::now() + BUSY_BACKOFF);
+                        requeue(pool, st, scan_id, &why, false).await
+                    }
                     Refusal::Temporary => requeue(pool, st, scan_id, &why, true).await,
                     Refusal::Final => {
                         st.retries.remove(&scan_id);
@@ -524,6 +644,12 @@ async fn start_queued(pool: &PgPool, agents: &AgentRegistry, st: &mut State) {
             }
         }
     }
+}
+
+/// Whether no new scan may start on a server this tick: one is followed there, one is
+/// `running` in the database, or the agent said it was busy less than [`BUSY_BACKOFF`] ago.
+fn server_blocked(followed: bool, running_in_db: bool, busy_until: Option<Instant>, now: Instant) -> bool {
+    followed || running_in_db || busy_until.is_some_and(|t| t > now)
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -717,7 +843,7 @@ async fn health_and_schedule(pool: &PgPool, agents: &AgentRegistry, st: &mut Sta
         let down_key = format!("{ALERT_DOWN}:{}", member.id);
         if responding {
             if st.down_since.remove(&member.id).is_some() {
-                notifications::resolve_alert(
+                resolve_av_alert(
                     pool,
                     member.user_id,
                     Some(member.id),
@@ -732,7 +858,7 @@ async fn health_and_schedule(pool: &PgPool, agents: &AgentRegistry, st: &mut Sta
         } else {
             let since = *st.down_since.entry(member.id).or_insert_with(Instant::now);
             if since.elapsed() >= AV_DOWN_AFTER {
-                notifications::fire_alert_deduped(
+                fire_av_alert(
                     pool,
                     member.user_id,
                     Some(member.id),
@@ -756,7 +882,7 @@ async fn health_and_schedule(pool: &PgPool, agents: &AgentRegistry, st: &mut Sta
         if responding {
             let sig_key = format!("{ALERT_SIGNATURES}:{}", member.id);
             if signatures_stale(&status, Utc::now()) {
-                notifications::fire_alert_deduped(
+                fire_av_alert(
                     pool,
                     member.user_id,
                     Some(member.id),
@@ -774,7 +900,7 @@ async fn health_and_schedule(pool: &PgPool, agents: &AgentRegistry, st: &mut Sta
                 )
                 .await;
             } else if status.pointer("/signatures/updated_at").is_some_and(|v| v.is_string()) {
-                notifications::resolve_alert(
+                resolve_av_alert(
                     pool,
                     member.user_id,
                     Some(member.id),
@@ -999,6 +1125,29 @@ mod tests {
         assert_eq!(start_refusal(&AgentError::Status(404, String::new())), Refusal::Final);
         assert_eq!(start_refusal(&AgentError::Status(502, String::new())), Refusal::Temporary);
         assert_eq!(start_refusal(&AgentError::Connection("x".into())), Refusal::Temporary);
+    }
+
+    #[test]
+    fn only_open_alerts_inside_the_window_mute_a_new_one() {
+        let now = at("2026-11-15T12:00:00Z");
+        let an_hour_ago = at("2026-11-15T11:00:00Z");
+        assert!(alert_mutes("firing", an_hour_ago, now, 12));
+        assert!(alert_mutes("acknowledged", an_hour_ago, now, 12));
+        // Cleaned then re-infected within the window: announced again.
+        assert!(!alert_mutes("resolved", an_hour_ago, now, 12));
+        // Still firing but older than the window: reminded again, as before.
+        assert!(!alert_mutes("firing", at("2026-11-14T23:59:00Z"), now, 12));
+        assert!(!alert_mutes("bogus", an_hour_ago, now, 12));
+    }
+
+    #[test]
+    fn a_busy_server_is_left_alone() {
+        let now = Instant::now();
+        assert!(!server_blocked(false, false, None, now));
+        assert!(server_blocked(true, false, None, now));
+        assert!(server_blocked(false, true, None, now));
+        assert!(server_blocked(false, false, Some(now + BUSY_BACKOFF), now));
+        assert!(!server_blocked(false, false, Some(now), now));
     }
 
     #[test]

@@ -50,6 +50,9 @@ const SUPPRESSIBLE_ALERT_TYPES: { key: string; label: string }[] = [
   { key: "security", label: "Security scan" },
   { key: "image_scan", label: "Image scan" },
   { key: "wp_vuln_scan", label: "WordPress vuln scan" },
+  { key: "malware", label: "Malware detected" },
+  { key: "av_signatures", label: "Antivirus signatures outdated" },
+  { key: "av_down", label: "Antivirus not responding" },
   { key: "slow_response", label: "Slow response" },
 ];
 
