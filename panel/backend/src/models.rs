@@ -178,10 +178,43 @@ pub struct Site {
     /// the agent treats every other runtime as nginx. Existing rows are `nginx`.
     #[serde(default = "default_web_server")]
     pub web_server: String,
+    /// Names served besides `domain` (import-hestia D4). `None` = never managed
+    /// by the database: the agent keeps whatever the vhost on disk serves.
+    /// `Some` is authoritative and is sent on every vhost rebuild.
+    #[sqlx(default)]
+    #[serde(default)]
+    pub aliases: Option<Vec<String>>,
+    /// `www` or `apex` (D4): every other served name redirects to it. `None` = no
+    /// canonical redirect.
+    #[sqlx(default)]
+    #[serde(default)]
+    pub canonical_host: Option<String>,
+    /// Folders where PHP execution is refused by the vhost (D9). `None` or empty
+    /// = none.
+    #[sqlx(default)]
+    #[serde(default)]
+    pub php_no_exec_dirs: Option<Vec<String>>,
+    /// Per-site HTTP-to-HTTPS redirect (D3). True = the historical rendering.
+    /// Deliberately NOT `#[sqlx(default)]`: a missing column must fail loudly,
+    /// not read as `false` and silently drop the redirect on the next rebuild.
+    #[serde(default = "default_true")]
+    pub force_ssl: bool,
+    /// Per-site Strict-Transport-Security header (D3). Same rule as `force_ssl`.
+    #[serde(default = "default_true")]
+    pub hsts: bool,
+    /// Custom SFTP account name (D6). `None` = the default `sftp<uid>`; read it
+    /// through [`crate::routes::sites::sftp_account_name`], never directly.
+    #[sqlx(default)]
+    #[serde(default)]
+    pub sftp_username: Option<String>,
 }
 
 fn default_web_server() -> String {
     "nginx".to_string()
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// One IPv4 address declared on a server (`server_ips`). See

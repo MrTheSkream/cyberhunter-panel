@@ -10,15 +10,20 @@ use crate::safe_cmd::{safe_command, safe_command_unsandboxed};
 use super::AppState;
 
 /// Allowed PHP versions (distro repos, deb.sury.org, or ondrej/php PPA).
-const ALLOWED_VERSIONS: &[&str] = &["8.1", "8.2", "8.3", "8.4", "8.5"];
+/// Derived from the single list in `services::php_pool`, never restated.
+const ALLOWED_VERSIONS: &[&str] = crate::services::php_pool::PHP_VERSIONS;
 
 /// PHP extensions to install with each version - each is installed only if
 /// this apt source actually has a candidate for it. Newer PHP releases build
 /// some of these in (8.5 absorbed opcache), so a fixed all-or-nothing list
 /// would fail the entire transaction over one obsolete package name.
+/// `json`, `mcrypt` and `soap` are for imported legacy sites: `json` is a
+/// separate package only up to 7.4 (built in since 8.0, so no candidate and
+/// skipped), `mcrypt` is core in 5.6 and a PECL build afterwards.
 const COMMON_EXTENSIONS: &[&str] = &[
     "mysql", "pgsql", "sqlite3", "curl", "gd", "mbstring",
     "xml", "zip", "bcmath", "intl", "readline", "opcache", "redis", "imagick",
+    "json", "mcrypt", "soap",
 ];
 
 #[derive(Serialize)]
@@ -27,6 +32,8 @@ struct PhpVersion {
     installed: bool,
     fpm_running: bool,
     socket: String,
+    /// End of life, no security updates (`php_pool::LEGACY_PHP_VERSIONS`).
+    legacy: bool,
 }
 
 #[derive(Serialize)]
@@ -44,6 +51,26 @@ struct InstallResponse {
     success: bool,
     message: String,
     version: String,
+}
+
+/// `POST /php/install` answer: the usual [`InstallResponse`] plus, for a
+/// legacy version, a `warning` the UI shows next to the result.
+#[derive(Serialize)]
+struct InstallOutcome {
+    #[serde(flatten)]
+    response: InstallResponse,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    warning: Option<String>,
+}
+
+/// The warning attached to every install answer for an end-of-life version.
+fn legacy_warning(version: &str) -> Option<String> {
+    crate::services::php_pool::is_legacy(version).then(|| {
+        format!(
+            "PHP {version} reached end of life and gets no security updates. \
+             Use it only for legacy sites that cannot run on PHP 8, and plan their upgrade."
+        )
+    })
 }
 
 /// Check if a PHP-FPM version is installed.
@@ -103,6 +130,7 @@ async fn list_versions() -> Json<PhpListResponse> {
             // Falls back to the Debian-shaped guess when nothing real was found yet
             // (not installed, or FPM hasn't opened its socket) - same as before.
             socket: real_socket.unwrap_or_else(|| format!("/run/php/php{v}-fpm.sock")),
+            legacy: crate::services::php_pool::is_legacy(v),
         });
     }
 
@@ -206,11 +234,23 @@ async fn settle(version: &str, what_happened: &str) -> InstallResponse {
     }
 }
 
-/// POST /php/install - Install a PHP version with common extensions.
+/// POST /php/install - Install a PHP version with common extensions. A legacy
+/// version's answer (success or failure) carries a `warning`.
 async fn install_version(
     Json(body): Json<InstallRequest>,
-) -> Result<Json<InstallResponse>, (StatusCode, Json<InstallResponse>)> {
+) -> Result<Json<InstallOutcome>, (StatusCode, Json<InstallOutcome>)> {
     let version = body.version.trim();
+    let warning = legacy_warning(version);
+    let wrap = |response: InstallResponse| InstallOutcome { response, warning: warning.clone() };
+    match install_version_inner(version).await {
+        Ok(Json(r)) => Ok(Json(wrap(r))),
+        Err((status, Json(r))) => Err((status, Json(wrap(r)))),
+    }
+}
+
+async fn install_version_inner(
+    version: &str,
+) -> Result<Json<InstallResponse>, (StatusCode, Json<InstallResponse>)> {
 
     if !ALLOWED_VERSIONS.contains(&version) {
         return Err((
@@ -218,6 +258,29 @@ async fn install_version(
             Json(InstallResponse {
                 success: false,
                 message: format!("Invalid version. Allowed: {}", ALLOWED_VERSIONS.join(", ")),
+                version: version.to_string(),
+            }),
+        ));
+    }
+
+    // Legacy versions come from deb.sury.org / ppa:ondrej/php only. The RHEL
+    // family's module streams may still list 7.4 (Rocky 8), but the panel's
+    // per-site pools and vhosts are Debian-shaped, so legacy PHP is refused
+    // there outright - before the "already installed" shortcut, so a box on
+    // the distro's own 7.4 stream is not reported as ready either.
+    if crate::services::php_pool::is_legacy(version)
+        && crate::services::pkg::manager().await == crate::services::pkg::PkgMgr::Rpm
+    {
+        return Err((
+            StatusCode::NOT_IMPLEMENTED,
+            Json(InstallResponse {
+                success: false,
+                message: format!(
+                    "PHP {version} (legacy, end of life) is only supported on Debian and Ubuntu, \
+                     through deb.sury.org / ppa:ondrej/php. It is not available on the RHEL family \
+                     (it would need the third-party remi repository, which CyberHunter - Panel \
+                     does not configure)."
+                ),
                 version: version.to_string(),
             }),
         ));

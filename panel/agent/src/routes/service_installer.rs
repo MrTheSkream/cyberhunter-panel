@@ -54,18 +54,31 @@ async fn install_status() -> Result<Json<serde_json::Value>, ApiErr> {
     let pdns_installed = is_installed("pdns-server").await;
     let pdns_running = is_active("pdns").await;
 
-    // Keep these version lists in lock-step with php.rs ALLOWED_VERSIONS - both
-    // installer paths (setup.sh, php.rs, this file) install `php{ver}-fpm`
-    // directly (never the `php-fpm` metapackage), so a missing version here
-    // reports an installed+running PHP as absent on the Services page.
-    let php_installed = is_installed("php-fpm").await || is_installed("php8.5-fpm").await || is_installed("php8.4-fpm").await || is_installed("php8.3-fpm").await || is_installed("php8.2-fpm").await || is_installed("php8.1-fpm").await;
+    // Derived from php_pool::PHP_VERSIONS (the list php.rs installs from, legacy
+    // 5.6/7.4 included): every installer path (setup.sh, php.rs, this file)
+    // installs `php{ver}-fpm` directly (never the `php-fpm` metapackage), so a
+    // version missing here reports an installed+running PHP as absent on the
+    // Services page. Newest first, stopping at the first hit.
+    let mut php_installed = is_installed("php-fpm").await;
+    for v in crate::services::php_pool::PHP_VERSIONS.iter().rev() {
+        if php_installed {
+            break;
+        }
+        php_installed = is_installed(&format!("php{v}-fpm")).await;
+    }
     // Debian names the unit per version (`php8.3-fpm`); the RHEL family has a
     // single `php-fpm`. Checking only the versioned names reported an active
     // PHP as stopped on every RPM box (s265) - the same shape as the dpkg
     // problem one line above, in the service manager instead of the package
     // manager.
-    let php_running = is_active("php8.5-fpm").await || is_active("php8.4-fpm").await || is_active("php8.3-fpm").await || is_active("php8.2-fpm").await || is_active("php8.1-fpm").await
-        || is_active("php-fpm").await;
+    let mut php_running = false;
+    for v in crate::services::php_pool::PHP_VERSIONS.iter().rev() {
+        if is_active(&format!("php{v}-fpm")).await {
+            php_running = true;
+            break;
+        }
+    }
+    let php_running = php_running || is_active("php-fpm").await;
     let certbot_installed = which("certbot").await;
     let ufw_installed = which("ufw").await;
     let ufw_active = is_ufw_active().await;
@@ -1703,7 +1716,12 @@ async fn detect_available_php() -> Option<String> {
             for line in out.lines() {
                 if let Some(rest) = line.trim().strip_prefix("Depends: php") {
                     if let Some(v) = rest.strip_suffix("-fpm") {
-                        if !v.is_empty() && v.chars().all(|c| c.is_ascii_digit() || c == '.') {
+                        // A distro whose default is an end-of-life PHP (5.6/7.4)
+                        // never makes it the panel's default: fall to the probe.
+                        if !v.is_empty()
+                            && v.chars().all(|c| c.is_ascii_digit() || c == '.')
+                            && !crate::services::php_pool::is_legacy(v)
+                        {
                             return Some(v.to_string());
                         }
                     }
@@ -1712,7 +1730,9 @@ async fn detect_available_php() -> Option<String> {
         }
     }
     // Fallback probe, newest first (covers boxes with a 3rd-party PHP repo
-    // already configured but no php-fpm metapackage).
+    // already configured but no php-fpm metapackage). Deliberately a literal
+    // WITHOUT the legacy versions of php_pool::PHP_VERSIONS: 5.6/7.4 are
+    // installed only on explicit request, never picked as the default.
     for v in ["8.5", "8.4", "8.3", "8.2", "8.1"] {
         let output = tokio::time::timeout(
             Duration::from_secs(120),

@@ -55,7 +55,43 @@ interface Site {
   bind_ip?: string | null;
   /** "apache" = nginx in front of Apache (.htaccess read). Absent on older backends = "nginx". */
   web_server?: "nginx" | "apache";
+  // import-hestia (W3). All optional: an older backend omits them.
+  /** Aliases as recorded in the database; null = not managed by the database yet. */
+  aliases?: string[] | null;
+  /** Name every other served name redirects to; null = no canonical redirect. */
+  canonical_host?: "www" | "apex" | null;
+  /** Folders under the document root where PHP is never executed; null = none. */
+  php_no_exec_dirs?: string[] | null;
+  /** Redirect HTTP to HTTPS when SSL is on. Absent = true. */
+  force_ssl?: boolean;
+  /** Send Strict-Transport-Security when SSL is on. Absent = true. */
+  hsts?: boolean;
+  /** Custom SFTP account name; null = the default `sftp<uid>`. */
+  sftp_username?: string | null;
 }
+
+/** PHP branches past end of life (kept for imported sites). */
+const LEGACY_PHP_VERSIONS = new Set(["5.6", "7.4"]);
+
+/** Default "no PHP execution" folders, as the backend applies them for `dirs: "defaults"`. */
+const DEFAULT_NO_EXEC_DIRS = [
+  "/wp-content/uploads",
+  "/sites/default/files",
+  "/storage/app/public",
+  "/uploads",
+  "/upload",
+];
+
+/** Client-side mirror of the backend rule for a no-exec folder; returns an error or "". */
+function validateNoExecDir(dir: string): string {
+  if (!dir.startsWith("/")) return "Each folder must start with /";
+  if (!/^\/[A-Za-z0-9_./-]*$/.test(dir)) return "Only letters, digits and _ . / - are allowed";
+  if (dir.includes("..")) return "A folder cannot contain ..";
+  return "";
+}
+
+/** SFTP account name rule (contract W4-S). */
+const SFTP_USERNAME_RE = /^[a-z_][a-z0-9_.-]{0,31}$/;
 
 type SiteLogType = "access" | "error" | "apache_error";
 
@@ -99,6 +135,8 @@ export default function SiteDetail() {
   } = useDnsPrereq(site && !site.ssl_enabled ? site.domain : "", { autoPoll: true, debounceMs: 0 });
   const [switchingPhp, setSwitchingPhp] = useState(false);
   const [phpMessage, setPhpMessage] = useState("");
+  // The backend's caveat on a switch to a legacy version; shown apart from the result.
+  const [phpWarning, setPhpWarning] = useState("");
   // What the picker is showing, which is not the same as what the site runs:
   // an uninstalled version stays selected while its install callout is up, and
   // only becomes the site's version once the switch actually goes through.
@@ -164,6 +202,18 @@ export default function SiteDetail() {
   const [newAlias, setNewAlias] = useState("");
   const [aliasMsg, setAliasMsg] = useState("");
   const [showAliases, setShowAliases] = useState(false);
+  const [savingCanonical, setSavingCanonical] = useState(false);
+  const [canonicalMsg, setCanonicalMsg] = useState<{ text: string; error: boolean } | null>(null);
+
+  // PHP no-exec folders (edit buffer, saved explicitly)
+  const [noExecDirs, setNoExecDirs] = useState<string[]>([]);
+  const [newNoExecDir, setNewNoExecDir] = useState("");
+  const [savingNoExec, setSavingNoExec] = useState(false);
+  const [noExecMsg, setNoExecMsg] = useState<{ text: string; error: boolean } | null>(null);
+
+  // SSL options (force HTTPS / HSTS)
+  const [savingSslOpts, setSavingSslOpts] = useState(false);
+  const [sslOptsMsg, setSslOptsMsg] = useState("");
 
   // Access Logs
   const [accessLogs, setAccessLogs] = useState("");
@@ -271,6 +321,8 @@ export default function SiteDetail() {
   const [sftpResetting, setSftpResetting] = useState(false);
   const [sftpMsg, setSftpMsg] = useState("");
   const [sftpPassword, setSftpPassword] = useState<string | null>(null);
+  const [sftpUsername, setSftpUsername] = useState("");
+  const [sftpWarning, setSftpWarning] = useState("");
   const [copied, setCopied] = useState("");
 
   const copyToClipboard = (text: string, label: string) => {
@@ -606,6 +658,72 @@ export default function SiteDetail() {
     }
   };
 
+  // Reset the no-exec edit buffer to what the server holds whenever that changes.
+  const savedNoExecKey = JSON.stringify(site?.php_no_exec_dirs ?? null);
+  useEffect(() => {
+    setNoExecDirs(site?.php_no_exec_dirs ?? []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [site?.id, savedNoExecKey]);
+
+  const saveNoExec = async (dirs: string[] | null | "defaults", okText: string) => {
+    setSavingNoExec(true);
+    setNoExecMsg(null);
+    try {
+      const res = await api.put<{ ok: boolean; php_no_exec_dirs: string[] | null }>(
+        `/sites/${id}/php-no-exec`,
+        { dirs },
+      );
+      setSite((s) => (s ? { ...s, php_no_exec_dirs: res.php_no_exec_dirs } : s));
+      setNoExecDirs(res.php_no_exec_dirs ?? []);
+      setNoExecMsg({ text: okText, error: false });
+    } catch (e) {
+      setNoExecMsg({ text: e instanceof Error ? e.message : "Save failed", error: true });
+    } finally {
+      setSavingNoExec(false);
+    }
+  };
+
+  const saveSslOptions = async (next: { force_ssl: boolean; hsts: boolean }) => {
+    if (!site) return;
+    const prev = { force_ssl: site.force_ssl ?? true, hsts: site.hsts ?? true };
+    setSavingSslOpts(true);
+    setSslOptsMsg("");
+    // Optimistic: the switch moves at once and moves back if the server refuses.
+    setSite((s) => (s ? { ...s, ...next } : s));
+    try {
+      const res = await api.put<{ ok: boolean; force_ssl: boolean; hsts: boolean }>(
+        `/sites/${id}/ssl-options`,
+        next,
+      );
+      setSite((s) => (s ? { ...s, force_ssl: res.force_ssl, hsts: res.hsts } : s));
+    } catch (e) {
+      setSite((s) => (s ? { ...s, ...prev } : s));
+      setSslOptsMsg(e instanceof Error ? e.message : "Could not save the SSL options");
+    } finally {
+      setSavingSslOpts(false);
+    }
+  };
+
+  const setCanonicalHost = async (value: "www" | "apex" | null) => {
+    setSavingCanonical(true);
+    setCanonicalMsg(null);
+    try {
+      const res = await api.put<{ ok: boolean; canonical_host: "www" | "apex" | null }>(
+        `/sites/${id}/canonical-host`,
+        { canonical_host: value },
+      );
+      setSite((s) => (s ? { ...s, canonical_host: res.canonical_host } : s));
+      setCanonicalMsg({
+        text: res.canonical_host ? "Canonical host saved" : "Canonical redirect removed",
+        error: false,
+      });
+    } catch (e) {
+      setCanonicalMsg({ text: e instanceof Error ? e.message : "Save failed", error: true });
+    } finally {
+      setSavingCanonical(false);
+    }
+  };
+
   // Keep the IP select on the site's current value whenever it is (re)loaded.
   useEffect(() => { setSiteIpId(site?.ip_id ?? ""); }, [site?.id, site?.ip_id]);
 
@@ -643,6 +761,15 @@ export default function SiteDetail() {
         <span className="text-sm text-dark-300 mx-2">/</span>
         <span className="text-sm text-dark-50 font-medium font-mono">{site.domain}</span>
       </div>
+
+      {site.runtime === "php" && site.php_version && LEGACY_PHP_VERSIONS.has(site.php_version) && (
+        <div
+          role="alert"
+          className="mb-6 px-4 py-3 rounded-lg text-sm bg-warn-500/10 text-warn-400 border border-warn-500/30"
+        >
+          PHP {site.php_version} reached end of life and gets no security updates. Plan an upgrade.
+        </div>
+      )}
 
       {/* Header */}
       <div className="flex items-start justify-between mb-6">
@@ -1071,10 +1198,13 @@ export default function SiteDetail() {
                         if (!ready || newVersion === site.php_version) return;
                         setSwitchingPhp(true);
                         setPhpMessage("");
+                        setPhpWarning("");
                         try {
-                          const updated = await api.put<Site>(`/sites/${id}/php`, { version: newVersion });
-                          setSite(updated);
+                          const updated = await api.put<Site & { warning?: string }>(`/sites/${id}/php`, { version: newVersion });
+                          const { warning, ...rest } = updated;
+                          setSite(rest);
                           setPhpMessage(`Switched to PHP ${newVersion}`);
+                          if (warning) setPhpWarning(warning);
                         } catch (err) {
                           setPhpMessage(err instanceof Error ? err.message : "Switch failed");
                           // Put the control back on what the site is actually
@@ -1098,6 +1228,11 @@ export default function SiteDetail() {
                       </span>
                     )}
                   </div>
+                  {phpWarning && (
+                    <p className="text-xs px-3 py-2 rounded-lg bg-warn-500/10 text-warn-400 border border-warn-500/30 max-w-xl">
+                      {phpWarning}
+                    </p>
+                  )}
                 </div>
               </dd>
             </div>
@@ -1128,6 +1263,52 @@ export default function SiteDetail() {
                       Expires: {new Date(site.ssl_expiry).toLocaleDateString()}
                     </p>
                   )}
+                  <div className="pt-2 space-y-2">
+                    {([
+                      {
+                        key: "force_ssl" as const,
+                        label: "Force HTTPS",
+                        hint: "Redirect every HTTP request to HTTPS.",
+                      },
+                      {
+                        key: "hsts" as const,
+                        label: "HSTS",
+                        hint: "Tell browsers to only ever use HTTPS for this domain.",
+                      },
+                    ]).map((opt) => {
+                      const current = {
+                        force_ssl: site.force_ssl ?? true,
+                        hsts: site.hsts ?? true,
+                      };
+                      const on = current[opt.key];
+                      return (
+                        <div key={opt.key} className="flex items-center gap-3">
+                          <button
+                            type="button"
+                            role="switch"
+                            aria-checked={on}
+                            aria-label={opt.label}
+                            disabled={savingSslOpts}
+                            onClick={() => saveSslOptions({ ...current, [opt.key]: !on })}
+                            className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${
+                              on ? "bg-rust-500" : "bg-dark-600"
+                            }`}
+                          >
+                            <span
+                              className={`inline-block h-4 w-4 rounded-full bg-white transition-transform ${
+                                on ? "translate-x-4" : "translate-x-0.5"
+                              }`}
+                            />
+                          </button>
+                          <div>
+                            <span className="text-xs text-dark-100">{opt.label}</span>
+                            <span className="text-xs text-dark-400 ml-2">{opt.hint}</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {sslOptsMsg && <p className="text-xs text-danger-400">{sslOptsMsg}</p>}
+                  </div>
                   {sslProvenance?.provenance === "foreign" && (
                     <p className="text-xs text-dark-300">
                       CyberHunter - Panel did not issue this certificate and will not renew it. Renew it
@@ -2025,11 +2206,11 @@ export default function SiteDetail() {
               site is ever reachable over the connection. Enabling it re-owns the site's existing
               content directory; this only happens once, when you click Enable.
             </p>
-            {site.sftp_enabled && site.sftp_uid != null && (
+            {site.sftp_enabled && (site.sftp_username || site.sftp_uid != null) && (
               <div className="grid grid-cols-2 gap-3 text-xs font-mono">
                 <div>
                   <div className="text-dark-400 uppercase tracking-wide mb-1">Username</div>
-                  <div className="text-dark-100">sftp{site.sftp_uid}</div>
+                  <div className="text-dark-100">{site.sftp_username || `sftp${site.sftp_uid}`}</div>
                 </div>
                 <div>
                   <div className="text-dark-400 uppercase tracking-wide mb-1">Host / Port</div>
@@ -2037,16 +2218,51 @@ export default function SiteDetail() {
                 </div>
               </div>
             )}
+            {!site.sftp_enabled && (
+              <div className="max-w-xs">
+                <label htmlFor="sftp-username" className="block text-xs font-medium text-dark-200 mb-1">
+                  Username (optional)
+                </label>
+                <input
+                  id="sftp-username"
+                  type="text"
+                  value={sftpUsername}
+                  onChange={(e) => setSftpUsername(e.target.value)}
+                  placeholder="Default: sftp<uid>, e.g. sftp10001"
+                  autoComplete="off"
+                  spellCheck={false}
+                  className="w-full px-3 py-2 border border-dark-500 rounded-lg text-sm font-mono focus:ring-2 focus:ring-accent-500 focus:border-accent-500 outline-none"
+                />
+                {sftpUsername.trim() && !SFTP_USERNAME_RE.test(sftpUsername.trim()) ? (
+                  <p className="text-xs text-danger-400 mt-1">
+                    Lowercase letters, digits, _ . - only, starting with a letter or _, 32 characters max.
+                  </p>
+                ) : (
+                  <p className="text-xs text-dark-400 mt-1">Leave empty to use the default account name.</p>
+                )}
+              </div>
+            )}
             <div className="flex items-center gap-3">
               <button
-                disabled={sftpToggling}
+                disabled={
+                  sftpToggling ||
+                  (!site.sftp_enabled && !!sftpUsername.trim() && !SFTP_USERNAME_RE.test(sftpUsername.trim()))
+                }
                 onClick={async () => {
                   setSftpToggling(true);
                   setSftpMsg("");
+                  setSftpWarning("");
                   setSftpPassword(null);
                   try {
                     const path = site.sftp_enabled ? "disable" : "enable";
-                    const result = await api.post<{ sftp_enabled: boolean }>(`/sites/${id}/sftp/${path}`);
+                    const wanted = sftpUsername.trim();
+                    const body = !site.sftp_enabled && wanted ? { username: wanted } : undefined;
+                    const result = await api.post<{ sftp_enabled: boolean; warning?: string }>(
+                      `/sites/${id}/sftp/${path}`,
+                      body,
+                    );
+                    if (result.warning) setSftpWarning(result.warning);
+                    if (result.sftp_enabled) setSftpUsername("");
                     // sftp_uid isn't in this response - the toggle endpoints only
                     // confirm the new state; re-fetching the site is what picks up
                     // the allocated uid after an enable.
@@ -2057,7 +2273,11 @@ export default function SiteDetail() {
                     }
                     setSftpMsg(site.sftp_enabled ? "SFTP disabled" : "SFTP enabled");
                   } catch (e) {
-                    setSftpMsg(e instanceof Error ? e.message : "Toggle failed");
+                    if (e instanceof ApiError && e.code === "username_taken") {
+                      setSftpMsg("Failed: this username is already taken on the server");
+                    } else {
+                      setSftpMsg(e instanceof Error ? e.message : "Toggle failed");
+                    }
                   } finally {
                     setSftpToggling(false);
                   }
@@ -2096,6 +2316,11 @@ export default function SiteDetail() {
                 </span>
               )}
             </div>
+            {sftpWarning && (
+              <p className="text-xs px-3 py-2 rounded-lg bg-warn-500/10 text-warn-400 border border-warn-500/30">
+                {sftpWarning}
+              </p>
+            )}
             {sftpPassword && (
               <div className="bg-dark-900 rounded-lg border border-accent-500/30 p-4">
                 <div className="flex items-center justify-between mb-2">
@@ -2890,6 +3115,128 @@ export default function SiteDetail() {
         </div>
       )}
 
+      {/* Block PHP execution in upload folders */}
+      {site.status === "active" && site.runtime === "php" && (() => {
+        const saved = site.php_no_exec_dirs ?? null;
+        const dirty = JSON.stringify(noExecDirs) !== JSON.stringify(saved ?? []);
+        const newDir = newNoExecDir.trim();
+        const newDirError = newDir ? validateNoExecDir(newDir) : "";
+        const addDir = () => {
+          if (!newDir || newDirError) return;
+          if (noExecDirs.includes(newDir)) {
+            setNoExecMsg({ text: `${newDir} is already in the list`, error: true });
+            return;
+          }
+          setNoExecDirs([...noExecDirs, newDir]);
+          setNewNoExecDir("");
+          setNoExecMsg(null);
+        };
+        return (
+          <div className="bg-dark-800 rounded-lg border border-dark-500 overflow-hidden mt-6">
+            <div className="px-5 py-4 border-b border-dark-600 flex items-center justify-between">
+              <h2 className="text-xs font-medium text-dark-300 uppercase font-mono tracking-widest">
+                Block PHP execution in upload folders
+              </h2>
+              <span className={`inline-flex px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                saved && saved.length > 0 ? "bg-rust-500/10 text-rust-400" : "bg-dark-700 text-dark-300"
+              }`}>
+                {saved && saved.length > 0 ? `${saved.length} folder${saved.length !== 1 ? "s" : ""}` : "Off"}
+              </span>
+            </div>
+            <div className="p-5 space-y-4">
+              <p className="text-sm text-dark-200">
+                PHP files inside these folders (and below them) are refused with a 403 instead of being
+                run, so an uploaded script cannot execute. Paths are relative to the site root.
+              </p>
+              <p className="text-xs text-dark-400">
+                Defaults: <span className="font-mono">{DEFAULT_NO_EXEC_DIRS.join(", ")}</span>
+              </p>
+
+              {noExecDirs.length > 0 ? (
+                <div className="space-y-2">
+                  {noExecDirs.map((dir) => (
+                    <div key={dir} className="flex items-center justify-between bg-dark-900 rounded-lg px-4 py-2">
+                      <span className="text-sm text-dark-100 font-mono">{dir}</span>
+                      <button
+                        type="button"
+                        onClick={() => setNoExecDirs(noExecDirs.filter((d) => d !== dir))}
+                        disabled={savingNoExec}
+                        className="p-1 text-dark-300 hover:text-danger-500 transition-colors disabled:opacity-50"
+                        title="Remove"
+                        aria-label={`Remove ${dir}`}
+                      >
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-dark-300">No folder in the list.</p>
+              )}
+
+              <div className="flex items-end gap-3">
+                <div className="flex-1 max-w-md">
+                  <label htmlFor="no-exec-dir" className="block text-xs font-medium text-dark-200 mb-1">Folder</label>
+                  <input
+                    id="no-exec-dir"
+                    type="text"
+                    value={newNoExecDir}
+                    onChange={(e) => setNewNoExecDir(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") addDir(); }}
+                    placeholder="/wp-content/uploads"
+                    spellCheck={false}
+                    className="w-full px-3 py-2 border border-dark-500 rounded-lg text-sm font-mono focus:ring-2 focus:ring-accent-500 focus:border-accent-500 outline-none"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={addDir}
+                  disabled={!newDir || !!newDirError || savingNoExec}
+                  className="px-4 py-2 bg-dark-700 text-dark-100 rounded-lg text-sm font-medium hover:bg-dark-600 disabled:opacity-50 transition-colors"
+                >
+                  Add
+                </button>
+              </div>
+              {newDirError && <p className="text-xs text-danger-400">{newDirError}</p>}
+
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  disabled={savingNoExec || !dirty}
+                  onClick={() => saveNoExec(noExecDirs, "Saved")}
+                  className="px-4 py-2 bg-rust-500 text-white rounded-lg text-sm font-medium hover:bg-rust-600 disabled:opacity-50 transition-colors"
+                >
+                  {savingNoExec ? "Saving..." : "Save"}
+                </button>
+                <button
+                  type="button"
+                  disabled={savingNoExec}
+                  onClick={() => saveNoExec("defaults", "Default folders applied")}
+                  className="px-4 py-2 bg-dark-700 text-dark-100 rounded-lg text-sm font-medium hover:bg-dark-600 disabled:opacity-50 transition-colors"
+                >
+                  Apply defaults
+                </button>
+                <button
+                  type="button"
+                  disabled={savingNoExec || saved === null}
+                  onClick={() => saveNoExec(null, "PHP execution is no longer blocked in any folder")}
+                  className="px-4 py-2 bg-warn-500/10 text-warn-400 rounded-lg text-sm font-medium hover:bg-warn-500/20 disabled:opacity-50 transition-colors"
+                >
+                  Disable
+                </button>
+                {noExecMsg && (
+                  <span className={`text-xs ${noExecMsg.error ? "text-danger-400" : "text-rust-400"}`}>
+                    {noExecMsg.text}
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Domain Aliases */}
       {site.status === "active" && (
         <div className="bg-dark-800 rounded-lg border border-dark-500 overflow-hidden mt-6">
@@ -2982,6 +3329,56 @@ export default function SiteDetail() {
                   {aliasMsg}
                 </p>
               )}
+
+              {/* Canonical host: every other served name 301s to the chosen one. */}
+              {(() => {
+                const wwwName = `www.${site.domain}`.toLowerCase();
+                const served = [...aliases, ...(site.aliases ?? [])].map((a) => a.toLowerCase());
+                const wwwServed = served.includes(wwwName);
+                const current = site.canonical_host ?? null;
+                const choices: { value: "www" | "apex" | null; label: string; title?: string; disabled?: boolean }[] = [
+                  { value: null, label: "None" },
+                  {
+                    value: "www",
+                    label: `www (${wwwName})`,
+                    disabled: !wwwServed,
+                    title: wwwServed ? undefined : `Add ${wwwName} as an alias first`,
+                  },
+                  { value: "apex", label: `apex (${site.domain})` },
+                ];
+                return (
+                  <div className="pt-4 border-t border-dark-600 space-y-2">
+                    <div className="text-xs font-medium text-dark-200">Canonical host</div>
+                    <p className="text-xs text-dark-400">
+                      Redirect every other name of this site (301) to one address.
+                    </p>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {choices.map((c) => (
+                        <button
+                          key={c.label}
+                          type="button"
+                          disabled={savingCanonical || c.disabled || current === c.value}
+                          title={c.title}
+                          onClick={() => setCanonicalHost(c.value)}
+                          className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors disabled:cursor-not-allowed ${
+                            current === c.value
+                              ? "bg-rust-500 text-white"
+                              : "bg-dark-700 text-dark-100 hover:bg-dark-600 disabled:opacity-50"
+                          }`}
+                        >
+                          {c.label}
+                        </button>
+                      ))}
+                      {savingCanonical && <span className="text-xs text-dark-200">Saving...</span>}
+                    </div>
+                    {canonicalMsg && (
+                      <p className={`text-xs ${canonicalMsg.error ? "text-danger-400" : "text-rust-400"}`}>
+                        {canonicalMsg.text}
+                      </p>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           )}
         </div>

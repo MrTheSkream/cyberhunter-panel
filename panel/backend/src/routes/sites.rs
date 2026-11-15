@@ -331,7 +331,7 @@ pub async fn create(
     ServerScope(server_id, agent): ServerScope,
     headers: HeaderMap,
     Json(body): Json<CreateSiteRequest>,
-) -> Result<(StatusCode, Json<Site>), ApiError> {
+) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
     // Feature 9: Block site creation during lockdown
     if security_hardening::is_locked_down(&state.db).await {
         return Err(err(StatusCode::SERVICE_UNAVAILABLE, "System is in lockdown mode"));
@@ -536,9 +536,13 @@ pub async fn create(
         body.proxy_port
     };
 
+    // D9: every new PHP site starts with PHP execution blocked in the usual
+    // upload folders. Other runtimes run no PHP, so they get nothing.
+    let php_no_exec_dirs: Option<Vec<String>> = (runtime == "php").then(default_php_no_exec_dirs);
+
     let site: Site = sqlx::query_as(
-        "INSERT INTO sites (user_id, server_id, domain, runtime, status, proxy_port, php_version, php_preset, app_command, ip_id, web_server) \
-         VALUES ($1, $2, $3, $4, 'creating', $5, $6, $7, $8, $9, $10) RETURNING *",
+        "INSERT INTO sites (user_id, server_id, domain, runtime, status, proxy_port, php_version, php_preset, app_command, ip_id, web_server, php_no_exec_dirs) \
+         VALUES ($1, $2, $3, $4, 'creating', $5, $6, $7, $8, $9, $10, $11) RETURNING *",
     )
     .bind(claims.sub)
     .bind(server_id)
@@ -550,6 +554,7 @@ pub async fn create(
     .bind(&body.app_command)
     .bind(body.ip_id)
     .bind(web_server)
+    .bind(&php_no_exec_dirs)
     .fetch_one(&mut *tx)
     .await
     .map_err(|e| {
@@ -617,6 +622,8 @@ pub async fn create(
     if let Some(pool) = crate::routes::php_settings::php_pool_for_site(&site) {
         agent_body["php_pool"] = pool;
     }
+    // import-hestia W3-V/W3-F: the same optional keys every rebuild sends.
+    apply_vhost_extras(&mut agent_body, &site);
 
     // Atomically reserve the reseller site-quota slot BEFORE the agent creates the
     // nginx vhost - closes the check-then-increment TOCTOU without orphaning an nginx
@@ -1388,7 +1395,8 @@ pub async fn create(
 
             let mut updated = updated;
             crate::services::server_ips::fill_bind_ip(&state.db, &mut updated).await;
-            Ok((StatusCode::CREATED, Json(updated)))
+            let warning = updated.php_version.as_deref().and_then(legacy_php_warning);
+            Ok((StatusCode::CREATED, Json(site_json_with_warning(&updated, warning)?)))
         }
         Err(e) => {
             // Agent call failed - roll back the transaction (INSERT is undone)
@@ -1522,7 +1530,30 @@ pub async fn get_one(
 /// frontend no longer carries a third and fourth copy: both pickers read the
 /// live list from `GET /api/php/versions`, which is the agent's answer for the
 /// server the site actually runs on.
-pub(crate) const PHP_VERSIONS: &[&str] = &["8.1", "8.2", "8.3", "8.4", "8.5"];
+pub(crate) const PHP_VERSIONS: &[&str] = &["5.6", "7.4", "8.1", "8.2", "8.3", "8.4", "8.5"];
+
+/// End-of-life versions kept for imported sites (import-hestia W3-P). Accepted
+/// everywhere `PHP_VERSIONS` is, but every door that selects one answers with a
+/// `warning` (see [`legacy_php_warning`]).
+pub(crate) const LEGACY_PHP_VERSIONS: &[&str] = &["5.6", "7.4"];
+
+/// The warning a create / switch response carries for an end-of-life version.
+pub(crate) fn legacy_php_warning(version: &str) -> Option<String> {
+    let v = version.trim();
+    LEGACY_PHP_VERSIONS
+        .contains(&v)
+        .then(|| format!("PHP {v} reached end of life and gets no security updates"))
+}
+
+/// A site as the API returns it, plus an optional top-level `warning` key.
+/// The site's own fields stay flat, so a client reading `Site` is unaffected.
+fn site_json_with_warning(site: &Site, warning: Option<String>) -> Result<serde_json::Value, ApiError> {
+    let mut v = serde_json::to_value(site).map_err(|e| internal_error("serialize site", e))?;
+    if let Some(w) = warning {
+        v["warning"] = serde_json::json!(w);
+    }
+    Ok(v)
+}
 
 /// PUT /api/sites/{id}/php - Switch PHP version for a site.
 #[derive(serde::Deserialize)]
@@ -1535,7 +1566,7 @@ pub async fn switch_php(
     AuthUser(claims): AuthUser,
     Path(id): Path<Uuid>,
     Json(body): Json<SwitchPhpRequest>,
-) -> Result<Json<Site>, ApiError> {
+) -> Result<Json<serde_json::Value>, ApiError> {
     let version = body.version.trim();
 
     if !PHP_VERSIONS.contains(&version) {
@@ -1594,7 +1625,7 @@ pub async fn switch_php(
 
     let mut updated = updated;
     crate::services::server_ips::fill_bind_ip(&state.db, &mut updated).await;
-    Ok(Json(updated))
+    Ok(Json(site_json_with_warning(&updated, legacy_php_warning(version))?))
 }
 
 /// The runtimes this switch will move a site BETWEEN - deliberately only two.
@@ -2256,6 +2287,26 @@ pub async fn remove(
         }
     }
 
+    // Databases on the shared local MariaDB (05-import-hestia D1) have no
+    // container: their schema and user are dropped through the agent, or they
+    // would outlive the site on the shared server.
+    let local_dbs: Vec<(String, String)> = sqlx::query_as(
+        "SELECT name, db_user FROM databases WHERE site_id = $1 AND kind = 'local'",
+    )
+    .bind(id)
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+    for (name, db_user) in &local_dbs {
+        let body = serde_json::json!({ "db_user": db_user, "drop_user_if_unused": true });
+        if let Err(e) = agent
+            .post(&format!("/localdb/databases/{}/drop", urlencoding::encode(name)), Some(body))
+            .await
+        {
+            tracing::warn!("Failed to drop local database {name}: {e}");
+        }
+    }
+
     // GAP 50: Remove firewall rule for proxy port on site deletion
     if let Some(port) = site.proxy_port {
         // Get current firewall rules and find the matching rule number to delete
@@ -2698,28 +2749,37 @@ pub async fn add_alias(
         return Err(err(StatusCode::BAD_REQUEST, "Invalid alias: must be a valid domain name"));
     }
 
-    // This handler needs the host as a VALUE, not just as a handle, so it reads both
-    // from the row rather than going through the domain-only resolver. Taking the id
+    // This handler needs the host as a VALUE, not just as a handle, so it reads
+    // the row rather than going through the domain-only resolver. Taking the id
     // from the caller's selection meant the collision check below ran against one
-    // machine while the alias was written on another.
-    let (domain, site_server_id): (String, Option<Uuid>) = sqlx::query_as(&format!(
-        "SELECT s.domain, s.server_id FROM sites s WHERE {}",
-        crate::helpers::SITE_CALLER_PREDICATE
-    ))
-    .bind(id)
-    .bind(claims.sub)
-    .fetch_optional(&state.db)
-    .await
-    .map_err(|e| internal_error("add alias", e))?
-    .ok_or_else(|| err(StatusCode::NOT_FOUND, "Site not found"))?;
+    // machine while the alias was written on another. The whole row is read
+    // because the alias list itself may live in it (import-hestia D4).
+    let site: Site = sqlx::query_as(SITE_FOR_CALLER_ALL.as_str())
+        .bind(id)
+        .bind(claims.sub)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| internal_error("add alias", e))?
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "Site not found"))?;
+    let domain = site.domain.clone();
 
-    let agent = crate::helpers::agent_for_site_server(&state, site_server_id, &domain).await?;
+    let agent = crate::helpers::agent_for_site_server(&state, site.server_id, &domain).await?;
     // An alias becomes an nginx `server_name` on the caller's own vhost. Without
     // this guard any tenant could attach ANOTHER tenant's (or the panel's own)
     // live domain as an alias and hijack its traffic / intercept its ACME
     // HTTP-01 challenge. Reject reserved domains and any domain already served
     // by a site or git deployment on this server.
     let alias = ensure_domain_available(&state, &body.alias, &headers, &claims.role).await?;
+
+    // The current list: the column when the database manages it, the vhost's
+    // own names otherwise.
+    let existing: Vec<String> = match site.aliases {
+        Some(ref a) => a.clone(),
+        None => read_agent_aliases(&agent, &domain)
+            .await
+            .map_err(|e| agent_error("Domain aliases", e))?,
+    };
+    validate_new_alias(&alias, &domain, &existing).map_err(|m| err(StatusCode::BAD_REQUEST, &m))?;
 
     let result = agent
         .post(
@@ -2731,25 +2791,165 @@ pub async fn add_alias(
         )
         .await
         .map_err(|e| agent_error("Domain aliases", e))?;
-    Ok(Json(result))
+
+    // The column becomes managed: what the agent now serves is the list.
+    let mut expected = existing;
+    expected.push(alias.clone());
+    let (stored, warning) = store_alias_list(&state, &agent, &site, expected).await;
+
+    let ip = crate::routes::client_ip(&headers);
+    activity::log_activity(
+        &state.db, claims.sub, &claims.email, "site.alias.add",
+        Some("site"), Some(&domain), Some(&alias), ip.as_deref(),
+        claims.key_id,
+    ).await;
+
+    Ok(Json(alias_response(result, stored, warning)))
+}
+
+/// After the agent changed a site's aliases, read its list back and store it in
+/// `sites.aliases` (the column becomes managed, D4). `expected` is the list the
+/// change should have produced; it is used when the read-back fails and the
+/// column was already managed, so a stale column cannot revert the change on
+/// the next rebuild. Returns the stored list and a warning when nothing could
+/// be stored (the column then stays as it was and the agent keeps the vhost's
+/// own names).
+async fn store_alias_list(
+    state: &AppState,
+    agent: &crate::services::agent::AgentHandle,
+    site: &Site,
+    expected: Vec<String>,
+) -> (Option<Vec<String>>, Option<String>) {
+    let list = match read_agent_aliases(agent, &site.domain).await {
+        Ok(live) if aliases_storable(&site.domain, &live) => live,
+        Ok(_) | Err(_) if site.aliases.is_some() && aliases_storable(&site.domain, &expected) => expected,
+        Ok(_) => {
+            return (
+                site.aliases.clone(),
+                Some("The vhost serves names the panel cannot manage; the alias list is left to the vhost".into()),
+            );
+        }
+        Err(e) => {
+            tracing::warn!("Could not read back the aliases of {}: {e}", site.domain);
+            return (
+                site.aliases.clone(),
+                Some("The alias list could not be read back from the server; it will be recorded on the next change".into()),
+            );
+        }
+    };
+    if let Err(e) = sqlx::query("UPDATE sites SET aliases = $1, updated_at = NOW() WHERE id = $2")
+        .bind(&list)
+        .bind(site.id)
+        .execute(&state.db)
+        .await
+    {
+        tracing::warn!("Could not record the aliases of {}: {e}", site.domain);
+        return (site.aliases.clone(), Some("The alias list could not be recorded".into()));
+    }
+    (Some(list), None)
+}
+
+/// The agent's answer, plus the recorded list and an optional warning.
+fn alias_response(
+    result: serde_json::Value,
+    stored: Option<Vec<String>>,
+    warning: Option<String>,
+) -> serde_json::Value {
+    let mut out = if result.is_object() { result } else { serde_json::json!({ "ok": true }) };
+    if let Some(list) = stored {
+        out["aliases"] = serde_json::json!(list);
+    }
+    if let Some(w) = warning {
+        out["warning"] = serde_json::json!(w);
+    }
+    out
 }
 
 /// POST /api/sites/{id}/aliases/remove - Remove a domain alias.
+///
+/// Removing the name the canonical redirect points at (`canonical_host = www`
+/// and alias `www.<domain>`) first clears `canonical_host` and rebuilds the
+/// vhost - otherwise every request would be redirected to a name the site no
+/// longer serves - then removes the alias. The response says so in `warning`.
 pub async fn remove_alias(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
     Path(id): Path<Uuid>,
+    headers: HeaderMap,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let (domain, agent) = crate::helpers::site_agent_for_caller(&state, id, &claims).await?;
+    let alias = body
+        .get("alias")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+    if alias.is_empty() {
+        return Err(err(StatusCode::BAD_REQUEST, "Alias required"));
+    }
+
+    let site: Site = sqlx::query_as(SITE_FOR_CALLER_ALL.as_str())
+        .bind(id)
+        .bind(claims.sub)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| internal_error("remove alias", e))?
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "Site not found"))?;
+    let domain = site.domain.clone();
+    let agent = crate::helpers::agent_for_site_server(&state, site.server_id, &domain).await?;
+
+    let removes_canonical_target = site.canonical_host.as_deref() == Some("www")
+        && alias.eq_ignore_ascii_case(&canonical_target(&domain, "www"));
+    let mut site = site;
+    let mut warning: Option<String> = None;
+    if removes_canonical_target {
+        let mut tx = state.db.begin().await.map_err(|e| internal_error("remove alias", e))?;
+        let updated: Site = sqlx::query_as(
+            "UPDATE sites SET canonical_host = NULL, updated_at = NOW() WHERE id = $1 RETURNING *",
+        )
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|e| internal_error("remove alias", e))?;
+        rebuild_then_commit(&state, &agent, tx, &updated, "Canonical host reset").await?;
+        warning = Some(format!(
+            "{alias} was the canonical host: the redirect to it has been removed"
+        ));
+        site = updated;
+    }
+
     let result = agent
         .post(
             &format!("/nginx/aliases/{domain}/remove"),
-            Some(body),
+            Some(serde_json::json!({ "alias": alias })),
         )
         .await
         .map_err(|e| agent_error("Domain aliases", e))?;
-    Ok(Json(result))
+
+    let expected: Vec<String> = site
+        .aliases
+        .clone()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|a| !a.eq_ignore_ascii_case(&alias))
+        .collect();
+    let (stored, store_warning) = store_alias_list(&state, &agent, &site, expected).await;
+    let warning = match (warning, store_warning) {
+        (Some(a), Some(b)) => Some(format!("{a}. {b}")),
+        (a, b) => a.or(b),
+    };
+
+    let ip = crate::routes::client_ip(&headers);
+    activity::log_activity(
+        &state.db, claims.sub, &claims.email, "site.alias.remove",
+        Some("site"), Some(&domain), Some(&alias), ip.as_deref(),
+        claims.key_id,
+    ).await;
+
+    let mut out = alias_response(result, stored, warning);
+    if removes_canonical_target {
+        out["canonical_host"] = serde_json::Value::Null;
+    }
+    Ok(Json(out))
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -3065,8 +3265,12 @@ pub async fn clone_site(
 
     // Create new site record
     let new_site: Site = match sqlx::query_as::<_, Site>(
-        "INSERT INTO sites (user_id, server_id, domain, runtime, status, php_version, root_path, rate_limit, max_upload_mb, php_memory_mb, php_max_workers, php_preset, app_command, ip_id, php_settings, php_isolation, php_disable_shell, web_server) \
-         VALUES ($1, $2, $3, $4, 'active', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING *"
+        // import-hestia: the no-exec folders and the SSL options describe the
+        // site's content and policy, so they follow the clone. Aliases, the
+        // canonical host and the SFTP name belong to the SOURCE's names and
+        // account, so they never do.
+        "INSERT INTO sites (user_id, server_id, domain, runtime, status, php_version, root_path, rate_limit, max_upload_mb, php_memory_mb, php_max_workers, php_preset, app_command, ip_id, php_settings, php_isolation, php_disable_shell, web_server, php_no_exec_dirs, force_ssl, hsts) \
+         VALUES ($1, $2, $3, $4, 'active', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20) RETURNING *"
     )
     .bind(claims.sub)
     .bind(server_id)
@@ -3085,6 +3289,9 @@ pub async fn clone_site(
     .bind(source.php_isolation)
     .bind(source.php_disable_shell)
     .bind(&source.web_server)
+    .bind(&source.php_no_exec_dirs)
+    .bind(source.force_ssl)
+    .bind(source.hsts)
     .fetch_one(&state.db).await
     {
         Ok(s) => s,
@@ -3132,6 +3339,7 @@ pub async fn clone_site(
     if let Some(pool) = crate::routes::php_settings::php_pool_for_site(&new_site) {
         nginx_body["php_pool"] = pool;
     }
+    apply_vhost_extras(&mut nginx_body, &new_site);
 
     agent.put(&format!("/nginx/sites/{target_domain}"), nginx_body).await
         .map_err(|e| agent_error("Nginx config", e))?;
@@ -3215,6 +3423,36 @@ pub async fn clone_site(
 // Custom SSL Upload
 // ──────────────────────────────────────────────────────────────
 
+/// Record a certificate installed outside the ACME doors (an operator upload,
+/// or one carried over by the Hestia import, W5). The single statement both
+/// write - see the comments in [`upload_ssl`] for why each column is set the
+/// way it is: paths and expiry keep a known value over a missing one, the ACME
+/// provenance columns are cleared because the installed certificate is no
+/// longer the one they describe.
+pub(crate) async fn record_uploaded_ssl(
+    db: &sqlx::PgPool,
+    site_id: Uuid,
+    cert_path: Option<&str>,
+    key_path: Option<&str>,
+    expiry: Option<chrono::DateTime<chrono::Utc>>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE sites SET ssl_enabled = true, ssl_cert_path = COALESCE($1, ssl_cert_path), \
+         ssl_key_path = COALESCE($2, ssl_key_path), ssl_expiry = COALESCE($3, ssl_expiry), \
+         ssl_profile = NULL, \
+         ssl_challenge = NULL, ssl_cert_subject = NULL, ssl_wildcard = NULL, \
+         ssl_dns_zone_id = NULL, \
+         ssl_renewal_at = NULL, ssl_renewal_checked_at = NULL, updated_at = NOW() WHERE id = $4",
+    )
+    .bind(cert_path)
+    .bind(key_path)
+    .bind(expiry)
+    .bind(site_id)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
 /// POST /api/sites/{id}/ssl/upload - Upload custom SSL certificate.
 pub async fn upload_ssl(
     State(state): State<AppState>,
@@ -3286,21 +3524,7 @@ pub async fn upload_ssl(
     // uploaded certificate honestly implies. Unlike its three siblings this one
     // is NOT wrapped in COALESCE - for those, keeping a known value beats erasing
     // it, and here the stored value is precisely what has stopped being true.
-    if let Err(e) = sqlx::query(
-        "UPDATE sites SET ssl_enabled = true, ssl_cert_path = COALESCE($1, ssl_cert_path), \
-         ssl_key_path = COALESCE($2, ssl_key_path), ssl_expiry = COALESCE($3, ssl_expiry), \
-         ssl_profile = NULL, \
-         ssl_challenge = NULL, ssl_cert_subject = NULL, ssl_wildcard = NULL, \
-         ssl_dns_zone_id = NULL, \
-         ssl_renewal_at = NULL, ssl_renewal_checked_at = NULL, updated_at = NOW() WHERE id = $4",
-    )
-        .bind(cert_path.as_deref())
-        .bind(key_path.as_deref())
-        .bind(expiry)
-        .bind(id)
-        .execute(&state.db)
-        .await
-    {
+    if let Err(e) = record_uploaded_ssl(&state.db, id, cert_path.as_deref(), key_path.as_deref(), expiry).await {
         tracing::warn!("Failed to record uploaded certificate for site {id}: {e}");
     }
 
@@ -3512,12 +3736,21 @@ pub async fn rename_domain(
              THEN '/etc/dockpanel/ssl/' || $1 || '/fullchain.pem' ELSE ssl_cert_path END, \
          ssl_key_path = CASE WHEN ssl_key_path LIKE $4 \
              THEN '/etc/dockpanel/ssl/' || $1 || '/privkey.pem' ELSE ssl_key_path END, \
+         aliases = CASE WHEN aliases IS NULL THEN NULL ELSE ARRAY( \
+             SELECT CASE WHEN right(a, length($5) + 1) = '.' || $5 \
+                 THEN left(a, length(a) - length($5)) || $1 ELSE a END \
+             FROM unnest(aliases) AS a \
+             WHERE a <> $1) END, \
          updated_at = NOW() WHERE id = $2",
     )
         .bind(&new_domain)
         .bind(id)
         .bind(format!("/etc/dockpanel/ssl/{old_domain}/%"))
         .bind(format!("/etc/dockpanel/ssl/{old_domain}/%"))
+        // Managed aliases follow the rename the agent applied to the vhost
+        // (`www.<old>` becomes `www.<new>`), so `canonical_host = www` still
+        // names a served host and the next rebuild is not refused.
+        .bind(&old_domain)
         .execute(&state.db)
         .await
         .map_err(|e| internal_error("rename domain", e))?;
@@ -3964,14 +4197,37 @@ pub async fn purge_redis_cache(
 /// site is ever migrated without this being clicked. `sftp_uid`/`sftp_gid`
 /// come from `sftp_id_seq`, an atomic Postgres sequence rather than a
 /// `MAX(sftp_uid)+1` read (which races under concurrent enables).
+///
+/// Optional JSON body `{username?: string}` (D6): a custom account name instead
+/// of `sftp<uid>`. An empty body - or no body at all - keeps the default. The
+/// body is read as raw bytes because a client may POST with a JSON content
+/// type and nothing in it, which `Option<Json<_>>` would refuse.
 pub async fn enable_sftp(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
     headers: HeaderMap,
     Path(id): Path<Uuid>,
+    raw_body: axum::body::Bytes,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     if crate::services::security_hardening::is_locked_down(&state.db).await {
         return Err(err(StatusCode::SERVICE_UNAVAILABLE, "System is in lockdown mode"));
+    }
+
+    // Parse and validate the requested name before anything is allocated.
+    let requested: Option<String> = if raw_body.iter().all(|b| b.is_ascii_whitespace()) {
+        None
+    } else {
+        let parsed: serde_json::Value = serde_json::from_slice(&raw_body)
+            .map_err(|_| err(StatusCode::BAD_REQUEST, "Body must be JSON: {\"username\"?: string}"))?;
+        match parsed.get("username") {
+            None | Some(serde_json::Value::Null) => None,
+            Some(serde_json::Value::String(s)) if s.trim().is_empty() => None,
+            Some(serde_json::Value::String(s)) => Some(s.trim().to_string()),
+            Some(_) => return Err(err(StatusCode::BAD_REQUEST, "'username' must be a string")),
+        }
+    };
+    if let Some(ref name) = requested {
+        validate_sftp_username(name).map_err(|m| err(StatusCode::BAD_REQUEST, &m))?;
     }
 
     let site: Site = sqlx::query_as(SITE_FOR_CALLER_ALL.as_str())
@@ -3986,8 +4242,29 @@ pub async fn enable_sftp(
         return Ok(Json(serde_json::json!({
             "ok": true,
             "sftp_enabled": true,
+            "username": sftp_account_name(&site),
             "message": "SFTP is already enabled for this site",
         })));
+    }
+
+    // Unique in the panel (the partial unique index backs this up); the agent
+    // separately checks the box's own passwd/group databases.
+    if let Some(ref name) = requested {
+        let taken: Option<(Uuid,)> = sqlx::query_as(
+            "SELECT id FROM sites WHERE sftp_username = $1 AND id <> $2",
+        )
+        .bind(name)
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| internal_error("enable sftp", e))?;
+        if taken.is_some() {
+            return Err(crate::error::err_coded(
+                StatusCode::CONFLICT,
+                &format!("The SFTP username '{name}' is already used by another site"),
+                "username_taken",
+            ));
+        }
     }
 
     let agent = crate::helpers::agent_for_site_server(&state, site.server_id, &site.domain).await?;
@@ -3998,14 +4275,51 @@ pub async fn enable_sftp(
         .map_err(|e| internal_error("allocate sftp uid", e))?;
     let (uid, gid) = (allocated, allocated);
 
-    agent.post(
+    let mut enable_body = serde_json::json!({ "uid": uid, "gid": gid });
+    if let Some(ref name) = requested {
+        enable_body["username"] = serde_json::json!(name);
+    }
+    let enabled = agent.post(
         &format!("/sftp/sites/{}/enable", site.domain),
-        Some(serde_json::json!({ "uid": uid, "gid": gid })),
-    ).await.map_err(|e| agent_error("SFTP enable", e))?;
+        Some(enable_body),
+    ).await.map_err(|e| match e {
+        // `agent_error` relays only a fixed set of codes; this one the SFTP
+        // card branches on, so it is carried here.
+        crate::services::agent::AgentError::Status(409, ref b) if b.contains("username_taken") => {
+            crate::error::err_coded(
+                StatusCode::CONFLICT,
+                "That SFTP username already exists on the server",
+                "username_taken",
+            )
+        }
+        e => agent_error("SFTP enable", e),
+    })?;
 
-    sqlx::query("UPDATE sites SET sftp_enabled = true, sftp_uid = $1, sftp_gid = $2, updated_at = NOW() WHERE id = $3")
+    // Store the custom name ONLY when the agent says it created that account.
+    // An agent that predates custom names ignores the field and creates
+    // `sftp<uid>`; recording the requested name then would hand the PHP pool
+    // to a user that does not exist.
+    let mut warning: Option<String> = None;
+    let stored_username: Option<String> = match requested {
+        Some(ref name) if enabled.get("username").and_then(|v| v.as_str()) == Some(name.as_str()) => {
+            Some(name.clone())
+        }
+        Some(_) => {
+            warning = Some(format!(
+                "This server does not support custom SFTP usernames yet: the account was created as sftp{uid}"
+            ));
+            None
+        }
+        None => None,
+    };
+
+    sqlx::query(
+        "UPDATE sites SET sftp_enabled = true, sftp_uid = $1, sftp_gid = $2, sftp_username = $3, \
+         updated_at = NOW() WHERE id = $4",
+    )
         .bind(uid)
         .bind(gid)
+        .bind(&stored_username)
         .bind(id)
         .execute(&state.db)
         .await
@@ -4018,16 +4332,18 @@ pub async fn enable_sftp(
     updated_site.sftp_enabled = true;
     updated_site.sftp_uid = Some(uid);
     updated_site.sftp_gid = Some(gid);
+    updated_site.sftp_username = stored_username;
+    let username = sftp_account_name(&updated_site);
     agent.put(
         &format!("/nginx/sites/{}", site.domain),
         build_nginx_body(&updated_site, crate::services::server_ips::nginx_bind_ip(&state.db, &updated_site).await.as_deref()),
     ).await.map_err(|e| agent_error("SFTP nginx/pool rebuild", e))?;
 
     let ip = crate::routes::client_ip(&headers);
-    tracing::info!("SFTP enabled for {} (uid={uid})", site.domain);
+    tracing::info!("SFTP enabled for {} (uid={uid}, user={username})", site.domain);
     activity::log_activity(
         &state.db, claims.sub, &claims.email, "site.sftp.enabled",
-        Some("site"), Some(&site.domain), None, ip.as_deref(),
+        Some("site"), Some(&site.domain), Some(&username), ip.as_deref(),
         claims.key_id,
     ).await;
     crate::services::security_hardening::audit_log(
@@ -4036,7 +4352,11 @@ pub async fn enable_sftp(
         claims.key_id,
     ).await;
 
-    Ok(Json(serde_json::json!({ "ok": true, "sftp_enabled": true })))
+    let mut out = serde_json::json!({ "ok": true, "sftp_enabled": true, "username": username });
+    if let Some(w) = warning {
+        out["warning"] = serde_json::json!(w);
+    }
+    Ok(Json(out))
 }
 
 /// POST /api/sites/{id}/sftp/disable - Tear down a site's SFTP account and
@@ -4101,7 +4421,8 @@ pub async fn disable_sftp(
         Some(serde_json::json!({ "uid": uid, "gid": gid, "last_sftp_site": last_sftp_site.0 == 0 })),
     ).await.map_err(|e| agent_error("SFTP disable", e))?;
 
-    sqlx::query("UPDATE sites SET sftp_enabled = false, updated_at = NOW() WHERE id = $1")
+    // The custom name (D6) goes with the account: a later enable starts over.
+    sqlx::query("UPDATE sites SET sftp_enabled = false, sftp_username = NULL, updated_at = NOW() WHERE id = $1")
         .bind(id)
         .execute(&state.db)
         .await
@@ -4417,7 +4738,7 @@ pub(crate) fn build_nginx_body(site: &crate::models::Site, bind_ip: Option<&str>
         body["proxy_port"] = serde_json::json!(site.proxy_port);
     }
     if site.sftp_enabled
-        && let (Some(uid), Some(gid)) = (site.sftp_uid, site.sftp_gid)
+        && let (Some(_), Some(gid)) = (site.sftp_uid, site.sftp_gid)
     {
         // Backend and agent are separate binaries - this naming convention is
         // duplicated (not shared code) on the agent side in
@@ -4425,8 +4746,9 @@ pub(crate) fn build_nginx_body(site: &crate::models::Site, bind_ip: Option<&str>
         // the one place that actually creates these Linux accounts. Keep the
         // two definitions byte-for-byte identical; a drift here means the
         // panel tells the wrong pool owner to a `write_php_pool_config` call
-        // that already succeeded under a different name.
-        body["pool_user"] = serde_json::json!(format!("sftp{uid}"));
+        // that already succeeded under a different name. A custom name (D6)
+        // is stored only once the agent confirmed it created that account.
+        body["pool_user"] = serde_json::json!(sftp_account_name(site));
         body["pool_group"] = serde_json::json!(format!("sftpg{gid}"));
     }
     if let Some(ip) = bind_ip {
@@ -4437,7 +4759,192 @@ pub(crate) fn build_nginx_body(site: &crate::models::Site, bind_ip: Option<&str>
     if let Some(pool) = crate::routes::php_settings::php_pool_for_site(site) {
         body["php_pool"] = pool;
     }
+    apply_vhost_extras(&mut body, site);
     body
+}
+
+/// The import-hestia (05) vhost keys, shared by [`build_nginx_body`] and the
+/// two hand-built bodies (create, clone) so no path can send a different set.
+///
+/// `aliases`, `canonical_host` and `php_no_exec_dirs` travel only when the row
+/// holds a value: absent means "keep what the vhost has" for aliases (D4) and
+/// "none" for the other two, which is the agent's byte-identical rendering.
+/// `force_ssl` and `hsts` ALWAYS travel - the columns are NOT NULL and default
+/// to the historical behaviour, so sending them is never a change by itself.
+fn apply_vhost_extras(body: &mut serde_json::Value, site: &Site) {
+    if let Some(ref aliases) = site.aliases {
+        body["aliases"] = serde_json::json!(aliases);
+    }
+    if let Some(ref canonical) = site.canonical_host {
+        body["canonical_host"] = serde_json::json!(canonical);
+    }
+    if let Some(ref dirs) = site.php_no_exec_dirs {
+        body["php_no_exec_dirs"] = serde_json::json!(dirs);
+    }
+    body["force_ssl"] = serde_json::json!(site.force_ssl);
+    body["hsts"] = serde_json::json!(site.hsts);
+}
+
+/// The Linux account that owns the site's SFTP chroot and PHP-FPM pool: the
+/// custom name (D6) when one was confirmed by the agent, else the historical
+/// `sftp<uid>`. Only meaningful while `sftp_enabled`; with no uid recorded it
+/// answers `sftp` + nothing, which no caller sends.
+pub(crate) fn sftp_account_name(site: &Site) -> String {
+    match site.sftp_username.as_deref() {
+        Some(name) if !name.is_empty() => name.to_string(),
+        // Same convention as the agent's `sftp_accounts::sftp_username`.
+        _ => {
+            let uid = site.sftp_uid.unwrap_or_default();
+            format!("sftp{uid}")
+        }
+    }
+}
+
+// ── import-hestia (05): validators ───────────────────────────────────────
+
+/// Upload folders where PHP execution is blocked by default (D9). Written to
+/// every new PHP site, and applied to an existing one by `{dirs: "defaults"}`.
+pub(crate) const DEFAULT_PHP_NO_EXEC_DIRS: &[&str] = &[
+    "/wp-content/uploads",
+    "/sites/default/files",
+    "/storage/app/public",
+    "/uploads",
+    "/upload",
+];
+
+fn default_php_no_exec_dirs() -> Vec<String> {
+    DEFAULT_PHP_NO_EXEC_DIRS.iter().map(|d| d.to_string()).collect()
+}
+
+/// Most entries a site may carry, for no-exec folders and for aliases alike
+/// (the agent enforces the same ceiling).
+const MAX_VHOST_LIST: usize = 20;
+
+/// Normalise and validate a no-exec folder list. Each entry is a URL path
+/// matching `^/[A-Za-z0-9_./-]*$`, without `..`, its trailing slashes removed.
+/// `/` alone is refused: it would answer 403 to every PHP file of the site.
+/// Duplicates are refused case-insensitively, since the nginx block is `~*`.
+pub(crate) fn validate_no_exec_dirs(dirs: &[String]) -> Result<Vec<String>, String> {
+    if dirs.len() > MAX_VHOST_LIST {
+        return Err(format!("At most {MAX_VHOST_LIST} folders"));
+    }
+    let mut out: Vec<String> = Vec::with_capacity(dirs.len());
+    for raw in dirs {
+        let d = raw.trim();
+        if !d.starts_with('/') {
+            return Err(format!("Invalid folder '{d}': must start with /"));
+        }
+        if !d.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '/' | '-')) {
+            return Err(format!("Invalid folder '{d}': only letters, digits, _ . / - are allowed"));
+        }
+        if d.contains("..") {
+            return Err(format!("Invalid folder '{d}': must not contain '..'"));
+        }
+        if d.contains("//") {
+            return Err(format!("Invalid folder '{d}': must not contain '//'"));
+        }
+        let normalised = d.trim_end_matches('/');
+        if normalised.is_empty() {
+            return Err("The site root '/' cannot be a no-exec folder: it would block all PHP".into());
+        }
+        if out.iter().any(|o| o.eq_ignore_ascii_case(normalised)) {
+            return Err(format!("Duplicate folder '{normalised}'"));
+        }
+        out.push(normalised.to_string());
+    }
+    Ok(out)
+}
+
+/// The host a canonical mode redirects to.
+fn canonical_target(domain: &str, mode: &str) -> String {
+    if mode == "www" { format!("www.{domain}") } else { domain.to_string() }
+}
+
+/// Validate a canonical-host choice against the names the site serves
+/// (`domain` + `aliases`). `None` clears it. The target must be served, or
+/// every request would be redirected to a host this vhost does not answer.
+fn validate_canonical_host(domain: &str, mode: Option<&str>, aliases: &[String]) -> Result<Option<String>, String> {
+    let Some(mode) = mode else { return Ok(None) };
+    if mode != "www" && mode != "apex" {
+        return Err("canonical_host must be \"www\", \"apex\" or null".into());
+    }
+    let target = canonical_target(domain, mode);
+    if target != domain && !aliases.iter().any(|a| a.eq_ignore_ascii_case(&target)) {
+        return Err(format!("{target} is not served by this site: add it as an alias first"));
+    }
+    Ok(Some(mode.to_string()))
+}
+
+/// Validate an alias about to be added (already normalised by the domain-claim
+/// guard): a domain, not the site's own name, not already present, and room
+/// left under the ceiling.
+fn validate_new_alias(alias: &str, domain: &str, existing: &[String]) -> Result<(), String> {
+    if !is_valid_domain(alias) {
+        return Err("Invalid alias: must be a valid domain name".into());
+    }
+    if alias.eq_ignore_ascii_case(domain) {
+        return Err("An alias cannot be the site's own domain".into());
+    }
+    if existing.iter().any(|a| a.eq_ignore_ascii_case(alias)) {
+        return Err(format!("{alias} is already an alias of this site"));
+    }
+    if existing.len() >= MAX_VHOST_LIST {
+        return Err(format!("At most {MAX_VHOST_LIST} aliases per site"));
+    }
+    Ok(())
+}
+
+/// Whether a list read back from the agent may become the authoritative
+/// `sites.aliases` column. Once stored it is sent on EVERY rebuild and the
+/// agent refuses an invalid list with 400, so a list that would not pass the
+/// agent's own checks is never stored (the column then stays unmanaged).
+fn aliases_storable(domain: &str, aliases: &[String]) -> bool {
+    aliases.len() <= MAX_VHOST_LIST
+        && aliases.iter().all(|a| is_valid_domain(a) && !a.eq_ignore_ascii_case(domain))
+        && aliases.iter().enumerate().all(|(i, a)| !aliases[..i].iter().any(|b| b.eq_ignore_ascii_case(a)))
+}
+
+/// Names reserved for system or service accounts: never a site's SFTP name.
+const RESERVED_SFTP_NAMES: &[&str] = &[
+    "root", "daemon", "bin", "sys", "www-data", "nginx", "postfix", "dovecot", "vmail",
+    "opendkim", "mysql", "postgres", "redis", "nobody", "sshd", "ubuntu", "debian", "admin",
+];
+
+/// Validate a custom SFTP account name (D6 / W4-S): `^[a-z_][a-z0-9_.-]{0,31}$`,
+/// not reserved, and not of the default `sftp<digits>` shape (nor the group's
+/// `sftpg<digits>`), which belongs to the uid-numbered accounts.
+pub(crate) fn validate_sftp_username(name: &str) -> Result<(), String> {
+    let mut chars = name.chars();
+    let first_ok = matches!(chars.next(), Some(c) if c.is_ascii_lowercase() || c == '_');
+    let rest_ok = chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '_' | '.' | '-'));
+    if !first_ok || !rest_ok || name.len() > 32 {
+        return Err("Invalid username: 1 to 32 characters, lowercase letters, digits, _ . -, starting with a letter or _".into());
+    }
+    if RESERVED_SFTP_NAMES.contains(&name) {
+        return Err(format!("'{name}' is reserved"));
+    }
+    for prefix in ["sftpg", "sftp"] {
+        if let Some(rest) = name.strip_prefix(prefix)
+            && !rest.is_empty()
+            && rest.chars().all(|c| c.is_ascii_digit())
+        {
+            return Err(format!("'{name}' is the default naming; choose another name or leave it empty"));
+        }
+    }
+    Ok(())
+}
+
+/// GET the agent's live alias list for a domain (`{aliases: [..]}`).
+async fn read_agent_aliases(
+    agent: &crate::services::agent::AgentHandle,
+    domain: &str,
+) -> Result<Vec<String>, crate::services::agent::AgentError> {
+    let res = agent.get(&format!("/nginx/aliases/{domain}")).await?;
+    Ok(res
+        .get("aliases")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+        .unwrap_or_default())
 }
 
 /// PUT /api/sites/{id}/security-headers - Update CSP and Permissions-Policy.
@@ -5089,21 +5596,214 @@ where
 }
 
 // --- import-hestia (05) ---
-// STUB(W3): step-0 skeleton handlers (501); the owner replaces them (contract W3-V / W3-F).
+// Per-site vhost options (contract W3-V / W3-F). Each handler: owner or admin,
+// UPDATE in a transaction, full vhost rebuild from the updated row, commit only
+// once the agent accepted it.
 
-/// PUT /api/sites/{id}/canonical-host
-pub async fn set_canonical_host(AuthUser(_claims): AuthUser) -> Result<Json<serde_json::Value>, ApiError> {
-    Err(crate::error::err_coded(StatusCode::NOT_IMPLEMENTED, "not implemented yet", "not_implemented"))
+/// Rebuild the vhost from `updated` and commit `tx` only if the agent accepted
+/// it; otherwise roll back and relay the agent's refusal.
+async fn rebuild_then_commit(
+    state: &AppState,
+    agent: &crate::services::agent::AgentHandle,
+    tx: sqlx::Transaction<'_, sqlx::Postgres>,
+    updated: &Site,
+    context: &str,
+) -> Result<(), ApiError> {
+    let bind_ip = crate::services::server_ips::nginx_bind_ip(&state.db, updated).await;
+    if let Err(e) = agent
+        .put(&format!("/nginx/sites/{}", updated.domain), build_nginx_body(updated, bind_ip.as_deref()))
+        .await
+    {
+        let _ = tx.rollback().await;
+        return Err(agent_error(context, e));
+    }
+    tx.commit().await.map_err(|e| internal_error(context, e))
 }
 
-/// PUT /api/sites/{id}/php-no-exec
-pub async fn set_php_no_exec(AuthUser(_claims): AuthUser) -> Result<Json<serde_json::Value>, ApiError> {
-    Err(crate::error::err_coded(StatusCode::NOT_IMPLEMENTED, "not implemented yet", "not_implemented"))
+/// The site the caller may act on, with its agent.
+async fn site_and_agent_for_caller(
+    state: &AppState,
+    id: Uuid,
+    claims: &Claims,
+    context: &str,
+) -> Result<(Site, crate::services::agent::AgentHandle), ApiError> {
+    let site: Site = sqlx::query_as(SITE_FOR_CALLER_ALL.as_str())
+        .bind(id)
+        .bind(claims.sub)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| internal_error(context, e))?
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "Site not found"))?;
+    let agent = crate::helpers::agent_for_site_server(state, site.server_id, &site.domain).await?;
+    Ok((site, agent))
 }
 
-/// PUT /api/sites/{id}/ssl-options
-pub async fn set_ssl_options(AuthUser(_claims): AuthUser) -> Result<Json<serde_json::Value>, ApiError> {
-    Err(crate::error::err_coded(StatusCode::NOT_IMPLEMENTED, "not implemented yet", "not_implemented"))
+/// PUT /api/sites/{id}/canonical-host - `{canonical_host: "www"|"apex"|null}`.
+///
+/// The target (`www.<domain>` or `<domain>`) must be served by the site. When
+/// the alias list is not yet managed (`aliases` NULL) and `www` is asked for,
+/// the vhost's live list is read and stored in the same transaction.
+pub async fn set_canonical_host(
+    State(state): State<AppState>,
+    AuthUser(claims): AuthUser,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let mode: Option<String> = match body.get("canonical_host") {
+        None => return Err(err(StatusCode::BAD_REQUEST, "Missing 'canonical_host' (\"www\", \"apex\" or null)")),
+        Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(s)) => Some(s.trim().to_ascii_lowercase()),
+        Some(_) => return Err(err(StatusCode::BAD_REQUEST, "canonical_host must be \"www\", \"apex\" or null")),
+    };
+
+    let (site, agent) = site_and_agent_for_caller(&state, id, &claims, "set canonical host").await?;
+
+    // Only `www` needs the alias list; `apex` and `null` are always valid.
+    let mut aliases_to_store: Option<Vec<String>> = None;
+    let served: Vec<String> = if mode.as_deref() == Some("www") {
+        match site.aliases {
+            Some(ref a) => a.clone(),
+            None => {
+                let live = read_agent_aliases(&agent, &site.domain)
+                    .await
+                    .map_err(|e| agent_error("Domain aliases", e))?;
+                if aliases_storable(&site.domain, &live) {
+                    aliases_to_store = Some(live.clone());
+                }
+                live
+            }
+        }
+    } else {
+        Vec::new()
+    };
+    let canonical = validate_canonical_host(&site.domain, mode.as_deref(), &served)
+        .map_err(|m| err(StatusCode::BAD_REQUEST, &m))?;
+
+    let mut tx = state.db.begin().await.map_err(|e| internal_error("set canonical host", e))?;
+    let updated: Site = sqlx::query_as(
+        "UPDATE sites SET canonical_host = $1, aliases = COALESCE($2, aliases), updated_at = NOW() \
+         WHERE id = $3 RETURNING *",
+    )
+    .bind(&canonical)
+    .bind(&aliases_to_store)
+    .bind(id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| internal_error("set canonical host", e))?;
+    rebuild_then_commit(&state, &agent, tx, &updated, "Canonical host").await?;
+
+    let ip = crate::routes::client_ip(&headers);
+    activity::log_activity(
+        &state.db, claims.sub, &claims.email, "site.canonical_host",
+        Some("site"), Some(&site.domain), Some(canonical.as_deref().unwrap_or("none")), ip.as_deref(),
+        claims.key_id,
+    ).await;
+
+    Ok(Json(serde_json::json!({ "ok": true, "canonical_host": canonical })))
+}
+
+/// PUT /api/sites/{id}/php-no-exec - `{dirs: ["/..."] | null | "defaults"}`.
+///
+/// `"defaults"` applies [`DEFAULT_PHP_NO_EXEC_DIRS`]; `null` and `[]` both
+/// clear the list (stored as NULL, rendered as nothing).
+pub async fn set_php_no_exec(
+    State(state): State<AppState>,
+    AuthUser(claims): AuthUser,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let dirs: Option<Vec<String>> = match body.get("dirs") {
+        None => return Err(err(StatusCode::BAD_REQUEST, "Missing 'dirs' (a list of folders, null, or \"defaults\")")),
+        Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(s)) if s == "defaults" => Some(default_php_no_exec_dirs()),
+        Some(serde_json::Value::Array(items)) => {
+            let mut raw = Vec::with_capacity(items.len());
+            for item in items {
+                let s = item
+                    .as_str()
+                    .ok_or_else(|| err(StatusCode::BAD_REQUEST, "Each folder must be a string"))?;
+                raw.push(s.to_string());
+            }
+            let v = validate_no_exec_dirs(&raw).map_err(|m| err(StatusCode::BAD_REQUEST, &m))?;
+            if v.is_empty() { None } else { Some(v) }
+        }
+        Some(_) => return Err(err(StatusCode::BAD_REQUEST, "'dirs' must be a list of folders, null, or \"defaults\"")),
+    };
+
+    let (site, agent) = site_and_agent_for_caller(&state, id, &claims, "set php no-exec").await?;
+
+    let mut tx = state.db.begin().await.map_err(|e| internal_error("set php no-exec", e))?;
+    let updated: Site = sqlx::query_as(
+        "UPDATE sites SET php_no_exec_dirs = $1, updated_at = NOW() WHERE id = $2 RETURNING *",
+    )
+    .bind(&dirs)
+    .bind(id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| internal_error("set php no-exec", e))?;
+    rebuild_then_commit(&state, &agent, tx, &updated, "PHP no-exec folders").await?;
+
+    let ip = crate::routes::client_ip(&headers);
+    let details = dirs.as_ref().map(|d| d.join(", ")).unwrap_or_else(|| "none".into());
+    activity::log_activity(
+        &state.db, claims.sub, &claims.email, "site.php_no_exec",
+        Some("site"), Some(&site.domain), Some(&details), ip.as_deref(),
+        claims.key_id,
+    ).await;
+
+    Ok(Json(serde_json::json!({ "ok": true, "php_no_exec_dirs": dirs })))
+}
+
+/// PUT /api/sites/{id}/ssl-options - `{force_ssl: bool, hsts: bool}`.
+///
+/// Either key may be omitted to keep its current value; at least one is required.
+pub async fn set_ssl_options(
+    State(state): State<AppState>,
+    AuthUser(claims): AuthUser,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    fn flag(body: &serde_json::Value, key: &str) -> Result<Option<bool>, ApiError> {
+        match body.get(key) {
+            None | Some(serde_json::Value::Null) => Ok(None),
+            Some(serde_json::Value::Bool(b)) => Ok(Some(*b)),
+            Some(_) => Err(err(StatusCode::BAD_REQUEST, &format!("'{key}' must be a boolean"))),
+        }
+    }
+    let force_ssl = flag(&body, "force_ssl")?;
+    let hsts = flag(&body, "hsts")?;
+    if force_ssl.is_none() && hsts.is_none() {
+        return Err(err(StatusCode::BAD_REQUEST, "Send 'force_ssl' and/or 'hsts'"));
+    }
+
+    let (site, agent) = site_and_agent_for_caller(&state, id, &claims, "set ssl options").await?;
+    let force_ssl = force_ssl.unwrap_or(site.force_ssl);
+    let hsts = hsts.unwrap_or(site.hsts);
+
+    let mut tx = state.db.begin().await.map_err(|e| internal_error("set ssl options", e))?;
+    let updated: Site = sqlx::query_as(
+        "UPDATE sites SET force_ssl = $1, hsts = $2, updated_at = NOW() WHERE id = $3 RETURNING *",
+    )
+    .bind(force_ssl)
+    .bind(hsts)
+    .bind(id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| internal_error("set ssl options", e))?;
+    rebuild_then_commit(&state, &agent, tx, &updated, "SSL options").await?;
+
+    let ip = crate::routes::client_ip(&headers);
+    let details = format!("force_ssl={force_ssl}, hsts={hsts}");
+    activity::log_activity(
+        &state.db, claims.sub, &claims.email, "site.ssl_options",
+        Some("site"), Some(&site.domain), Some(&details), ip.as_deref(),
+        claims.key_id,
+    ).await;
+
+    Ok(Json(serde_json::json!({ "ok": true, "force_ssl": force_ssl, "hsts": hsts })))
 }
 // --- end import-hestia (05) ---
 
@@ -5197,6 +5897,156 @@ mod tests {
         let mut apache = php.clone();
         apache.web_server = "apache".into();
         assert_eq!(build_nginx_body(&apache, Some("primary"))["web_server"], "apache");
+
+        // import-hestia (05): the fixture predates the new columns. The two
+        // flags default to the historical rendering and always travel; the
+        // three lists travel only when the row holds one.
+        assert!(site.force_ssl && site.hsts);
+        let body = build_nginx_body(&site, None);
+        assert_eq!(body["force_ssl"], true);
+        assert_eq!(body["hsts"], true);
+        assert!(body.get("aliases").is_none());
+        assert!(body.get("canonical_host").is_none());
+        assert!(body.get("php_no_exec_dirs").is_none());
+        let mut extra = site.clone();
+        extra.aliases = Some(vec!["www.a.example".into()]);
+        extra.canonical_host = Some("www".into());
+        extra.php_no_exec_dirs = Some(vec!["/uploads".into()]);
+        extra.force_ssl = false;
+        extra.hsts = false;
+        let body = build_nginx_body(&extra, None);
+        assert_eq!(body["aliases"], serde_json::json!(["www.a.example"]));
+        assert_eq!(body["canonical_host"], "www");
+        assert_eq!(body["php_no_exec_dirs"], serde_json::json!(["/uploads"]));
+        assert_eq!(body["force_ssl"], false);
+        assert_eq!(body["hsts"], false);
+        // An empty managed list is still sent: it means "no aliases", not "keep".
+        extra.aliases = Some(vec![]);
+        assert_eq!(build_nginx_body(&extra, None)["aliases"], serde_json::json!([]));
+
+        // SFTP pool owner: the default name, or the confirmed custom one.
+        let mut sftp = php.clone();
+        sftp.sftp_enabled = true;
+        sftp.sftp_uid = Some(5001);
+        sftp.sftp_gid = Some(5001);
+        let body = build_nginx_body(&sftp, None);
+        assert_eq!(body["pool_user"], "sftp5001");
+        assert_eq!(body["pool_group"], "sftpg5001");
+        sftp.sftp_username = Some("adm-jim_x".into());
+        let body = build_nginx_body(&sftp, None);
+        assert_eq!(body["pool_user"], "adm-jim_x");
+        assert_eq!(body["pool_group"], "sftpg5001");
+        assert!(site.sftp_username.is_none());
+        assert!(build_nginx_body(&site, None).get("pool_user").is_none());
+    }
+
+    #[test]
+    fn legacy_php_versions_are_accepted_with_a_warning() {
+        for v in LEGACY_PHP_VERSIONS {
+            assert!(PHP_VERSIONS.contains(v));
+            assert!(legacy_php_warning(v).unwrap().contains("end of life"));
+        }
+        assert_eq!(
+            legacy_php_warning("5.6").as_deref(),
+            Some("PHP 5.6 reached end of life and gets no security updates")
+        );
+        assert!(legacy_php_warning("8.3").is_none());
+        assert!(legacy_php_warning("7.3").is_none());
+    }
+
+    #[test]
+    fn no_exec_dirs_are_validated_and_normalised() {
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        // The defaults pass their own validator unchanged.
+        let d = default_php_no_exec_dirs();
+        assert_eq!(validate_no_exec_dirs(&d).unwrap(), d);
+        assert_eq!(d.len(), 5);
+        // Trailing slashes are dropped; a doubled slash is refused.
+        assert!(validate_no_exec_dirs(&s(&["/uploads/", "/a/b//"])).is_err());
+        assert_eq!(validate_no_exec_dirs(&s(&["/uploads/", "/media/files"])).unwrap(), s(&["/uploads", "/media/files"]));
+        assert_eq!(validate_no_exec_dirs(&Vec::new()).unwrap(), Vec::<String>::new());
+        // Refused: relative, traversal, bad characters, the root, duplicates.
+        assert!(validate_no_exec_dirs(&s(&["uploads"])).is_err());
+        assert!(validate_no_exec_dirs(&s(&["/a/../b"])).is_err());
+        assert!(validate_no_exec_dirs(&s(&["/up loads"])).is_err());
+        assert!(validate_no_exec_dirs(&s(&["/up;loads"])).is_err());
+        assert!(validate_no_exec_dirs(&s(&["/"])).is_err());
+        assert!(validate_no_exec_dirs(&s(&["/uploads", "/uploads/"])).is_err());
+        assert!(validate_no_exec_dirs(&s(&["/Uploads", "/uploads"])).is_err());
+        // At most 20.
+        let many: Vec<String> = (0..21).map(|i| format!("/d{i}")).collect();
+        assert!(validate_no_exec_dirs(&many).is_err());
+        assert!(validate_no_exec_dirs(&many[..20]).is_ok());
+    }
+
+    #[test]
+    fn canonical_host_must_be_served() {
+        let www = vec!["www.a.example".to_string()];
+        assert_eq!(validate_canonical_host("a.example", None, &[]), Ok(None));
+        assert_eq!(validate_canonical_host("a.example", Some("apex"), &[]), Ok(Some("apex".into())));
+        assert_eq!(validate_canonical_host("a.example", Some("www"), &www), Ok(Some("www".into())));
+        assert!(validate_canonical_host("a.example", Some("www"), &[]).is_err());
+        assert!(validate_canonical_host("a.example", Some("www"), &["b.example".into()]).is_err());
+        assert!(validate_canonical_host("a.example", Some("other"), &www).is_err());
+        assert_eq!(canonical_target("a.example", "www"), "www.a.example");
+        assert_eq!(canonical_target("a.example", "apex"), "a.example");
+    }
+
+    #[test]
+    fn new_aliases_are_validated() {
+        let existing = vec!["www.a.example".to_string()];
+        assert!(validate_new_alias("b.example", "a.example", &existing).is_ok());
+        assert!(validate_new_alias("a.example", "a.example", &existing).is_err());
+        assert!(validate_new_alias("www.a.example", "a.example", &existing).is_err());
+        assert!(validate_new_alias("not a domain", "a.example", &existing).is_err());
+        let full: Vec<String> = (0..20).map(|i| format!("n{i}.example")).collect();
+        assert!(validate_new_alias("b.example", "a.example", &full).is_err());
+        // What may become the managed column.
+        assert!(aliases_storable("a.example", &existing));
+        assert!(aliases_storable("a.example", &[]));
+        assert!(!aliases_storable("a.example", &["a.example".into()]));
+        assert!(!aliases_storable("a.example", &["x.example".into(), "X.example".into()]));
+        assert!(!aliases_storable("a.example", &["_".into()]));
+        let too_many: Vec<String> = (0..21).map(|i| format!("n{i}.example")).collect();
+        assert!(!aliases_storable("a.example", &too_many));
+    }
+
+    #[test]
+    fn sftp_usernames_are_validated() {
+        let longest = "a".repeat(32);
+        let too_long = "a".repeat(33);
+        for ok in ["adm-jim_x", "_svc", "a", "jim.doe", "sftp", "sftpuser", "sftp1a", longest.as_str()] {
+            assert!(validate_sftp_username(ok).is_ok(), "{ok} must be accepted");
+        }
+        for bad in ["", "1abc", "-abc", "Abc", "ab c", "ab@c", too_long.as_str(), "root", "www-data",
+                    "admin", "sftp1", "sftp5001", "sftpg12"] {
+            assert!(validate_sftp_username(bad).is_err(), "{bad} must be refused");
+        }
+    }
+
+    #[test]
+    fn sftp_account_name_prefers_the_confirmed_custom_name() {
+        let mut site: Site = serde_json::from_str(r#"{
+            "id": "00000000-0000-0000-0000-000000000000", "user_id": "00000000-0000-0000-0000-000000000000",
+            "server_id": null, "domain": "a.example", "runtime": "php", "status": "active",
+            "proxy_port": null, "php_version": "8.3", "root_path": null, "ssl_enabled": false,
+            "ssl_cert_path": null, "ssl_key_path": null, "ssl_expiry": null, "ssl_profile": null,
+            "ssl_renewal_at": null, "ssl_renewal_checked_at": null, "ssl_challenge": null,
+            "ssl_cert_subject": null, "ssl_wildcard": null, "ssl_dns_zone_id": null, "rate_limit": null,
+            "max_upload_mb": 64, "php_memory_mb": 256, "php_max_workers": 5, "custom_nginx": null,
+            "php_preset": null, "app_command": null, "parent_site_id": null, "synced_at": null,
+            "enabled": true, "fastcgi_cache": false, "redis_cache": false, "redis_db": 0,
+            "waf_enabled": false, "waf_mode": "detection", "csp_policy": null, "permissions_policy": null,
+            "bot_protection": "off", "bandwidth_quota_mb": null, "bandwidth_suspended_at": null,
+            "sftp_enabled": true, "sftp_uid": 7, "sftp_gid": 7,
+            "created_at": "2026-11-14T00:00:00Z", "updated_at": "2026-11-14T00:00:00Z", "ip_id": null
+        }"#)
+        .unwrap();
+        assert_eq!(sftp_account_name(&site), "sftp7");
+        site.sftp_username = Some(String::new());
+        assert_eq!(sftp_account_name(&site), "sftp7");
+        site.sftp_username = Some("adm-jim_x".into());
+        assert_eq!(sftp_account_name(&site), "adm-jim_x");
     }
 
     #[test]

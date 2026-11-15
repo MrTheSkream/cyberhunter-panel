@@ -91,6 +91,25 @@ pub struct SiteConfig {
     /// Ignored, i.e. nginx, for every runtime other than `php`.
     #[serde(default)]
     pub web_server: Option<String>,
+    /// Extra names (05-import-hestia W3-V). `Some` is authoritative and is
+    /// rendered in every `server_name` (and `ServerAlias`); `None` keeps the
+    /// names already in the vhost on disk.
+    #[serde(default)]
+    pub aliases: Option<Vec<String>>,
+    /// `"www"` / `"apex"`: one 301 to that name for every other served name,
+    /// ACME kept reachable on port 80. Absent = no canonical redirect.
+    #[serde(default)]
+    pub canonical_host: Option<String>,
+    /// Folders where PHP never runs (D9). Absent or empty = no block.
+    #[serde(default)]
+    pub php_no_exec_dirs: Option<Vec<String>>,
+    /// Absent = true (port 80 redirects to HTTPS, as always). `false`: the
+    /// site is served on both ports.
+    #[serde(default)]
+    pub force_ssl: Option<bool>,
+    /// Absent = true (`Strict-Transport-Security` sent, as always).
+    #[serde(default)]
+    pub hsts: Option<bool>,
 }
 
 struct NginxResponse {
@@ -307,6 +326,22 @@ async fn put_site_inner(
                 success: false,
                 message: e,
             })));
+        }
+    }
+
+    // 05-import-hestia (W3-V): aliases, canonical host and no-exec folders
+    // are refused here, before any side effect, rather than as a template
+    // error after the pool was written. `aliases: None` keeps the names the
+    // vhost on disk serves, so the canonical target is checked against those.
+    {
+        use services::vhost_extras as vx;
+        let resolved = services::nginx::with_aliases_from_disk(&domain, &config);
+        let effective = resolved.as_ref().unwrap_or(&config);
+        let checked = vx::validate_aliases(&domain, effective.aliases.as_deref().unwrap_or(&[]))
+            .and_then(|a| vx::canonical_target(&domain, effective.canonical_host.as_deref(), &a))
+            .and_then(|_| vx::validate_no_exec_dirs(config.php_no_exec_dirs.as_deref().unwrap_or(&[])));
+        if let Err(e) = checked {
+            return Err((StatusCode::BAD_REQUEST, Json(NginxResponse { success: false, message: e })));
         }
     }
 
@@ -532,6 +567,7 @@ async fn put_site_inner(
                 .unwrap_or("unix:/run/php/php-fpm.sock"),
             timeout_s: services::apache::request_timeout_s(config.php_pool.as_ref()),
             max_upload_mb: config.max_upload_mb.unwrap_or(64),
+            no_exec_dirs: config.php_no_exec_dirs.as_deref().unwrap_or(&[]),
         })
         .map_err(|e| {
             (StatusCode::BAD_REQUEST, Json(NginxResponse { success: false, message: e }))
@@ -824,7 +860,7 @@ async fn delete_site(
     }
 
     // PHP-FPM pool configs (all versions)
-    for version in &["8.1", "8.2", "8.3", "8.4", "8.5"] {
+    for version in services::php_pool::PHP_VERSIONS {
         let pool_path = format!("/etc/php/{version}/fpm/pool.d/{pool_name}.conf");
         if std::path::Path::new(&pool_path).exists() {
             std::fs::remove_file(&pool_path).ok();
@@ -1275,7 +1311,7 @@ async fn rename_site(
     // 7. Rename PHP-FPM pool configs
     let old_pool = old_domain.replace('.', "_");
     let new_pool = new_domain.replace('.', "_");
-    for version in &["8.1", "8.2", "8.3", "8.4", "8.5"] {
+    for version in services::php_pool::PHP_VERSIONS {
         let old_pool_path = format!("/etc/php/{version}/fpm/pool.d/{old_pool}.conf");
         let new_pool_path = format!("/etc/php/{version}/fpm/pool.d/{new_pool}.conf");
         if std::path::Path::new(&old_pool_path).exists() {
@@ -1915,18 +1951,18 @@ async fn add_alias(
     let content = std::fs::read_to_string(&site_conf)
         .map_err(|_| api_err(StatusCode::NOT_FOUND, "Site config not found"))?;
 
-    // Add alias to server_name line
-    let new_content = content.replace(
-        &format!("server_name {};", body.domain),
-        &format!("server_name {} {};", body.domain, body.alias),
-    );
-
-    if new_content == content {
-        return Err(api_err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Could not find server_name directive",
-        ));
+    // Add the alias to every server_name line of the site (the :80 redirect
+    // and the :443 block alike), whatever aliases they already carry. The old
+    // exact `server_name <domain>;` replacement could not add a second alias.
+    let mut names = services::apache::aliases_in_nginx_config(&content, &body.domain);
+    if names.iter().any(|n| n.eq_ignore_ascii_case(&body.alias)) {
+        return Ok(Json(serde_json::json!({ "ok": true })));
     }
+    names.push(body.alias.clone());
+    let names = services::vhost_extras::validate_aliases(&body.domain, &names)
+        .map_err(|e| api_err(StatusCode::BAD_REQUEST, &e))?;
+    let new_content = services::vhost_extras::rewrite_server_names(&content, &body.domain, &names)
+        .ok_or_else(|| api_err(StatusCode::INTERNAL_SERVER_ERROR, "Could not find server_name directive"))?;
 
     // Apache mode: Apache learns the alias before nginx forwards it, or the
     // alias would land on Apache's catch-all 404.
@@ -2040,10 +2076,16 @@ async fn remove_alias(
     let content = std::fs::read_to_string(&site_conf)
         .map_err(|_| api_err(StatusCode::NOT_FOUND, "Site config not found"))?;
 
-    // Remove alias from server_name lines
-    let new_content = content
-        .replace(&format!(" {alias}"), "")
-        .replace(&format!("{alias} "), "");
+    // Remove the alias from the site's server_name lines only. The old blind
+    // `replace(" {alias}")` also cut it out of anything else in the file (a
+    // canonical redirect, a custom directive, a longer name ending with it).
+    let names: Vec<String> = services::apache::aliases_in_nginx_config(&content, &domain)
+        .into_iter()
+        .filter(|n| !n.eq_ignore_ascii_case(alias))
+        .collect();
+    let Some(new_content) = services::vhost_extras::rewrite_server_names(&content, &domain, &names) else {
+        return Err(api_err(StatusCode::INTERNAL_SERVER_ERROR, "Could not find server_name directive"));
+    };
 
     std::fs::write(&site_conf, &new_content).ok();
 

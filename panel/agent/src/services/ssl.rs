@@ -204,6 +204,35 @@ pub struct ProvisionOpts<'a> {
     /// Set it only where a human has been told what will be destroyed and said
     /// yes anyway (`dockpanel ssl provision --force`).
     pub replace_foreign: bool,
+    /// HTTP-01 names ordered besides the domain (05-import-hestia W3-S: a
+    /// site's aliases, so a renewal does not drop `www.`). Validated by
+    /// [`validate_extra_names`]. Ignored by the DNS-01 writer.
+    pub extra_names: &'a [String],
+    /// When the order with `extra_names` is declined by the CA, order the
+    /// domain alone and report what was left out in `CertInfo::warnings`.
+    pub fallback_apex_only: bool,
+}
+
+/// Most extra names one HTTP-01 order may carry.
+pub const MAX_EXTRA_NAMES: usize = 10;
+
+/// `extra_names` as sent by the panel: valid domains, no wildcard, never the
+/// domain itself, no duplicate, at most [`MAX_EXTRA_NAMES`].
+pub fn validate_extra_names(domain: &str, names: &[String]) -> Result<Vec<String>, String> {
+    if names.len() > MAX_EXTRA_NAMES {
+        return Err(format!("At most {MAX_EXTRA_NAMES} extra names can be ordered"));
+    }
+    let mut out: Vec<String> = Vec::new();
+    for n in names {
+        let n = n.trim().to_ascii_lowercase();
+        if !crate::routes::is_valid_domain(&n) {
+            return Err("Invalid extra name for the certificate".into());
+        }
+        if n != domain.to_ascii_lowercase() && !out.contains(&n) {
+            out.push(n);
+        }
+    }
+    Ok(out)
 }
 
 #[derive(serde::Serialize)]
@@ -213,6 +242,10 @@ pub struct CertInfo {
     pub expiry: Option<String>,
     /// Echoes the profile used for this order (None if none was requested).
     pub profile: Option<String>,
+    /// Names the certificate covers (the domain first).
+    pub names: Vec<String>,
+    /// E.g. `www.x.tld not included: ...` after the apex-only fallback.
+    pub warnings: Vec<String>,
 }
 
 #[derive(serde::Serialize)]
@@ -453,9 +486,38 @@ pub async fn provision_cert(
         }
     }
 
+    let extra = opts.map(|o| o.extra_names).unwrap_or(&[]);
+    let mut names = vec![domain.to_string()];
+    names.extend(validate_extra_names(domain, extra)?);
+    if names.len() == 1 {
+        return order_http01(account, domain, &names, opts).await;
+    }
+    match order_http01(account, domain, &names, opts).await {
+        Ok(info) => Ok(info),
+        // Only what the CA declined is retried: a local fault would fail the
+        // same way twice.
+        Err(e) if e.starts_with(CA_DECLINED) && opts.is_some_and(|o| o.fallback_apex_only) => {
+            let left_out = names[1..].join(", ");
+            let reason = e.trim_start_matches(CA_DECLINED).to_string();
+            tracing::warn!("ACME order for {domain} with {left_out} failed, retrying {domain} alone: {reason}");
+            let mut info = order_http01(account, domain, &names[..1], opts).await?;
+            info.warnings.push(format!("{left_out} not included: {reason}"));
+            Ok(info)
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// One HTTP-01 order for `names` (the domain first); the certificate is
+/// stored under the domain's directory.
+async fn order_http01(
+    account: &Account,
+    domain: &str,
+    names: &[String],
+    opts: Option<&ProvisionOpts<'_>>,
+) -> Result<CertInfo, String> {
     // Create order with optional profile + ARI replaces hint
-    let identifier = Identifier::Dns(domain.to_string());
-    let identifiers = [identifier];
+    let identifiers: Vec<Identifier> = names.iter().map(|n| Identifier::Dns(n.clone())).collect();
     let mut new_order = NewOrder::new(&identifiers);
     if let Some(o) = opts {
         if let Some(p) = o.profile {
@@ -574,6 +636,8 @@ pub async fn provision_cert(
         key_path,
         expiry,
         profile: profile_used,
+        names: names.to_vec(),
+        warnings: Vec::new(),
     })
 }
 
@@ -787,7 +851,11 @@ pub async fn provision_cert_dns01(
     let expiry = get_cert_expiry(&cert_path).await;
     tracing::info!("SSL ({label}) provisioned for {domain}");
 
-    Ok(CertInfo { cert_path, key_path, expiry, profile: profile_used })
+    let mut names = vec![domain.to_string()];
+    if wildcard {
+        names.push(format!("*.{domain}"));
+    }
+    Ok(CertInfo { cert_path, key_path, expiry, profile: profile_used, names, warnings: Vec::new() })
 }
 
 /// Clean up Cloudflare TXT records created during DNS-01 challenge.
@@ -995,6 +1063,31 @@ pub async fn enable_ssl_for_site(
     let mut base = site_config.clone();
     base.web_server =
         crate::services::apache::infer_web_server(domain, site_config.web_server.as_deref());
+    // Same for the 05-import-hestia settings (aliases, canonical host, no-exec
+    // folders, Force SSL / HSTS): whatever the description leaves out is read
+    // back from the vhost on disk, so a certificate never drops `www.`, a
+    // redirect or an upload-folder block until the panel's full rebuild.
+    if let Ok(existing) = std::fs::read_to_string(nginx::vhost_target(domain).path()) {
+        let r = crate::services::vhost_extras::recover_from_vhost(&existing, domain);
+        if base.aliases.is_none() && !r.aliases.is_empty() {
+            base.aliases = Some(r.aliases);
+        }
+        if base.canonical_host.is_none() {
+            let served = base.aliases.clone().unwrap_or_default();
+            base.canonical_host = r.canonical_host.filter(|c| {
+                crate::services::vhost_extras::canonical_target(domain, Some(c), &served).is_ok()
+            });
+        }
+        if base.php_no_exec_dirs.is_none() && !r.php_no_exec_dirs.is_empty() {
+            base.php_no_exec_dirs = Some(r.php_no_exec_dirs);
+        }
+        if base.force_ssl.is_none() {
+            base.force_ssl = r.force_ssl;
+        }
+        if base.hsts.is_none() {
+            base.hsts = r.hsts;
+        }
+    }
     let site_config = &base;
 
     let ssl_config = SiteConfig {
@@ -1025,6 +1118,11 @@ pub async fn enable_ssl_for_site(
         bind_ip: site_config.bind_ip.clone(),
         php_pool: site_config.php_pool.clone(),
         web_server: site_config.web_server.clone(),
+        aliases: site_config.aliases.clone(),
+        canonical_host: site_config.canonical_host.clone(),
+        php_no_exec_dirs: site_config.php_no_exec_dirs.clone(),
+        force_ssl: site_config.force_ssl,
+        hsts: site_config.hsts,
     };
 
     // Without a pool in the description, an Apache site keeps the timeout

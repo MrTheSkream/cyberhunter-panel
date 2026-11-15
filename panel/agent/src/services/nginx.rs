@@ -513,6 +513,11 @@ pub async fn retrofit_static_denies() {
 pub async fn reconcile_site_access() {
     use crate::services::site_access as sa;
 
+    // 05-import-hestia (D9): managed Apache vhosts written before `ExecCGI`
+    // joined `Options=` are updated here, at agent start, the same way. Run
+    // from this existing startup step so the shared `main.rs` stays as is.
+    crate::services::apache::reconcile_vhost_overrides().await;
+
     let mut domains: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for dir in [sa::REDIRECTS_DIR, sa::AUTH_DIR] {
         let Ok(entries) = std::fs::read_dir(dir) else { continue };
@@ -908,7 +913,40 @@ pub fn render_site_config_with(
     apache_timeout_s: Option<u32>,
 ) -> Result<String, tera::Error> {
     let includes = crate::services::site_access::SiteIncludes::on_disk(domain);
-    render_site_config_including(templates, domain, config, apache_timeout_s, includes)
+    let resolved = with_aliases_from_disk(domain, config);
+    render_site_config_including(
+        templates,
+        domain,
+        resolved.as_ref().unwrap_or(config),
+        apache_timeout_s,
+        includes,
+    )
+}
+
+/// The names beyond `domain` that the site's vhost on disk serves (its parked
+/// body for a disabled site); empty when there is no vhost.
+pub fn served_aliases(domain: &str) -> Vec<String> {
+    std::fs::read_to_string(vhost_target(domain).path())
+        .map(|v| crate::services::apache::aliases_in_nginx_config(&v, domain))
+        .unwrap_or_default()
+}
+
+/// `aliases: None` means "keep the names the vhost on disk serves"
+/// (05-import-hestia W3-V): this is where they are read, from the file the
+/// render will replace (the parked body of a disabled site). `None` back when
+/// the description already carries its aliases or the vhost has none.
+pub fn with_aliases_from_disk(domain: &str, config: &SiteConfig) -> Option<SiteConfig> {
+    if config.aliases.is_some() {
+        return None;
+    }
+    let existing = std::fs::read_to_string(vhost_target(domain).path()).ok()?;
+    let aliases = crate::services::apache::aliases_in_nginx_config(&existing, domain);
+    if aliases.is_empty() {
+        return None;
+    }
+    let mut c = config.clone();
+    c.aliases = Some(aliases);
+    Some(c)
 }
 
 /// [`render_site_config_with`] with the per-site includes given rather than
@@ -951,7 +989,8 @@ pub fn render_site_config_including(
     let mut ctx = Context::new();
     ctx.insert("domain", domain);
     ctx.insert("root", config.root.as_deref().unwrap_or("/var/www"));
-    ctx.insert("bind_ip", &bind_ip_for(domain, config));
+    let bind_ip = bind_ip_for(domain, config);
+    ctx.insert("bind_ip", &bind_ip);
     ctx.insert("runtime", &config.runtime);
     ctx.insert("inc_redirects", &includes.redirects);
     ctx.insert("inc_auth", &includes.auth);
@@ -1014,6 +1053,37 @@ pub fn render_site_config_including(
 
     let ssl = config.ssl.unwrap_or(false);
     ctx.insert("ssl", &ssl);
+
+    // 05-import-hestia (W3-V / W3-F). Every fragment is "" when its setting is
+    // absent, so an existing site renders byte for byte as before.
+    use crate::services::vhost_extras as vx;
+    let aliases = vx::validate_aliases(domain, config.aliases.as_deref().unwrap_or(&[]))
+        .map_err(tera::Error::msg)?;
+    let alias_names: String = aliases.iter().map(|a| format!(" {a}")).collect();
+    ctx.insert("server_alias_names", &alias_names);
+    let target = vx::canonical_target(domain, config.canonical_host.as_deref(), &aliases)
+        .map_err(tera::Error::msg)?;
+    let force_ssl = config.force_ssl.unwrap_or(true);
+    ctx.insert("force_ssl", &force_ssl);
+    ctx.insert("hsts", &config.hsts.unwrap_or(true));
+    let canonical_block = match target.as_deref() {
+        None => String::new(),
+        Some(t) if ssl && force_ssl => vx::canonical_block_https(t),
+        Some(t) => vx::canonical_block_any_scheme(t),
+    };
+    ctx.insert("canonical_block", &canonical_block);
+    ctx.insert("redirect_host", target.as_deref().unwrap_or("$host"));
+    let (plain, acme) = if ssl && !force_ssl {
+        (vx::plain_listeners(&bind_ip), vx::acme_block())
+    } else {
+        (String::new(), "")
+    };
+    ctx.insert("plain_listeners", &plain);
+    ctx.insert("acme_block", acme);
+    let no_exec = vx::validate_no_exec_dirs(config.php_no_exec_dirs.as_deref().unwrap_or(&[]))
+        .map_err(tera::Error::msg)?;
+    let no_exec_block = if config.runtime == "php" { vx::no_exec_block(&no_exec) } else { String::new() };
+    ctx.insert("no_exec_block", &no_exec_block);
 
     if ssl {
         ctx.insert(
@@ -1955,6 +2025,195 @@ server {").unwrap();
         ] {
             assert!(!t.contains("auth_basic"));
             assert!(t.contains("location /.well-known/acme-challenge/"));
+        }
+    }
+
+    // ── 05-import-hestia W3: aliases, canonical, no-exec, Force SSL / HSTS ──
+
+    /// Every W3 fragment and what it was before (the step-0 templates).
+    const W3_FRAGMENTS: &[(&str, &str)] = &[
+        ("{{ server_alias_names }}", ""),
+        ("{{ canonical_block }}", ""),
+        ("{{ no_exec_block }}", ""),
+        ("{{ plain_listeners }}", ""),
+        ("{{ acme_block }}", ""),
+        ("{{ redirect_host }}", "$host"),
+        ("{% if force_ssl %}", ""),
+        ("{% endif %}# HTTPS server", "# HTTPS server"),
+        ("{% if hsts %}", ""),
+        (
+            "always;\n{% endif %}    add_header X-Content-Type-Options",
+            "always;\n    add_header X-Content-Type-Options",
+        ),
+    ];
+
+    /// The templates as they were before the W3 fragments were added.
+    fn templates_without_w3() -> Tera {
+        let strip = |t: &str| {
+            let mut t = t.replace('\r', "");
+            for (a, b) in W3_FRAGMENTS {
+                t = t.replace(a, b);
+            }
+            assert!(!t.contains("force_ssl") && !t.contains("canonical") && !t.contains("no_exec"));
+            t
+        };
+        let mut tera = Tera::default();
+        tera.add_raw_template("http.conf", &strip(include_str!("../templates/nginx/http.conf"))).unwrap();
+        tera.add_raw_template("https.conf", &strip(include_str!("../templates/nginx/https.conf"))).unwrap();
+        tera.add_raw_template("proxy.conf", &strip(include_str!("../templates/nginx/proxy.conf"))).unwrap();
+        tera
+    }
+
+    fn render(t: &Tera, c: &SiteConfig) -> String {
+        render_site_config_including(t, "example.com", c, None, SiteIncludes::default()).unwrap()
+    }
+
+    #[test]
+    fn absent_w3_settings_render_byte_identically_to_the_step0_templates() {
+        let new = init_templates();
+        let old = templates_without_w3();
+        for ssl in [false, true] {
+            for (name, c) in every_branch(ssl) {
+                assert_eq!(render(&new, &c), render(&old, &c), "ssl={ssl} {name}");
+                // The explicit defaults are the same as absent.
+                let explicit = with(c.clone(), |c| {
+                    c.aliases = Some(vec![]);
+                    c.php_no_exec_dirs = Some(vec![]);
+                    c.force_ssl = Some(true);
+                    c.hsts = Some(true);
+                });
+                assert_eq!(render(&new, &explicit), render(&old, &c), "ssl={ssl} {name} explicit");
+            }
+        }
+    }
+
+    fn names(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn aliases_are_in_every_server_block() {
+        let t = init_templates();
+        for ssl in [false, true] {
+            for (name, c) in every_branch(ssl) {
+                let c = with(c, |c| c.aliases = Some(names(&["www.example.com", "example.org"])));
+                let out = render(&t, &c);
+                let blocks = out.matches("\nserver {").count();
+                assert_eq!(
+                    out.matches("    server_name example.com www.example.com example.org;\n").count(),
+                    blocks,
+                    "ssl={ssl} {name}\n{out}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn canonical_host_is_one_redirect_and_acme_stays_reachable() {
+        let t = init_templates();
+        let www = |c: SiteConfig| {
+            with(c, |c| {
+                c.aliases = Some(names(&["www.example.com"]));
+                c.canonical_host = Some("www".into());
+            })
+        };
+        // HTTP only: one 301 keeping the scheme, ACME exempt, every runtime.
+        for (name, c) in every_branch(false) {
+            let out = render(&t, &www(c));
+            assert!(out.contains("    if ($host != \"www.example.com\") { set $ch_canonical 1; }\n"), "{name}");
+            assert!(out.contains("acme-challenge/\") { set $ch_canonical 0; }"), "{name}");
+            assert!(out.contains("return 301 $scheme://www.example.com$request_uri;"), "{name}");
+        }
+        // HTTPS forced: :80 goes straight to the canonical https URL (a single
+        // 301 for any name), :443 redirects the other names.
+        for (name, c) in every_branch(true) {
+            let out = render(&t, &www(c));
+            let (port80, port443) = out.split_at(out.find("# HTTPS server").unwrap());
+            assert!(port80.contains("location /.well-known/acme-challenge/"), "{name}");
+            assert!(port80.contains("return 301 https://www.example.com$request_uri;"), "{name}");
+            assert!(!port80.contains("$host$request_uri"), "{name}");
+            assert!(port443.contains(
+                "    server_name example.com www.example.com;\n    if ($host != \"www.example.com\") { return 301 https://www.example.com$request_uri; }\n"
+            ), "{name}\n{out}");
+            // Apex works the same way.
+            let apex = with(www(every_branch(true).remove(0).1), |c| c.canonical_host = Some("apex".into()));
+            assert!(render(&t, &apex).contains("return 301 https://example.com$request_uri;"));
+        }
+    }
+
+    #[test]
+    fn a_canonical_host_that_is_not_served_is_refused() {
+        let t = init_templates();
+        let c = with(php_site(true, None), |c| c.canonical_host = Some("www".into()));
+        assert!(render_site_config_including(&t, "example.com", &c, None, SiteIncludes::default()).is_err());
+        let c = with(php_site(true, None), |c| c.canonical_host = Some("other".into()));
+        assert!(render_site_config_including(&t, "example.com", &c, None, SiteIncludes::default()).is_err());
+        let c = with(php_site(true, None), |c| c.aliases = Some(names(&["bad name"])));
+        assert!(render_site_config_including(&t, "example.com", &c, None, SiteIncludes::default()).is_err());
+        let c = with(php_site(true, None), |c| c.php_no_exec_dirs = Some(names(&["/a/../b"])));
+        assert!(render_site_config_including(&t, "example.com", &c, None, SiteIncludes::default()).is_err());
+    }
+
+    #[test]
+    fn force_ssl_off_serves_both_ports_from_one_block() {
+        let t = init_templates();
+        for (name, c) in every_branch(true) {
+            let base = render(&t, &c);
+            let c = with(c, |c| c.force_ssl = Some(false));
+            let out = render(&t, &c);
+            assert_eq!(out.matches("\nserver {").count() + usize::from(out.starts_with("server {")), 1, "{name}\n{out}");
+            for l in ["    listen 192.0.2.10:443 ssl;\n", "    listen 192.0.2.10:80;\n", "    listen [::]:80;\n"] {
+                assert!(out.contains(l), "{name} missing {l:?}");
+            }
+            assert!(!out.contains("return 301 https://"), "{name}");
+            assert!(out.contains("    location /.well-known/acme-challenge/ {\n        root /var/www/acme;\n    }\n"), "{name}");
+            // The serving block keeps everything else (HSTS included).
+            assert_eq!(out.contains("Strict-Transport-Security"), base.contains("Strict-Transport-Security"));
+            // With a canonical host the redirect keeps the scheme and spares ACME.
+            let canon = with(c, |c| {
+                c.aliases = Some(names(&["www.example.com"]));
+                c.canonical_host = Some("apex".into());
+            });
+            let out = render(&t, &canon);
+            assert!(out.contains("return 301 $scheme://example.com$request_uri;"), "{name}");
+            assert!(out.contains("acme-challenge/\") { set $ch_canonical 0; }"), "{name}");
+        }
+    }
+
+    #[test]
+    fn hsts_off_drops_only_the_header() {
+        let t = init_templates();
+        for (name, c) in every_branch(true) {
+            let on = render(&t, &c);
+            let off = render(&t, &with(c, |c| c.hsts = Some(false)));
+            let line = "    add_header Strict-Transport-Security \"max-age=31536000; includeSubDomains\" always;\n";
+            assert!(on.contains(line), "{name}");
+            assert_eq!(off, on.replace(line, ""), "{name}");
+        }
+    }
+
+    #[test]
+    fn no_exec_block_comes_before_every_php_and_asset_location() {
+        let t = init_templates();
+        let dirs = names(&["/wp-content/uploads", "/uploads"]);
+        for ssl in [false, true] {
+            for (name, c) in every_branch(ssl) {
+                let out = render(&t, &with(c.clone(), |c| c.php_no_exec_dirs = Some(dirs.clone())));
+                let block = "    location ~* ^(?:/wp-content/uploads|/uploads)/.*\\.(?:php[0-9]?|phtml|pht|phps|phar)(/|$) {\n        return 403;\n    }\n";
+                if c.runtime != "php" {
+                    assert!(!out.contains("PHP execution blocked"), "ssl={ssl} {name}");
+                    continue;
+                }
+                let at = out.find(block).unwrap_or_else(|| panic!("ssl={ssl} {name}\n{out}"));
+                assert_eq!(out.matches(block).count(), 1);
+                // First regex location of the serving block: before `\.php$`,
+                // the dotfile deny, preset assets and Apache's static regex.
+                let first_regex = out.find("    location ~").unwrap();
+                assert_eq!(first_regex, at, "ssl={ssl} {name}");
+                if let Some(php) = out.find("location ~ \\.php$") {
+                    assert!(at < php);
+                }
+            }
         }
     }
 }

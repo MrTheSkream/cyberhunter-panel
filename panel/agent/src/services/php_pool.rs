@@ -16,8 +16,124 @@ use crate::safe_cmd::safe_command;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-/// Every PHP version a pool may exist for (same list as `routes::php`).
-pub const PHP_VERSIONS: &[&str] = &["8.1", "8.2", "8.3", "8.4", "8.5"];
+/// Every PHP version the panel knows, oldest first. THE single source: the
+/// install routes (`routes::php`), the IaC export, the vhost writer and the
+/// pool cleanup all derive from it.
+pub const PHP_VERSIONS: &[&str] = &["5.6", "7.4", "8.1", "8.2", "8.3", "8.4", "8.5"];
+
+/// End-of-life versions kept only to host imported legacy sites (D2): no
+/// security updates, Debian/Ubuntu only (deb.sury.org / ppa:ondrej/php), never
+/// picked as a default.
+pub const LEGACY_PHP_VERSIONS: &[&str] = &["5.6", "7.4"];
+
+/// True for an end-of-life version from [`LEGACY_PHP_VERSIONS`].
+pub fn is_legacy(version: &str) -> bool {
+    LEGACY_PHP_VERSIONS.contains(&version)
+}
+
+/// INI directives introduced after PHP 5.6, with the version that brought
+/// them (php.net ini list / changelogs). A key ending in `*` is a prefix.
+/// Only consulted for legacy versions: an unknown `php_value` is not a
+/// `php-fpm -t` error, but every worker start logs "Unable to set php_value",
+/// and the directive silently does nothing - so it is not emitted at all.
+const INI_SINCE: &[(&str, &str)] = &[
+    // 7.0
+    ("zend.assertions", "7.0"),
+    ("assert.exception", "7.0"),
+    ("pcre.jit", "7.0"),
+    ("session.lazy_write", "7.0"),
+    ("opcache.file_cache*", "7.0"),
+    ("opcache.huge_code_pages", "7.0"),
+    ("opcache.validate_permission", "7.0"), // 7.0.14
+    ("opcache.validate_root", "7.0"),       // 7.0.14
+    // 7.1
+    ("hard_timeout", "7.1"),
+    ("zend.signal_check", "7.1"),
+    ("url_rewriter.hosts", "7.1"),
+    ("session.sid_length", "7.1"),
+    ("session.sid_bits_per_character", "7.1"),
+    ("session.trans_sid_tags", "7.1"),
+    ("session.trans_sid_hosts", "7.1"),
+    ("opcache.opt_debug_level", "7.1"),
+    // 7.2 / 7.3
+    ("sqlite3.defensive", "7.2"), // 7.2.17 / 7.3.4
+    ("session.cookie_samesite", "7.3"),
+    ("syslog.*", "7.3"),
+    ("mbstring.regex_stack_limit", "7.3"),
+    // 7.4
+    ("mbstring.regex_retry_limit", "7.4"),
+    ("zend.exception_ignore_args", "7.4"),
+    ("unserialize_max_depth", "7.4"),
+    ("opcache.preload", "7.4"),
+    ("opcache.preload_user", "7.4"),
+    ("opcache.cache_id", "7.4"),
+    ("ffi.*", "7.4"),
+    // 8.x
+    ("opcache.jit*", "8.0"),
+    ("opcache.record_warnings", "8.0"),
+    ("zend.exception_string_param_max_len", "8.0"),
+    ("max_multipart_body_parts", "8.0"), // 8.0.28 / 8.1.16 / 8.2.3
+    ("fiber.stack_size", "8.1"),
+    ("mysqli.local_infile_directory", "8.1"),
+    ("error_log_mode", "8.2"),
+    ("mail.mixed_lf_and_crlf", "8.2"),
+    ("memory_hard_limit_percent", "8.2"),
+    ("zend.max_allowed_stack_size", "8.3"),
+    ("zend.reserved_stack_size", "8.3"),
+    ("mail.cr_lf_mode", "8.4"),
+    ("opcache.file_cache_read_only", "8.5"),
+    ("session.cookie_partitioned", "8.5"),
+];
+
+/// INI directives removed between 5.6 and 7.4, with the removing version
+/// (they still exist on 5.6; on 7.4 they are unknown).
+const INI_REMOVED: &[(&str, &str)] = &[
+    ("asp_tags", "7.0"),
+    ("always_populate_raw_post_data", "7.0"),
+    ("opcache.load_comments", "7.0"),
+    ("xsl.security_prefs", "7.0"),
+    ("session.hash_function", "7.1"),
+    ("session.hash_bits_per_character", "7.1"),
+    ("session.entropy_file", "7.1"),
+    ("session.entropy_length", "7.1"),
+    ("opcache.fast_shutdown", "7.2"),
+    ("sql.safe_mode", "7.2"),
+    ("opcache.inherited_hack", "7.3"),
+];
+
+/// `"7.4"` -> `(7, 4)`.
+fn major_minor(v: &str) -> Option<(u32, u32)> {
+    let (a, b) = v.split_once('.')?;
+    let b = b.split('.').next()?;
+    Some((a.parse().ok()?, b.parse().ok()?))
+}
+
+fn ini_table_matches(pattern: &str, key: &str) -> bool {
+    match pattern.strip_suffix('*') {
+        Some(prefix) => key.starts_with(prefix),
+        None => pattern == key,
+    }
+}
+
+/// Pure: may `key` be written as a `php_value` / `php_admin_value` in a pool
+/// of `php_version`? Always `true` for non-legacy versions (8.x pools are
+/// rendered exactly as before); for 5.6 / 7.4, `false` for a directive that
+/// version does not know (introduced later, or removed earlier). Keys absent
+/// from both tables pass through: the admin's free-form `extra` cannot be
+/// checked exhaustively.
+pub fn ini_key_supported(php_version: &str, key: &str) -> bool {
+    if !is_legacy(php_version) {
+        return true;
+    }
+    let Some(ver) = major_minor(php_version) else { return true };
+    let introduced_later = INI_SINCE
+        .iter()
+        .any(|(k, since)| ini_table_matches(k, key) && major_minor(since).is_some_and(|s| ver < s));
+    let removed_already = INI_REMOVED
+        .iter()
+        .any(|(k, removed)| ini_table_matches(k, key) && major_minor(removed).is_some_and(|r| ver >= r));
+    !(introduced_later || removed_already)
+}
 
 /// Directory the per-pool `error_log` files live in. The PHP errors viewer
 /// (`routes::nginx::php_errors`) reads `{PHP_FPM_LOG_DIR}/{pool}.error.log`.
@@ -206,12 +322,14 @@ pub fn render_php_pool(
 
     // The plan caps are admin values, as in the legacy pool: `ini_set`,
     // `set_time_limit` and `.user.ini` cannot raise them. Everything else is
-    // a plain `php_value` the site may override.
-    for (k, v) in &pool.values {
+    // a plain `php_value` the site may override. On a legacy version a
+    // directive that PHP does not know is left out ([`ini_key_supported`]).
+    let supported = |k: &str| ini_key_supported(php_version, k);
+    for (k, v) in pool.values.iter().filter(|(k, _)| supported(k.as_str())) {
         let kind = if ADMIN_VALUE_KEYS.contains(&k.as_str()) { "php_admin_value" } else { "php_value" };
         out.push_str(&format!("{kind}[{k}] = {v}\n"));
     }
-    for (k, v) in &pool.extra {
+    for (k, v) in pool.extra.iter().filter(|(k, _)| supported(k.as_str())) {
         out.push_str(&format!("php_value[{k}] = {v}\n"));
     }
     out.push('\n');
@@ -977,5 +1095,143 @@ php_admin_flag[log_errors] = on
         check(&|p| p.idle_timeout_s = 3601, false);
         check(&|p| p.request_terminate_timeout_s = 86_400, true);
         check(&|p| p.request_terminate_timeout_s = 86_401, false);
+    }
+
+    #[test]
+    fn version_lists_and_is_legacy() {
+        assert_eq!(PHP_VERSIONS, &["5.6", "7.4", "8.1", "8.2", "8.3", "8.4", "8.5"]);
+        assert_eq!(LEGACY_PHP_VERSIONS, &["5.6", "7.4"]);
+        for v in LEGACY_PHP_VERSIONS {
+            assert!(PHP_VERSIONS.contains(v), "{v} must be offered");
+        }
+        assert!(is_legacy("5.6") && is_legacy("7.4"));
+        for v in ["8.1", "8.2", "8.3", "8.4", "8.5", "7.3", "", "5.6.40"] {
+            assert!(!is_legacy(v), "{v}");
+        }
+        // Oldest first, no duplicates.
+        let mut sorted: Vec<(u32, u32)> = PHP_VERSIONS.iter().map(|v| major_minor(v).unwrap()).collect();
+        let before = sorted.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted, before);
+    }
+
+    #[test]
+    fn ini_filter_is_the_identity_for_every_non_legacy_version() {
+        for &v in PHP_VERSIONS.iter().filter(|v| !is_legacy(v)) {
+            for (k, _) in INI_SINCE.iter().chain(INI_REMOVED.iter()) {
+                let key = k.replace('*', "_x");
+                assert!(ini_key_supported(v, &key), "{v} {key}");
+            }
+        }
+    }
+
+    #[test]
+    fn ini_filter_per_legacy_version() {
+        // 5.6: everything newer goes, what 7.x removed stays.
+        for k in ["session.cookie_samesite", "zend.exception_ignore_args", "opcache.jit",
+                  "opcache.jit_buffer_size", "session.sid_length", "opcache.file_cache",
+                  "opcache.preload", "zend.assertions", "syslog.ident", "error_log_mode"] {
+            assert!(!ini_key_supported("5.6", k), "5.6 {k}");
+        }
+        for k in ["session.hash_function", "always_populate_raw_post_data", "asp_tags",
+                  "max_input_vars", "memory_limit", "opcache.memory_consumption", "date.timezone",
+                  "session.gc_maxlifetime", "short_open_tag", "mbstring.func_overload"] {
+            assert!(ini_key_supported("5.6", k), "5.6 {k}");
+        }
+        // 7.4: 7.x additions stay, 8.x additions and 7.x removals go.
+        for k in ["session.cookie_samesite", "zend.exception_ignore_args", "session.sid_length",
+                  "opcache.preload", "opcache.file_cache", "max_input_vars", "track_errors"] {
+            assert!(ini_key_supported("7.4", k), "7.4 {k}");
+        }
+        for k in ["opcache.jit", "opcache.jit_buffer_size", "session.hash_function",
+                  "always_populate_raw_post_data", "opcache.fast_shutdown", "fiber.stack_size",
+                  "zend.max_allowed_stack_size"] {
+            assert!(!ini_key_supported("7.4", k), "7.4 {k}");
+        }
+        // A key in neither table passes (extra is free-form).
+        assert!(ini_key_supported("5.6", "some.unknown_key"));
+    }
+
+    #[test]
+    fn panel_defaults_render_identically_on_legacy_versions() {
+        // Every key the PHP settings card sends exists in 5.6 and 7.4: the
+        // pinned rendering only differs by the socket's version.
+        for v in ["5.6", "7.4"] {
+            let out = render_php_pool("example.com", v, &a1(), "www-data", "www-data");
+            assert_eq!(out, A1_RENDERED.replace("php8.3-fpm", &format!("php{v}-fpm")), "{v}");
+        }
+    }
+
+    fn with_new_and_removed_extras() -> PhpPool {
+        let mut p = a1();
+        p.extra = [
+            ("session.cookie_samesite", "Lax"),
+            ("opcache.jit", "tracing"),
+            ("session.hash_function", "1"),
+            ("zend.exception_ignore_args", "On"),
+            ("opcache.jit_buffer_size", "64M"),
+            ("max_input_nesting_level", "64"),
+        ]
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+        p.values.insert("session.sid_length".into(), "48".into());
+        p
+    }
+
+    fn extra_block(lines: &[&str]) -> String {
+        lines.iter().map(|l| format!("{l}\n")).collect()
+    }
+
+    #[test]
+    fn legacy_pools_drop_unknown_directives_in_order() {
+        let p = with_new_and_removed_extras();
+        let r = |v: &str| render_php_pool("example.com", v, &p, "www-data", "www-data");
+
+        let out56 = r("5.6");
+        assert!(out56.contains(&extra_block(&[
+            "php_admin_value[upload_max_filesize] = 128M",
+            "php_value[session.hash_function] = 1",
+            "php_value[max_input_nesting_level] = 64",
+            "",
+        ])), "{out56}");
+        for k in ["cookie_samesite", "opcache.jit", "exception_ignore_args", "sid_length"] {
+            assert!(!out56.contains(k), "5.6 {k}");
+        }
+
+        let out74 = r("7.4");
+        assert!(out74.contains("php_value[session.sid_length] = 48\n"));
+        assert!(out74.contains(&extra_block(&[
+            "php_admin_value[upload_max_filesize] = 128M",
+            "php_value[session.cookie_samesite] = Lax",
+            "php_value[zend.exception_ignore_args] = On",
+            "php_value[max_input_nesting_level] = 64",
+            "",
+        ])), "{out74}");
+        for k in ["opcache.jit", "hash_function"] {
+            assert!(!out74.contains(k), "7.4 {k}");
+        }
+    }
+
+    #[test]
+    fn php83_keeps_every_directive_byte_for_byte() {
+        // Before the legacy filter, render_php_pool wrote every `values` entry
+        // then every `extra` entry unconditionally. Rebuild that block by hand
+        // and require it verbatim in the 8.3 output.
+        let p = with_new_and_removed_extras();
+        let out = render(&p);
+        let mut expected = String::new();
+        for (k, v) in &p.values {
+            let kind = if ADMIN_VALUE_KEYS.contains(&k.as_str()) { "php_admin_value" } else { "php_value" };
+            expected.push_str(&format!("{kind}[{k}] = {v}\n"));
+        }
+        for (k, v) in &p.extra {
+            expected.push_str(&format!("php_value[{k}] = {v}\n"));
+        }
+        expected.push('\n');
+        assert!(out.contains(&format!("request_terminate_timeout = 90s\n\n{expected}php_admin_value[open_basedir]")), "{out}");
+        // And the pinned A1 rendering is untouched.
+        assert_eq!(render(&a1()), A1_RENDERED);
     }
 }
