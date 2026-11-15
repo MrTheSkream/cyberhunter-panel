@@ -10,15 +10,19 @@
 //! regular files (progress total), the second reads them one at a time and
 //! hands each to the async side through a channel of one slot, so at most a
 //! couple of files are in memory and no path list of the tree is ever held
-//! (the agent runs under `MemoryMax=512M`). Each file is opened with
-//! `openat2(RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS)` from the site root fd, so a
-//! directory swapped for a symlink mid-scan cannot make the agent read outside
-//! the site.
+//! (the agent runs under `MemoryMax=512M`). Directories are opened from the
+//! site root fd one component at a time with `O_NOFOLLOW`
+//! ([`quarantine::open_dir_beneath`]) and listed from that fd, files are opened
+//! relative to it, so a directory swapped for a symlink mid-scan can neither
+//! make the agent read nor walk outside the site.
 
 use crate::services::clamav::{self, AvErr, ScanReply};
 use crate::services::migration_jobs::{self, JobHandle};
 use crate::services::quarantine;
+use std::ffi::OsStr;
 use std::io::Read;
+use std::os::fd::OwnedFd;
+use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
@@ -42,34 +46,50 @@ fn running(job: &Option<String>) -> bool {
         .unwrap_or(false)
 }
 
-/// Walk `root` without following symlinks; `f` gets every regular file with
-/// its path and metadata. Unreadable directories are skipped. Returns false
-/// when `f` asked to stop.
-pub fn walk<F: FnMut(&Path, &std::fs::Metadata) -> bool>(root: &Path, exclude: &Path, mut f: F) -> bool {
-    let mut stack = vec![root.to_path_buf()];
-    while let Some(dir) = stack.pop() {
-        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
-        for e in rd.flatten() {
-            let p = e.path();
-            if p == exclude {
+/// Walk the site whose root fd is `site_fd` (shown as `site_root`) without
+/// following symlinks. `f` gets every regular file: its directory's fd, its
+/// name there, its full path and its size. Only site-relative paths are kept
+/// on the stack (never fds, so a wide tree cannot exhaust descriptors); each
+/// directory is reopened from the root with `O_NOFOLLOW` on every component.
+/// Unreadable directories are skipped. Returns false when `f` asked to stop.
+pub fn walk<F>(site_fd: &OwnedFd, site_root: &Path, exclude: &Path, mut f: F) -> bool
+where
+    F: FnMut(&OwnedFd, &OsStr, &Path, u64) -> bool,
+{
+    let mut stack = vec![PathBuf::new()];
+    while let Some(rel) = stack.pop() {
+        let Ok(dir_fd) = quarantine::open_dir_beneath(site_fd, &rel) else { continue };
+        let Ok(dir) = rustix::fs::Dir::read_from(&dir_fd) else { continue };
+        for entry in dir.flatten() {
+            let name = OsStr::from_bytes(entry.file_name().to_bytes());
+            if name == "." || name == ".." {
                 continue;
             }
-            let Ok(m) = std::fs::symlink_metadata(&p) else { continue };
-            let ft = m.file_type();
-            if ft.is_dir() {
-                stack.push(p);
-            } else if ft.is_file() && !f(&p, &m) {
-                return false;
+            let full = site_root.join(&rel).join(name);
+            if full == exclude {
+                continue;
+            }
+            let Ok(st) = rustix::fs::statat(&dir_fd, name, rustix::fs::AtFlags::SYMLINK_NOFOLLOW) else {
+                continue;
+            };
+            match rustix::fs::FileType::from_raw_mode(st.st_mode as _) {
+                rustix::fs::FileType::Directory => stack.push(rel.join(name)),
+                rustix::fs::FileType::RegularFile => {
+                    if !f(&dir_fd, name, &full, st.st_size as u64) {
+                        return false;
+                    }
+                }
+                _ => {}
             }
         }
     }
     true
 }
 
-/// Number of regular files under `root` (pass one).
-pub fn count_files(root: &Path, exclude: &Path) -> u64 {
+/// Number of regular files of the site (pass one).
+pub fn count_files(site_fd: &OwnedFd, site_root: &Path, exclude: &Path) -> u64 {
     let mut n = 0u64;
-    walk(root, exclude, |_, _| {
+    walk(site_fd, site_root, exclude, |_, _, _, _| {
         n += 1;
         true
     });
@@ -94,25 +114,20 @@ pub enum Item {
     Unreadable { path: String, error: String },
 }
 
-/// Read a file of the site safely: returns `Skipped` above [`MAX_FILE`].
-pub fn read_item(site_fd: &std::os::fd::OwnedFd, site_root: &Path, path: &Path) -> Item {
+/// Read the file `name` of the directory `dir_fd` (shown as `path`) safely:
+/// returns `Skipped` above [`MAX_FILE`].
+pub fn read_item(dir_fd: &OwnedFd, name: &OsStr, path: &Path) -> Item {
     let shown = path.to_string_lossy().into_owned();
     let unreadable = |e: String| Item::Unreadable { path: shown.clone(), error: e };
-    let Ok(rel) = path.strip_prefix(site_root) else {
-        return unreadable("outside the site".into());
-    };
-    let fd = match rustix::fs::openat2(
-        site_fd,
-        rel,
+    let fd = match rustix::fs::openat(
+        dir_fd,
+        name,
         rustix::fs::OFlags::RDONLY
             | rustix::fs::OFlags::NOFOLLOW
             | rustix::fs::OFlags::NONBLOCK
             | rustix::fs::OFlags::NOCTTY
             | rustix::fs::OFlags::CLOEXEC,
         rustix::fs::Mode::empty(),
-        rustix::fs::ResolveFlags::BENEATH
-            | rustix::fs::ResolveFlags::NO_SYMLINKS
-            | rustix::fs::ResolveFlags::NO_MAGICLINKS,
     ) {
         Ok(fd) => fd,
         Err(e) => return unreadable(format!("cannot open: {e}")),
@@ -219,9 +234,11 @@ pub async fn run(h: JobHandle, www: PathBuf, domain: String, sock: PathBuf) -> R
         .spawn(move || {
             set_idle_io_priority();
             let exclude = PathBuf::from(CANARY);
-            total_w.store(count_files(&root, &exclude), std::sync::atomic::Ordering::Relaxed);
+            total_w.store(count_files(&site_fd, &root, &exclude), std::sync::atomic::Ordering::Relaxed);
             // Sentinel-free: the channel closing ends the scan.
-            walk(&root, &exclude, |p, _| tx.blocking_send(read_item(&site_fd, &root, p)).is_ok());
+            walk(&site_fd, &root, &exclude, |dir, name, full, _| {
+                tx.blocking_send(read_item(dir, name, full)).is_ok()
+            });
         })
         .map_err(|e| format!("Cannot start the scan thread: {e}"))?;
 
@@ -299,14 +316,41 @@ mod tests {
         std::os::unix::fs::symlink(d.join("outside/c"), site.join("public/filelink")).unwrap();
         let fifo = std::ffi::CString::new(site.join("fifo").to_string_lossy().as_bytes()).unwrap();
         unsafe { libc::mkfifo(fifo.as_ptr(), 0o644) };
-        assert_eq!(count_files(&site, Path::new(CANARY)), 2);
+        let site_fd = quarantine::open_site(&d.join("www"), "a.tld").unwrap();
+        assert_eq!(count_files(&site_fd, &site, Path::new(CANARY)), 2);
+        // The whole www tree, with an exclusion.
+        let www_fd = quarantine::open_site(&d.join("www"), "").unwrap();
         let mut seen = Vec::new();
-        walk(&d.join("www"), &d.join("www/canary"), |p, _| {
+        walk(&www_fd, &d.join("www"), &d.join("www/canary"), |dir, name, p, size| {
+            assert!(matches!(read_item(dir, name, p), Item::File { size: s, .. } if s == size));
             seen.push(p.strip_prefix(&d).unwrap().to_string_lossy().into_owned());
             true
         });
         seen.sort();
         assert_eq!(seen, vec!["www/a.tld/public/a.php", "www/a.tld/public/sub/b.js"]);
+        // Stop on request.
+        let mut n = 0;
+        assert!(!walk(&site_fd, &site, Path::new(CANARY), |_, _, _, _| {
+            n += 1;
+            false
+        }));
+        assert_eq!(n, 1);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn walk_does_not_descend_into_a_directory_swapped_for_a_symlink() {
+        // open_dir_beneath refuses a symlinked component even when the stack
+        // still names it as a directory.
+        let d = scratch("swap");
+        std::fs::create_dir_all(d.join("a.tld/sub")).unwrap();
+        std::fs::create_dir_all(d.join("outside")).unwrap();
+        std::fs::write(d.join("outside/secret"), b"x").unwrap();
+        let fd = quarantine::open_site(&d, "a.tld").unwrap();
+        std::fs::remove_dir(d.join("a.tld/sub")).unwrap();
+        std::os::unix::fs::symlink(d.join("outside"), d.join("a.tld/sub")).unwrap();
+        assert!(quarantine::open_dir_beneath(&fd, Path::new("sub")).is_err());
+        assert_eq!(count_files(&fd, &d.join("a.tld"), Path::new(CANARY)), 0);
         let _ = std::fs::remove_dir_all(&d);
     }
 
@@ -321,18 +365,21 @@ mod tests {
         std::fs::create_dir_all(d.join("outside")).unwrap();
         std::fs::write(d.join("outside/y"), b"secret").unwrap();
         std::os::unix::fs::symlink(d.join("outside"), site.join("link")).unwrap();
+        std::os::unix::fs::symlink(d.join("outside/y"), site.join("leaf")).unwrap();
         let fd = quarantine::open_site(&d, "a.tld").unwrap();
-        match read_item(&fd, &site, &site.join("dir/x")) {
-            Item::File { size, sha256, data, .. } => {
+        let dir = quarantine::open_dir_beneath(&fd, Path::new("dir")).unwrap();
+        match read_item(&dir, OsStr::new("x"), &site.join("dir/x")) {
+            Item::File { size, sha256, data, path } => {
                 assert_eq!(size, 5);
                 assert_eq!(data, b"hello");
                 assert_eq!(sha256, "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824");
+                assert_eq!(path, site.join("dir/x").to_string_lossy());
             }
             _ => panic!("expected a file"),
         }
-        assert!(matches!(read_item(&fd, &site, &site.join("big")), Item::Skipped));
-        assert!(matches!(read_item(&fd, &site, &site.join("link/y")), Item::Unreadable { .. }));
-        assert!(matches!(read_item(&fd, &site, &d.join("outside/y")), Item::Unreadable { .. }));
+        assert!(matches!(read_item(&fd, OsStr::new("big"), &site.join("big")), Item::Skipped));
+        assert!(matches!(read_item(&fd, OsStr::new("leaf"), &site.join("leaf")), Item::Unreadable { .. }));
+        assert!(quarantine::open_dir_beneath(&fd, Path::new("link")).is_err());
         let _ = std::fs::remove_dir_all(&d);
     }
 

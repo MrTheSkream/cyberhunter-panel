@@ -9,18 +9,25 @@
 //! # Path safety
 //!
 //! The agent is root and the site trees are writable by tenants, so no path is
-//! resolved by name and then acted on. The site root is opened with
-//! `openat2(RESOLVE_NO_SYMLINKS)` below `/var/www`, the parent directory of the
-//! file likewise with `RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS` relative to it,
-//! and the leaf is handled with `*at` calls on that directory fd (`O_NOFOLLOW`,
+//! resolved by name and then acted on. From an fd on `/var/www`, every
+//! component is opened one at a time with `openat(O_DIRECTORY | O_NOFOLLOW)`,
+//! and the leaf is handled with `*at` calls on its parent's fd (`O_NOFOLLOW`,
 //! `renameat2(RENAME_NOREPLACE)`, `unlinkat`). A symlink anywhere in the path,
 //! or a `..`, is refused. Swapping a directory for a symlink after the check
 //! changes nothing: the fd already points at the real directory.
+//!
+//! Not `openat2(RESOLVE_NO_SYMLINKS)`: the agent unit's `RestrictSUIDSGID=yes`
+//! makes systemd's seccomp filter answer `openat2` with ENOSYS (it cannot
+//! inspect the mode inside `open_how`).
+//!
+//! Each `ReadWritePaths` entry is its own bind mount, so moving a file from
+//! `/var/www` to `/var/lib/dockpanel` gets EXDEV even on one file system: the
+//! copy-then-unlink fallback is the usual path in production.
 
 use crate::services::clamav::AvErr;
-use rustix::fs::{AtFlags, Mode, OFlags, ResolveFlags};
+use rustix::fs::{AtFlags, Mode, OFlags};
 use rustix::io::Errno;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::io::{Read, Seek, Write};
 use std::os::fd::OwnedFd;
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
@@ -88,17 +95,24 @@ pub fn open_site(www: &Path, site: &str) -> Result<OwnedFd, AvErr> {
     if site.contains('/') || site == "." || site == ".." {
         return Err(AvErr::bad("Invalid domain"));
     }
-    rustix::fs::openat2(
-        &www_fd,
-        site,
-        OFlags::PATH | OFlags::DIRECTORY | OFlags::CLOEXEC,
-        Mode::empty(),
-        ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
-    )
-    .map_err(|e| match e {
+    open_dir_beneath(&www_fd, Path::new(site)).map_err(|e| match e {
         Errno::NOENT => AvErr::not_found("Site directory not found"),
         _ => AvErr::bad("The site directory is not a plain directory"),
     })
+}
+
+/// Open the directory `rel` (plain components only) below `base`, one
+/// component at a time, never following a symlink (ELOOP / ENOTDIR on one).
+/// The fd can be listed (`O_RDONLY`) and used as a `*at` base. An empty `rel`
+/// reopens `base` itself.
+pub fn open_dir_beneath(base: &OwnedFd, rel: &Path) -> Result<OwnedFd, Errno> {
+    let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+    let mut cur = rustix::fs::openat(base, ".", flags, Mode::empty())?;
+    for c in rel.components() {
+        let Component::Normal(name) = c else { return Err(Errno::INVAL) };
+        cur = rustix::fs::openat(&cur, name, flags, Mode::empty())?;
+    }
+    Ok(cur)
 }
 
 /// `path` relative to `www/site`, refusing anything but plain components.
@@ -120,18 +134,8 @@ pub fn site_relative(www: &Path, site: &str, path: &str) -> Result<PathBuf, AvEr
 /// leaf name.
 pub fn open_parent(site_fd: &OwnedFd, rel: &Path) -> Result<(OwnedFd, OsString), AvErr> {
     let leaf = rel.file_name().ok_or_else(|| AvErr::bad(OUTSIDE))?.to_os_string();
-    let parent = match rel.parent() {
-        Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
-        _ => PathBuf::from("."),
-    };
-    let fd = rustix::fs::openat2(
-        site_fd,
-        &parent,
-        OFlags::PATH | OFlags::DIRECTORY | OFlags::CLOEXEC,
-        Mode::empty(),
-        ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
-    )
-    .map_err(|e| match e {
+    let parent = rel.parent().unwrap_or(Path::new(""));
+    let fd = open_dir_beneath(site_fd, parent).map_err(|e| match e {
         Errno::NOENT => AvErr::not_found("File not found"),
         _ => AvErr::bad(OUTSIDE),
     })?;
@@ -226,8 +230,9 @@ fn read_meta(dir: &Path) -> Option<Meta> {
 }
 
 /// Copy `src` into a new file `name` of `dir_fd` (create-exclusive), used when
-/// a rename crosses file systems.
-fn copy_into(src: &mut std::fs::File, dir_fd: &OwnedFd, name: &str, mode: u32) -> std::io::Result<()> {
+/// a rename crosses mounts. A partial copy is removed. Returns the new file
+/// (open for writing) so the caller can set owner and mode on the fd.
+fn copy_into(src: &mut std::fs::File, dir_fd: &OwnedFd, name: &OsStr, mode: u32) -> std::io::Result<std::fs::File> {
     src.rewind()?;
     let fd = rustix::fs::openat(
         dir_fd,
@@ -237,8 +242,13 @@ fn copy_into(src: &mut std::fs::File, dir_fd: &OwnedFd, name: &str, mode: u32) -
     )
     .map_err(std::io::Error::from)?;
     let mut dst = std::fs::File::from(fd);
-    std::io::copy(src, &mut dst)?;
-    dst.sync_all()
+    match std::io::copy(src, &mut dst).and_then(|_| dst.sync_all()) {
+        Ok(()) => Ok(dst),
+        Err(e) => {
+            let _ = rustix::fs::unlinkat(dir_fd, name, AtFlags::empty());
+            Err(e)
+        }
+    }
 }
 
 // ── Operations (paths injected for tests) ───────────────────────────────────
@@ -249,6 +259,18 @@ pub fn quarantine_at(
     site: &str,
     path: &str,
     signature: Option<String>,
+) -> Result<serde_json::Value, AvErr> {
+    quarantine_impl(qroot, www, site, path, signature, false)
+}
+
+/// `force_copy` exercises the cross-mount branch in tests.
+fn quarantine_impl(
+    qroot: &Path,
+    www: &Path,
+    site: &str,
+    path: &str,
+    signature: Option<String>,
+    force_copy: bool,
 ) -> Result<serde_json::Value, AvErr> {
     let (parent, leaf) = resolve(www, site, path)?;
     let mut src = open_regular(&parent, &leaf)?;
@@ -291,10 +313,17 @@ pub fn quarantine_at(
             return Err(AvErr::internal(format!("Cannot open the quarantine entry: {e}")));
         }
     };
-    match rustix::fs::renameat(&parent, leaf.as_os_str(), &dir_fd, FILE) {
-        Ok(()) => {}
+    let renamed = if force_copy {
+        Err(Errno::XDEV)
+    } else {
+        rustix::fs::renameat(&parent, leaf.as_os_str(), &dir_fd, FILE)
+    };
+    let copied = match renamed {
+        Ok(()) => false,
         Err(Errno::XDEV) => {
-            if let Err(e) = copy_into(&mut src, &dir_fd, FILE, 0o000) {
+            // The copy comes from the fd that was hashed, so it is the same
+            // inode's content; owner and mode stay those of `st`.
+            if let Err(e) = copy_into(&mut src, &dir_fd, OsStr::new(FILE), 0o000) {
                 cleanup(&dir);
                 return Err(AvErr::internal(format!("Cannot copy the file into the quarantine: {e}")));
             }
@@ -302,30 +331,38 @@ pub fn quarantine_at(
                 cleanup(&dir);
                 return Err(AvErr::internal(format!("Cannot remove the original file: {e}")));
             }
+            true
         }
         Err(e) => {
             cleanup(&dir);
             return Err(AvErr::internal(format!("Cannot move the file into the quarantine: {e}")));
         }
-    }
+    };
     let qfile = dir.join(FILE);
-    let _ = std::fs::set_permissions(&qfile, std::fs::Permissions::from_mode(0o000));
-    // If the leaf was swapped between the hash and the rename, describe what
-    // was actually moved.
+    // Describe what is really in the quarantine: the content may have been
+    // written to between the hash and the move, and a rename may have moved
+    // a leaf swapped in meanwhile (then its own owner and mode apply). Read
+    // before the chmod to 000.
+    let mut changed = false;
     if let Ok(m) = std::fs::symlink_metadata(&qfile) {
-        if (m.dev(), m.ino()) != (st.dev(), st.ino()) && m.file_type().is_file() {
-            if let Ok(mut f) = std::fs::File::open(&qfile) {
-                if let Ok((sha, size)) = sha256_reader(&mut f) {
-                    meta.sha256 = sha;
-                    meta.size = size;
-                    meta.uid = m.uid();
-                    meta.gid = m.gid();
-                    meta.mode = m.mode() & 0o7777;
-                    let _ = write_meta(&dir, &meta, false);
-                }
+        if !copied && (m.dev(), m.ino()) != (st.dev(), st.ino()) {
+            meta.uid = m.uid();
+            meta.gid = m.gid();
+            meta.mode = m.mode() & 0o7777;
+            changed = true;
+        }
+        if let Ok((sha, size)) = std::fs::File::open(&qfile).and_then(|mut f| sha256_reader(&mut f)) {
+            if sha != meta.sha256 || size != meta.size {
+                meta.sha256 = sha;
+                meta.size = size;
+                changed = true;
             }
         }
     }
+    if changed {
+        let _ = write_meta(&dir, &meta, false);
+    }
+    let _ = std::fs::set_permissions(&qfile, std::fs::Permissions::from_mode(0o000));
     Ok(item_json(&id, &meta))
 }
 
@@ -347,6 +384,16 @@ fn parse_id(id: &str) -> Result<QId, AvErr> {
 
 /// Puts a quarantined file back. Returns its path.
 pub fn restore_at(qroot: &Path, www: &Path, id: &str) -> Result<String, AvErr> {
+    restore_impl(qroot, www, id, false)
+}
+
+/// Mode given back on restore: setuid/setgid dropped (the agent unit's
+/// `RestrictSUIDSGID=yes` refuses them, and a web file has no use for them).
+pub fn restored_mode(mode: u32) -> u32 {
+    mode & 0o1777
+}
+
+fn restore_impl(qroot: &Path, www: &Path, id: &str, force_copy: bool) -> Result<String, AvErr> {
     let id = match parse_id(id)? {
         QId::Legacy(_) => return Err(AvErr::conflict("No metadata for this file")),
         QId::Entry(id) => id,
@@ -375,29 +422,44 @@ pub fn restore_at(qroot: &Path, www: &Path, id: &str) -> Result<String, AvErr> {
     if sha != meta.sha256 {
         return Err(AvErr::conflict("The quarantined file changed (sha256 mismatch)"));
     }
+    let mode = restored_mode(meta.mode);
     let dir_fd = rustix::fs::open(&dir, OFlags::PATH | OFlags::DIRECTORY | OFlags::CLOEXEC, Mode::empty())
         .map_err(|e| AvErr::internal(format!("Cannot open the quarantine entry: {e}")))?;
-    match rustix::fs::renameat_with(&dir_fd, FILE, &parent, leaf.as_os_str(), rustix::fs::RenameFlags::NOREPLACE) {
+    // Owner and mode are set while the file is still in the root-only
+    // quarantine, so a file never lands back at 000 or root-owned.
+    let set_owner_mode = |f: &std::fs::File| -> Result<(), AvErr> {
+        std::os::unix::fs::fchown(f, Some(meta.uid), Some(meta.gid))
+            .map_err(|e| AvErr::internal(format!("chown failed: {e}")))?;
+        f.set_permissions(std::fs::Permissions::from_mode(mode))
+            .map_err(|e| AvErr::internal(format!("chmod failed: {e}")))
+    };
+    let renamed = if force_copy {
+        Err(Errno::XDEV)
+    } else {
+        set_owner_mode(&src)?;
+        rustix::fs::renameat_with(&dir_fd, FILE, &parent, leaf.as_os_str(), rustix::fs::RenameFlags::NOREPLACE)
+    };
+    match renamed {
         Ok(()) => {}
-        Err(Errno::EXIST) => return Err(AvErr::conflict("A file already exists at the original path")),
+        Err(Errno::EXIST) => {
+            let _ = src.set_permissions(std::fs::Permissions::from_mode(0o000));
+            return Err(AvErr::conflict("A file already exists at the original path"));
+        }
         Err(Errno::XDEV) => {
-            let name = leaf.to_string_lossy().into_owned();
-            if name.as_bytes() != leaf.as_encoded_bytes() {
-                return Err(AvErr::internal("Cannot restore a non UTF-8 file name across file systems"));
-            }
-            copy_into(&mut src, &parent, &name, 0o600).map_err(|e| match e.kind() {
+            let dst = copy_into(&mut src, &parent, &leaf, 0o600).map_err(|e| match e.kind() {
                 std::io::ErrorKind::AlreadyExists => AvErr::conflict("A file already exists at the original path"),
                 _ => AvErr::internal(format!("Cannot restore the file: {e}")),
             })?;
+            if let Err(e) = set_owner_mode(&dst) {
+                let _ = rustix::fs::unlinkat(&parent, leaf.as_os_str(), AtFlags::empty());
+                return Err(e);
+            }
         }
-        Err(e) => return Err(AvErr::internal(format!("Cannot restore the file: {e}"))),
+        Err(e) => {
+            let _ = src.set_permissions(std::fs::Permissions::from_mode(0o000));
+            return Err(AvErr::internal(format!("Cannot restore the file: {e}")));
+        }
     }
-    let restored = open_regular(&parent, &leaf)?;
-    std::os::unix::fs::fchown(&restored, Some(meta.uid), Some(meta.gid))
-        .map_err(|e| AvErr::internal(format!("Restored, but chown failed: {e}")))?;
-    restored
-        .set_permissions(std::fs::Permissions::from_mode(meta.mode))
-        .map_err(|e| AvErr::internal(format!("Restored, but chmod failed: {e}")))?;
     let _ = std::fs::remove_dir_all(&dir);
     Ok(meta.original_path)
 }
@@ -652,6 +714,38 @@ mod tests {
         assert!(!dir.exists());
         assert!(list_at(&s.q()).is_empty());
         assert_eq!(restore_at(&s.q(), &s.www(), &id).unwrap_err().status, 404);
+    }
+
+    /// The production path: `/var/www` and the quarantine are separate bind
+    /// mounts, so both moves are copies.
+    #[test]
+    fn cross_mount_copy_keeps_owner_and_mode() {
+        let s = Scratch::new("copy");
+        let f = s.www().join("a.tld/public/evil.php");
+        std::fs::write(&f, b"payload").unwrap();
+        std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o6750)).unwrap();
+        let _ = std::os::unix::fs::chown(&f, Some(1234), Some(2345));
+        let before = std::fs::metadata(&f).unwrap();
+
+        let item = quarantine_impl(&s.q(), &s.www(), "a.tld", &f.to_string_lossy(), None, true).unwrap();
+        assert!(!f.exists());
+        let id = item["quarantine_id"].as_str().unwrap().to_string();
+        assert_eq!(item["uid"], before.uid());
+        assert_eq!(item["gid"], before.gid());
+        assert_eq!(item["mode"], before.mode() & 0o7777);
+        assert_eq!(item["size"], 7);
+        let qf = s.q().join(&id).join("file");
+        assert_eq!(std::fs::metadata(&qf).unwrap().mode() & 0o7777, 0);
+        assert_eq!(read_meta(&s.q().join(&id)).unwrap().uid, before.uid());
+
+        restore_impl(&s.q(), &s.www(), &id, true).unwrap();
+        let after = std::fs::metadata(&f).unwrap();
+        assert_eq!(std::fs::read(&f).unwrap(), b"payload");
+        assert_eq!((after.uid(), after.gid()), (before.uid(), before.gid()));
+        assert_eq!(after.mode() & 0o7777, 0o0750, "setuid/setgid dropped");
+        assert!(!s.q().join(&id).exists());
+        assert_eq!(restored_mode(0o4755), 0o755);
+        assert_eq!(restored_mode(0o1777), 0o1777);
     }
 
     #[test]
