@@ -112,6 +112,9 @@ export default function ClamavCard() {
   const [msg, setMsg] = useState<{ text: string; type: "success" | "error" } | null>(null);
   const refreshRef = useRef(refresh);
   refreshRef.current = refresh;
+  // Stable: ConfirmDialog re-focuses Cancel whenever onCancel changes, and the
+  // job poll re-renders this card every 3 s.
+  const cancelConfirm = useCallback(() => setConfirm(null), []);
 
   // An install started elsewhere (another tab, before a reload) is resumed.
   useEffect(() => {
@@ -231,7 +234,7 @@ export default function ClamavCard() {
           confirmLabel="Install"
           tone="warn"
           onConfirm={startInstall}
-          onCancel={() => setConfirm(null)}
+          onCancel={cancelConfirm}
         />
       )}
       {confirm === "uninstall" && (
@@ -240,7 +243,7 @@ export default function ClamavCard() {
           confirmLabel="Uninstall"
           tone="danger"
           onConfirm={doUninstall}
-          onCancel={() => setConfirm(null)}
+          onCancel={cancelConfirm}
         />
       )}
 

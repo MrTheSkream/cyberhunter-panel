@@ -131,6 +131,10 @@ export default function AntivirusTab() {
   const [busy, setBusy] = useState<string | null>(null);
   const [pending, setPending] = useState<PendingAction | null>(null);
   const [ignoreNote, setIgnoreNote] = useState("");
+  // Stable on purpose: ConfirmDialog re-focuses Cancel whenever onCancel
+  // changes, which would steal focus from the note field on every keystroke
+  // and on every 3 s poll.
+  const cancelPending = useCallback(() => setPending(null), []);
 
   // Schedule form
   const [schedEnabled, setSchedEnabled] = useState(true);
@@ -199,8 +203,10 @@ export default function AntivirusTab() {
     if (sub === "quarantine") loadQuarantine();
   }, [sub, loadQuarantine]);
 
-  // Live progress: one 3 s poll while any scan is queued or running. When the
-  // last one finishes, the open detections are read again.
+  // Live progress: one 3 s poll while any scan is queued or running. Scans run
+  // one site at a time, so detections are read on each tick too (a finished
+  // site shows its threats without waiting for the whole batch), and once more
+  // when the last scan ends.
   const anyActive = scans.some(isActive);
   const wasActive = useRef(false);
   useEffect(() => {
@@ -214,6 +220,7 @@ export default function AntivirusTab() {
     wasActive.current = true;
     const t = window.setInterval(() => {
       loadScans().catch(() => {});
+      loadDetections().catch(() => {});
     }, POLL_MS);
     return () => window.clearInterval(t);
   }, [anyActive, loadScans, loadDetections]);
@@ -300,7 +307,7 @@ export default function AntivirusTab() {
     } else purge(p.item);
   };
 
-  const tz = schedule?.timezone || "UTC";
+  const tz = status?.schedule?.timezone || schedule?.timezone || "UTC";
   const detectionByQuarantine = new Map(
     quarantinedDetections.filter((d) => d.quarantine_id).map((d) => [d.quarantine_id as string, d]),
   );
@@ -327,7 +334,7 @@ export default function AntivirusTab() {
           confirmLabel="Delete"
           tone="danger"
           onConfirm={confirmPending}
-          onCancel={() => setPending(null)}
+          onCancel={cancelPending}
         />
       )}
       {pending?.kind === "ignore" && (
@@ -336,7 +343,7 @@ export default function AntivirusTab() {
           confirmLabel="Ignore"
           tone="warn"
           onConfirm={confirmPending}
-          onCancel={() => setPending(null)}
+          onCancel={cancelPending}
         >
           <label htmlFor="av-ignore-note" className="block text-xs text-dark-200 mb-1">Note (optional)</label>
           <input
@@ -356,7 +363,7 @@ export default function AntivirusTab() {
           confirmLabel="Delete permanently"
           tone="danger"
           onConfirm={confirmPending}
-          onCancel={() => setPending(null)}
+          onCancel={cancelPending}
         />
       )}
 
@@ -703,11 +710,12 @@ export function SiteAntivirusStatus({
     try {
       setSt(await api.get<AvSiteStatus>(`/antivirus/site-status?site_id=${encodeURIComponent(siteId)}`));
     } catch {
-      setSt(null);
+      // Hidden only when the first read fails; a failed poll keeps the last state.
     }
   }, [siteId]);
 
   useEffect(() => {
+    setSt(null);
     load();
   }, [load]);
 
