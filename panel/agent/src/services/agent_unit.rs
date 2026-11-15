@@ -203,4 +203,19 @@ mod tests {
             "the `-` prefix must be stripped before these are handed to mkdir"
         );
     }
+
+    #[test]
+    fn hestia_import_paths_are_writable() {
+        // 05-import-hestia (W1-S): staging under /var/lib/dockpanel/migration,
+        // site files in /var/www, maildirs in /var/vmail, the local MariaDB's
+        // config under /etc/mysql. A missing entry is EROFS at import time.
+        let paths = read_write_paths(AGENT_UNIT);
+        for p in ["/var/lib/dockpanel", "/var/www", "/var/vmail", "/etc/mysql"] {
+            assert!(paths.contains(&p), "{p} must be in ReadWritePaths");
+        }
+        assert!(
+            crate::services::migration::STAGING_ROOT.starts_with("/var/lib/dockpanel/"),
+            "the staging must stay inside a ReadWritePaths entry"
+        );
+    }
 }

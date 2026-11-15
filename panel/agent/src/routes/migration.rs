@@ -1,5 +1,5 @@
 use axum::{
-    extract::State,
+    extract::{Path, State},
     http::StatusCode,
     routing::{get, post},
     Json, Router,
@@ -22,16 +22,38 @@ pub fn router() -> Router<AppState> {
 }
 
 // --- import-hestia (05) ---
-// STEP 0 SKELETON (owner: W1): 501 until W1 implements W1-J / W1-C.
 
-/// GET /migration/jobs/{job_id} - state of an import job (W1-J).
-async fn job_status() -> (StatusCode, Json<serde_json::Value>) {
-    crate::routes::not_implemented()
+/// GET /migration/jobs/{job_id} - state of an import job (W1-J). 404 once the
+/// job is unknown (finished more than 6 h ago, or the agent restarted).
+async fn job_status(Path(job_id): Path<String>) -> (StatusCode, Json<serde_json::Value>) {
+    match crate::services::migration_jobs::get(&job_id) {
+        Some(v) => (StatusCode::OK, Json(v)),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "job not found", "code": "job_not_found" })),
+        ),
+    }
 }
 
 /// POST /migration/hestia/import-ssl - install a Hestia certificate (W1-C).
-async fn hestia_import_ssl() -> (StatusCode, Json<serde_json::Value>) {
-    crate::routes::not_implemented()
+/// Never returns nor logs the key.
+async fn hestia_import_ssl(Json(body): Json<serde_json::Value>) -> (StatusCode, Json<serde_json::Value>) {
+    let bad = |m: &str| (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": m })));
+    let Some(migration_id) = body["migration_id"].as_str() else { return bad("migration_id required") };
+    let Some(domain) = body["domain"].as_str() else { return bad("domain required") };
+    if migration::staging_dir(migration_id).is_err() {
+        return bad("Invalid migration ID format");
+    }
+    if !crate::routes::is_valid_domain(domain) {
+        return bad("Invalid domain format");
+    }
+    match migration::hestia_import_ssl(migration_id, domain).await {
+        Ok(v) => (StatusCode::OK, Json(v)),
+        Err((code, error)) => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(serde_json::json!({ "error": error, "code": code })),
+        ),
+    }
 }
 // --- end import-hestia (05) ---
 
@@ -81,9 +103,9 @@ async fn fetch(
 async fn analyze(
     State(_state): State<AppState>,
     Json(body): Json<serde_json::Value>,
-) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, String)> {
     let path = body["path"].as_str().ok_or((StatusCode::BAD_REQUEST, "path required".into()))?;
-    let source = body["source"].as_str().unwrap_or("cpanel");
+    let source = body["source"].as_str().unwrap_or("auto");
 
     // Reject traversal attempts
     if path.contains("..") || path.contains('\0') {
@@ -117,29 +139,61 @@ async fn analyze(
         return Err((StatusCode::BAD_REQUEST, "Resolved path not in allowed directories".into()));
     }
 
+    if !matches!(source, "auto" | "hestiacp" | "cpanel" | "plesk") {
+        return Err((StatusCode::BAD_REQUEST, format!("Unknown source: {source}")));
+    }
+
+    // `async: true` (05-import-hestia): answer 202 at once and run the analysis
+    // as a job, whose report is the inventory. A HestiaCP analysis reads every
+    // domain_data blob once and takes minutes on a large archive.
+    if body["async"].as_bool().unwrap_or(false) {
+        let id = uuid::Uuid::new_v4().to_string();
+        let (p, s, i) = (path.to_string(), source.to_string(), id.clone());
+        let job_id = crate::services::migration_jobs::spawn("analyze", &id, move |job| async move {
+            let inv = migration::analyze_with(&i, &p, &s, Some(job)).await?;
+            Ok(serde_json::to_value(inv).unwrap_or_default())
+        });
+        return Ok((StatusCode::ACCEPTED, Json(serde_json::json!({ "id": id, "job_id": job_id }))));
+    }
+
     match migration::analyze(path, source).await {
-        Ok(inventory) => Ok(Json(serde_json::to_value(inventory).unwrap_or_default())),
+        Ok(inventory) => Ok((StatusCode::OK, Json(serde_json::to_value(inventory).unwrap_or_default()))),
+        Err(e) if e == "Unknown backup format" => Err((StatusCode::BAD_REQUEST, e)),
         Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, e)),
     }
 }
 
-/// POST /migration/import-site - Copy files from extracted backup to /var/www/{domain}/
+/// POST /migration/import-site - place a site's files (W1-I).
+///
+/// With `mode` (`initial`|`force`): 202 `{job_id}`, the work runs as a job
+/// polled through `/migration/jobs/{id}`; validation fails at once with 400.
+/// Without `mode` but with `source_dir` (pre-05 callers): the historical
+/// synchronous copy, kept so an older backend keeps working.
 async fn import_site(
     State(_state): State<AppState>,
     Json(body): Json<serde_json::Value>,
-) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, String)> {
     let migration_id = body["migration_id"].as_str().ok_or((StatusCode::BAD_REQUEST, "migration_id required".into()))?;
     let domain = body["domain"].as_str().ok_or((StatusCode::BAD_REQUEST, "domain required".into()))?;
-    let source_dir = body["source_dir"].as_str().ok_or((StatusCode::BAD_REQUEST, "source_dir required".into()))?;
     // Decides whether the files belong in the site directory or in its `public`
     // subdirectory. Defaults to the same arm `put_site` takes for anything it
     // does not recognise, so an older panel that does not send the key lands
     // the files where a static or PHP vhost looks for them.
     let runtime = body["runtime"].as_str().unwrap_or("php");
+    let source_dir = body["source_dir"].as_str();
 
-    match migration::import_site_files(migration_id, domain, source_dir, runtime).await {
-        Ok(msg) => Ok(Json(serde_json::json!({ "ok": true, "message": msg }))),
-        Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, e)),
+    match body["mode"].as_str() {
+        Some(mode) => match migration::start_import_site(migration_id, domain, runtime, mode, source_dir) {
+            Ok(job_id) => Ok((StatusCode::ACCEPTED, Json(serde_json::json!({ "job_id": job_id })))),
+            Err(e) => Err((StatusCode::BAD_REQUEST, e)),
+        },
+        None => {
+            let source_dir = source_dir.ok_or((StatusCode::BAD_REQUEST, "mode required".into()))?;
+            match migration::import_site_files(migration_id, domain, source_dir, runtime).await {
+                Ok(msg) => Ok((StatusCode::OK, Json(serde_json::json!({ "ok": true, "message": msg })))),
+                Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, e)),
+            }
+        }
     }
 }
 

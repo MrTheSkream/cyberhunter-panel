@@ -546,15 +546,17 @@ install_dependencies() {
     # openssh-client is the SFTP backup destination's runtime: the agent shells out
     # to scp/ssh for every SFTP upload. Present by default on the images we test, but
     # a dependency that happens to be satisfied is still an undeclared dependency.
-    local BASE_PKGS="curl, openssl, ca-certificates, openssh-client"
+    # zstd + rsync: the HestiaCP import (05) reads .tar.zst blobs and places site
+    # files with rsync -a when the target already holds files.
+    local BASE_PKGS="curl, openssl, ca-certificates, openssh-client, rsync, zstd"
     if [ "$PKG_MGR" = "apt" ]; then
         # gnupg + lsb-release only exist/matter on Debian-based
         run "Installing base packages (${BASE_PKGS}, gnupg, lsb-release)" \
-            pkg_install curl openssl ca-certificates openssh-client gnupg lsb-release
+            pkg_install curl openssl ca-certificates openssh-client rsync zstd gnupg lsb-release
     else
         # RHEL-family names the ssh client package openssh-clients (plural).
         run "Installing base packages (${BASE_PKGS})" \
-            pkg_install curl openssl ca-certificates openssh-clients
+            pkg_install curl openssl ca-certificates openssh-clients rsync zstd
     fi
 
     # sshpass - required for PASSWORD-authenticated SFTP backup destinations, which
@@ -1791,6 +1793,10 @@ ServerSignature Off
 APACHE_CONF_EOF
     a2dissite -q 000-default >/dev/null 2>&1 || true
     a2dismod -q -f mpm_prefork mpm_worker >/dev/null 2>&1 || true
+    # D9 (05): ExecCGI is allowed in AllowOverride Options= so a client .htaccess
+    # with "Options -Indexes -ExecCGI" does not answer 500; with mod_cgi/cgid off,
+    # "+ExecCGI" then has no handler and executes nothing.
+    a2dismod -q -f cgi cgid >/dev/null 2>&1 || true
     local f
     for f in /etc/apache2/mods-enabled/php*.load; do
         [ -e "$f" ] || continue

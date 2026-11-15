@@ -80,7 +80,11 @@ RestrictNamespaces=~user
 # /etc/apache2 is Apache behind nginx (feature 4): per-site vhosts in
 # sites-enabled/, written by put_site. Optional like the other service trees,
 # hence the `-`; its error logs go to /var/log/apache2, already covered.
-ReadWritePaths=/etc/nginx /etc/dockpanel /var/run/dockpanel /var/backups/dockpanel /var/lib/dockpanel /var/www /var/log /etc/systemd/system /opt -/etc/letsencrypt -/etc/apt -/etc/fail2ban -/etc/powerdns -/etc/modsecurity -/etc/cloudflared -/etc/postfix -/etc/dovecot -/var/spool/postfix -/var/spool/cron -/var/vmail -/var/cache/nginx -/etc/ufw -/var/lib/ufw -/etc/php -/etc/ssh -/var/dockpanel-sftp -/etc/apache2
+# /etc/mysql is the local MariaDB of the HestiaCP import (05, D1): the agent
+# writes mariadb.conf.d/99-cyberhunter.cnf (bind, sql_mode). Optional, hence the `-`.
+# The import itself stages under /var/lib/dockpanel/migration and writes
+# /var/www and /var/vmail, all three already listed.
+ReadWritePaths=/etc/nginx /etc/dockpanel /var/run/dockpanel /var/backups/dockpanel /var/lib/dockpanel /var/www /var/log /etc/systemd/system /opt -/etc/letsencrypt -/etc/apt -/etc/fail2ban -/etc/powerdns -/etc/modsecurity -/etc/cloudflared -/etc/postfix -/etc/dovecot -/var/spool/postfix -/var/spool/cron -/var/vmail -/var/cache/nginx -/etc/ufw -/var/lib/ufw -/etc/php -/etc/ssh -/var/dockpanel-sftp -/etc/apache2 -/etc/mysql
 
 MemoryMax=512M
 LimitNOFILE=65535

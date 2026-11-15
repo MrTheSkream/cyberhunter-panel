@@ -558,6 +558,32 @@ NR_EOF
     fi
 fi
 
+# ── HestiaCP import (05): zstd + rsync, and no CGI module in Apache ──
+# setup.sh installs zstd and rsync as base packages since the HestiaCP import:
+# the agent reads .tar.zst blobs and places site files with rsync -a. Boxes
+# installed before that get them here. Best-effort: a mirror that is down must
+# not fail the update (the import then reports "install zstd" by name).
+for bin in zstd rsync; do
+    if ! command -v "$bin" &> /dev/null; then
+        if command -v apt-get &> /dev/null; then
+            DEBIAN_FRONTEND=noninteractive apt-get install -y "$bin" > /dev/null 2>&1 \
+                || warn "Could not install $bin - install it manually (apt-get install $bin)"
+        elif command -v dnf &> /dev/null; then
+            dnf install -y "$bin" > /dev/null 2>&1 \
+                || warn "Could not install $bin - install it manually (dnf install $bin)"
+        fi
+    fi
+done
+# D9: ExecCGI is allowed in AllowOverride Options= (a client .htaccess with
+# "Options -Indexes -ExecCGI" no longer answers 500); with mod_cgi/cgid off,
+# "+ExecCGI" has no handler and executes nothing. Idempotent.
+if command -v a2dismod &> /dev/null; then
+    if [ -e /etc/apache2/mods-enabled/cgi.load ] || [ -e /etc/apache2/mods-enabled/cgid.load ]; then
+        a2dismod -q -f cgi cgid > /dev/null 2>&1 || true
+        systemctl reload apache2 > /dev/null 2>&1 || true
+    fi
+fi
+
 # ── v2.38.0: heal RHEL-family installs the old installer left unreachable ──
 # Every install on Rocky/Alma/CentOS/Fedora before v2.38.0 finished in one of
 # two broken states, and an operator cannot click their way out of either

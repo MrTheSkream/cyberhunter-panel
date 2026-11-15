@@ -301,6 +301,11 @@ async fn main() {
     // unit. No-op when the bytes already match, which is every panel box.
     tokio::spawn(services::agent_unit::heal_agent_unit());
 
+    // --- import-hestia (05) ---
+    // Work dirs of a site import killed with the previous process (W1-I).
+    tokio::task::spawn_blocking(services::migration_files::sweep_stale_import_dirs);
+    // --- end import-hestia (05) ---
+
     // Start phone-home if configured (remote agent mode)
     if let Some(mut ph_config) = services::phone_home::PhoneHomeConfig::from_env() {
         ph_config.cert_fingerprint = Some(cert_fingerprint.clone());
