@@ -12,7 +12,7 @@ use crate::services;
 use crate::services::nginx::{restore_note, restore_or_remove};
 use crate::services::ssl;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 pub struct SiteConfig {
     /// Site runtime: "static", "php", "proxy"
     pub runtime: String,
@@ -85,6 +85,12 @@ pub struct SiteConfig {
     /// present = those two fields are ignored and this drives the pool.
     #[serde(default)]
     pub php_pool: Option<services::php_pool::PhpPool>,
+    /// Web server for a PHP site (feature 4): `"nginx"` (absent = nginx, the
+    /// vhost renders byte for byte as before) or `"apache"` (nginx in front,
+    /// Apache on the loopback reads `.htaccess`). Any other value is a 400.
+    /// Ignored, i.e. nginx, for every runtime other than `php`.
+    #[serde(default)]
+    pub web_server: Option<String>,
 }
 
 struct NginxResponse {
@@ -134,20 +140,111 @@ async fn put_site(
     state: State<AppState>,
     domain: Path<String>,
     config: Json<SiteConfig>,
-) -> Result<Json<NginxResponse>, (StatusCode, Json<NginxResponse>)> {
+) -> Result<Json<NginxResponse>, (StatusCode, Json<serde_json::Value>)> {
+    // Apache mode preconditions (contract A5), before any side effect.
+    apache_preflight(&config).await?;
+
     let mut pool_rollback: Option<services::php_pool::PoolRollback> = None;
-    let result = put_site_inner(state, domain, config, &mut pool_rollback).await;
-    match (result, pool_rollback) {
-        (Err((status, Json(mut resp))), Some(rollback)) => {
-            let restored = rollback.restore().await;
-            resp.message.push_str(if restored {
-                " (the previous PHP pool was restored)"
-            } else {
-                " (the new PHP pool was removed)"
-            });
-            Err((status, Json(resp)))
+    let mut apache_rollback: Option<services::apache::ApacheRollback> = None;
+    let result =
+        put_site_inner(state, domain, config, &mut pool_rollback, &mut apache_rollback).await;
+    match result {
+        Ok(resp) => Ok(resp),
+        Err((status, Json(mut resp))) => {
+            // A later step (nginx) failed after Apache took the new vhost: put
+            // Apache back first, so the restored nginx vhost finds the Apache
+            // it was written for.
+            if let Some(rollback) = apache_rollback {
+                resp.message.push_str(if rollback.restore().await {
+                    " (the previous Apache configuration was restored)"
+                } else {
+                    " (the previous Apache configuration could not be restored)"
+                });
+            }
+            if let Some(rollback) = pool_rollback {
+                let restored = rollback.restore().await;
+                resp.message.push_str(if restored {
+                    " (the previous PHP pool was restored)"
+                } else {
+                    " (the new PHP pool was removed)"
+                });
+            }
+            Err((status, Json(serde_json::to_value(&resp).unwrap_or_default())))
         }
-        (result, _) => result,
+    }
+}
+
+/// `{success, message, error, code}` for a refusal that carries a code.
+fn coded_refusal(
+    status: StatusCode,
+    message: &str,
+    code: &str,
+) -> (StatusCode, Json<serde_json::Value>) {
+    (
+        status,
+        Json(serde_json::json!({
+            "success": false,
+            "message": message,
+            "error": message,
+            "code": code,
+        })),
+    )
+}
+
+/// The checks that refuse an Apache-mode site before anything is touched:
+/// an invalid `web_server` (400), an OS without Apache support (400, code
+/// `apache_unsupported`), Apache not installed (409, code
+/// `apache_not_installed`), an Apache managed outside the panel (409, code
+/// `apache_foreign`). An installed panel Apache whose global configuration
+/// is missing or drifted is repaired here, before any site uses it.
+async fn apache_preflight(
+    config: &SiteConfig,
+) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+    use services::apache;
+    let ws = apache::parse_web_server(config.web_server.as_deref()).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "success": false, "message": e, "error": e })),
+        )
+    })?;
+    if ws != apache::WebServer::Apache || config.runtime != "php" {
+        return Ok(());
+    }
+    if let Some(why) = apache::unsupported_reason().await {
+        return Err(coded_refusal(StatusCode::BAD_REQUEST, &why, apache::UNSUPPORTED_CODE));
+    }
+    if !apache::is_installed().await {
+        return Err(coded_refusal(
+            StatusCode::CONFLICT,
+            "Apache is not installed",
+            apache::NOT_INSTALLED_CODE,
+        ));
+    }
+    match apache::ensure_global_config().await {
+        Ok(()) => {}
+        // An Apache the admin manages: never reconfigured, nothing touched.
+        Err(apache::GlobalConfigError::Foreign(why)) => {
+            return Err(coded_refusal(StatusCode::CONFLICT, &why, apache::FOREIGN_CODE));
+        }
+        Err(apache::GlobalConfigError::Failed(e)) => {
+            let msg = format!("Apache is installed but could not be configured: {e}");
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "success": false, "message": msg, "error": msg })),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// After nginx accepted a vhost that does not go through Apache, drop the
+/// domain's Apache vhost if it had one (switch back to nginx, or a runtime
+/// change). nginx no longer forwards to it, so this is never an outage.
+async fn drop_unused_apache_vhost(domain: &str) {
+    match services::apache::remove_site_vhost(domain).await {
+        Ok(true) => tracing::info!("{domain} no longer uses Apache: its Apache vhost was removed"),
+        Ok(false) => {}
+        Err(e) => tracing::warn!("Could not remove the Apache vhost of {domain}: {e}"),
     }
 }
 
@@ -156,7 +253,13 @@ async fn put_site_inner(
     Path(domain): Path<String>,
     Json(mut config): Json<SiteConfig>,
     pool_rollback: &mut Option<services::php_pool::PoolRollback>,
+    apache_rollback: &mut Option<services::apache::ApacheRollback>,
 ) -> Result<Json<NginxResponse>, (StatusCode, Json<NginxResponse>)> {
+    // Validated by `apache_preflight`; Apache is installed and configured when
+    // this is true.
+    let apache_mode =
+        services::apache::uses_apache(&config.runtime, config.web_server.as_deref());
+
     // Validate domain format
     if !is_valid_domain(&domain) {
         return Err((
@@ -365,7 +468,7 @@ async fn put_site_inner(
     // Must succeed: nginx -t calls mkdir() on this path at config-test time and
     // fails the whole reload if the parent doesn't exist. Returning here
     // prevents writing a config we know nginx can't validate (#54-B, v2.8.14).
-    if config.fastcgi_cache.unwrap_or(false) && config.runtime == "php" {
+    if config.fastcgi_cache.unwrap_or(false) && config.runtime == "php" && !apache_mode {
         let cache_dir = format!(
             "/var/cache/nginx/fastcgi/{}",
             domain.replace('.', "_")
@@ -401,6 +504,57 @@ async fn put_site_inner(
             ));
         }
     };
+
+    // Apache mode: the Apache vhost is written, tested and loaded BEFORE nginx
+    // is pointed at it, so the site is never forwarded to an Apache that does
+    // not know it (contract A5). A failure here leaves nginx untouched; a
+    // failure after it puts this vhost back (see `put_site`).
+    if apache_mode {
+        // The same rule the nginx path applies further down, checked here so
+        // a refusal cannot come after Apache already took the new vhost.
+        if let Some(ref root) = config.root {
+            if !root.starts_with("/var/www/") || root.contains("..") {
+                return Err((StatusCode::BAD_REQUEST, Json(NginxResponse {
+                    success: false,
+                    message: "Document root must be under /var/www/".into(),
+                })));
+            }
+        }
+        let aliases = services::apache::aliases_in_nginx_config(&rendered, &domain);
+        let document_root = services::apache::document_root(config.root.as_deref(), &domain);
+        let vhost = services::apache::render_apache_vhost(&services::apache::ApacheVhost {
+            domain: &domain,
+            aliases: &aliases,
+            document_root: &document_root,
+            php_socket: config
+                .php_socket
+                .as_deref()
+                .unwrap_or("unix:/run/php/php-fpm.sock"),
+            timeout_s: services::apache::request_timeout_s(config.php_pool.as_ref()),
+            max_upload_mb: config.max_upload_mb.unwrap_or(64),
+        })
+        .map_err(|e| {
+            (StatusCode::BAD_REQUEST, Json(NginxResponse { success: false, message: e }))
+        })?;
+        if let Err(e) = std::fs::create_dir_all(&document_root) {
+            tracing::warn!("Failed to create document root {document_root}: {e}");
+        }
+        match services::apache::apply_vhost(&domain, &vhost).await {
+            Ok(rollback) => *apache_rollback = Some(rollback),
+            Err(services::apache::ApplyError::Rejected(e)) => {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    Json(NginxResponse { success: false, message: e }),
+                ));
+            }
+            Err(services::apache::ApplyError::Failed(e)) => {
+                return Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(NginxResponse { success: false, message: e }),
+                ));
+            }
+        }
+    }
 
     // Write config file atomically (write to .tmp, then rename).
     //
@@ -472,6 +626,9 @@ async fn put_site_inner(
         if let Some(ref ver) = php_pool_version {
             services::php_pool::remove_pool_from_other_versions(&domain, ver).await;
         }
+        if !apache_mode {
+            drop_unused_apache_vhost(&domain).await;
+        }
         tracing::info!("Site {domain} is disabled: saved its configuration to {config_path} and left the maintenance response in service");
         return Ok(Json(NginxResponse {
             success: true,
@@ -487,6 +644,12 @@ async fn put_site_inner(
         Ok(output) if output.success => {
             // Reload nginx
             if let Err(e) = services::nginx::reload().await {
+                // Apache mode: `put_site` puts the previous Apache vhost back, so
+                // the nginx file must go back too, or the next reload would
+                // forward this site to an Apache that no longer knows it.
+                if apache_mode {
+                    restore_or_remove(&config_path, previous.as_deref());
+                }
                 return Err((
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(NginxResponse {
@@ -536,6 +699,12 @@ async fn put_site_inner(
             // `nginx -t` above restores a vhost that may still use them.
             if let Some(ref ver) = php_pool_version {
                 services::php_pool::remove_pool_from_other_versions(&domain, ver).await;
+            }
+
+            // Back to nginx (or no longer PHP): Apache is dropped only now that
+            // nginx serves the site without it - the reverse of the switch.
+            if !apache_mode {
+                drop_unused_apache_vhost(&domain).await;
             }
 
             Ok(Json(NginxResponse {
@@ -679,6 +848,13 @@ async fn delete_site(
         let log_path = format!("/var/log/nginx/{domain}.{suffix}");
         std::fs::remove_file(&log_path).ok();
     }
+
+    // Apache vhost and its error log (Apache mode). nginx no longer forwards
+    // this name, so removing it after the nginx reload is never an outage.
+    if let Err(e) = services::apache::remove_site_vhost(&domain).await {
+        tracing::warn!("Failed to remove the Apache vhost for {domain}: {e}");
+    }
+    std::fs::remove_file(services::apache::error_log_path(&domain)).ok();
 
     // App process service (Node.js/Python)
     if let Err(e) = services::app_process::remove_app_service(&domain) {
@@ -1042,6 +1218,11 @@ async fn rename_site(
                 let updated = pool_content.replace(&old_domain, new_domain);
                 std::fs::write(&new_pool_path, updated).ok();
                 std::fs::remove_file(&old_pool_path).ok();
+                // The pool's paths (open_basedir, tmp, sessions) now name the new
+                // directory: without a reload the running pool keeps the old
+                // open_basedir and refuses every script ("Operation not permitted").
+                // Non-fatal: reload_php_fpm already swallows reload failures.
+                let _ = services::nginx::reload_php_fpm(version).await;
             }
         }
     }
@@ -1187,6 +1368,35 @@ async fn rename_site(
         );
     }
 
+    // 9d. Apache mode: load the vhost under the new name BEFORE nginx starts
+    //     forwarding it, keeping the old one until nginx has switched, so Apache
+    //     always knows the name nginx sends. Undone below if nginx refuses.
+    let old_apache = services::apache::vhost_path(&old_domain);
+    let mut apache_carried = false;
+    if services::apache::is_managed_vhost(&old_apache) {
+        let body = std::fs::read_to_string(&old_apache).unwrap_or_default();
+        let carried_body = body.replace(&old_domain, new_domain);
+        match services::apache::apply_vhost(new_domain, &carried_body).await {
+            Ok(_) => apache_carried = true,
+            Err(services::apache::ApplyError::Rejected(e))
+            | Err(services::apache::ApplyError::Failed(e)) => {
+                undo_backup_carry(&carried, &old_domain);
+                std::fs::write(&old_conf, &config_content).ok();
+                services::nginx::restore_or_remove(&new_conf, displaced.as_deref());
+                if std::path::Path::new(&new_dir).exists() {
+                    std::fs::rename(&new_dir, &old_dir).ok();
+                }
+                return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(NginxResponse {
+                    success: false,
+                    message: format!(
+                        "Could not carry the Apache vhost of {old_domain} over to {new_domain}: \
+                         {e}. The rename was rolled back."
+                    ),
+                })));
+            }
+        }
+    }
+
     // 10. Test and reload nginx
     match services::nginx::test_config().await {
         Ok(output) if output.success => {
@@ -1194,6 +1404,21 @@ async fn rename_site(
                 return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(NginxResponse {
                     success: false, message: format!("Config valid but reload failed: {e}"),
                 })));
+            }
+            if apache_carried {
+                // nginx now forwards the new name: the old Apache vhost and
+                // its error log follow the nginx ones. The log is moved before
+                // the reload, so Apache reopens it under the new name.
+                if let Err(e) = services::apache::remove_file(&old_apache).await {
+                    tracing::warn!("Could not remove {old_apache} after the rename: {e}");
+                }
+                let old_log = services::apache::error_log_path(&old_domain);
+                if std::path::Path::new(&old_log).exists() {
+                    std::fs::rename(&old_log, services::apache::error_log_path(new_domain)).ok();
+                }
+                if let Err(e) = services::apache::reload().await {
+                    tracing::warn!("Apache reload after renaming {old_domain} failed: {e}");
+                }
             }
             tracing::info!("Domain renamed: {old_domain} → {new_domain}");
             Ok(Json(NginxResponse {
@@ -1204,6 +1429,9 @@ async fn rename_site(
         Ok(output) => {
             // Rollback: restore old config, and put back whatever we displaced
             // at the destination rather than deleting it.
+            if apache_carried {
+                services::apache::remove_site_vhost(new_domain).await.ok();
+            }
             std::fs::write(&old_conf, &config_content).ok();
             undo_backup_carry(&carried, &old_domain);
             let restored = services::nginx::restore_or_remove(&new_conf, displaced.as_deref());
@@ -1220,6 +1448,9 @@ async fn rename_site(
             })))
         }
         Err(e) => {
+            if apache_carried {
+                services::apache::remove_site_vhost(new_domain).await.ok();
+            }
             std::fs::write(&old_conf, &config_content).ok();
             undo_backup_carry(&carried, &old_domain);
             services::nginx::restore_or_remove(&new_conf, displaced.as_deref());
@@ -1654,13 +1885,36 @@ async fn add_alias(
         ));
     }
 
+    // Apache mode: Apache learns the alias before nginx forwards it, or the
+    // alias would land on Apache's catch-all 404.
+    let apache_path = services::apache::vhost_path(&body.domain);
+    let mut apache_rollback: Option<services::apache::ApacheRollback> = None;
+    if services::apache::is_managed_vhost(&apache_path) {
+        let current = std::fs::read_to_string(&apache_path).unwrap_or_default();
+        let patched = services::apache::vhost_with_alias_added(&current, &body.alias)
+            .ok_or_else(|| api_err(StatusCode::INTERNAL_SERVER_ERROR, "Could not find ServerName in the Apache vhost"))?;
+        if patched != current {
+            match services::apache::apply_vhost(&body.domain, &patched).await {
+                Ok(rb) => apache_rollback = Some(rb),
+                Err(services::apache::ApplyError::Rejected(e)) => {
+                    return Err(api_err(StatusCode::BAD_REQUEST, &e));
+                }
+                Err(services::apache::ApplyError::Failed(e)) => {
+                    return Err(api_err(StatusCode::INTERNAL_SERVER_ERROR, &e));
+                }
+            }
+        }
+    }
+
     let tmp = format!("{site_conf}.tmp");
-    std::fs::write(&tmp, &new_content)
-        .map_err(|e| api_err(StatusCode::INTERNAL_SERVER_ERROR, &format!("{e}")))?;
-    std::fs::rename(&tmp, &site_conf).map_err(|e| {
+    let written = std::fs::write(&tmp, &new_content).and_then(|_| std::fs::rename(&tmp, &site_conf));
+    if let Err(e) = written {
         std::fs::remove_file(&tmp).ok();
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, &format!("{e}"))
-    })?;
+        if let Some(rb) = apache_rollback {
+            rb.restore().await;
+        }
+        return Err(api_err(StatusCode::INTERNAL_SERVER_ERROR, &format!("{e}")));
+    }
 
     match services::nginx::test_config().await {
         Ok(output) if output.success => {
@@ -1673,6 +1927,9 @@ async fn add_alias(
         }
         _ => {
             // Revert
+            if let Some(rb) = apache_rollback {
+                rb.restore().await;
+            }
             std::fs::write(&site_conf, &content).ok();
             if let Err(e) = services::nginx::reload().await {
                 tracing::warn!("Nginx reload failed during alias rollback for {}: {e}", body.domain);
@@ -1764,6 +2021,22 @@ async fn remove_alias(
         }
     }
 
+    // Apache mode: drop the alias there too, now that nginx no longer
+    // forwards it.
+    let apache_path = services::apache::vhost_path(&domain);
+    if services::apache::is_managed_vhost(&apache_path) {
+        let current = std::fs::read_to_string(&apache_path).unwrap_or_default();
+        let patched = services::apache::vhost_with_alias_removed(&current, alias);
+        if patched != current {
+            if let Err(services::apache::ApplyError::Rejected(e))
+            | Err(services::apache::ApplyError::Failed(e)) =
+                services::apache::apply_vhost(&domain, &patched).await
+            {
+                tracing::warn!("Could not remove alias {alias} from the Apache vhost of {domain}: {e}");
+            }
+        }
+    }
+
     tracing::info!("Domain alias removed: {alias} from {domain}");
     Ok(Json(serde_json::json!({ "ok": true })))
 }
@@ -1791,6 +2064,7 @@ async fn site_logs(
 
     let log_file = match log_type {
         "error" => format!("/var/log/nginx/{domain}.error.log"),
+        "apache_error" => services::apache::error_log_path(&domain),
         _ => format!("/var/log/nginx/{domain}.access.log"),
     };
 

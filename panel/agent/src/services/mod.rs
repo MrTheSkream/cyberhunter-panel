@@ -1,4 +1,5 @@
 pub mod agent_unit;
+pub mod apache;
 pub mod app_process;
 pub mod app_sidecar;
 pub mod command_filter;

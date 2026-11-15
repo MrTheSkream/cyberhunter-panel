@@ -846,10 +846,11 @@ async fn auto_renew_ssl(pool: &PgPool, agents: &AgentRegistry) {
         Option<chrono::DateTime<chrono::Utc>>,
         Option<String>,
         uuid::Uuid,
+        String,
     )> = match sqlx::query_as(
         "SELECT s.id, s.domain, s.user_id, s.runtime, s.proxy_port, s.php_version, s.root_path, \
                 s.ssl_expiry, s.ssl_renewal_at, s.ssl_renewal_checked_at, s.ssl_profile, \
-                s.server_id \
+                s.server_id, s.web_server \
          FROM sites s \
          WHERE s.ssl_enabled = TRUE AND s.ssl_expiry IS NOT NULL \
          AND s.ssl_expiry < NOW() + INTERVAL '45 days'",
@@ -866,7 +867,7 @@ async fn auto_renew_ssl(pool: &PgPool, agents: &AgentRegistry) {
     for row in &sites {
         let (site_id, domain, user_id, runtime, proxy_port, php_version, root_path,
              ssl_expiry, ssl_renewal_at_initial, ssl_renewal_checked_at, ssl_profile,
-             server_id) = row;
+             server_id, web_server) = row;
 
         // Resolve the host from the ROW before doing anything else. Every leg
         // below writes: ARI state, the certificate itself, `ssl_expiry`, and a
@@ -1016,7 +1017,14 @@ async fn auto_renew_ssl(pool: &PgPool, agents: &AgentRegistry) {
         let mut agent_body = serde_json::json!({
             "email": email,
             "runtime": runtime,
+            // Feature 4: the agent re-renders the vhost from this body.
+            "web_server": web_server,
         });
+        // The per-site PHP pool `build_nginx_body` sends, so the re-rendered
+        // vhost keeps the site's PHP timeouts. Omitted when it cannot be read.
+        if let Some(php_pool) = crate::routes::php_settings::php_pool_for_site_id(pool, *site_id).await {
+            agent_body["php_pool"] = php_pool;
+        }
         if let Some(port) = proxy_port {
             agent_body["proxy_port"] = serde_json::json!(port);
         }

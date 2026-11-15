@@ -9,6 +9,14 @@ import { FieldHelp, InfoTip } from "../components/FieldHelp";
 import PhpVersionPicker from "../components/PhpVersionPicker";
 import { useAuth } from "../context/AuthContext";
 import { useServerIps, serverIpOptionLabel } from "../utils/serverIps";
+import {
+  ApacheInstallCallout,
+  ApacheUnsupportedNotice,
+  APACHE_UNSUPPORTED_MESSAGE,
+  useApacheInstalled,
+  isApacheNotInstalled,
+  isApacheUnsupported,
+} from "../components/ApacheInstall";
 
 interface Site {
   id: string;
@@ -23,6 +31,8 @@ interface Site {
   ip_id?: string | null;
   /** Effective IP of `ip_id`; null = primary IP. */
   bind_ip?: string | null;
+  /** "apache" = nginx in front of Apache (.htaccess read). Absent on older backends = "nginx". */
+  web_server?: "nginx" | "apache";
   // Present only on the admin all-sites view (GET /api/admin/sites). The
   // owner-scoped list cannot carry them, and would not need to: every row it
   // returns belongs to the person reading it.
@@ -66,6 +76,14 @@ export default function Sites() {
   const [proxyPort, setProxyPort] = useState("");
   const [phpVersion, setPhpVersion] = useState("8.3");
   const [phpPreset, setPhpPreset] = useState("generic");
+  // PHP sites default to nginx + Apache (decision D1), like HestiaCP.
+  const [webServer, setWebServer] = useState<"apache" | "nginx">("apache");
+  // Set when a create was refused with `apache_not_installed`: the install is
+  // then offered, and the create retried once Apache is really there.
+  const [apacheRefused, setApacheRefused] = useState(false);
+  // Set when a create was refused with `apache_unsupported`: nothing to
+  // install, nginx only is offered instead (never switched to silently).
+  const [apacheUnsupportedRefused, setApacheUnsupportedRefused] = useState(false);
   const [appCommand, setAppCommand] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [cms, setCms] = useState("");
@@ -105,8 +123,31 @@ export default function Sites() {
     api.get<PanelUser[]>("/users").then(setUsers).catch(() => setUsers([]));
   }, [isAdmin]);
 
-  const handleCreate = async (e: FormEvent) => {
+  const effectiveRuntimeForm = cms ? "php" : runtime;
+  const wantsApache = effectiveRuntimeForm === "php" && webServer === "apache";
+  // install-status is admin-only; for everyone else both answers stay null
+  // (unknown) and the server's 409 / 400 is what raises the callout or notice.
+  // Read for any PHP form, not only once Apache is chosen: whether Apache can
+  // run here decides what is preselected.
+  const apache = useApacheInstalled(isAdmin && showForm && effectiveRuntimeForm === "php");
+  const apacheUnsupported = apache.supported === false;
+  const showApacheUnsupported = wantsApache && (apacheUnsupported || apacheUnsupportedRefused);
+  const showApacheCallout =
+    wantsApache && !showApacheUnsupported && (apacheRefused || apache.installed === false);
+
+  // Known up front that Apache cannot run here: preselect nginx only. The
+  // Apache option stays visible but disabled, with the reason beside it, so
+  // this is a stated choice and not a silent fallback.
+  useEffect(() => {
+    if (apacheUnsupported) setWebServer("nginx");
+  }, [apacheUnsupported]);
+
+  const handleCreate = (e: FormEvent) => {
     e.preventDefault();
+    createSite();
+  };
+
+  const createSite = async (webServerOverride?: "apache" | "nginx") => {
     setError("");
     setSubmitting(true);
     try {
@@ -120,6 +161,9 @@ export default function Sites() {
       if (effectiveRuntime === "php") {
         body.php_version = phpVersion;
         body.php_preset = effectivePreset;
+        // Always explicit: the backend defaults PHP to "apache", so "nginx
+        // only" has to be said.
+        body.web_server = webServerOverride ?? webServer;
       }
       if (cms) {
         body.cms = cms;
@@ -143,8 +187,25 @@ export default function Sites() {
       setAdminUser("admin");
       setAdminPassword("");
       setIpId("");
+      setWebServer(apacheUnsupported ? "nginx" : "apache");
+      setApacheRefused(false);
+      setApacheUnsupportedRefused(false);
       fetchSites();
     } catch (err) {
+      if (isApacheUnsupported(err)) {
+        // Nothing to install: say so and offer nginx only, without retrying.
+        setApacheUnsupportedRefused(true);
+        setApacheRefused(false);
+        setError("");
+        return;
+      }
+      if (isApacheNotInstalled(err)) {
+        // Not a silent fallback to nginx: say so and offer both ways out.
+        setApacheRefused(true);
+        apache.setInstalled(false);
+        setError("");
+        return;
+      }
       setError(err instanceof Error ? err.message : "Failed to create site");
     } finally {
       setSubmitting(false);
@@ -427,6 +488,60 @@ export default function Sites() {
                 </select>
                 <p className="text-xs text-dark-400 mt-1.5">Nginx configuration preset for your PHP framework</p>
               </div>
+            </div>
+          )}
+
+          {(runtime === "php" || cms) && (
+            <div className="space-y-2">
+              <label htmlFor="site-web-server" className="block text-sm font-medium text-dark-100 mb-1">Web server</label>
+              <select
+                id="site-web-server"
+                value={webServer}
+                onChange={(e) => {
+                  setWebServer(e.target.value as "apache" | "nginx");
+                  setApacheRefused(false);
+                  setApacheUnsupportedRefused(false);
+                }}
+                className="w-full md:w-1/2 px-3 py-2.5 border border-dark-500 rounded-lg focus:ring-2 focus:ring-accent-500 focus:border-accent-500 outline-none text-sm bg-dark-800"
+              >
+                <option value="apache" disabled={apacheUnsupported}>
+                  {apacheUnsupported ? "nginx + Apache (not supported on this server)" : "nginx + Apache (.htaccess)"}
+                </option>
+                <option value="nginx">nginx only</option>
+              </select>
+              <p className="text-xs text-dark-400">
+                {apacheUnsupported && webServer === "nginx"
+                  ? `${APACHE_UNSUPPORTED_MESSAGE} nginx serves the site on its own. .htaccess files are ignored.`
+                  : webServer === "apache"
+                  ? "nginx serves static files and passes PHP requests to Apache, which reads .htaccess files. php_value / php_flag in .htaccess do not work with PHP-FPM: use PHP settings or .user.ini."
+                  : "nginx serves the site on its own. .htaccess files are ignored."}
+              </p>
+              {showApacheUnsupported && (
+                <ApacheUnsupportedNotice
+                  disabled={submitting}
+                  onUseNginx={() => {
+                    setWebServer("nginx");
+                    setApacheRefused(false);
+                    setApacheUnsupportedRefused(false);
+                  }}
+                />
+              )}
+              {showApacheCallout && (
+                <ApacheInstallCallout
+                  canInstall={isAdmin}
+                  recheck={apache.refresh}
+                  disabled={submitting}
+                  installLabel={apacheRefused ? "Install Apache and create the site" : "Install Apache"}
+                  onInstalled={() => {
+                    const retry = apacheRefused;
+                    setApacheRefused(false);
+                    // The create that was refused goes through now; a proactive
+                    // install just clears the way for the Create button.
+                    if (retry) createSite("apache");
+                  }}
+                  onUseNginx={() => { setWebServer("nginx"); setApacheRefused(false); }}
+                />
+              )}
             </div>
           )}
 

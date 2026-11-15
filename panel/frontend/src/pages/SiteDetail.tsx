@@ -8,6 +8,14 @@ import PhpVersionPicker from "../components/PhpVersionPicker";
 import PhpSettingsCard from "../components/PhpSettingsCard";
 import { useAuth } from "../context/AuthContext";
 import { useServerIps, serverIpOptionLabel } from "../utils/serverIps";
+import {
+  ApacheInstallCallout,
+  ApacheUnsupportedNotice,
+  APACHE_UNSUPPORTED_MESSAGE,
+  useApacheInstalled,
+  isApacheNotInstalled,
+  isApacheUnsupported,
+} from "../components/ApacheInstall";
 
 interface Site {
   id: string;
@@ -45,7 +53,11 @@ interface Site {
   ip_id?: string | null;
   /** Effective IP of `ip_id`; null = primary IP. */
   bind_ip?: string | null;
+  /** "apache" = nginx in front of Apache (.htaccess read). Absent on older backends = "nginx". */
+  web_server?: "nginx" | "apache";
 }
+
+type SiteLogType = "access" | "error" | "apache_error";
 
 interface StagingInfo {
   exists: boolean;
@@ -157,9 +169,10 @@ export default function SiteDetail() {
   const [accessLogs, setAccessLogs] = useState("");
   const [errorLogs, setErrorLogs] = useState("");
   const [phpErrors, setPhpErrors] = useState("");
+  const [apacheErrorLogs, setApacheErrorLogs] = useState("");
   const [logsLoading, setLogsLoading] = useState(false);
   const [showAccessLogs, setShowAccessLogs] = useState(false);
-  const [logType, setLogType] = useState<"access" | "error" | "php">("access");
+  const [logType, setLogType] = useState<SiteLogType | "php">("access");
 
   // Traffic Stats
   interface TrafficStats {
@@ -232,6 +245,18 @@ export default function SiteDetail() {
   const [newDomain, setNewDomain] = useState("");
   const [renaming, setRenaming] = useState(false);
   const [renameMsg, setRenameMsg] = useState("");
+
+  // Web server (nginx only / nginx + Apache)
+  const [webServerTarget, setWebServerTarget] = useState<"nginx" | "apache" | null>(null);
+  const [webServerSwitching, setWebServerSwitching] = useState(false);
+  const [webServerMsg, setWebServerMsg] = useState("");
+  // The switch was refused with `apache_not_installed`: offer the install, then retry.
+  const [webServerApacheMissing, setWebServerApacheMissing] = useState(false);
+  // The switch was refused with `apache_unsupported`: nothing to install.
+  const [webServerApacheUnsupported, setWebServerApacheUnsupported] = useState(false);
+  // Read up front for any PHP site (admins only, the route is admin-only), so a
+  // server that cannot run Apache disables the switch before it is tried.
+  const apacheStatus = useApacheInstalled(user?.role === "admin" && site?.runtime === "php");
 
   // FastCGI Cache
   const [cacheToggling, setCacheToggling] = useState(false);
@@ -337,17 +362,48 @@ export default function SiteDetail() {
       .catch(() => {});
   };
 
+  const switchWebServer = async (target: "nginx" | "apache") => {
+    setWebServerSwitching(true);
+    setWebServerMsg("");
+    try {
+      const res = await api.put<{ web_server: "nginx" | "apache" }>(`/sites/${id}/web-server`, {
+        web_server: target,
+      });
+      const now = res?.web_server ?? target;
+      setSite((s) => (s ? { ...s, web_server: now } : s));
+      if (now !== "apache" && logType === "apache_error") setLogType("access");
+      setWebServerTarget(null);
+      setWebServerApacheMissing(false);
+      setWebServerApacheUnsupported(false);
+      setWebServerMsg(now === "apache" ? "Switched to nginx + Apache" : "Switched to nginx only");
+    } catch (err) {
+      if (isApacheUnsupported(err)) {
+        // Nothing to install: say so and keep nginx only, without retrying.
+        setWebServerApacheUnsupported(true);
+        setWebServerApacheMissing(false);
+      } else if (isApacheNotInstalled(err)) {
+        setWebServerApacheMissing(true);
+        apacheStatus.setInstalled(false);
+      } else {
+        setWebServerMsg(err instanceof Error ? err.message : "Switch failed");
+      }
+    } finally {
+      setWebServerSwitching(false);
+    }
+  };
+
   const loadAliases = () => {
     api.get<{ aliases: string[] }>(`/sites/${id}/aliases`)
       .then((d) => setAliases(d.aliases || []))
       .catch(() => {});
   };
 
-  const loadLogs = async (type: "access" | "error") => {
+  const loadLogs = async (type: SiteLogType) => {
     setLogsLoading(true);
     try {
       const data = await api.get<{ logs: string }>(`/sites/${id}/access-logs?type=${type}&lines=200`);
       if (type === "access") setAccessLogs(data.logs);
+      else if (type === "apache_error") setApacheErrorLogs(data.logs);
       else setErrorLogs(data.logs);
     } catch {}
     finally { setLogsLoading(false); }
@@ -1678,22 +1734,153 @@ export default function SiteDetail() {
         />
       )}
 
+      {/* Web server - PHP sites only */}
+      {site.runtime === "php" && (() => {
+        const mode = site.web_server === "apache" ? "apache" : "nginx";
+        const target = mode === "apache" ? "nginx" : "apache";
+        // Only the nginx -> Apache direction is blocked: a site already in
+        // Apache mode can always go back to nginx only.
+        const apacheUnsupported = apacheStatus.supported === false;
+        const showApacheUnsupported =
+          webServerTarget === "apache" && (apacheUnsupported || webServerApacheUnsupported);
+        const showApacheCallout =
+          webServerTarget === "apache" &&
+          !showApacheUnsupported &&
+          (webServerApacheMissing || apacheStatus.installed === false);
+        return (
+          <div className="bg-dark-800 rounded-lg border border-dark-500 overflow-hidden mt-6">
+            <div className="px-5 py-4 border-b border-dark-600 flex items-center justify-between">
+              <h2 className="text-xs font-medium text-dark-300 uppercase font-mono tracking-widest">Web server</h2>
+              <span className={`inline-flex px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                mode === "apache" ? "bg-rust-500/10 text-rust-400" : "bg-dark-700 text-dark-300"
+              }`}>
+                {mode === "apache" ? "nginx + Apache (.htaccess)" : "nginx only"}
+              </span>
+            </div>
+            <div className="p-5 space-y-4">
+              {mode === "apache" ? (
+                <p className="text-sm text-dark-200">
+                  nginx serves static files and passes PHP requests to Apache. .htaccess files are read.{" "}
+                  <span className="font-mono">php_value</span> / <span className="font-mono">php_flag</span> in
+                  .htaccess do not work with PHP-FPM: use PHP settings or <span className="font-mono">.user.ini</span>.
+                </p>
+              ) : (
+                <p className="text-sm text-dark-200">
+                  nginx serves the site on its own. .htaccess files are ignored: rewrite rules have to be
+                  written as nginx configuration.
+                </p>
+              )}
+
+              {webServerTarget ? (
+                <div className="rounded-lg border border-warn-500/30 bg-warn-500/5 p-3 space-y-3">
+                  <p className="text-xs text-dark-200">
+                    {webServerTarget === "apache"
+                      ? "Switch this site to nginx + Apache? Its vhost is rebuilt and its .htaccess files start being read, including rules that were ignored until now. The FastCGI cache is not used in this mode (its setting is kept)."
+                      : "Switch this site to nginx only? Its vhost is rebuilt and its .htaccess files stop being read: the rewrite rules and redirects they contain no longer apply."}
+                  </p>
+                  {showApacheUnsupported && (
+                    <ApacheUnsupportedNotice
+                      disabled={webServerSwitching}
+                      onUseNginx={() => {
+                        setWebServerTarget(null);
+                        setWebServerApacheMissing(false);
+                        setWebServerApacheUnsupported(false);
+                      }}
+                    />
+                  )}
+                  {showApacheCallout && (
+                    <ApacheInstallCallout
+                      canInstall={user?.role === "admin"}
+                      recheck={apacheStatus.refresh}
+                      disabled={webServerSwitching}
+                      installLabel={webServerApacheMissing ? "Install Apache and switch" : "Install Apache"}
+                      onInstalled={() => {
+                        const retry = webServerApacheMissing;
+                        setWebServerApacheMissing(false);
+                        if (retry) switchWebServer("apache");
+                      }}
+                      onUseNginx={() => { setWebServerTarget(null); setWebServerApacheMissing(false); }}
+                    />
+                  )}
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={webServerSwitching || showApacheUnsupported}
+                      onClick={() => switchWebServer(webServerTarget)}
+                      className="text-xs px-3 py-1.5 rounded-lg bg-rust-600 text-white hover:bg-rust-500 disabled:opacity-50"
+                    >
+                      {webServerSwitching
+                        ? "Switching..."
+                        : webServerTarget === "apache" ? "Switch to nginx + Apache" : "Switch to nginx only"}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={webServerSwitching}
+                      onClick={() => {
+                        setWebServerTarget(null);
+                        setWebServerApacheMissing(false);
+                        setWebServerApacheUnsupported(false);
+                        setWebServerMsg("");
+                      }}
+                      className="text-xs px-3 py-1.5 rounded-lg border border-dark-600 text-dark-100 hover:text-dark-50"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center gap-3 flex-wrap">
+                  <button
+                    type="button"
+                    disabled={target === "apache" && apacheUnsupported}
+                    onClick={() => {
+                      setWebServerMsg("");
+                      setWebServerApacheMissing(false);
+                      setWebServerApacheUnsupported(false);
+                      setWebServerTarget(target);
+                    }}
+                    className="px-4 py-2 bg-dark-700 text-dark-100 rounded-lg text-sm font-medium hover:bg-dark-600 transition-colors disabled:opacity-50 disabled:hover:bg-dark-700"
+                  >
+                    {target === "apache" ? "Switch to nginx + Apache" : "Switch to nginx only"}
+                  </button>
+                  {target === "apache" && apacheUnsupported && (
+                    <span className="text-xs text-dark-300">{APACHE_UNSUPPORTED_MESSAGE}</span>
+                  )}
+                </div>
+              )}
+              {webServerMsg && (
+                <p className={`text-xs ${webServerMsg.startsWith("Switched") ? "text-rust-400" : "text-danger-400"}`}>
+                  {webServerMsg}
+                </p>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* FastCGI Cache - PHP sites only */}
       {site.runtime === "php" && site.status === "active" && (
         <div className="bg-dark-800 rounded-lg border border-dark-500 overflow-hidden mt-6">
           <div className="px-5 py-4 border-b border-dark-600 flex items-center justify-between">
             <h2 className="text-xs font-medium text-dark-300 uppercase font-mono tracking-widest">FastCGI Cache</h2>
             <span className={`inline-flex px-2.5 py-0.5 rounded-full text-xs font-medium ${
+              site.web_server === "apache" ? "bg-dark-700 text-dark-300" :
               site.fastcgi_cache ? "bg-rust-500/10 text-rust-400" : "bg-dark-700 text-dark-300"
             }`}>
-              {site.fastcgi_cache ? "Enabled" : "Disabled"}
+              {site.web_server === "apache" ? "Not used" : site.fastcgi_cache ? "Enabled" : "Disabled"}
             </span>
           </div>
           <div className="p-5 space-y-4">
             <p className="text-sm text-dark-200">
               Caches PHP responses at the Nginx level. Dramatically improves page load times for WordPress, Laravel, and other PHP applications. Logged-in users and POST requests bypass the cache automatically.
             </p>
-            <div className="flex items-center gap-3">
+            {site.web_server === "apache" && (
+              <p className="text-sm text-warn-400">
+                Not used in nginx + Apache mode: PHP requests go to Apache, not through the FastCGI cache.
+                The setting ({site.fastcgi_cache ? "enabled" : "disabled"}) is kept and applies again if the site is switched to nginx only.
+              </p>
+            )}
+            <div className={`flex items-center gap-3 ${site.web_server === "apache" ? "hidden" : ""}`}>
               <button
                 disabled={cacheToggling}
                 onClick={async () => {
@@ -2803,7 +2990,7 @@ export default function SiteDetail() {
       {/* Access Logs */}
       {site.status === "active" && (
         <div className="bg-dark-800 rounded-lg border border-dark-500 overflow-hidden mt-6">
-          <button onClick={() => { setShowAccessLogs(!showAccessLogs); if (!showAccessLogs) loadLogs(logType === "php" ? "access" : logType as "access" | "error"); }}
+          <button onClick={() => { setShowAccessLogs(!showAccessLogs); if (!showAccessLogs) loadLogs(logType === "php" ? "access" : logType); }}
             className="w-full px-5 py-4 flex items-center justify-between hover:bg-dark-700/30 transition-colors">
             <h2 className="text-xs font-medium text-dark-300 uppercase font-mono tracking-widest">Access Logs</h2>
             <svg className={`w-4 h-4 text-dark-300 transition-transform ${showAccessLogs ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -2818,17 +3005,21 @@ export default function SiteDetail() {
                     className={`px-2 py-1 rounded text-xs font-medium ${logType === "access" ? "bg-rust-500/15 text-rust-400" : "text-dark-300 hover:text-dark-100"}`}>Access</button>
                   <button onClick={() => { setLogType("error"); loadLogs("error"); }}
                     className={`px-2 py-1 rounded text-xs font-medium ${logType === "error" ? "bg-danger-400/15 text-danger-400" : "text-dark-300 hover:text-dark-100"}`}>Error</button>
+                  {site.runtime === "php" && site.web_server === "apache" && (
+                    <button onClick={() => { setLogType("apache_error"); loadLogs("apache_error"); }}
+                      className={`px-2 py-1 rounded text-xs font-medium ${logType === "apache_error" ? "bg-danger-400/15 text-danger-400" : "text-dark-300 hover:text-dark-100"}`}>Apache error log</button>
+                  )}
                   {site.runtime === "php" && (
                     <button onClick={() => { setLogType("php"); loadPhpErrors(); }}
                       className={`px-2 py-1 rounded text-xs font-medium ${logType === "php" ? "bg-warn-500/15 text-warn-400" : "text-dark-300 hover:text-dark-100"}`}>PHP Errors</button>
                   )}
                 </div>
-                <button onClick={() => logType === "php" ? loadPhpErrors() : loadLogs(logType as "access" | "error")} className="text-xs text-rust-400 hover:text-rust-300">
+                <button onClick={() => logType === "php" ? loadPhpErrors() : loadLogs(logType)} className="text-xs text-rust-400 hover:text-rust-300">
                   {logsLoading ? "Loading..." : "Refresh"}
                 </button>
               </div>
               <pre className="p-4 text-[11px] font-mono text-dark-200 bg-dark-950 max-h-80 overflow-y-auto overflow-x-auto whitespace-pre-wrap">
-                {logsLoading ? "Loading logs..." : (logType === "access" ? accessLogs : logType === "error" ? errorLogs : phpErrors) || "No logs available"}
+                {logsLoading ? "Loading logs..." : (logType === "access" ? accessLogs : logType === "error" ? errorLogs : logType === "apache_error" ? apacheErrorLogs : phpErrors) || "No logs available"}
               </pre>
             </div>
           )}

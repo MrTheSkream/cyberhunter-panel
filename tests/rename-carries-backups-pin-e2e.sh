@@ -142,9 +142,10 @@ has "C5 doubt counts as occupied"             "$F_OCC" 'Err(_)=>true'
 has "C6 and only NotFound counts as free"     "$F_OCC" 'ErrorKind::NotFound=>false'
 
 echo "── §D  the rollback is symmetric"
-# 1 definition + 3 call sites: the carry's own failure, and BOTH nginx -t
-# branches. Counted, not merely present - deleting one call leaves the other two.
-eq  "D1 the undo is wired at every abort"     "$(occ "$F_ANGINX" 'undo_backup_carry(')" 4
+# 1 definition + 4 call sites: the carry's own failure, the Apache vhost carry
+# (Apache mode, feature 4), and BOTH nginx -t branches. Counted, not merely
+# present - deleting one call leaves the others.
+eq  "D1 the undo is wired at every abort"     "$(occ "$F_ANGINX" 'undo_backup_carry(')" 5
 has "D2 it puts trees back most-recent-first" "$F_UNDO" 'carried.iter().rev()'
 has "D3 and never silently"                   "$F_UNDO" 'tracing::error!('
 

@@ -29,6 +29,12 @@ pub fn resolve_log_path(log_type: &str) -> Result<String, String> {
         return Ok(format!("/var/log/nginx/{domain}.error.log"));
     }
 
+    // Site-specific Apache error log (Apache mode, feature 4)
+    if let Some(domain) = log_type.strip_prefix("apache_error:") {
+        validate_domain(domain)?;
+        return Ok(crate::services::apache::error_log_path(domain));
+    }
+
     // Site-specific PHP-FPM error logs
     if let Some(domain) = log_type.strip_prefix("php_error:") {
         validate_domain(domain)?;

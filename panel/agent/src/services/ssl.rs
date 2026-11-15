@@ -989,6 +989,14 @@ pub async fn enable_ssl_for_site(
     // same domain. See site_lock's module doc.
     let _guard = crate::site_lock::lock_site(domain).await;
 
+    // Several callers rebuild the site from a partial description and do not
+    // know its web server: keep an Apache site in Apache mode (feature 4)
+    // instead of silently moving it back to plain nginx with its certificate.
+    let mut base = site_config.clone();
+    base.web_server =
+        crate::services::apache::infer_web_server(domain, site_config.web_server.as_deref());
+    let site_config = &base;
+
     let ssl_config = SiteConfig {
         runtime: site_config.runtime.clone(),
         root: site_config.root.clone(),
@@ -1016,9 +1024,20 @@ pub async fn enable_ssl_for_site(
         pool_group: site_config.pool_group.clone(),
         bind_ip: site_config.bind_ip.clone(),
         php_pool: site_config.php_pool.clone(),
+        web_server: site_config.web_server.clone(),
     };
 
-    let rendered = nginx::render_site_config(templates, domain, &ssl_config)
+    // Without a pool in the description, an Apache site keeps the timeout
+    // already in its Apache vhost rather than nginx's 300 s default (the
+    // Apache vhost is not rewritten here, so the two must agree).
+    let apache_timeout = (crate::services::apache::uses_apache(
+        &site_config.runtime,
+        site_config.web_server.as_deref(),
+    ) && site_config.php_pool.is_none())
+    .then(|| crate::services::apache::existing_vhost_timeout(domain))
+    .flatten();
+
+    let rendered = nginx::render_site_config_with(templates, domain, &ssl_config, apache_timeout)
         .map_err(|e| format!("Template render error: {e}"))?;
 
     // A site the operator took offline gets its parked body updated instead, so
@@ -1052,7 +1071,7 @@ pub async fn enable_ssl_for_site(
 
     if !test_result.success {
         // Rollback - write non-SSL config
-        let fallback = nginx::render_site_config(templates, domain, site_config)
+        let fallback = nginx::render_site_config_with(templates, domain, site_config, apache_timeout)
             .map_err(|e| format!("Rollback render error: {e}"))?;
         tokio::fs::write(&config_path, &fallback).await.ok();
         nginx::reload().await.ok();

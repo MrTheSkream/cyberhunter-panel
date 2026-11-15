@@ -195,7 +195,18 @@ fn scan_nginx_sites() -> Vec<SiteExport> {
 
             let ssl = content.contains("ssl_certificate");
 
-            let (runtime, proxy_port, php_version) = if content.contains("proxy_pass") {
+            let (runtime, proxy_port, php_version) = if content.contains("location @apache") {
+                // Apache mode (feature 4): a PHP site whose pool socket is in
+                // its Apache vhost, not a proxy to port 8091.
+                let apache = std::fs::read_to_string(crate::services::apache::vhost_path(&domain))
+                    .unwrap_or_default();
+                let ver = apache
+                    .lines()
+                    .find(|l| l.contains("SetHandler") && l.contains("fpm"))
+                    .and_then(|l| l.split("/php/php").nth(1))
+                    .and_then(|s| s.split('-').next().map(|v| v.to_string()));
+                ("php".to_string(), None, ver)
+            } else if content.contains("proxy_pass") {
                 // Extract proxy port from "proxy_pass http://127.0.0.1:PORT"
                 let port = content
                     .lines()

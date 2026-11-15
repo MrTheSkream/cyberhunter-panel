@@ -93,6 +93,11 @@ async fn main() {
     // finish before the agent starts serving vhost writes of its own.
     services::nginx::retrofit_static_denies().await;
 
+    // Pools written before every pool carried open_basedir get the default line
+    // (Apache mode can hand a request to any pool's socket; open_basedir keeps
+    // that pool inside its own site tree). Idempotent, managed pools only.
+    services::php_pool::reconcile_open_basedir().await;
+
     // Load auth token: prefer AGENT_TOKEN env var, then file, then generate new
     let token_path = format!("{CONFIG_DIR}/agent.token");
     let token = if let Ok(env_token) = std::env::var("AGENT_TOKEN") {

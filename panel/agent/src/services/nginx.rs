@@ -793,6 +793,21 @@ pub fn render_site_config(
     domain: &str,
     config: &SiteConfig,
 ) -> Result<String, tera::Error> {
+    render_site_config_with(templates, domain, config, None)
+}
+
+/// [`render_site_config`], with the Apache-mode `proxy_read_timeout` taken
+/// from `apache_timeout_s` when the description carries no `php_pool` (a
+/// certificate re-render rebuilds the site from a partial description; the
+/// caller reads the value from the site's managed Apache vhost so the two
+/// hops keep giving up at the same moment). Ignored in nginx mode and when a
+/// pool is present, so those render exactly as [`render_site_config`].
+pub fn render_site_config_with(
+    templates: &Tera,
+    domain: &str,
+    config: &SiteConfig,
+    apache_timeout_s: Option<u32>,
+) -> Result<String, tera::Error> {
     // Validate fields that get inserted into nginx config
     if let Some(ref root) = config.root {
         if !is_safe_path(root) {
@@ -836,8 +851,24 @@ pub fn render_site_config(
     }
     ctx.insert("custom_nginx", &config.custom_nginx.as_deref().unwrap_or(""));
 
-    // FastCGI cache (PHP sites only)
-    let fastcgi_cache = config.fastcgi_cache.unwrap_or(false) && config.runtime == "php";
+    // Apache behind nginx (PHP sites only; anything else is nginx). Always in
+    // the context: the templates test it in a condition.
+    let apache_mode = crate::services::apache::uses_apache(
+        &config.runtime,
+        config.web_server.as_deref(),
+    );
+    ctx.insert("apache_mode", &apache_mode);
+    ctx.insert("apache_upstream", crate::services::apache::UPSTREAM);
+    let apache_read_timeout = match (config.php_pool.as_ref(), apache_timeout_s) {
+        (None, Some(t)) if apache_mode && t > 0 => t.min(86_400),
+        (pool, _) => crate::services::apache::request_timeout_s(pool),
+    };
+    ctx.insert("apache_read_timeout", &apache_read_timeout);
+
+    // FastCGI cache (PHP sites only). Not used in Apache mode: nginx does not
+    // talk FastCGI there. The setting itself is kept by the panel.
+    let fastcgi_cache =
+        config.fastcgi_cache.unwrap_or(false) && config.runtime == "php" && !apache_mode;
     ctx.insert("fastcgi_cache", &fastcgi_cache);
 
     // Redis object cache (PHP sites only)
@@ -962,7 +993,7 @@ pub fn write_php_pool_config(
     // case) keeps the original shared identity.
     let (user, group) = pool_owner.unwrap_or(("www-data", "www-data"));
 
-    let config = legacy_php_pool_config(&pool_name, php_version, memory_mb, max_workers, user, group);
+    let config = legacy_php_pool_config(domain, &pool_name, php_version, memory_mb, max_workers, user, group);
 
     let pool_path = format!("{pool_dir}/{pool_name}.conf");
     std::fs::write(&pool_path, &config)
@@ -975,6 +1006,7 @@ pub fn write_php_pool_config(
 /// The legacy pool body (no `php_pool` in the request). Pure, and pinned by a
 /// test, so the per-site PHP settings work cannot change it by accident.
 fn legacy_php_pool_config(
+    domain: &str,
     pool_name: &str,
     php_version: &str,
     memory_mb: u32,
@@ -982,6 +1014,11 @@ fn legacy_php_pool_config(
     user: &str,
     group: &str,
 ) -> String {
+    // Every pool carries open_basedir (same value as `php_pool`).
+    let open_basedir = format!(
+        "php_admin_value[open_basedir] = {}\n",
+        crate::services::php_pool::open_basedir_value(domain)
+    );
     format!(
         r#"[{pool_name}]
 user = {user}
@@ -1002,7 +1039,7 @@ php_admin_value[memory_limit] = {memory_mb}M
 php_admin_value[upload_max_filesize] = 64M
 php_admin_value[post_max_size] = 64M
 php_admin_value[max_execution_time] = 300
-"#,
+{open_basedir}"#,
         start = std::cmp::min(2, max_workers),
         spare = std::cmp::min(3, max_workers),
     )
@@ -1426,11 +1463,22 @@ server {
 mod php_settings_tests {
     use super::*;
 
+    #[test]
+    fn legacy_pool_has_exactly_one_open_basedir_for_every_user() {
+        for user in ["www-data", "sftp_x"] {
+            let out = legacy_php_pool_config("example.com", "example_com", "8.3", 256, 5, user, user);
+            assert_eq!(out.matches("open_basedir").count(), 1);
+            assert!(out.ends_with(
+                "php_admin_value[open_basedir] = /var/www/example.com/:/tmp/:/usr/share/php/\n"
+            ));
+        }
+    }
+
     /// The legacy pool body, pinned byte for byte: a request without
     /// `php_pool` must keep producing exactly this.
     #[test]
     fn legacy_pool_body_is_unchanged() {
-        let out = legacy_php_pool_config("example_com", "8.3", 256, 5, "www-data", "www-data");
+        let out = legacy_php_pool_config("example.com", "example_com", "8.3", 256, 5, "www-data", "www-data");
         assert_eq!(
             out,
             "[example_com]
@@ -1452,6 +1500,7 @@ php_admin_value[memory_limit] = 256M
 php_admin_value[upload_max_filesize] = 64M
 php_admin_value[post_max_size] = 64M
 php_admin_value[max_execution_time] = 300
+php_admin_value[open_basedir] = /var/www/example.com/:/tmp/:/usr/share/php/
 "
         );
     }
@@ -1526,6 +1575,150 @@ php_admin_value[max_execution_time] = 300
             let a = render_site_config(&new, "example.com", &php_site(ssl, None)).unwrap();
             let b = render_site_config(&old, "example.com", &php_site(ssl, None)).unwrap();
             assert_eq!(a, b, "ssl={ssl}");
+        }
+    }
+
+    // ── web_server = "apache" (feature 4) ───────────────────────────────
+
+    /// The templates as they were before the Apache branch was added.
+    fn templates_without_apache_branch() -> Tera {
+        let strip = |t: &str| {
+            let t = t.replace('\r', "");
+            let start = t
+                .find("{% elif runtime == \"php\" and apache_mode %}")
+                .expect("apache branch");
+            let end = start + t[start..].find("{% elif runtime == \"php\" %}").expect("php branch");
+            format!("{}{}", &t[..start], &t[end..])
+        };
+        let mut tera = Tera::default();
+        tera.add_raw_template("http.conf", &strip(include_str!("../templates/nginx/http.conf"))).unwrap();
+        tera.add_raw_template("https.conf", &strip(include_str!("../templates/nginx/https.conf"))).unwrap();
+        tera.add_raw_template("proxy.conf", include_str!("../templates/nginx/proxy.conf")).unwrap();
+        tera
+    }
+
+    fn with(mut c: SiteConfig, f: impl FnOnce(&mut SiteConfig)) -> SiteConfig {
+        f(&mut c);
+        c
+    }
+
+    #[test]
+    fn absent_or_nginx_web_server_renders_byte_identically_to_the_pre_apache_templates() {
+        let new = init_templates();
+        let old = templates_without_apache_branch();
+        let presets = [None, Some("wordpress"), Some("laravel"), Some("drupal"), Some("magento"), Some("generic")];
+        for ssl in [false, true] {
+            for pool in [None, Some(90)] {
+                for preset in presets {
+                    for cache in [false, true] {
+                        for ws in [None, Some("nginx")] {
+                            let c = with(php_site(ssl, pool), |c| {
+                                c.php_preset = preset.map(str::to_string);
+                                c.fastcgi_cache = Some(cache);
+                                c.web_server = ws.map(str::to_string);
+                            });
+                            let a = render_site_config(&new, "example.com", &c).unwrap();
+                            let b = render_site_config(&old, "example.com", &c).unwrap();
+                            assert_eq!(a, b, "ssl={ssl} pool={pool:?} preset={preset:?} cache={cache} ws={ws:?}");
+                        }
+                    }
+                }
+            }
+            // Other runtimes ignore web_server, "apache" included.
+            for rt in ["static", "proxy", "node"] {
+                for ws in [None, Some("nginx"), Some("apache")] {
+                    let c = with(php_site(ssl, None), |c| {
+                        c.runtime = rt.to_string();
+                        c.proxy_port = Some(3000);
+                        c.web_server = ws.map(str::to_string);
+                    });
+                    let plain = with(c.clone(), |c| c.web_server = None);
+                    let a = render_site_config(&new, "example.com", &c).unwrap();
+                    let b = render_site_config(&old, "example.com", &plain).unwrap();
+                    assert_eq!(a, b, "ssl={ssl} rt={rt} ws={ws:?}");
+                }
+            }
+        }
+    }
+
+    fn apache_site(ssl: bool, pool: Option<u32>) -> SiteConfig {
+        with(php_site(ssl, pool), |c| c.web_server = Some("apache".to_string()))
+    }
+
+    #[test]
+    fn apache_mode_hands_php_to_apache_in_both_templates() {
+        let t = init_templates();
+        for ssl in [false, true] {
+            let out = render_site_config(&t, "example.com", &apache_site(ssl, None)).unwrap();
+            for needle in [
+                "    root /var/www/example.com/public;\n",
+                "    location ~ /\\.(?!well-known) {\n        deny all;\n    }\n",
+                "    location ~* \\.(?:jpe?g|png|gif|webp|avif|svg|ico|css|js|mjs|map|woff2?|ttf|otf|eot|txt|xml|pdf|mp4|webm|mp3|ogg|zip|gz)$ {\n        try_files $uri @apache;\n        expires 30d;\n    }\n",
+                "    location / {\n        try_files /nonexistent @apache;\n    }\n",
+                "    location @apache {\n        proxy_pass http://127.0.0.1:8091;\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_set_header X-Forwarded-Proto $scheme;\n        proxy_read_timeout 300s;\n    }\n",
+                "access_log /var/log/nginx/example.com.access.log;",
+                "error_log /var/log/nginx/example.com.error.log;",
+                "client_max_body_size 64m;",
+                ":80;\n",
+            ] {
+                assert!(out.contains(needle), "ssl={ssl} missing {needle:?}\n{out}");
+            }
+            // No PHP handled by nginx itself, no preset, and not the static
+            // marker the static-deny retrofit and update.sh key on.
+            for absent in ["fastcgi_pass", "index index.html index.htm;", "index index.php", "access_log off", "fastcgi_cache"] {
+                assert!(!out.contains(absent), "ssl={ssl} has {absent:?}");
+            }
+            if ssl {
+                assert!(out.contains(":443 ssl;\n"));
+                assert!(out.contains("ssl_certificate /etc/dockpanel/ssl/example.com/fullchain.pem;"));
+                assert!(out.contains("return 301 https://$host$request_uri;"));
+            } else {
+                assert!(out.contains("location /.well-known/acme-challenge/"));
+            }
+        }
+    }
+
+    #[test]
+    fn apache_mode_ignores_presets_and_the_fastcgi_cache() {
+        let t = init_templates();
+        let base = render_site_config(&t, "example.com", &apache_site(true, None)).unwrap();
+        for preset in ["wordpress", "magento", "drupal"] {
+            let c = with(apache_site(true, None), |c| {
+                c.php_preset = Some(preset.to_string());
+                c.fastcgi_cache = Some(true);
+            });
+            assert_eq!(render_site_config(&t, "example.com", &c).unwrap(), base, "{preset}");
+        }
+    }
+
+    #[test]
+    fn apache_timeout_override_applies_only_to_an_apache_site_without_a_pool() {
+        let t = init_templates();
+        for ssl in [false, true] {
+            // Certificate re-render: no pool, the Apache vhost says 90.
+            let out = render_site_config_with(&t, "example.com", &apache_site(ssl, None), Some(90)).unwrap();
+            assert!(out.contains("        proxy_read_timeout 90s;\n"), "ssl={ssl}");
+            // A pool in the description wins over the override.
+            let out = render_site_config_with(&t, "example.com", &apache_site(ssl, Some(45)), Some(90)).unwrap();
+            assert!(out.contains("        proxy_read_timeout 45s;\n"), "ssl={ssl}");
+            // nginx mode is byte-identical with or without an override.
+            for pool in [None, Some(90)] {
+                let c = php_site(ssl, pool);
+                assert_eq!(
+                    render_site_config_with(&t, "example.com", &c, Some(77)).unwrap(),
+                    render_site_config(&t, "example.com", &c).unwrap(),
+                    "ssl={ssl} pool={pool:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn apache_mode_read_timeout_follows_the_pool() {
+        let t = init_templates();
+        for ssl in [false, true] {
+            let out = render_site_config(&t, "example.com", &apache_site(ssl, Some(90))).unwrap();
+            assert!(out.contains("        proxy_read_timeout 90s;\n"), "ssl={ssl}");
         }
     }
 }

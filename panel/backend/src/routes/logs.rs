@@ -90,7 +90,8 @@ pub async fn site_logs(
     let (domain, agent) = crate::helpers::site_agent_for_caller(&state, id, &claims).await?;
 
     let log_type = q.log_type.as_deref().unwrap_or("access");
-    if !["access", "error"].contains(&log_type) {
+    // `apache_error` (feature 4): the per-site Apache error log, for Apache-mode sites.
+    if !["access", "error", "apache_error"].contains(&log_type) {
         return Err(err(StatusCode::BAD_REQUEST, "Invalid site log type"));
     }
     let lines = q.lines.unwrap_or(100).max(1).min(1000);
@@ -156,6 +157,7 @@ pub async fn search_site_logs(
     let full_type = match log_type {
         "access" => format!("nginx_access:{domain}"),
         "error" => format!("nginx_error:{domain}"),
+        "apache_error" => format!("apache_error:{domain}"),
         _ => return Err(err(StatusCode::BAD_REQUEST, "Invalid site log type")),
     };
 

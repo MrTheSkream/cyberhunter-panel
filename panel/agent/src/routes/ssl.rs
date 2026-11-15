@@ -61,6 +61,23 @@ fn ca_or_internal(e: String) -> (StatusCode, Json<serde_json::Value>) {
     )
 }
 
+/// The `php_pool` of a provision/renew body, dropped (with a warning) when it
+/// does not validate: a certificate must not fail over it, and without it the
+/// Apache-mode timeout comes from the site's Apache vhost.
+fn checked_pool(
+    domain: &str,
+    pool: Option<crate::services::php_pool::PhpPool>,
+) -> Option<crate::services::php_pool::PhpPool> {
+    let pool = pool?;
+    match crate::services::php_pool::validate_php_pool(&pool) {
+        Ok(()) => Some(pool),
+        Err(e) => {
+            tracing::warn!("Ignoring the invalid php_pool sent for {domain}'s certificate: {e}");
+            None
+        }
+    }
+}
+
 #[derive(Deserialize)]
 struct ProvisionRequest {
     email: String,
@@ -68,6 +85,15 @@ struct ProvisionRequest {
     root: Option<String>,
     proxy_port: Option<u16>,
     php_socket: Option<String>,
+    /// `"nginx"` / `"apache"` (feature 4). Absent = read from disk: a site
+    /// with a panel-managed Apache vhost stays in Apache mode.
+    #[serde(default)]
+    web_server: Option<String>,
+    /// The site's PHP settings, as `put_site` gets them. Only the request
+    /// timeout matters here (Apache mode's nginx `proxy_read_timeout`).
+    /// Absent = the timeout already in the site's Apache vhost.
+    #[serde(default)]
+    php_pool: Option<crate::services::php_pool::PhpPool>,
     /// Optional ACME profile ("classic" / "tlsserver" / "shortlived").
     /// Omit to let the CA pick its default.
     #[serde(default)]
@@ -150,7 +176,8 @@ async fn provision(
         pool_user: None,
         pool_group: None,
         bind_ip: None,
-        php_pool: None,
+        php_pool: checked_pool(&domain, body.php_pool),
+        web_server: body.web_server,
     };
 
     let canonical = ssl::enable_ssl_for_site(&state.templates, &domain, &site_config)
@@ -315,6 +342,7 @@ async fn upload_cert(
         pool_group: None,
         bind_ip: None,
         php_pool: None,
+        web_server: None,
     };
 
     let canonical = ssl::enable_ssl_for_site(&state.templates, &body.domain, &site_config)
@@ -357,6 +385,12 @@ struct RenewRequest {
     root: Option<String>,
     proxy_port: Option<u16>,
     php_socket: Option<String>,
+    /// See `ProvisionRequest::web_server`.
+    #[serde(default)]
+    web_server: Option<String>,
+    /// See `ProvisionRequest::php_pool`.
+    #[serde(default)]
+    php_pool: Option<crate::services::php_pool::PhpPool>,
     #[serde(default)]
     profile: Option<String>,
 }
@@ -476,7 +510,8 @@ async fn renew(
                 pool_user: None,
                 pool_group: None,
                 bind_ip: None,
-                php_pool: None,
+                php_pool: checked_pool(&domain, body.php_pool),
+                web_server: body.web_server,
             };
             match ssl::enable_ssl_for_site(&state.templates, &domain, &site_config).await {
                 Ok(outcome) => canonical = Some(outcome),
@@ -705,7 +740,7 @@ async fn provision_dns01(
                 fastcgi_cache: None, redis_cache: None, redis_db: None,
                 waf_enabled: None, waf_mode: None,
                 csp_policy: None, permissions_policy: None, bot_protection: None,
-                pool_user: None, pool_group: None, bind_ip: None, php_pool: None,
+                pool_user: None, pool_group: None, bind_ip: None, php_pool: None, web_server: None,
             };
 
             canonical = Some(

@@ -91,10 +91,11 @@ async fn get_site_logs(
     let log_type = match short_type {
         "access" => format!("nginx_access:{domain}"),
         "error" => format!("nginx_error:{domain}"),
+        "apache_error" => format!("apache_error:{domain}"),
         other => {
             return Err(err(
                 StatusCode::BAD_REQUEST,
-                &format!("Invalid site log type: {other}. Use 'access' or 'error'"),
+                &format!("Invalid site log type: {other}. Use 'access', 'error' or 'apache_error'"),
             ));
         }
     };
@@ -189,6 +190,7 @@ async fn stream_handler(
             "access" => format!("nginx_access:{domain}"),
             "error" => format!("nginx_error:{domain}"),
             "php_error" | "php" => format!("php_error:{domain}"),
+            "apache_error" => format!("apache_error:{domain}"),
             _ => {
                 return Response::builder()
                     .status(403)

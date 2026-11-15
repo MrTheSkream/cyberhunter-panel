@@ -174,6 +174,14 @@ pub struct Site {
     /// disable_functions for the shell family. Same defaults as isolation (D2).
     #[serde(default)]
     pub php_disable_shell: bool,
+    /// `nginx` or `apache` (feature 4). Only meaningful for `runtime = php`;
+    /// the agent treats every other runtime as nginx. Existing rows are `nginx`.
+    #[serde(default = "default_web_server")]
+    pub web_server: String,
+}
+
+fn default_web_server() -> String {
+    "nginx".to_string()
 }
 
 /// One IPv4 address declared on a server (`server_ips`). See

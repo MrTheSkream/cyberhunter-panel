@@ -551,9 +551,10 @@ pub(crate) async fn auto_fix_safe_findings(
                     Option<String>,
                     uuid::Uuid,
                     Option<String>,
+                    String,
                 )> = sqlx::query_as(
                     "SELECT s.id, s.runtime, s.proxy_port, s.php_version, s.root_path, s.user_id, \
-                            s.ssl_profile \
+                            s.ssl_profile, s.web_server \
                      FROM sites s WHERE s.domain = $1 AND s.server_id = $2 AND s.ssl_enabled = TRUE",
                 )
                 .bind(domain)
@@ -562,7 +563,7 @@ pub(crate) async fn auto_fix_safe_findings(
                 .await
                 .unwrap_or(None);
 
-                let Some((site_id, runtime, proxy_port, php_version, root_path, user_id, ssl_profile)) =
+                let Some((site_id, runtime, proxy_port, php_version, root_path, user_id, ssl_profile, web_server)) =
                     site
                 else {
                     // The subject came from the agent's FILESYSTEM walk of
@@ -664,7 +665,17 @@ pub(crate) async fn auto_fix_safe_findings(
                 let mut agent_body = serde_json::json!({
                     "email": email,
                     "runtime": runtime,
+                    // Feature 4: the agent re-renders the vhost from this body.
+                    "web_server": web_server,
                 });
+                // The per-site PHP pool `build_nginx_body` sends, so the
+                // re-rendered vhost keeps the site's PHP timeouts. Omitted
+                // (renewal still runs) when it cannot be read.
+                if let Some(php_pool) =
+                    crate::routes::php_settings::php_pool_for_site_id(pool, site_id).await
+                {
+                    agent_body["php_pool"] = php_pool;
+                }
                 if let Some(port) = proxy_port {
                     agent_body["proxy_port"] = serde_json::json!(port);
                 }

@@ -48,6 +48,78 @@ pub struct ImportSiteItem {
     pub runtime: String,
 }
 
+/// The web server an imported site is created with (B5 / D3 of
+/// `conception/04-apache-contrats.md`).
+///
+/// Read from the inventory the AGENT produced at analysis time and the panel
+/// stored, never from the import request: `ImportSiteItem` is client JSON, while
+/// `sites[].web_server` is what the agent's HestiaCP parser found in the
+/// domain's `web.conf` (`"apache"` when it had a `PROXY` key). Only a PHP site
+/// can be `apache`; a domain the inventory does not describe, or a panel whose
+/// parser does not report the field, gets `nginx` (the historical behaviour).
+pub(crate) fn imported_web_server(
+    inventory: Option<&serde_json::Value>,
+    domain: &str,
+    runtime: &str,
+) -> &'static str {
+    if runtime != "php" {
+        return "nginx";
+    }
+    let found = inventory
+        .and_then(|inv| inv.get("sites"))
+        .and_then(|s| s.as_array())
+        .and_then(|sites| {
+            sites.iter().find(|s| {
+                s.get("domain")
+                    .and_then(|d| d.as_str())
+                    .is_some_and(|d| d.eq_ignore_ascii_case(domain))
+            })
+        })
+        .and_then(|s| s.get("web_server"))
+        .and_then(|w| w.as_str());
+    match found {
+        Some("apache") => "apache",
+        _ => "nginx",
+    }
+}
+
+/// Whether Apache is installed on the import target, from the agent's
+/// `/services/install-status`. Only an explicit `apache.installed: true` counts:
+/// an older agent that does not report Apache, an unsupported OS (RHEL), or an
+/// unreachable agent all mean "not usable here".
+pub(crate) fn apache_installed_in(install_status: Option<&serde_json::Value>) -> bool {
+    install_status
+        .and_then(|s| s.get("apache"))
+        .and_then(|a| a.get("installed"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
+
+/// The web server a domain is actually created with, and the warning to record
+/// when the one HestiaCP used cannot be honoured here.
+///
+/// A domain detected as `apache` on a server without Apache used to fail its
+/// vhost write (409 `apache_not_installed` / 400 `apache_unsupported`) and be
+/// skipped, losing the whole site. It is imported in nginx mode instead, and
+/// said so per domain - the operator must know its `.htaccess` rules are not
+/// read until Apache is installed and the site switched (D1: never silent).
+pub(crate) fn import_web_server(
+    detected: &'static str,
+    apache_installed: bool,
+    domain: &str,
+) -> (&'static str, Option<String>) {
+    if detected == "apache" && !apache_installed {
+        (
+            "nginx",
+            Some(format!(
+                "{domain} used Apache in HestiaCP; imported in nginx mode because Apache is not installed here. Install Apache and switch the site to keep its .htaccess rules."
+            )),
+        )
+    } else {
+        (detected, None)
+    }
+}
+
 #[derive(serde::Deserialize, Clone)]
 pub struct ImportDbItem {
     pub name: String,
@@ -602,6 +674,8 @@ pub async fn import(
     let key_id = claims.key_id;
     let agent_migration_id = agent_migration_id.clone();
     let migration_source = migration.source.clone();
+    // Read per site by `imported_web_server` (feature 4, D3).
+    let migration_inventory = migration.inventory.clone();
     // The imported domains are client-supplied (`ImportSiteItem.domain`) and are
     // never reconciled against what the analyse step actually found, so they get
     // the same guard as any other claim. Carried into the task because
@@ -626,7 +700,16 @@ pub async fn import(
             "databases_imported": [],
             "databases_failed": [],
             "errors": [],
+            // Non-fatal notes per domain (an Apache domain imported in nginx
+            // mode). Kept apart from `errors`: the site did import.
+            "warnings": [],
         });
+
+        // Asked once, before the domain loop: whether domains HestiaCP served
+        // through Apache can keep that mode here (see `import_web_server`).
+        let apache_installed = apache_installed_in(
+            agent.get("/services/install-status").await.ok().as_ref(),
+        );
 
         let total_steps = sites.len() + databases.len();
         let mut completed = 0usize;
@@ -727,9 +810,18 @@ pub async fn import(
             let runtime = &site_item.runtime;
             // Multi-IP: an imported site starts on the primary address (its row's
             // `ip_id` is NULL), sent explicitly rather than left for the agent to guess.
+            let (web_server, web_server_warning) = import_web_server(
+                imported_web_server(migration_inventory.as_ref(), domain, runtime),
+                apache_installed,
+                domain,
+            );
+            if let Some(ref w) = web_server_warning {
+                tracing::warn!("Migration {id}: {w}");
+            }
             let mut nginx_body = serde_json::json!({
                 "runtime": runtime,
                 "bind_ip": crate::services::server_ips::PRIMARY,
+                "web_server": web_server,
             });
             let mut needs_config: Option<String> = None;
 
@@ -808,14 +900,15 @@ pub async fn import(
             // nothing serves this domain yet, and 'active' would say otherwise.
             let initial_status = if needs_config.is_some() { "error" } else { "active" };
             let site_result = sqlx::query_as::<_, (Uuid,)>(
-                "INSERT INTO sites (user_id, server_id, domain, runtime, status) \
-                 VALUES ($1, $2, $3, $4, $5) RETURNING id",
+                "INSERT INTO sites (user_id, server_id, domain, runtime, status, web_server) \
+                 VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
             )
             .bind(user_id)
             .bind(server_id)
             .bind(domain)
             .bind(runtime)
             .bind(initial_status)
+            .bind(web_server)
             .fetch_one(&db)
             .await;
 
@@ -860,10 +953,16 @@ pub async fn import(
                 continue;
             }
 
-            let done_message = match &needs_config {
+            let mut done_message = match &needs_config {
                 Some(reason) => format!("Imported - needs configuration: {reason}"),
                 None => "Imported".to_string(),
             };
+            if let Some(ref w) = web_server_warning {
+                done_message = format!("{done_message}. Warning: {w}");
+                if let Some(arr) = results["warnings"].as_array_mut() {
+                    arr.push(serde_json::json!(w));
+                }
+            }
             emit_step(
                 &logs,
                 id,
@@ -1426,4 +1525,57 @@ pub async fn remove(
     .await;
 
     Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+#[cfg(test)]
+mod web_server_tests {
+    use super::{apache_installed_in, import_web_server, imported_web_server};
+
+    #[test]
+    fn an_apache_domain_falls_back_to_nginx_with_a_warning_when_apache_is_missing() {
+        assert_eq!(import_web_server("apache", true, "a.example"), ("apache", None));
+        assert_eq!(import_web_server("nginx", false, "b.example"), ("nginx", None));
+        let (ws, warning) = import_web_server("apache", false, "a.example");
+        assert_eq!(ws, "nginx");
+        assert_eq!(
+            warning.as_deref(),
+            Some(
+                "a.example used Apache in HestiaCP; imported in nginx mode because Apache is not installed here. Install Apache and switch the site to keep its .htaccess rules."
+            )
+        );
+    }
+
+    #[test]
+    fn only_an_explicit_installed_true_counts_as_apache_installed() {
+        let yes = serde_json::json!({ "apache": { "installed": true, "running": true, "supported": true } });
+        let no = serde_json::json!({ "apache": { "installed": false, "supported": false } });
+        let old_agent = serde_json::json!({ "redis": { "installed": true } });
+        assert!(apache_installed_in(Some(&yes)));
+        assert!(!apache_installed_in(Some(&no)));
+        assert!(!apache_installed_in(Some(&old_agent)));
+        assert!(!apache_installed_in(None));
+    }
+
+    #[test]
+    fn an_apache_hestia_domain_is_imported_in_apache_mode() {
+        let inv = serde_json::json!({
+            "id": "m1",
+            "sites": [
+                { "domain": "a.example", "runtime": "php", "web_server": "apache" },
+                { "domain": "b.example", "runtime": "php", "web_server": "nginx" },
+                { "domain": "c.example", "runtime": "php" },
+                { "domain": "d.example", "runtime": "static", "web_server": "apache" }
+            ]
+        });
+        assert_eq!(imported_web_server(Some(&inv), "a.example", "php"), "apache");
+        assert_eq!(imported_web_server(Some(&inv), "A.Example", "php"), "apache");
+        assert_eq!(imported_web_server(Some(&inv), "b.example", "php"), "nginx");
+        // Field absent (non-HestiaCP parser): historical nginx.
+        assert_eq!(imported_web_server(Some(&inv), "c.example", "php"), "nginx");
+        // Only PHP can be apache, whatever the inventory says.
+        assert_eq!(imported_web_server(Some(&inv), "d.example", "static"), "nginx");
+        // Unknown domain or no inventory: nginx.
+        assert_eq!(imported_web_server(Some(&inv), "zz.example", "php"), "nginx");
+        assert_eq!(imported_web_server(None, "a.example", "php"), "nginx");
+    }
 }

@@ -277,8 +277,8 @@ pub async fn create(
 
     // Insert staging site
     let staging: Site = sqlx::query_as(
-        "INSERT INTO sites (user_id, server_id, domain, runtime, status, proxy_port, php_version, app_command, parent_site_id) \
-         VALUES ($1, $2, $3, $4, 'creating', $5, $6, $7, $8) RETURNING *",
+        "INSERT INTO sites (user_id, server_id, domain, runtime, status, proxy_port, php_version, app_command, parent_site_id, web_server) \
+         VALUES ($1, $2, $3, $4, 'creating', $5, $6, $7, $8, $9) RETURNING *",
     )
     .bind(claims.sub)
     .bind(server_id)
@@ -288,6 +288,9 @@ pub async fn create(
     .bind(&parent.php_version)
     .bind(&parent.app_command)
     .bind(id)
+    // Feature 4: a staging copy is served the way its parent is, so the
+    // parent's .htaccess behaves the same there.
+    .bind(&parent.web_server)
     .fetch_one(&state.db)
     .await
     .map_err(|e| {
@@ -326,6 +329,7 @@ pub async fn create(
     // primary address (its row's `ip_id` is NULL). Sent explicitly - the backend
     // never leaves the agent to guess.
     agent_body["bind_ip"] = serde_json::json!(crate::services::server_ips::PRIMARY);
+    agent_body["web_server"] = serde_json::json!(staging.web_server);
     // The staging row is a new site: its own PHP columns (defaults) drive its pool.
     if let Some(pool) = crate::routes::php_settings::php_pool_for_site(&staging) {
         agent_body["php_pool"] = pool;

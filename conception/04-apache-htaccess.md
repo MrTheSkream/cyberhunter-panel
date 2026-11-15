@@ -17,7 +17,7 @@
 **HestiaCP** (installation nginx + Apache, la plus courante) :
 - nginx écoute sur 80/443, termine le SSL, **sert les fichiers statiques** (images, css, js…) et
   **transmet le reste à Apache** (ports locaux 8080/8443) ;
-- Apache (mpm_event) exécute le PHP via PHP-FPM, lit les `.htaccess` (`AllowOverride All`) ;
+- Apache (mpm_event) exécute le PHP via PHP-FPM, lit les `.htaccess` (jeu restreint, voir ci-dessous) ;
 - choix par domaine via deux modèles : « Proxy template » (nginx) et « Backend template » (PHP).
 
 ## 2. Ce qu'on fait
@@ -35,16 +35,19 @@
   WAF, anti-bots, limite de débit, en-têtes de sécurité, gzip, journaux d'accès (donc statistiques,
   bande passante, fail2ban, page « désactivé » : rien à refaire).
 - nginx sert lui-même les fichiers statiques (décision D2) et transmet le reste à Apache sur
-  **`127.0.0.1:8081`** (8080, 8443 et 8880 sont déjà pris par le panel et Traefik), avec
+  **`127.0.0.1:8091`** (8080, 8443 et 8880 sont pris par le panel et Traefik, 8081 par l'API PowerDNS), avec
   `Host`, `X-Real-IP`, `X-Forwarded-For`, `X-Forwarded-Proto`.
 - nginx refuse toujours `.htaccess`, `.htpasswd` et les fichiers cachés.
 - **Apache** (un vhost par site, `/etc/apache2/sites-enabled/<domaine>.conf`) :
-  - écoute **uniquement** `127.0.0.1:8081` (jamais exposé) ; MPM event ; modules `proxy_fcgi`,
+  - écoute **uniquement** `127.0.0.1:8091` (jamais exposé) ; MPM event ; modules `proxy_fcgi`,
     `rewrite`, `remoteip`, `headers`, `expires`, `setenvif` ; pas de mod_php ; site par défaut
     désactivé (une requête sans vhost connu → 404) ;
   - `DocumentRoot` = le même dossier `public` que nginx ;
-  - `AllowOverride All` (compatibilité maximale, comme HestiaCP), `Options +FollowSymLinks
-    -Indexes -ExecCGI -Includes` ;
+  - `AllowOverride AuthConfig Limit Indexes Options=FollowSymLinks,SymLinksIfOwnerMatch,Indexes,MultiViews
+    Nonfatal=Override` + `AllowOverrideList` (Rewrite*, Redirect*, ErrorDocument, Header, AddType,
+    SetEnvIf...) : compatibilité WordPress/Laravel/Joomla/Drupal, mais `SetHandler`/`AddHandler` refusés
+    pour qu'un `.htaccess` ne puisse pas viser le socket d'un autre site (détails : contrats A3) ;
+    `Options +SymLinksIfOwnerMatch -FollowSymLinks -Indexes -ExecCGI -Includes` ;
   - PHP envoyé **au même pool PHP-FPM du site** que la fonctionnalité 2 : les réglages PHP par
     site, l'isolation et les fonctions bloquées restent exactement les mêmes ;
   - `mod_remoteip` : le PHP voit la **vraie IP du visiteur** (pas 127.0.0.1) ; `HTTPS=on` quand
@@ -61,7 +64,7 @@
 - Apache n'est **pas** installé par défaut. Il s'installe :
   - depuis Paramètres → Services (comme Redis), ou
   - automatiquement au premier site passé en mode Apache (avec le journal d'installation).
-- L'installation écrit sa configuration (`ports.conf` sur 127.0.0.1:8081, modules, site par défaut
+- L'installation écrit sa configuration (`ports.conf` sur 127.0.0.1:8091, modules, site par défaut
   désactivé) **avant** de démarrer Apache, pour qu'il ne prenne jamais le port 80 à nginx.
 - Désinstallation refusée tant qu'un site est en mode Apache.
 - Le service apparaît dans la santé des services.
@@ -94,7 +97,7 @@
   fonctionnalité.
 
 ## 5. Tests en VM
-1. Installation d'Apache : il n'écoute que 127.0.0.1:8081 ; nginx garde 80/443 ; l'IP par site marche.
+1. Installation d'Apache : il n'écoute que 127.0.0.1:8091 ; nginx garde 80/443 ; l'IP par site marche.
 2. Site en mode Apache avec un `.htaccess` de type WordPress (permaliens) : `/un-article/` répond via
    `index.php` ; un dossier avec `Deny from all` → 403 ; une redirection 301 du `.htaccess` marche.
 3. `phpinfo()` : vraie IP du visiteur, `HTTPS=on` en https, réglages PHP du site appliqués,

@@ -99,6 +99,36 @@ const RENEWAL_FAILURE_PREFIX: &str = "Renewal failed:";
 /// - the agent crate carries the same literal and cannot share this constant.
 pub const CODE_FOREIGN_CERTIFICATE: &str = "foreign_certificate";
 
+/// The label the agent puts on a vhost write that asked for `web_server =
+/// "apache"` on a server where Apache is not installed (409, feature 4). The
+/// frontend branches on it to offer the Apache installer. Same cross-tree
+/// caveat as [`CODE_FOREIGN_CERTIFICATE`]: the agent carries the same literal.
+pub const CODE_APACHE_NOT_INSTALLED: &str = "apache_not_installed";
+
+/// The label the agent puts on an Apache-mode request it can never satisfy on
+/// this server (RHEL family today: 400 on a vhost write, 501 on the Apache
+/// installer). Unlike [`CODE_APACHE_NOT_INSTALLED`] there is nothing to
+/// install: the frontend offers nginx only instead of the installer (D1).
+pub const CODE_APACHE_UNSUPPORTED: &str = "apache_unsupported";
+
+/// The label on a refused Apache uninstall while sites still use it (409),
+/// whether the panel or the agent refused it.
+pub const CODE_APACHE_IN_USE: &str = "apache_in_use";
+
+/// The label on an Apache request refused because Apache on this server is
+/// installed and managed outside the panel (409). Nothing to install either.
+pub const CODE_APACHE_FOREIGN: &str = "apache_foreign";
+
+/// The agent labels a 4xx may carry that [`agent_error`] relays verbatim. Any
+/// other label is dropped: the frontend only branches on these.
+const RELAYED_AGENT_CODES: &[&str] = &[
+    CODE_FOREIGN_CERTIFICATE,
+    CODE_APACHE_NOT_INSTALLED,
+    CODE_APACHE_UNSUPPORTED,
+    CODE_APACHE_IN_USE,
+    CODE_APACHE_FOREIGN,
+];
+
 pub fn err(status: StatusCode, msg: &str) -> ApiError {
     (status, Json(serde_json::json!({ "error": msg })))
 }
@@ -113,7 +143,7 @@ pub fn err_coded(status: StatusCode, msg: &str, code: &str) -> ApiError {
 /// The agent answers errors in three shapes - `{"error": …}`, `{"success":
 /// false, "message": …}`, and occasionally bare text - so all three are
 /// handled rather than the one that happened to be in front of us.
-fn agent_message(body: &str) -> String {
+pub(crate) fn agent_message(body: &str) -> String {
     let msg = serde_json::from_str::<serde_json::Value>(body)
         .ok()
         .and_then(|v| {
@@ -266,9 +296,12 @@ pub fn agent_error(context: &str, e: AgentError) -> ApiError {
             // inherit it too. `err` alone lost this exact code before: the
             // agent has always labelled the refusal, but nothing between it and
             // the frontend carried the label past a human-readable sentence.
+            // The Apache labels (feature 4) ride the same path so the create
+            // form and the web-server switch can tell "install Apache" from
+            // "Apache cannot run here" from "Apache is still in use".
             match agent_code(body) {
-                Some(ref c) if c == CODE_FOREIGN_CERTIFICATE => {
-                    err_coded(status, &msg, CODE_FOREIGN_CERTIFICATE)
+                Some(ref c) if RELAYED_AGENT_CODES.contains(&c.as_str()) => {
+                    err_coded(status, &msg, c)
                 }
                 _ => err(status, &msg),
             }
@@ -474,6 +507,58 @@ mod tests {
             "The certificate on example.com was not issued by CyberHunter - Panel (issuer: DigiCert Inc)."
         );
         assert_eq!(body_of(&e)["code"], CODE_FOREIGN_CERTIFICATE);
+    }
+
+    #[test]
+    fn an_apache_not_installed_refusal_keeps_its_code() {
+        let e = agent_error(
+            "Site configuration",
+            AgentError::Status(
+                409,
+                r#"{"error":"Apache is not installed","code":"apache_not_installed"}"#.into(),
+            ),
+        );
+        assert_eq!(e.0, StatusCode::CONFLICT);
+        assert_eq!(body_of(&e)["error"], "Apache is not installed");
+        assert_eq!(body_of(&e)["code"], CODE_APACHE_NOT_INSTALLED);
+    }
+
+    #[test]
+    fn an_apache_unsupported_refusal_keeps_its_code_and_status() {
+        // RHEL shape: `success`/`message`, not `error`.
+        let e = agent_error(
+            "Site configuration",
+            AgentError::Status(
+                400,
+                r#"{"success":false,"message":"Apache mode is not supported on RHEL yet","code":"apache_unsupported"}"#.into(),
+            ),
+        );
+        assert_eq!(e.0, StatusCode::BAD_REQUEST);
+        assert_eq!(body_of(&e)["error"], "Apache mode is not supported on RHEL yet");
+        assert_eq!(body_of(&e)["code"], CODE_APACHE_UNSUPPORTED);
+    }
+
+    #[test]
+    fn an_apache_in_use_refusal_keeps_its_code() {
+        let e = agent_error(
+            "Apache uninstall",
+            AgentError::Status(
+                409,
+                r#"{"error":"Apache is used by 2 site(s)","code":"apache_in_use","sites":["a.example","b.example"]}"#.into(),
+            ),
+        );
+        assert_eq!(e.0, StatusCode::CONFLICT);
+        assert_eq!(body_of(&e)["code"], CODE_APACHE_IN_USE);
+    }
+
+    #[test]
+    fn an_unknown_agent_code_is_not_relayed() {
+        let e = agent_error(
+            "Site configuration",
+            AgentError::Status(400, r#"{"error":"nope","code":"something_else"}"#.into()),
+        );
+        assert_eq!(e.0, StatusCode::BAD_REQUEST);
+        assert!(body_of(&e).get("code").is_none());
     }
 
     #[test]

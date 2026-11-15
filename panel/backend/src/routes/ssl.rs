@@ -357,7 +357,14 @@ pub async fn provision(
     let mut agent_body = serde_json::json!({
         "email": email,
         "runtime": site.runtime,
+        // Feature 4: the agent re-renders the vhost from this body.
+        "web_server": site.web_server,
     });
+    // Same per-site pool `build_nginx_body` sends, so the vhost this provision
+    // re-renders keeps the site's PHP timeouts and limits.
+    if let Some(pool) = crate::routes::php_settings::php_pool_for_site(&site) {
+        agent_body["php_pool"] = pool;
+    }
 
     if let Some(port) = site.proxy_port {
         agent_body["proxy_port"] = serde_json::json!(port);
@@ -1096,7 +1103,13 @@ pub(crate) async fn renew_for_site(
     let mut agent_body = serde_json::json!({
         "email": email,
         "runtime": site.runtime,
+        // Feature 4: the agent re-renders the vhost from this body.
+        "web_server": site.web_server,
     });
+    // See `provision`: the re-rendered vhost keeps the site's PHP pool.
+    if let Some(pool) = crate::routes::php_settings::php_pool_for_site(&site) {
+        agent_body["php_pool"] = pool;
+    }
     if let Some(port) = site.proxy_port {
         agent_body["proxy_port"] = serde_json::json!(port);
     }

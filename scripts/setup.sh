@@ -1758,11 +1758,129 @@ install_php() {
     fi
 }
 
+# ── Apache behind nginx (.htaccess mode, feature 4) ─────────────────────
+# Decision D1: new PHP sites default to "nginx + Apache", so a fresh Debian/
+# Ubuntu box gets Apache here. nginx stays in front on 80/443; Apache listens
+# on 127.0.0.1:8091 ONLY. The steps and the two file bodies are the same as
+# panel/agent/src/services/apache.rs (install + configure_script); a unit test
+# there compares the bodies with this file, so edit both together.
+# Never fatal: a box without Apache still serves PHP sites through nginx alone.
+configure_apache() {
+    mkdir -p /etc/apache2/conf-available /var/log/apache2 || return 1
+    cat > /etc/apache2/ports.conf <<'APACHE_PORTS_EOF' || return 1
+# Managed by CyberHunter - Panel. Do not edit by hand.
+# Apache sits behind nginx and listens on the loopback only.
+Listen 127.0.0.1:8091
+APACHE_PORTS_EOF
+    cat > /etc/apache2/conf-available/zz-cyberhunter.conf <<'APACHE_CONF_EOF' || return 1
+# Managed by CyberHunter - Panel. Do not edit by hand.
+# The visitor's address comes from nginx, which is the only client.
+RemoteIPHeader X-Real-IP
+RemoteIPInternalProxy 127.0.0.1
+# nginx terminated TLS: tell PHP the request was HTTPS.
+SetEnvIf X-Forwarded-Proto "^https$" HTTPS=on
+ServerTokens Prod
+ServerSignature Off
+
+# Catch-all for names no site claims: 404, never another site.
+<VirtualHost 127.0.0.1:8091>
+    ServerName default.invalid
+    Redirect 404 /
+    CustomLog /dev/null common
+</VirtualHost>
+APACHE_CONF_EOF
+    a2dissite -q 000-default >/dev/null 2>&1 || true
+    a2dismod -q -f mpm_prefork mpm_worker >/dev/null 2>&1 || true
+    local f
+    for f in /etc/apache2/mods-enabled/php*.load; do
+        [ -e "$f" ] || continue
+        a2dismod -q -f "$(basename "$f" .load)" >/dev/null 2>&1 || true
+    done
+    a2enmod -q mpm_event proxy proxy_fcgi rewrite remoteip headers expires setenvif alias >/dev/null || return 1
+    a2disconf -q other-vhosts-access-log >/dev/null 2>&1 || true
+    a2enconf -q zz-cyberhunter >/dev/null || return 1
+    local holder
+    holder=$(ss -ltnpH 'sport = :8091' 2>/dev/null | grep -v '"apache2"' || true)
+    if [ -n "$holder" ]; then
+        echo "Port 8091 is already in use by another program: $holder" >&2
+        return 1
+    fi
+    apache2ctl configtest || return 1
+    systemctl unmask --runtime apache2.service >/dev/null 2>&1 || true
+    systemctl enable apache2.service >/dev/null 2>&1 || true
+    systemctl reload-or-restart apache2.service || return 1
+}
+
+# True when the installed Apache is managed outside the panel: ports.conf is
+# not ours and sites-enabled has sites that are neither stock nor ours, or
+# apache2 listens on a non-loopback address.
+apache_is_foreign() {
+    local header="# Managed by CyberHunter - Panel. Do not edit by hand."
+    local f name
+    if ss -ltnpH 2>/dev/null | grep '"apache2"' | awk '{print $4}' | grep -Eqv '^(127\.[0-9.]+|\[::1\]):[0-9]+$'; then
+        return 0
+    fi
+    [ "$(head -n 1 /etc/apache2/ports.conf 2>/dev/null)" = "$header" ] && return 1
+    for f in /etc/apache2/sites-enabled/*.conf; do
+        [ -e "$f" ] || continue
+        name=$(basename "$f")
+        case "$name" in 000-default.conf|default-ssl.conf) continue ;; esac
+        [ "$(head -n 1 "$f" 2>/dev/null)" = "$header" ] && continue
+        return 0
+    done
+    return 1
+}
+
+install_apache() {
+    if [ "$PKG_MGR" != "apt" ]; then
+        info "Apache (.htaccess mode) is not supported on this distribution yet - skipped"
+        return 0
+    fi
+    local fresh=0
+    if ! grep -q '^ii' <<< "$(dpkg -l apache2 2>/dev/null)"; then
+        fresh=1
+        # Masked for the package transaction: the package's own start must not
+        # grab port 80 before ports.conf says 127.0.0.1:8091.
+        systemctl mask --runtime apache2.service >/dev/null 2>&1 || true
+        if ! run "Installing Apache" pkg_install apache2; then
+            systemctl unmask --runtime apache2.service >/dev/null 2>&1 || true
+            warn "Apache failed to install - PHP sites can still use nginx only"
+            svc_fail "Apache"
+            return 0
+        fi
+    elif apache_is_foreign; then
+        # Same rule as apache.rs::foreign_apache_reason: an Apache the admin
+        # set up (own sites, or listening on a public address) is left alone.
+        warn "Apache is already installed and managed outside the panel - left untouched; PHP sites can use nginx only"
+        svc_fail "Apache"
+        return 0
+    fi
+    if run "Configuring Apache (127.0.0.1:8091)" configure_apache; then
+        log "Apache listening on 127.0.0.1:8091 behind nginx"
+        svc_ok "Apache"
+    else
+        # A package installed just now is left stopped and off at boot rather
+        # than running on a default config. An Apache that was already serving
+        # sites (re-run of the installer) keeps running its last good config.
+        # Unmask first: disable refuses a masked unit.
+        if [ "$fresh" = "1" ]; then
+            systemctl unmask --runtime apache2.service >/dev/null 2>&1 || true
+            systemctl disable apache2.service >/dev/null 2>&1 || true
+            systemctl stop apache2.service >/dev/null 2>&1 || true
+        fi
+        warn "Apache could not be configured (see $INSTALL_LOG) - PHP sites can use nginx only"
+        svc_fail "Apache"
+    fi
+}
+
 install_recommended_services() {
     header "Recommended Services"
 
     # PHP-FPM (needed for WordPress, PHP sites)
     install_php
+
+    # Apache behind nginx, for PHP sites in .htaccess mode (needs PHP-FPM first)
+    install_apache
 
     # Certbot (needed for SSL certificates)
     if ! command -v certbot &> /dev/null; then

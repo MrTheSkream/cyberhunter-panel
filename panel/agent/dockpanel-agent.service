@@ -77,7 +77,10 @@ RestrictNamespaces=~user
 # sandbox landed. Reproduced on a fresh Ubuntu 24.04 box (s288). Note the failure
 # is only legible because s287 stopped flattening the agent's message; before that
 # it read "Agent offline".
-ReadWritePaths=/etc/nginx /etc/dockpanel /var/run/dockpanel /var/backups/dockpanel /var/lib/dockpanel /var/www /var/log /etc/systemd/system /opt -/etc/letsencrypt -/etc/apt -/etc/fail2ban -/etc/powerdns -/etc/modsecurity -/etc/cloudflared -/etc/postfix -/etc/dovecot -/var/spool/postfix -/var/spool/cron -/var/vmail -/var/cache/nginx -/etc/ufw -/var/lib/ufw -/etc/php -/etc/ssh -/var/dockpanel-sftp
+# /etc/apache2 is Apache behind nginx (feature 4): per-site vhosts in
+# sites-enabled/, written by put_site. Optional like the other service trees,
+# hence the `-`; its error logs go to /var/log/apache2, already covered.
+ReadWritePaths=/etc/nginx /etc/dockpanel /var/run/dockpanel /var/backups/dockpanel /var/lib/dockpanel /var/www /var/log /etc/systemd/system /opt -/etc/letsencrypt -/etc/apt -/etc/fail2ban -/etc/powerdns -/etc/modsecurity -/etc/cloudflared -/etc/postfix -/etc/dovecot -/var/spool/postfix -/var/spool/cron -/var/vmail -/var/cache/nginx -/etc/ufw -/var/lib/ufw -/etc/php -/etc/ssh -/var/dockpanel-sftp -/etc/apache2
 
 MemoryMax=512M
 LimitNOFILE=65535

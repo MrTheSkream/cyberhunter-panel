@@ -28,6 +28,13 @@ async fn check_services() -> Json<Vec<ServiceStatus>> {
         results.push(status);
     }
 
+    // Apache (feature 4) is optional: listed only once it is installed, so a
+    // box without it does not show a permanent "not installed" row.
+    let apache = check_systemd_service(crate::services::apache::UNIT).await;
+    if apache.status != "not_installed" {
+        results.push(apache);
+    }
+
     // Also check for PHP-FPM version-specific services (php8.x-fpm)
     if let Ok(output) = safe_command("sh")
         .args(["-c", "systemctl list-units --type=service --no-pager --plain 2>/dev/null | grep 'php.*fpm' | awk '{print $1}'"])

@@ -535,6 +535,20 @@ pub fn php_pool_for_site(site: &Site) -> Option<Value> {
     is_php_site(site).then(|| php_pool_json(&PhpRow::of(site)))
 }
 
+/// [`php_pool_for_site`] for a caller that holds only a site id (the background
+/// SSL renewals). `None` when the site is not PHP or cannot be read: the caller
+/// then omits `php_pool` and still renews - a missing pool must never cost a
+/// certificate.
+pub async fn php_pool_for_site_id(db: &sqlx::PgPool, site_id: Uuid) -> Option<Value> {
+    let site: Site = sqlx::query_as("SELECT * FROM sites WHERE id = $1")
+        .bind(site_id)
+        .fetch_optional(db)
+        .await
+        .ok()
+        .flatten()?;
+    php_pool_for_site(&site)
+}
+
 // ── B1 response ────────────────────────────────────────────────────────────
 
 pub fn fields_json() -> Value {

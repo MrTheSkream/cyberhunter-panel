@@ -213,6 +213,9 @@ pub struct CreateSiteRequest {
     /// The `server_ips` row the vhost listens on. Absent/null = the primary address.
     /// Must belong to the server the site is created on.
     pub ip_id: Option<Uuid>,
+    /// `nginx` or `apache` (feature 4). Absent = `apache` for a PHP site (D1);
+    /// always forced to `nginx` for every other runtime. See [`resolve_create_web_server`].
+    pub web_server: Option<String>,
 }
 
 /// GET /api/sites - List all sites for the current user.
@@ -467,6 +470,10 @@ pub async fn create(
         }
     }
 
+    // Feature 4: which web server serves the site. Validated before any write.
+    let web_server = resolve_create_web_server(runtime, body.web_server.as_deref())
+        .map_err(|m| err(StatusCode::BAD_REQUEST, &m))?;
+
     // Domain uniqueness - sites, git deploys AND Docker apps - was checked by
     // `domain_claim::ensure_claimable` above, before any of this work started.
 
@@ -530,8 +537,8 @@ pub async fn create(
     };
 
     let site: Site = sqlx::query_as(
-        "INSERT INTO sites (user_id, server_id, domain, runtime, status, proxy_port, php_version, php_preset, app_command, ip_id) \
-         VALUES ($1, $2, $3, $4, 'creating', $5, $6, $7, $8, $9) RETURNING *",
+        "INSERT INTO sites (user_id, server_id, domain, runtime, status, proxy_port, php_version, php_preset, app_command, ip_id, web_server) \
+         VALUES ($1, $2, $3, $4, 'creating', $5, $6, $7, $8, $9, $10) RETURNING *",
     )
     .bind(claims.sub)
     .bind(server_id)
@@ -542,6 +549,7 @@ pub async fn create(
     .bind(body.php_preset.as_deref().unwrap_or("generic"))
     .bind(&body.app_command)
     .bind(body.ip_id)
+    .bind(web_server)
     .fetch_one(&mut *tx)
     .await
     .map_err(|e| {
@@ -603,6 +611,9 @@ pub async fn create(
     agent_body["waf_enabled"] = serde_json::json!(false);
     agent_body["waf_mode"] = serde_json::json!("detection");
     agent_body["bind_ip"] = serde_json::json!(bind_ip);
+    // An agent without Apache answers 409 `apache_not_installed`; `agent_error`
+    // relays it with its code and the open transaction drops the row.
+    agent_body["web_server"] = serde_json::json!(web_server);
     if let Some(pool) = crate::routes::php_settings::php_pool_for_site(&site) {
         agent_body["php_pool"] = pool;
     }
@@ -876,6 +887,7 @@ pub async fn create(
             let ssl_php_socket = body.php_version.as_ref().map(|v| format!("unix:/run/php/php{v}-fpm.sock"));
             let ssl_proxy_port = body.proxy_port;
             let ssl_php_preset = body.php_preset.clone();
+            let ssl_web_server = web_server;
             let ssl_root_path: Option<String> = None; // default root
             let ssl_logs = logs.clone();
             // Lets the terminal step below report what actually happened instead
@@ -902,6 +914,7 @@ pub async fn create(
                         "runtime": ssl_runtime,
                         "php_socket": ssl_php_socket,
                         "proxy_port": ssl_proxy_port,
+                        "web_server": ssl_web_server,
                     });
                     if let Some(ref preset) = ssl_php_preset {
                         ssl_body["php_preset"] = serde_json::json!(preset);
@@ -1738,6 +1751,133 @@ pub async fn switch_runtime(
     let mut updated = updated;
     crate::services::server_ips::fill_bind_ip(&state.db, &mut updated).await;
     Ok(Json(updated))
+}
+
+/// The two values `sites.web_server` accepts (feature 4, CHECK constraint in
+/// `20261118000000_web_server.sql`).
+pub(crate) const WEB_SERVERS: &[&str] = &["nginx", "apache"];
+
+/// Validate a `web_server` value from a request body, returning its canonical
+/// `'static` form. Unknown values are a 400 everywhere they are accepted.
+pub(crate) fn parse_web_server(value: &str) -> Result<&'static str, String> {
+    let v = value.trim();
+    WEB_SERVERS
+        .iter()
+        .copied()
+        .find(|w| *w == v)
+        .ok_or_else(|| format!("web_server must be one of: {}", WEB_SERVERS.join(", ")))
+}
+
+/// The web server a NEW site is created with (B3 of `04-apache-contrats.md`).
+///
+/// - an explicit value is validated first, whatever the runtime, so a typo is
+///   reported rather than silently ignored;
+/// - a PHP site takes the requested value, or `apache` when none is given (D1);
+/// - every other runtime is forced to `nginx`: Apache only ever fronts PHP.
+pub(crate) fn resolve_create_web_server(
+    runtime: &str,
+    requested: Option<&str>,
+) -> Result<&'static str, String> {
+    let requested = requested.map(parse_web_server).transpose()?;
+    if runtime == "php" {
+        Ok(requested.unwrap_or("apache"))
+    } else {
+        Ok("nginx")
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub struct SwitchWebServerRequest {
+    pub web_server: String,
+}
+
+/// PUT /api/sites/{id}/web-server - Switch a PHP site between nginx alone and
+/// nginx + Apache (B4 of `04-apache-contrats.md`).
+///
+/// Owner or administrator of the site's server, through the same
+/// `SITE_FOR_CALLER_ALL` predicate as `switch_php`. The column is updated inside
+/// a transaction and committed only once the agent has accepted the rebuilt
+/// vhost, so a refusal (409 `apache_not_installed`, a failed `configtest`, ...)
+/// leaves the row describing what is really served. `fastcgi_cache` is kept
+/// as-is: the agent ignores it in Apache mode, and it is back in effect on the
+/// way back to nginx.
+///
+/// Response: `{ "web_server": "nginx" | "apache" }`. Asking for the current
+/// value is a no-op that answers the same shape without touching the agent.
+pub async fn switch_web_server(
+    State(state): State<AppState>,
+    AuthUser(claims): AuthUser,
+    Path(id): Path<Uuid>,
+    Json(body): Json<SwitchWebServerRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let target = parse_web_server(&body.web_server).map_err(|m| err(StatusCode::BAD_REQUEST, &m))?;
+
+    let site: Site = sqlx::query_as(SITE_FOR_CALLER_ALL.as_str())
+        .bind(id)
+        .bind(claims.sub)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| internal_error("switch web server", e))?
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "Site not found"))?;
+
+    if site.runtime != "php" {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "Only PHP sites can choose their web server",
+        ));
+    }
+
+    if site.web_server == target {
+        return Ok(Json(serde_json::json!({ "web_server": target })));
+    }
+
+    let agent = crate::helpers::agent_for_site_server(&state, site.server_id, &site.domain).await?;
+    let bind_ip = crate::services::server_ips::nginx_bind_ip(&state.db, &site).await;
+
+    let mut tx = state
+        .db
+        .begin()
+        .await
+        .map_err(|e| internal_error("switch web server", e))?;
+    let updated: Site = sqlx::query_as(
+        "UPDATE sites SET web_server = $1, updated_at = NOW() WHERE id = $2 RETURNING *",
+    )
+    .bind(target)
+    .bind(id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| internal_error("switch web server", e))?;
+
+    // Full vhost from the updated row, like every other rebuild path. On error
+    // the transaction is dropped (rolled back) and the agent's refusal, code
+    // included, reaches the caller.
+    agent
+        .put(
+            &format!("/nginx/sites/{}", site.domain),
+            build_nginx_body(&updated, bind_ip.as_deref()),
+        )
+        .await
+        .map_err(|e| agent_error("Web server switch", e))?;
+
+    tx.commit()
+        .await
+        .map_err(|e| internal_error("switch web server", e))?;
+
+    tracing::info!("Web server switched {} -> {} for {}", site.web_server, target, site.domain);
+    activity::log_activity(
+        &state.db,
+        claims.sub,
+        &claims.email,
+        "site.web_server",
+        Some("site"),
+        Some(&site.domain),
+        Some(&format!("{} -> {}", site.web_server, target)),
+        None,
+        claims.key_id,
+    )
+    .await;
+
+    Ok(Json(serde_json::json!({ "web_server": target })))
 }
 
 /// GET /api/php/versions - List available PHP versions (proxy to agent).
@@ -2925,8 +3065,8 @@ pub async fn clone_site(
 
     // Create new site record
     let new_site: Site = match sqlx::query_as::<_, Site>(
-        "INSERT INTO sites (user_id, server_id, domain, runtime, status, php_version, root_path, rate_limit, max_upload_mb, php_memory_mb, php_max_workers, php_preset, app_command, ip_id, php_settings, php_isolation, php_disable_shell) \
-         VALUES ($1, $2, $3, $4, 'active', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING *"
+        "INSERT INTO sites (user_id, server_id, domain, runtime, status, php_version, root_path, rate_limit, max_upload_mb, php_memory_mb, php_max_workers, php_preset, app_command, ip_id, php_settings, php_isolation, php_disable_shell, web_server) \
+         VALUES ($1, $2, $3, $4, 'active', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING *"
     )
     .bind(claims.sub)
     .bind(server_id)
@@ -2944,6 +3084,7 @@ pub async fn clone_site(
     .bind(&source.php_settings)
     .bind(source.php_isolation)
     .bind(source.php_disable_shell)
+    .bind(&source.web_server)
     .fetch_one(&state.db).await
     {
         Ok(s) => s,
@@ -2987,6 +3128,7 @@ pub async fn clone_site(
     nginx_body["waf_enabled"] = serde_json::json!(source.waf_enabled);
     nginx_body["waf_mode"] = serde_json::json!(source.waf_mode);
     nginx_body["bind_ip"] = serde_json::json!(clone_bind_ip);
+    nginx_body["web_server"] = serde_json::json!(new_site.web_server);
     if let Some(pool) = crate::routes::php_settings::php_pool_for_site(&new_site) {
         nginx_body["php_pool"] = pool;
     }
@@ -4249,6 +4391,8 @@ pub(crate) fn build_nginx_body(site: &crate::models::Site, bind_ip: Option<&str>
         "csp_policy": site.csp_policy,
         "permissions_policy": site.permissions_policy,
         "bot_protection": site.bot_protection,
+        // Feature 4 (B2): always sent. The agent ignores it for non-PHP runtimes.
+        "web_server": site.web_server,
     });
     if let Some(ref preset) = site.php_preset {
         body["php_preset"] = serde_json::json!(preset);
@@ -5026,6 +5170,39 @@ mod tests {
         // PHP runtime without a version: no socket, so no pool either.
         php.php_version = None;
         assert!(build_nginx_body(&php, None).get("php_pool").is_none());
+
+        // Feature 4 (B2): the stored web server always travels. A row read
+        // without the column (older JSON fixture) defaults to nginx.
+        assert_eq!(site.web_server, "nginx");
+        assert_eq!(build_nginx_body(&site, None)["web_server"], "nginx");
+        let mut apache = php.clone();
+        apache.web_server = "apache".into();
+        assert_eq!(build_nginx_body(&apache, Some("primary"))["web_server"], "apache");
+    }
+
+    #[test]
+    fn web_server_values_are_validated() {
+        assert_eq!(parse_web_server("nginx"), Ok("nginx"));
+        assert_eq!(parse_web_server(" apache "), Ok("apache"));
+        assert!(parse_web_server("httpd").is_err());
+        assert!(parse_web_server("Apache").is_err());
+        assert!(parse_web_server("").is_err());
+    }
+
+    #[test]
+    fn a_new_site_gets_apache_only_when_it_runs_php() {
+        // D1: PHP defaults to apache, nginx stays possible.
+        assert_eq!(resolve_create_web_server("php", None), Ok("apache"));
+        assert_eq!(resolve_create_web_server("php", Some("nginx")), Ok("nginx"));
+        assert_eq!(resolve_create_web_server("php", Some("apache")), Ok("apache"));
+        // Every other runtime is forced to nginx, even when apache is asked for.
+        for rt in ["static", "proxy", "node", "python"] {
+            assert_eq!(resolve_create_web_server(rt, None), Ok("nginx"));
+            assert_eq!(resolve_create_web_server(rt, Some("apache")), Ok("nginx"));
+        }
+        // An unknown value is refused for every runtime, never ignored.
+        assert!(resolve_create_web_server("php", Some("lighttpd")).is_err());
+        assert!(resolve_create_web_server("static", Some("lighttpd")).is_err());
     }
 
     // ── proxy_port validation - s241 H4 (SSRF + firewall-clobber DoS) ────

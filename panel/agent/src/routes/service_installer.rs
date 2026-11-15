@@ -27,6 +27,7 @@ pub fn router() -> Router<AppState> {
         .route("/services/install/fail2ban", post(install_fail2ban))
         .route("/services/install/powerdns", post(install_powerdns))
         .route("/services/install/redis", post(install_redis))
+        .route("/services/install/apache", post(install_apache))
         .route("/services/install/nodejs", post(install_nodejs))
         .route("/services/install/composer", post(install_composer))
         .route("/services/install/sshpass", post(install_sshpass))
@@ -36,6 +37,7 @@ pub fn router() -> Router<AppState> {
         .route("/services/uninstall/fail2ban", post(uninstall_fail2ban))
         .route("/services/uninstall/powerdns", post(uninstall_powerdns))
         .route("/services/uninstall/redis", post(uninstall_redis))
+        .route("/services/uninstall/apache", post(uninstall_apache))
         .route("/services/uninstall/nodejs", post(uninstall_nodejs))
         .route("/services/uninstall/composer", post(uninstall_composer))
         .route("/services/install/waf", post(install_waf))
@@ -76,6 +78,11 @@ async fn install_status() -> Result<Json<serde_json::Value>, ApiErr> {
     let redis_installed = which("redis-server").await || is_installed("redis-server").await;
     let redis_running = is_active("redis-server").await;
 
+    // Apache behind nginx (feature 4). `supported` is false on the RHEL family.
+    let apache_supported = crate::services::apache::unsupported_reason().await.is_none();
+    let apache_installed = apache_supported && crate::services::apache::is_installed().await;
+    let apache_running = apache_installed && crate::services::apache::is_active().await;
+
     let nodejs_installed = which("node").await;
     let composer_installed = which("composer").await;
 
@@ -98,6 +105,11 @@ async fn install_status() -> Result<Json<serde_json::Value>, ApiErr> {
         "fail2ban": { "installed": fail2ban_installed, "running": fail2ban_running },
         "powerdns": { "installed": pdns_installed, "running": pdns_running },
         "redis": { "installed": redis_installed, "running": redis_running },
+        "apache": {
+            "installed": apache_installed,
+            "running": apache_running,
+            "supported": apache_supported,
+        },
         "nodejs": { "installed": nodejs_installed },
         "composer": { "installed": composer_installed },
         "waf": { "installed": waf_installed },
@@ -786,6 +798,79 @@ async fn install_redis() -> Result<Json<serde_json::Value>, ApiErr> {
 
     tracing::info!("Redis installed, ping verified: {verified}");
     Ok(ok("Redis installed and started"))
+}
+
+// ── Apache installer (feature 4) ───────────────────────────────────
+
+/// POST /services/install/apache - install Apache behind nginx.
+///
+/// The unit is masked for the package transaction, the loopback-only global
+/// configuration is written and tested, and only then is Apache started: it
+/// never binds port 80 or a public address (contract A4). Idempotent on a box
+/// whose Apache the panel configured: it (re)applies the configuration. An
+/// Apache managed outside the panel is refused (409, code `apache_foreign`)
+/// and left untouched.
+async fn install_apache() -> Result<Json<serde_json::Value>, ApiErr> {
+    use crate::services::apache;
+
+    if let Some(why) = apache::unsupported_reason().await {
+        return Err(err(StatusCode::NOT_IMPLEMENTED, &why));
+    }
+    tracing::info!("Installing Apache (loopback {})...", apache::LISTEN_ADDR);
+    apache::install().await.map_err(|e| match e {
+        apache::GlobalConfigError::Foreign(why) => foreign_refusal(&why),
+        apache::GlobalConfigError::Failed(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e),
+    })?;
+    tracing::info!("Apache installed and listening on {}", apache::LISTEN_ADDR);
+    Ok(ok(&format!(
+        "Apache installed and listening on {} behind nginx",
+        apache::LISTEN_ADDR
+    )))
+}
+
+/// 409 `apache_foreign`: an Apache the admin manages outside the panel.
+fn foreign_refusal(why: &str) -> ApiErr {
+    (
+        StatusCode::CONFLICT,
+        Json(serde_json::json!({ "error": why, "code": crate::services::apache::FOREIGN_CODE })),
+    )
+}
+
+/// POST /services/uninstall/apache - refused while a site still uses Apache,
+/// and for an Apache managed outside the panel (the panel did not install it
+/// and will not remove the admin's own web server).
+async fn uninstall_apache() -> Result<Json<serde_json::Value>, ApiErr> {
+    use crate::services::{apache, pkg};
+
+    if let Some(why) = apache::unsupported_reason().await {
+        return Err(err(StatusCode::NOT_IMPLEMENTED, &why));
+    }
+    if let Some(why) = apache::foreign_apache().await {
+        return Err(foreign_refusal(&why));
+    }
+    let in_use = apache::managed_domains();
+    if !in_use.is_empty() {
+        let msg = format!(
+            "Apache is still used by {} site(s): {}. Switch them to nginx first.",
+            in_use.len(),
+            in_use.join(", ")
+        );
+        return Err((
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({ "error": msg, "code": "apache_in_use", "sites": in_use })),
+        ));
+    }
+    tracing::info!("Uninstalling Apache...");
+    let _ = tokio::time::timeout(
+        Duration::from_secs(120),
+        safe_command("systemctl").args(["disable", "--now", apache::UNIT]).output(),
+    )
+    .await;
+    pkg::remove(&["apache2"]).await.map_err(|e| {
+        err(StatusCode::INTERNAL_SERVER_ERROR, &format!("Apache uninstall failed: {e}"))
+    })?;
+    tracing::info!("Apache uninstalled");
+    Ok(ok("Apache stopped and removed"))
 }
 
 // ── Node.js installer ──────────────────────────────────────────────

@@ -151,7 +151,7 @@ interface SmtpSaveResult {
 }
 
 /** WebAuthn PublicKeyCredentialCreationOptions as returned by the server (base64url-encoded) */
-type ServiceStatus = Record<string, { installed?: boolean; running?: boolean; active?: boolean; version?: string | null }>;
+type ServiceStatus = Record<string, { installed?: boolean; running?: boolean; active?: boolean; supported?: boolean; version?: string | null }>;
 
 interface OAuthRedirects {
   base_url: string;
@@ -2602,6 +2602,7 @@ function ServiceInstallers({ pdnsApiUrl, setPdnsApiUrl, pdnsApiKey, setPdnsApiKe
     { id: "powerdns", label: "PowerDNS", desc: "Self-hosted authoritative DNS server with HTTP API", field: "powerdns", checkInstalled: (s: ServiceStatus) => s?.powerdns?.installed, checkRunning: (s: ServiceStatus) => s?.powerdns?.running, extra: () => null },
     { id: "mail", label: "Mail Server", desc: "Postfix + Dovecot + OpenDKIM for email hosting", field: "mail", checkInstalled: () => mailStatus?.installed ?? null, checkRunning: () => mailStatus?.running ?? false, extra: () => null },
     { id: "redis", label: "Redis", desc: "In-memory cache and data store for PHP applications", field: "redis", checkInstalled: (s: ServiceStatus) => s?.redis?.installed, checkRunning: (s: ServiceStatus) => s?.redis?.running, extra: () => null },
+    { id: "apache", label: "Apache", desc: "Runs behind nginx on 127.0.0.1:8091 so PHP sites can use .htaccess files", field: "apache", checkInstalled: (s: ServiceStatus) => s?.apache?.installed, checkRunning: (s: ServiceStatus) => s?.apache?.running, extra: () => null },
     { id: "nodejs", label: "Node.js", desc: "JavaScript runtime for builds, SSR, and npm packages", field: "nodejs", checkInstalled: (s: ServiceStatus) => s?.nodejs?.installed, checkRunning: () => null, extra: () => null },
     { id: "composer", label: "Composer", desc: "PHP dependency manager for Laravel, Symfony, Drupal", field: "composer", checkInstalled: (s: ServiceStatus) => s?.composer?.installed, checkRunning: () => null, extra: () => null },
     { id: "waf", label: "WAF (ModSecurity)", desc: "Web Application Firewall with OWASP CRS - blocks SQL injection, XSS, and OWASP Top 10", field: "waf", checkInstalled: (s: ServiceStatus) => s?.waf?.installed, checkRunning: () => null, extra: () => null },
@@ -2667,6 +2668,7 @@ function ServiceInstallers({ pdnsApiUrl, setPdnsApiUrl, pdnsApiKey, setPdnsApiKe
             <p><span className="text-dark-100 font-medium">PowerDNS</span> - Installs an authoritative DNS server with your choice of SQLite (no database server required) or PostgreSQL backend. Auto-configures the HTTP API and saves credentials to Settings.</p>
             <p><span className="text-dark-100 font-medium">Mail Server</span> - Installs Postfix (SMTP), Dovecot (IMAP/POP3), and OpenDKIM (DKIM signing). Creates vmail user, configures virtual mailbox hosting with SASL auth and submission port (587). Manage domains and mailboxes from the Mail page.</p>
             <p><span className="text-dark-100 font-medium">Redis</span> - Installs Redis in-memory data store. Used as cache backend for PHP applications (WordPress object cache, Laravel, Drupal). Runs as a systemd service on port 6379.</p>
+            <p><span className="text-dark-100 font-medium">Apache</span> - Installs Apache (MPM event, proxy_fcgi, rewrite, remoteip) listening only on 127.0.0.1:8091, never on port 80. nginx stays in front and passes PHP requests of sites in "nginx + Apache" mode to it, so their .htaccess files are read. PHP still runs in each site's own PHP-FPM pool. Cannot be uninstalled while a site uses it.</p>
             <p><span className="text-dark-100 font-medium">Node.js</span> - Installs Node.js 22 LTS and npm via NodeSource. Used for build tools, SSR frameworks (Next.js, Nuxt), and running JavaScript/TypeScript applications.</p>
             <p><span className="text-dark-100 font-medium">Composer</span> - Installs Composer globally at /usr/local/bin. The standard PHP dependency manager used by Laravel, Symfony, Drupal, and most PHP frameworks.</p>
           </div>
@@ -2720,6 +2722,8 @@ function ServiceInstallers({ pdnsApiUrl, setPdnsApiUrl, pdnsApiKey, setPdnsApiKe
                       </button>
                     )}
                   </div>
+                ) : svc.id === "apache" && status?.apache?.supported === false ? (
+                  <span className="text-[10px] text-dark-300 uppercase tracking-wider shrink-0 ml-3">Not supported on this server</span>
                 ) : (
                   <button
                     onClick={() => install(svc.id, svc.label, svc.id === "powerdns" ? { backend: pdnsBackend } : undefined)}

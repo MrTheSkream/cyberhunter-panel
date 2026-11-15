@@ -127,6 +127,11 @@ pub struct MigrationSite {
     pub size_bytes: u64,
     pub runtime: String,
     pub file_count: u64,
+    /// `"apache"` / `"nginx"` as the source panel served the domain (feature 4,
+    /// decision D3). Only HestiaCP reports it; absent (not serialized) for the
+    /// other panels.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub web_server: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -306,6 +311,7 @@ async fn parse_cpanel(id: &str, root: &str) -> Result<MigrationInventory, String
                 size_bytes: size,
                 runtime,
                 file_count: count,
+                web_server: None,
             });
         }
 
@@ -326,6 +332,7 @@ async fn parse_cpanel(id: &str, root: &str) -> Result<MigrationInventory, String
                         size_bytes: size,
                         runtime,
                         file_count: count,
+                        web_server: None,
                     });
                 }
             }
@@ -429,6 +436,7 @@ async fn parse_plesk(id: &str, root: &str) -> Result<MigrationInventory, String>
                     size_bytes: size,
                     runtime,
                     file_count: count,
+                    web_server: None,
                 });
             }
         }
@@ -479,7 +487,20 @@ async fn parse_hestiacp(id: &str, root: &str) -> Result<MigrationInventory, Stri
                     warnings.push(format!("Skipped {domain}: document root is outside the archive"));
                     continue;
                 };
-                sites.push(MigrationSite { domain, doc_root: rel_doc_root, size_bytes: size, runtime, file_count: count });
+                // D3: a domain Hestia served through Apache arrives in Apache
+                // mode, so its .htaccess keeps working from the first request.
+                let web_conf = ["hestia/web.conf", "web.conf"]
+                    .iter()
+                    .find_map(|f| std::fs::read_to_string(entry.path().join(f)).ok());
+                let web_server = hestia_web_server(web_conf.as_deref().unwrap_or(""), &domain);
+                sites.push(MigrationSite {
+                    domain,
+                    doc_root: rel_doc_root,
+                    size_bytes: size,
+                    runtime,
+                    file_count: count,
+                    web_server: Some(web_server.to_string()),
+                });
             }
         }
     }
@@ -503,6 +524,44 @@ async fn parse_hestiacp(id: &str, root: &str) -> Result<MigrationInventory, Stri
     }
 
     Ok(MigrationInventory { id: id.to_string(), source: "hestiacp".to_string(), sites, databases, mail_accounts: vec![], warnings })
+}
+
+/// `KEY='value'` pairs of one HestiaCP config line, in order.
+fn hestia_pairs(line: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let mut rest = line.trim();
+    while let Some(eq) = rest.find("='") {
+        let key = rest[..eq].trim().to_string();
+        let after = &rest[eq + 2..];
+        let Some(end) = after.find('\'') else {
+            break;
+        };
+        out.push((key, after[..end].to_string()));
+        rest = after[end + 1..].trim_start();
+    }
+    out
+}
+
+/// How HestiaCP served `domain`, from its `web.conf`: `"apache"` when the
+/// domain has a non-empty `PROXY` template (nginx in front of Apache), else
+/// `"nginx"`. Matches the key exactly - `PROXY_EXT` is always set and says
+/// nothing about Apache. A line for another domain is ignored.
+pub fn hestia_web_server(web_conf: &str, domain: &str) -> &'static str {
+    for line in web_conf.lines() {
+        let pairs = hestia_pairs(line);
+        if let Some((_, d)) = pairs.iter().find(|(k, _)| k == "DOMAIN") {
+            if d != domain {
+                continue;
+            }
+        }
+        if pairs
+            .iter()
+            .any(|(k, v)| k == "PROXY" && !v.trim().is_empty())
+        {
+            return "apache";
+        }
+    }
+    "nginx"
 }
 
 /// Try to find the main domain from cPanel config files
@@ -750,4 +809,33 @@ pub async fn cleanup(migration_id: &str) -> Result<(), String> {
         tracing::info!("Cleaned up migration directory: {dir}");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod web_server_tests {
+    use super::hestia_web_server;
+
+    #[test]
+    fn hestia_proxy_template_means_apache() {
+        let conf = "DOMAIN='example.com' IP='192.0.2.1' IP6='' ALIAS='www.example.com' TPL='default' \
+                    SSL='yes' BACKEND='PHP-8_2' PROXY='default' PROXY_EXT='jpeg,jpg,png' SUSPENDED='no'\n";
+        assert_eq!(hestia_web_server(conf, "example.com"), "apache");
+    }
+
+    #[test]
+    fn empty_proxy_with_proxy_ext_is_nginx() {
+        let conf = "DOMAIN='example.com' TPL='default' BACKEND='PHP-8_2' PROXY='' PROXY_EXT='jpeg,jpg,png,css'\n";
+        assert_eq!(hestia_web_server(conf, "example.com"), "nginx");
+        let no_key = "DOMAIN='example.com' TPL='default' PROXY_EXT='jpg'\n";
+        assert_eq!(hestia_web_server(no_key, "example.com"), "nginx");
+        assert_eq!(hestia_web_server("", "example.com"), "nginx");
+        assert_eq!(hestia_web_server("garbage without pairs", "example.com"), "nginx");
+    }
+
+    #[test]
+    fn only_the_domains_own_line_counts() {
+        let conf = "DOMAIN='other.com' PROXY='default'\nDOMAIN='example.com' PROXY=''\n";
+        assert_eq!(hestia_web_server(conf, "example.com"), "nginx");
+        assert_eq!(hestia_web_server(conf, "other.com"), "apache");
+    }
 }

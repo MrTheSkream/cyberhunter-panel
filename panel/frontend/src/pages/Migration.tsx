@@ -631,6 +631,23 @@ export default function Migration() {
             </div>
           </div>
 
+          {/* Non-fatal notes from the import (e.g. a HestiaCP Apache domain
+              imported in nginx mode). Read from the stored result, which is
+              refreshed when the progress stream completes. */}
+          {(() => {
+            const raw = migration?.result?.warnings;
+            const warnings = Array.isArray(raw) ? raw.filter((w): w is string => typeof w === "string") : [];
+            if (warnings.length === 0) return null;
+            return (
+              <div className="bg-warn-500/10 border border-warn-500/30 rounded-lg p-4 space-y-1.5">
+                <h3 className="text-sm font-medium text-warn-400">Warnings</h3>
+                {warnings.map((w, i) => (
+                  <p key={i} className="text-xs text-dark-200">{w}</p>
+                ))}
+              </div>
+            );
+          })()}
+
           <div className="flex gap-3">
             {/* `Link`, not `<a href>`: an anchor to an in-app route reloads the
                 whole SPA - it discards the router, refetches the bundle and

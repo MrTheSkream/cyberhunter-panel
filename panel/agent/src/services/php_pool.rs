@@ -149,7 +149,19 @@ pub fn validate_php_pool(pool: &PhpPool) -> Result<(), String> {
     Ok(())
 }
 
+/// The `open_basedir` of a site's pool. One definition for isolation and for
+/// the always-on rule below.
+pub fn open_basedir_value(domain: &str) -> String {
+    format!("/var/www/{domain}/:/tmp/:/usr/share/php/")
+}
+
 /// Render the pool file. Pure: the caller validates first.
+///
+/// EVERY pool gets `open_basedir`, whatever its user and the `isolation` flag:
+/// Apache mode can be made to hand a request to any pool's socket
+/// (RewriteRule [H=]), and `open_basedir` is what makes that pool refuse a
+/// script outside its own site tree. An explicit `open_basedir` in the pool's
+/// values wins; the line is never emitted twice.
 pub fn render_php_pool(
     domain: &str,
     php_version: &str,
@@ -204,11 +216,18 @@ pub fn render_php_pool(
     }
     out.push('\n');
 
+    let explicit_ob = pool.values.contains_key("open_basedir")
+        || pool.extra.iter().any(|(k, _)| k == "open_basedir");
+    if !explicit_ob {
+        out.push_str(&format!(
+            "php_admin_value[open_basedir] = {}\n",
+            open_basedir_value(domain)
+        ));
+    }
     if pool.isolation {
         let site = format!("/var/www/{domain}");
         out.push_str(&format!(
-            "php_admin_value[open_basedir] = {site}/:/tmp/:/usr/share/php/\n\
-             php_admin_value[upload_tmp_dir] = {site}/tmp\n\
+            "php_admin_value[upload_tmp_dir] = {site}/tmp\n\
              php_admin_value[session.save_path] = {site}/tmp\n\
              php_admin_value[session.gc_probability] = 1\n\
              php_admin_value[sendmail_path] = /usr/sbin/sendmail -t -i -f noreply@{domain}\n"
@@ -222,6 +241,103 @@ pub fn render_php_pool(
          php_admin_flag[log_errors] = on\n"
     ));
     out
+}
+
+/// Pure: the text of an existing panel-managed pool file with the default
+/// `open_basedir` added, or `None` when nothing should change - the file
+/// already has an `open_basedir` line, is not one the panel wrote (the section
+/// name must equal the file stem, the socket must be this version's
+/// `php<ver>-fpm-<stem>.sock`, the stem must turn back into a valid domain), or
+/// it is the distro `www.conf`.
+pub fn pool_text_with_open_basedir(stem: &str, php_version: &str, text: &str) -> Option<String> {
+    if stem == "www" || stem.is_empty() {
+        return None;
+    }
+    let domain = stem.replace('_', ".");
+    if !crate::routes::is_valid_domain(&domain) || pool_name(&domain) != stem {
+        return None;
+    }
+    let first = text.lines().map(str::trim).find(|l| !l.is_empty() && !l.starts_with(';'))?;
+    if first != format!("[{stem}]") {
+        return None;
+    }
+    let socket = format!("listen = /run/php/php{php_version}-fpm-{stem}.sock");
+    if !text.lines().any(|l| l.trim() == socket) {
+        return None;
+    }
+    let has_ob = text.lines().any(|l| {
+        let t = l.trim();
+        !t.starts_with(';') && t.contains("open_basedir")
+    });
+    if has_ob {
+        return None;
+    }
+    let mut out = text.to_string();
+    if !out.ends_with('\n') {
+        out.push('\n');
+    }
+    out.push_str(&format!(
+        "php_admin_value[open_basedir] = {}\n",
+        open_basedir_value(&domain)
+    ));
+    Some(out)
+}
+
+/// Startup reconciliation: pools written before every pool carried
+/// `open_basedir` get the default line added, then each affected php-fpm
+/// version is tested and reloaded once. Idempotent; unmanaged files and the
+/// distro `www.conf` are never touched. A version whose `php-fpm -t` fails
+/// afterwards is put back as it was.
+pub async fn reconcile_open_basedir() {
+    let _guard = FPM_CONFIG_LOCK.lock().await;
+    let versions: Vec<String> = std::fs::read_dir("/etc/php")
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|v| !v.is_empty() && v.chars().all(|c| c.is_ascii_digit() || c == '.'))
+        .collect();
+    for ver in versions {
+        let dir = format!("/etc/php/{ver}/fpm/pool.d");
+        let mut changed: Vec<(String, String)> = Vec::new(); // (path, previous text)
+        for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let Some(stem) = name.strip_suffix(".conf") else { continue };
+            let path = format!("{dir}/{name}");
+            let Ok(meta) = std::fs::symlink_metadata(&path) else { continue };
+            if !meta.is_file() {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&path) else { continue };
+            let Some(new_text) = pool_text_with_open_basedir(stem, &ver, &text) else { continue };
+            let domain = stem.replace('_', ".");
+            if !std::path::Path::new(&format!("/var/www/{domain}")).is_dir() {
+                tracing::warn!("open_basedir reconciliation: skipping {path}, /var/www/{domain} not found");
+                continue;
+            }
+            let tmp = format!("{path}.tmp");
+            let written = std::fs::write(&tmp, &new_text).and_then(|_| std::fs::rename(&tmp, &path));
+            match written {
+                Ok(()) => changed.push((path, text)),
+                Err(e) => {
+                    std::fs::remove_file(&tmp).ok();
+                    tracing::warn!("open_basedir reconciliation: cannot write {path}: {e}");
+                }
+            }
+        }
+        if changed.is_empty() {
+            continue;
+        }
+        if let Err(e) = test_fpm_config(&ver).await {
+            tracing::warn!("open_basedir reconciliation: php-fpm{ver} -t failed, reverting {} pool(s): {e}", changed.len());
+            for (path, prev) in &changed {
+                let _ = std::fs::write(path, prev);
+            }
+            continue;
+        }
+        tracing::info!("open_basedir added to {} PHP-FPM pool(s) of PHP {ver}", changed.len());
+        let _ = crate::services::nginx::reload_php_fpm(&ver).await;
+    }
 }
 
 /// Serialises pool AND php.ini writes box-wide: `php-fpm -t` reads every
@@ -615,6 +731,66 @@ php_admin_flag[log_errors] = on
     }
 
     #[test]
+    fn every_pool_gets_exactly_one_open_basedir() {
+        let ob = "php_admin_value[open_basedir] = /var/www/example.com/:/tmp/:/usr/share/php/\n";
+        let mut p = a1();
+        for (user, iso) in [("www-data", false), ("sftp_x", false), ("www-data", true), ("sftp_x", true)] {
+            p.isolation = iso;
+            let out = render_php_pool("example.com", "8.3", &p, user, user);
+            assert_eq!(out.matches("open_basedir").count(), 1, "{user} {iso}: {out}");
+            assert!(out.contains(ob));
+        }
+        // Isolation on is byte-identical to the pinned rendering.
+        p.isolation = true;
+        assert_eq!(render(&p), A1_RENDERED);
+        // Isolation off: the same file minus the isolation-only lines.
+        p.isolation = false;
+        let off = render(&p);
+        assert!(off.contains(ob) && !off.contains("upload_tmp_dir") && !off.contains("sendmail_path"));
+    }
+
+    #[test]
+    fn an_explicit_open_basedir_wins_and_is_not_doubled() {
+        let mut p = a1();
+        p.values.insert("open_basedir".into(), "/srv/x/".into());
+        for iso in [false, true] {
+            p.isolation = iso;
+            let out = render_php_pool("example.com", "8.3", &p, "www-data", "www-data");
+            assert_eq!(out.matches("open_basedir").count(), 1, "{out}");
+            assert!(out.contains("[open_basedir] = /srv/x/"));
+            assert!(!out.contains("/var/www/example.com/:/tmp/"));
+        }
+    }
+
+    const OLD_POOL: &str = "[example_com]\nuser = www-data\ngroup = www-data\nlisten = /run/php/php8.3-fpm-example_com.sock\nlisten.owner = www-data\nlisten.group = www-data\nlisten.mode = 0660\n\npm = dynamic\nphp_admin_value[memory_limit] = 256M\n";
+
+    #[test]
+    fn reconciliation_adds_the_line_once_to_managed_pools_only() {
+        let new = pool_text_with_open_basedir("example_com", "8.3", OLD_POOL).unwrap();
+        assert_eq!(
+            new,
+            format!("{OLD_POOL}php_admin_value[open_basedir] = /var/www/example.com/:/tmp/:/usr/share/php/\n")
+        );
+        // Idempotent.
+        assert_eq!(pool_text_with_open_basedir("example_com", "8.3", &new), None);
+        // Missing trailing newline is handled.
+        let nonl = OLD_POOL.trim_end();
+        assert!(pool_text_with_open_basedir("example_com", "8.3", nonl).unwrap().contains("memory_limit] = 256M\nphp_admin_value[open_basedir]"));
+        // Already has one (even an explicit different one): untouched.
+        let own = format!("{OLD_POOL}php_admin_value[open_basedir] = /srv/\n");
+        assert_eq!(pool_text_with_open_basedir("example_com", "8.3", &own), None);
+        // A commented line does not count.
+        let commented = format!("{OLD_POOL};php_admin_value[open_basedir] = /srv/\n");
+        assert!(pool_text_with_open_basedir("example_com", "8.3", &commented).is_some());
+        // Distro and foreign files: never.
+        assert_eq!(pool_text_with_open_basedir("www", "8.3", "[www]\nuser = www-data\nlisten = /run/php/php8.3-fpm.sock\n"), None);
+        assert_eq!(pool_text_with_open_basedir("example_com", "8.2", OLD_POOL), None, "socket of another version");
+        assert_eq!(pool_text_with_open_basedir("other_com", "8.3", OLD_POOL), None, "section name differs from the file");
+        assert_eq!(pool_text_with_open_basedir("bad name", "8.3", OLD_POOL), None);
+        assert_eq!(pool_text_with_open_basedir("example_com", "8.3", ""), None);
+    }
+
+    #[test]
     fn a1_example_renders_exactly() {
         let p = a1();
         validate_php_pool(&p).unwrap();
@@ -678,12 +854,14 @@ php_admin_flag[log_errors] = on
     }
 
     #[test]
-    fn isolation_off_drops_the_four_isolation_lines_but_keeps_error_log() {
+    fn isolation_off_drops_the_isolation_lines_but_keeps_error_log_and_open_basedir() {
         let mut p = a1();
         p.isolation = false;
         p.disable_shell = false;
         let out = render(&p);
-        for k in ["open_basedir", "upload_tmp_dir", "session.save_path", "sendmail_path", "disable_functions"] {
+        assert!(out.contains("php_admin_value[open_basedir] = /var/www/example.com/:/tmp/:/usr/share/php/
+"));
+        for k in ["upload_tmp_dir", "session.save_path", "sendmail_path", "disable_functions"] {
             assert!(!out.contains(&format!("[{k}]")), "{k} should be absent");
         }
         assert!(out.contains("php_admin_value[error_log] = /var/log/php-fpm/example_com.error.log\n"));
@@ -705,7 +883,7 @@ php_admin_flag[log_errors] = on
         assert!(out.contains(
             "php_admin_value[disable_functions] = exec,system,passthru,shell_exec,proc_open,popen\n"
         ));
-        assert!(!out.contains("open_basedir"));
+        assert_eq!(out.matches("open_basedir").count(), 1);
     }
 
     #[test]

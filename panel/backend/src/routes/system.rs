@@ -613,7 +613,16 @@ pub(crate) async fn install_service_with_log(
                 ).await;
             }
             Err(e) => {
-                emit("install", &format!("Installing {svc}"), "error", Some(format!("{e}")));
+                // An agent refusal carries its own sentence ("Apache mode is not
+                // supported on RHEL yet", "Apache is used by 2 site(s)..."):
+                // show that, not the raw `agent returned 501: {json}` framing.
+                let detail = match &e {
+                    crate::services::agent::AgentError::Status(_, body) => {
+                        crate::error::agent_message(body)
+                    }
+                    other => format!("{other}"),
+                };
+                emit("install", &format!("Installing {svc}"), "error", Some(detail));
                 emit("complete", "Install failed", "error", None);
                 tracing::error!("Service install failed: {svc}: {e}");
             }
@@ -1142,6 +1151,49 @@ pub async fn uninstall_powerdns(
     }))))
 }
 
+/// POST /api/services/install/apache - Install Apache behind nginx (feature 4).
+/// Same SSE install flow as Redis; the agent writes the loopback-only
+/// configuration (127.0.0.1:8091) before Apache is ever started.
+pub async fn install_apache(
+    State(state): State<AppState>,
+    AdminUser(claims): AdminUser,
+    ServerScope(_server_id, agent): ServerScope,
+) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
+    install_service_with_log(&state, agent, claims.sub, &claims.email, "Apache", "/services/install/apache", None).await
+}
+
+/// The refusal an Apache uninstall gets while `apache_sites` sites on the
+/// server still use it, or `None` when it may proceed. Pure, for the test.
+pub(crate) fn apache_uninstall_refusal(apache_sites: i64) -> Option<String> {
+    (apache_sites > 0).then(|| {
+        format!(
+            "Apache is used by {apache_sites} site(s) on this server. \
+             Switch them to nginx before uninstalling Apache."
+        )
+    })
+}
+
+/// POST /api/services/uninstall/apache - refused (409 `apache_in_use`) while any
+/// PHP site of the scoped server has `web_server = 'apache'` (a site switched to
+/// another runtime keeps the column but is served by nginx, so it does not count).
+pub async fn uninstall_apache(
+    State(state): State<AppState>,
+    AdminUser(claims): AdminUser,
+    ServerScope(server_id, agent): ServerScope,
+) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
+    let (count,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM sites WHERE server_id = $1 AND runtime = 'php' AND web_server = 'apache'",
+    )
+    .bind(server_id)
+    .fetch_one(&state.db)
+    .await
+    .map_err(|e| internal_error("apache uninstall check", e))?;
+    if let Some(msg) = apache_uninstall_refusal(count) {
+        return Err(crate::error::err_coded(StatusCode::CONFLICT, &msg, crate::error::CODE_APACHE_IN_USE));
+    }
+    install_service_with_log(&state, agent, claims.sub, &claims.email, "Apache (uninstall)", "/services/uninstall/apache", None).await
+}
+
 pub async fn uninstall_redis(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
@@ -1249,4 +1301,17 @@ pub async fn traefik_status(
         .map_err(|e| agent_error("Traefik status", e))?;
 
     Ok(Json(result))
+}
+
+#[cfg(test)]
+mod apache_tests {
+    use super::apache_uninstall_refusal;
+
+    #[test]
+    fn apache_uninstall_is_refused_while_a_site_uses_it() {
+        assert!(apache_uninstall_refusal(0).is_none());
+        let msg = apache_uninstall_refusal(2).unwrap();
+        assert!(msg.contains("2 site(s)"));
+        assert!(!msg.contains('\u{2014}'));
+    }
 }

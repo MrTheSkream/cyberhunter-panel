@@ -25,7 +25,7 @@ location ~* \.(?:jpe?g|png|gif|webp|avif|svg|ico|css|js|mjs|map|woff2?|ttf|otf|e
 }
 location / { try_files /nonexistent @apache; }
 location @apache {
-    proxy_pass http://127.0.0.1:8081;
+    proxy_pass http://127.0.0.1:8091;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -40,13 +40,14 @@ location @apache {
 ### A3. vhost Apache `/etc/apache2/sites-enabled/<domaine>.conf` (fonction pure `render_apache_vhost`)
 ```apache
 # Managed by CyberHunter - Panel. Do not edit by hand.
-<VirtualHost 127.0.0.1:8081>
+<VirtualHost 127.0.0.1:8091>
     ServerName <domaine>
     ServerAlias <alias...>            # mêmes alias que le server_name nginx
     DocumentRoot <document_root_for(site)>
     <Directory <document_root>>
-        AllowOverride All
-        Options +FollowSymLinks -Indexes -ExecCGI -Includes
+        AllowOverride AuthConfig Limit Indexes Options=FollowSymLinks,SymLinksIfOwnerMatch,Indexes,MultiViews Nonfatal=Override
+        AllowOverrideList RewriteEngine RewriteBase RewriteCond RewriteRule RewriteOptions Redirect RedirectMatch RedirectPermanent RedirectTemp ErrorDocument Header RequestHeader AddType ForceType RemoveType RemoveHandler AddDefaultCharset AddCharset RemoveCharset AddEncoding RemoveEncoding AddLanguage RemoveLanguage LanguagePriority FileETag MultiviewsMatch SetEnv SetEnvIf SetEnvIfNoCase BrowserMatch BrowserMatchNoCase UnsetEnv PassEnv SetOutputFilter AddOutputFilter AddOutputFilterByType
+        Options +SymLinksIfOwnerMatch -FollowSymLinks -Indexes -ExecCGI -Includes
         Require all granted
     </Directory>
     <FilesMatch "^\.(ht|user\.ini)">
@@ -63,9 +64,47 @@ location @apache {
 ```
 - Le socket est celui que `put_site` a résolu pour le pool du site (après l'attente du socket).
 - Écriture atomique ; `apachectl configtest` ; puis `systemctl reload apache2`.
+- **Isolation des sockets (durcissement)** : un `.htaccess` ne doit jamais pouvoir viser le socket
+  d'un autre site. `AllowOverride All` le permettait (`SetHandler`/`AddHandler
+  "proxy:unix:<autre>.sock|fcgi://localhost"`, aussi dans `<Files>`/`<If>`). Le vhost n'accorde donc
+  plus la catégorie `FileInfo` (qui regroupe SetHandler/AddHandler) : il accorde `AuthConfig Limit
+  Indexes Options=...` en entier et ré-autorise une à une les directives FileInfo utiles
+  (`AllowOverrideList` : Rewrite*, Redirect*, ErrorDocument, Header, AddType, AddDefaultCharset,
+  SetEnvIf...). `SetHandler`, `AddHandler`, `Action`, `SetInputFilter` restent refusés dans tous les
+  contextes (le `SetHandler` du vhost, lui, n'est pas soumis à AllowOverride). `Nonfatal=Override`
+  transforme une directive refusée en avertissement dans le journal d'erreurs au lieu d'une erreur 500
+  (un `.htaccess` cPanel avec `AddHandler ...php74...`, ou le `SetHandler Drupal_Security_...` de
+  Drupal, continue de fonctionner, la ligne étant ignorée). Les conteneurs (`<IfModule>`, `<Files>`,
+  `<FilesMatch>`, `<If>`, `<Limit>`) restent permis ; avec `AllowOverride None` + liste seule ils
+  seraient refusés et casseraient tout `.htaccess` WordPress.
+- Une règle `<Proxy>`/`<ProxyMatch>` « refuser tout sauf le worker du site » a été **essayée et ne
+  convient pas** : mesuré sur Apache 2.4.58, ces sections ne sont pas appliquées aux handlers forcés
+  (`SetHandler`, `AddHandler`, `RewriteRule [H=]`), seulement aux requêtes déjà proxy dès la
+  traduction (`ProxyPass`). Aucune n'est émise.
+- **Limite connue** : `RewriteRule ... [H=proxy:unix:<autre>.sock|fcgi://localhost]` (et `[P]` vers une
+  URL `fcgi://` TCP) ne peut pas être refusé par la configuration Apache tant que `RewriteRule` est
+  permis. En pratique, le pool visé refuse le script (chemin dans l'arbre du site appelant, hors de
+  son `open_basedir` : « No input file specified »). Le contournement par lien symbolique vers un
+  fichier de l'autre site est refusé par défaut par `Options +SymLinksIfOwnerMatch -FollowSymLinks` (lien et
+  cible de propriétaires différents : 403 ; `mod_rewrite` accepte l'une ou l'autre option). Un `.htaccess`
+  PEUT réactiver `FollowSymLinks` (présent dans la liste `Options=`) : Drupal et beaucoup de sites migrés
+  contiennent `Options +FollowSymLinks`, et une erreur 500 n'est pas acceptable. Risque résiduel : un
+  locataire qui fait cela plus `[H=]` ne peut exécuter que des scripts déjà présents dans l'arbre de
+  l'autre site, sous le `open_basedir` de cet autre site. Sans réactivation, un lien symbolique dont le
+  propriétaire diffère de celui de sa cible (ex. lien de déploiement créé par root) est refusé.
+- **`open_basedir` sur tous les pools** : chaque pool PHP-FPM reçoit toujours
+  `php_admin_value[open_basedir] = /var/www/<domaine>/:/tmp/:/usr/share/php/`, quel que soit
+  l'utilisateur du pool (`www-data` ou dédié) et l'option `isolation` (une seule ligne ; une valeur
+  `open_basedir` explicite du pool l'emporte). Raison : constaté en VM, un `RewriteRule ... [H=proxy:unix:<autre>.sock|...]`
+  exécutait le script d'un site dans le pool d'un autre (pool `www-data` sans `open_basedir`), hors des
+  limites du site appelant. Avec `open_basedir`, le pool visé refuse tout script hors de son propre
+  arbre. Les pools existants sont complétés au démarrage de l'agent (pools gérés par le panel sans
+  ligne `open_basedir` : ligne ajoutée, `php-fpm -t`, rechargement par version ; idempotent, `www.conf`
+  et fichiers non gérés jamais touchés).
+- Écriture atomique ; `apachectl configtest` ; puis `systemctl reload apache2`.
 
 ### A4. Configuration globale Apache (écrite par l'installeur, idempotente)
-- `/etc/apache2/ports.conf` : `Listen 127.0.0.1:8081` uniquement.
+- `/etc/apache2/ports.conf` : `Listen 127.0.0.1:8091` uniquement.
 - `a2dissite 000-default` ; `a2dismod mpm_prefork php*` ; `a2enmod mpm_event proxy proxy_fcgi
   rewrite remoteip headers expires setenvif`.
 - `/etc/apache2/conf-available/cyberhunter.conf` (activée) :
