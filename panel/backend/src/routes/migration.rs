@@ -14,6 +14,9 @@ use crate::auth::{AuthUser, ServerScope};
 use crate::error::{internal_error, err, require_admin, ApiError};
 use crate::routes::sites::ProvisionStep;
 use crate::services::activity;
+use crate::services::import_site::{self, ItemRunner, RunCounts, SiteChoice, SiteEnv};
+use crate::services::import_types::{ImportCtx, ItemOutcome, ItemStatus, ProgressFn};
+use crate::services::migration_ledger as ledger;
 use crate::AppState;
 
 // ──────────────────────────────────────────────────────────────
@@ -35,17 +38,33 @@ pub struct AnalyzeRequest {
     pub url: Option<String>,
 }
 
-#[derive(serde::Deserialize)]
+/// `POST /api/migration/{id}/import` (W5-R). Every field is optional so a bare
+/// `{"retry": true}` replays the stored selection. Unknown fields (the old
+/// `doc_root` / `runtime` per site) are ignored: those come from the inventory.
+#[derive(serde::Deserialize, serde::Serialize, Default, Clone, Debug)]
 pub struct ImportRequest {
-    pub sites: Option<Vec<ImportSiteItem>>,
+    #[serde(default)]
+    pub default_php_version: Option<String>,
+    #[serde(default)]
+    pub sites: Option<Vec<SiteChoice>>,
+    #[serde(default)]
     pub databases: Option<Vec<ImportDbItem>>,
+    #[serde(default)]
+    pub mail_domains: Option<Vec<String>>,
+    /// `"<kind>:<key>"` items to redo even though they are finished.
+    #[serde(default)]
+    pub force_items: Vec<String>,
+    #[serde(default)]
+    pub retry: bool,
 }
 
-#[derive(serde::Deserialize, Clone)]
-pub struct ImportSiteItem {
-    pub domain: String,
-    pub doc_root: String,
-    pub runtime: String,
+impl ImportRequest {
+    fn is_empty(&self) -> bool {
+        let none = |n: Option<usize>| n.unwrap_or(0) == 0;
+        none(self.sites.as_ref().map(Vec::len))
+            && none(self.databases.as_ref().map(Vec::len))
+            && none(self.mail_domains.as_ref().map(Vec::len))
+    }
 }
 
 /// The web server an imported site is created with (B5 / D3 of
@@ -120,18 +139,15 @@ pub(crate) fn import_web_server(
     }
 }
 
-#[derive(serde::Deserialize, Clone)]
+#[derive(serde::Deserialize, serde::Serialize, Clone, Debug)]
 pub struct ImportDbItem {
+    /// The dump file and the engine come from the inventory: `file` / `engine`
+    /// sent by an older page are ignored.
     pub name: String,
-    pub file: String,
-    pub engine: String,
-    /// Which imported site this database belongs to.
+    /// Which site this database belongs to.
     ///
-    /// A `databases` row cannot exist without one - the column is NOT NULL with
-    /// no default - and a control-panel archive does not record the association,
-    /// so it has to come from the operator. Optional on the wire because a
-    /// single-site archive has only one possible answer and the import resolves
-    /// it without asking; when the run imports several sites and this is absent,
+    /// A `databases` row cannot exist without one. Absent: the analysis'
+    /// `suggested_site` (D12), else the only site of the selection; otherwise
     /// the database is refused rather than guessed at.
     #[serde(default)]
     pub site_domain: Option<String>,
@@ -171,8 +187,17 @@ fn emit_step(
         message,
     };
     if let Ok(mut map) = logs.lock() {
-        if let Some((history, tx, _)) = map.get_mut(&id) {
-            history.push(ev.clone());
+        if let Some((history, tx, touched)) = map.get_mut(&id) {
+            // One history entry per step (its latest state): a 9 GB copy emits
+            // an event every few seconds for an hour, and the snapshot a
+            // reconnecting page receives must not grow with it.
+            match history.iter_mut().find(|h| h.step == ev.step) {
+                Some(h) => *h = ev.clone(),
+                None => history.push(ev.clone()),
+            }
+            // The hourly sweep in `main.rs` evicts by this instant: a live,
+            // multi-hour import keeps it fresh so its stream is never detached.
+            *touched = Instant::now();
             let _ = tx.send(ev);
         }
     }
@@ -204,6 +229,24 @@ const FETCH_AGENT_TIMEOUT_SECS: u64 = 1860;
 /// same way a wrong guess in a manually-copied filename already would; this
 /// only makes a failure message that echoes the path read like a real backup
 /// name instead of a bare UUID.
+/// The job id of an asynchronous analysis (`{id, job_id}` without sites), or
+/// `None` when the agent answered with the inventory itself.
+pub(crate) fn analysis_job_id(resp: &serde_json::Value) -> Option<String> {
+    if resp.get("sites").is_some() {
+        return None;
+    }
+    resp.get("job_id").and_then(|j| j.as_str()).filter(|j| !j.is_empty()).map(str::to_string)
+}
+
+/// The source recorded on the row after analysis: the agent's verdict
+/// (`inventory.source`) when it names a known panel, else what was asked for.
+pub(crate) fn detected_source(inventory: &serde_json::Value, requested: &str) -> String {
+    match inventory.get("source").and_then(|s| s.as_str()) {
+        Some(s @ ("cpanel" | "plesk" | "hestiacp")) => s.to_string(),
+        _ => requested.to_string(),
+    }
+}
+
 fn fetch_archive_extension(url: &str) -> &'static str {
     let lower = url.split(['?', '#']).next().unwrap_or(url).to_ascii_lowercase();
     if lower.ends_with(".zip") {
@@ -350,12 +393,17 @@ pub async fn analyze(
             }
         }
 
+        // `async: true` (W1): a HestiaCP analysis reads every blob and takes
+        // minutes, so the agent answers 202 `{id, job_id}` and the inventory
+        // arrives as the job's report. An agent that ignores the flag answers
+        // with the inventory itself, as before.
         let agent_body = serde_json::json!({
             "path": path_owned.clone(),
             "source": source_owned.clone(),
+            "async": true,
         });
 
-        match agent
+        let analysis = match agent
             .post_long(
                 "/migration/analyze",
                 Some(agent_body),
@@ -363,13 +411,37 @@ pub async fn analyze(
             )
             .await
         {
+            Ok(resp) => match analysis_job_id(&resp) {
+                Some(job) => crate::services::import_types::poll_job(&agent, &job, |_| {})
+                    .await
+                    .map(|mut inv| {
+                        // The staging id every later agent call needs.
+                        if inv.get("id").is_none()
+                            && let (Some(o), Some(sid)) = (inv.as_object_mut(), resp.get("id"))
+                        {
+                            o.insert("id".into(), sid.clone());
+                        }
+                        inv
+                    })
+                    .map_err(|e| ledger::redact(&e)),
+                None => Ok(resp),
+            },
+            Err(e) => Err(e.to_string()),
+        };
+
+        match analysis {
             Ok(inventory) => {
+                // `auto` is resolved by the agent: the row records what the
+                // archive actually is, so the list and the import loop never
+                // see `auto` again.
+                let detected = detected_source(&inventory, &source_owned);
                 if let Err(e) = sqlx::query(
-                    "UPDATE migrations SET status = 'analyzed', inventory = $1, updated_at = NOW() \
-                     WHERE id = $2",
+                    "UPDATE migrations SET status = 'analyzed', inventory = $1, source = $3, \
+                     updated_at = NOW() WHERE id = $2",
                 )
                 .bind(&inventory)
                 .bind(migration_id)
+                .bind(&detected)
                 .execute(&db)
                 .await
                 {
@@ -393,7 +465,7 @@ pub async fn analyze(
                 tracing::info!(
                     "Migration analyzed: {} (source: {})",
                     path_owned,
-                    source_owned
+                    detected
                 );
                 activity::log_activity(
                     &db,
@@ -402,7 +474,7 @@ pub async fn analyze(
                     "migration.analyze",
                     Some("migration"),
                     Some(&path_owned),
-                    Some(&source_owned),
+                    Some(&detected),
                     None,
                     key_id,
                 )
@@ -454,13 +526,15 @@ pub async fn finalize_analyzing_on_startup(pool: &sqlx::PgPool) {
             "The panel restarted while this archive was being analysed. Nothing was \
              changed on the server - analysis only reads - so run it again.",
         ),
+        // An import is item by item (`migration_items`): what finished is kept
+        // and skipped by the next run, what was running is redone (D10).
         (
             "importing",
-            "The panel restarted part-way through this import. Whatever had already \
-             been imported is still there; the rest was not. Check Sites and Databases \
-             for what landed before importing the remainder.",
+            "The panel restarted part-way through this import. Run it again: the \
+             items already imported are kept and skipped, the interrupted ones are redone.",
         ),
     ];
+    crate::services::migration_ledger::interrupt_running_on_startup(pool).await;
 
     for (status, message) in sweeps {
         let result = sqlx::query(
@@ -533,23 +607,28 @@ pub async fn list(
 // POST /api/migration/{id}/import
 // ──────────────────────────────────────────────────────────────
 
-/// Start importing selected sites and databases from an analyzed migration.
+/// Start (or resume) importing the selected items of an analysed migration.
 ///
-/// **The destination is the row's, not the picker's.** Everything below is a
-/// write against one specific machine: it publishes an nginx vhost for a live
-/// customer domain, claims that domain, inserts a `sites` row that names its host
-/// permanently, and creates database containers. The archive those writes are fed
-/// from was unpacked and staged by the analyse step, on the host that step ran
-/// against - which is why `analyze` records the server on the migration row in the
-/// first place. Reading the destination back off the caller's server selection
-/// therefore asked a question the row had already answered, and answered it
-/// differently the moment an operator switched servers between analysing and
-/// importing: vhosts for somebody's live domains published on a machine that must
-/// not serve them, the domain claim registered against that machine, `sites` rows
-/// bound to it for good, database containers built there - and then not one file
-/// copied, because the staged archive was still sitting on the other host. Half a
-/// migration on the wrong box, and the half that landed is the half that answers
-/// DNS.
+/// **Relaunchable, item by item (D10).** Every site, file copy, certificate,
+/// SFTP account, database and mail item is one row of `migration_items`. A row
+/// already `done`/`warning` is skipped without any write unless the operator
+/// lists it in `force_items`; a `running` (interrupted) or `failed` row is
+/// redone. So the same call serves the first import, a "Retry failed" (`retry:
+/// true` replays the stored selection) and a forced re-import of one item, and
+/// it is accepted from `analyzed`, `done` and `failed`.
+///
+/// **The destination is the row's, not the picker's.** Everything below writes
+/// to one specific machine: it publishes vhosts for live customer domains,
+/// claims those domains, inserts `sites` rows that name their host for good,
+/// and copies files staged by the analyse step on the host that step ran
+/// against - which is why `analyze` records the server on the row. Reading the
+/// destination from the caller's server selection would publish vhosts on a
+/// machine that must not serve them while the staged archive sits on another.
+///
+/// **Inventory, not request.** `runtime`, aliases, canonical host, web server,
+/// the default PHP version and database files come from the inventory the agent
+/// produced and the panel stored; the request only selects, chooses a database's
+/// site, and overrides the PHP version (whitelisted).
 pub async fn import(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
@@ -559,813 +638,741 @@ pub async fn import(
 ) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
     require_admin(&claims.role)?;
 
-    // The fourth handler that writes `sites` rows, and the only one that writes
-    // them in bulk: this starts a background job that imports every analysed
-    // domain at once. Gated here, at the entry point, rather than in that loop -
-    // a lockdown declared mid-import should not tear down a run already in
-    // flight and leave half a migration behind, and the loop's own domain claim
-    // stays the authority on individual rows.
-    //
-    // Deliberately WITHOUT the per-hour ceiling the other three carry. That
-    // ceiling exists to bound how many sites an account can conjure; a bulk
-    // import is an operator asking for exactly that, from a source they named,
-    // and applying a limit of three would break the feature rather than guard it.
-    // A lockdown is the different question - whether the panel should be creating
-    // anything at all right now - and the answer there is the same as everywhere.
+    // Gated at the entry point rather than in the loop: a lockdown declared
+    // mid-import should not tear down a run already in flight. Deliberately
+    // without the per-hour site ceiling: a bulk import is the operator asking for
+    // exactly that, from a source they named.
     if crate::services::security_hardening::is_locked_down(&state.db).await {
         return Err(err(StatusCode::SERVICE_UNAVAILABLE, "System is in lockdown mode"));
     }
 
-    // Verify migration exists, belongs to user, and is analyzed
-    let migration: Migration = sqlx::query_as(
-        "SELECT * FROM migrations WHERE id = $1 AND user_id = $2",
-    )
-    .bind(id)
-    .bind(claims.sub)
-    .fetch_optional(&state.db)
-    .await
-    .map_err(|e| internal_error("import", e))?
-    .ok_or_else(|| err(StatusCode::NOT_FOUND, "Migration not found"))?;
+    let migration: Migration = sqlx::query_as("SELECT * FROM migrations WHERE id = $1 AND user_id = $2")
+        .bind(id)
+        .bind(claims.sub)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| internal_error("import", e))?
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "Migration not found"))?;
 
-    if migration.status != "analyzed" {
+    let inventory = migration
+        .inventory
+        .clone()
+        .ok_or_else(|| err(StatusCode::BAD_REQUEST, "This migration has no analysis to import from"))?;
+    // D8: an analysis that found too little disk refuses the import outright
+    // (the page refuses too, but a retry or a direct call must not slip by).
+    if let Some(reason) = disk_refusal(&inventory) {
+        return Err(crate::error::err_coded(StatusCode::CONFLICT, &reason, "insufficient_disk"));
+    }
+    if !IMPORTABLE_STATUSES.contains(&migration.status.as_str()) {
         return Err(err(
-            StatusCode::BAD_REQUEST,
-            &format!("Migration is '{}', expected 'analyzed'", migration.status),
+            StatusCode::CONFLICT,
+            &format!("Migration is '{}': an import can start from analyzed, done or failed", migration.status),
         ));
     }
 
-    // Both halves of the destination come from the row: the id, because it is
-    // written into the `sites` rows and passed to the domain claim, and the handle,
-    // because it is what actually creates the vhosts and the database containers.
-    // Resolved BEFORE the status moves to 'importing' - a migration refused here has
-    // not started, and marking it started would leave the operator a row they have
-    // to reason about for a run that never happened.
-    //
-    // A row that names no server is refused rather than guessed at. The column is
-    // filled by `analyze` and has been for every migration since the fleet work, so
-    // the `None` arm means a row older than that - and the one thing that must never
-    // happen to an older row is having a host chosen for it by whoever opened the
-    // page. `agent_for_site_server` refuses an unreachable host on the same
-    // principle: not importing is recoverable, importing onto the wrong machine is
-    // not.
+    // Both halves of the destination come from the row. Resolved BEFORE the
+    // status moves: a migration refused here has not started. A row naming no
+    // server is refused rather than guessed at.
     let server_id = migration.server_id.ok_or_else(|| {
         tracing::warn!("Refusing to import migration {id}: its row names no server");
-        err(
-            StatusCode::CONFLICT,
-            "This migration is not associated with a server",
-        )
+        err(StatusCode::CONFLICT, "This migration is not associated with a server")
     })?;
     let agent =
-        crate::helpers::agent_for_site_server(&state, Some(server_id), &migration.backup_path)
-            .await?;
+        crate::helpers::agent_for_site_server(&state, Some(server_id), &migration.backup_path).await?;
 
-    let sites = body.sites.unwrap_or_default();
-    let databases = body.databases.unwrap_or_default();
+    let agent_migration_id = inventory
+        .get("id")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .ok_or_else(|| err(StatusCode::INTERNAL_SERVER_ERROR, "Migration inventory missing agent ID"))?;
 
-    if sites.is_empty() && databases.is_empty() {
-        return Err(err(
-            StatusCode::BAD_REQUEST,
-            "Select at least one site or database to import",
-        ));
+    // `retry` with nothing selected replays the stored selection.
+    let mut body = body;
+    if body.retry && body.is_empty() {
+        let stored = migration
+            .selected_items
+            .as_ref()
+            .map(selection_from_stored)
+            .unwrap_or_default();
+        if stored.is_empty() {
+            return Err(err(StatusCode::BAD_REQUEST, "There is no previous selection to retry"));
+        }
+        let force_items = std::mem::take(&mut body.force_items);
+        body = ImportRequest { force_items, retry: true, ..stored };
+    }
+    let plan = validate_selection(&inventory, &body).map_err(|m| err(StatusCode::BAD_REQUEST, &m))?;
+    if plan.is_empty() {
+        return Err(err(StatusCode::BAD_REQUEST, "Select at least one site, database or mail domain to import"));
     }
 
-    // Store selected items and update status
-    let selected = serde_json::json!({
-        "sites": sites.iter().map(|s| &s.domain).collect::<Vec<_>>(),
-        "databases": databases.iter().map(|d| &d.name).collect::<Vec<_>>(),
-    });
-
-    sqlx::query(
-        "UPDATE migrations SET status = 'importing', selected_items = $1, updated_at = NOW() WHERE id = $2",
+    // Claimed atomically: two tabs pressing Import cannot start two loops.
+    let selected = serde_json::to_value(plan.as_stored()).unwrap_or_default();
+    let claimed: Option<(Uuid,)> = sqlx::query_as(
+        "UPDATE migrations SET status = 'importing', selected_items = $1, updated_at = NOW() \
+         WHERE id = $2 AND status IN ('analyzed', 'done', 'failed') AND inventory IS NOT NULL RETURNING id",
     )
     .bind(&selected)
     .bind(id)
-    .execute(&state.db)
+    .fetch_optional(&state.db)
     .await
     .map_err(|e| internal_error("import", e))?;
+    if claimed.is_none() {
+        return Err(err(StatusCode::CONFLICT, "An import of this migration is already running"));
+    }
 
-    // Extract the agent-side migration_id from the inventory (needed for agent import calls)
-    let agent_migration_id = migration
-        .inventory
-        .as_ref()
-        .and_then(|inv| inv.get("id"))
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .ok_or_else(|| err(StatusCode::INTERNAL_SERVER_ERROR, "Migration inventory missing agent ID"))?;
+    // Registered only once nothing above can still bail. 512: one import emits
+    // several events per item (W5-F).
+    crate::helpers::register_provision_log(&state.provision_logs, &state.deploy_owners, id, claims.sub, 512);
 
-    // Registered only once nothing above can still bail. Creating the log first
-    // meant this `?` returned a 500 while leaving a log and an owner behind for
-    // the whole TTL - and `progress` would then answer 200 on a stream nothing
-    // would ever emit to, so the page sat on "Provisioning…" until the sweep.
-    crate::helpers::register_provision_log(
-        &state.provision_logs,
-        &state.deploy_owners,
-        id,
-        claims.sub,
-        64,
-    );
-
-    // Clone everything needed for the spawned task
+    let ctx = ImportCtx {
+        db: state.db.clone(),
+        agent,
+        server_id,
+        user_id: claims.sub,
+        migration_id: id,
+        agent_migration_id,
+        jwt_secret: state.config.jwt_secret.clone(),
+        force: false,
+        progress: progress_fn(state.provision_logs.clone(), id),
+    };
+    let run = RunInputs {
+        plan,
+        inventory,
+        // The claim reads the Host header (`is_reserved_domain_for`) and asks
+        // every fleet member whether a Docker app holds the domain.
+        headers,
+        role: claims.role.clone(),
+        agents: state.agents.clone(),
+        email: claims.email.clone(),
+        key_id: claims.key_id,
+        source: migration.source.clone(),
+    };
     let logs = state.provision_logs.clone();
-    let db = state.db.clone();
-    let jwt_secret = state.config.jwt_secret.clone();
-    let user_id = claims.sub;
-    let email = claims.email.clone();
-    let key_id = claims.key_id;
-    let agent_migration_id = agent_migration_id.clone();
-    let migration_source = migration.source.clone();
-    // Read per site by `imported_web_server` (feature 4, D3).
-    let migration_inventory = migration.inventory.clone();
-    // The imported domains are client-supplied (`ImportSiteItem.domain`) and are
-    // never reconciled against what the analyse step actually found, so they get
-    // the same guard as any other claim. Carried into the task because
-    // `is_reserved_domain_for` reads the Host header - BASE_URL is empty on a
-    // routine install, which is the whole reason that variant exists.
-    let claim_headers = headers.clone();
-    // Carried for the same reason as the headers: the claim happens inside the
-    // spawned task, after `claims` has been moved. `import` is already
-    // admin-only (`require_admin` above), so this can never be a client today -
-    // it is passed so that the choke point sees a real role from every caller
-    // rather than a placeholder some later refactor would have to remember.
-    let claim_role = claims.role.clone();
-    // The claim asks every online member whether a Docker app already holds the
-    // domain - an app's domain lives only in a container label, so no SQL leg can
-    // see it. That needs the registry rather than this task's single handle.
-    let claim_agents = state.agents.clone();
 
     tokio::spawn(async move {
-        let mut results = serde_json::json!({
-            "sites_imported": [],
-            "sites_skipped": [],
-            "databases_imported": [],
-            "databases_failed": [],
-            "errors": [],
-            // Non-fatal notes per domain (an Apache domain imported in nginx
-            // mode). Kept apart from `errors`: the site did import.
-            "warnings": [],
-        });
-
-        // Asked once, before the domain loop: whether domains HestiaCP served
-        // through Apache can keep that mode here (see `import_web_server`).
-        let apache_installed = apache_installed_in(
-            agent.get("/services/install-status").await.ok().as_ref(),
-        );
-
-        let total_steps = sites.len() + databases.len();
-        let mut completed = 0usize;
-
-        // Every site row this run creates, in order. The databases loop below
-        // needs one: `databases.site_id` is NOT NULL, so a database imported
-        // without a site has nowhere to be stored. Recorded when the row lands
-        // rather than when the whole site succeeds - a site whose files failed
-        // to copy still has a valid row, and refusing its databases as well
-        // would punish them for an unrelated failure.
-        let mut imported_sites: Vec<(String, Uuid)> = Vec::new();
-
-        // ── Import sites ──────────────────────────────────────
-        for site_item in &sites {
-            let domain = &site_item.domain;
-            let step_key = format!("site_{domain}");
-
-            emit_step(
-                &logs,
-                id,
-                &step_key,
-                &format!("Importing site {domain}"),
-                "in_progress",
-                None,
-            );
-
-            // Is this domain claimable? Same guard as every other path - which
-            // here also supplies the format and reserved-domain checks the import
-            // never had, and extends "already exists" past the `sites` table to
-            // git deploys and Docker apps. Note the ORDER below: the vhost is
-            // written before the row is inserted, so a domain that slips past
-            // this is already on disk by the time the INSERT could reject it.
-            let claimed = crate::services::domain_claim::ensure_claimable(
-                &db,
-                &claim_agents,
-                domain,
-                &claim_headers,
-                crate::services::domain_claim::Holder::New,
-                &claim_role,
-            )
-            .await;
-
-            let domain = &match claimed {
-                Ok(d) => d,
-                Err((_, reason)) => {
-                    let detail = reason
-                        .get("error")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("domain not available")
-                        .to_string();
-                    emit_step(
-                        &logs,
-                        id,
-                        &step_key,
-                        &format!("Site {domain}"),
-                        "done",
-                        Some(format!("Skipped ({detail})")),
-                    );
-                    if let Some(arr) = results["sites_skipped"].as_array_mut() {
-                        arr.push(serde_json::json!(domain));
-                    }
-                    completed += 1;
-                    continue;
-                }
-            };
-
-            // 1. Create nginx site via agent - except when the required config
-            // simply cannot be known from a file-tree scan.
-            //
-            // `detect_runtime` (agent's `services::migration`) only ever answers
-            // "php", "node", "python", or "static" - never anything requiring
-            // MORE than a domain to configure, except that "php" needs a
-            // PHP-FPM socket and "node"/"python" need a port AND a start
-            // command, none of which a cPanel/Plesk/HestiaCP archive records.
-            // Sending the agent `{"runtime": "php"}` with no `php_socket` does
-            // NOT fail: `put_site` skips its entire validation/resolution block
-            // when the field is absent, and `render_site_config` then silently
-            // defaults to a socket path (`/run/php/php-fpm.sock`) that does not
-            // exist under this project's own versioned PHP-FPM convention - an
-            // always-broken config reported as a success. "node"/"python" are
-            // worse: without `proxy_port`, `create_app_service` never runs at
-            // all (it needs both a command AND a port), and the rendered config
-            // then defaults to `proxy_pass http://127.0.0.1:3000` - pointing at
-            // nothing, or worse, at whatever unrelated thing happens to be
-            // listening on 3000.
-            //
-            // So: for "php", resolve a real, currently-running PHP-FPM version
-            // from the server itself and send that socket, letting the agent's
-            // normal validation run. For "node"/"python" (and defensively any
-            // value besides the four `detect_runtime` emits, since this field
-            // is client-supplied JSON, not re-validated against the inventory),
-            // there is nothing safe to send - creating the vhost anyway would
-            // either point at a wrong port or, if pointed at "static" instead,
-            // serve the app's raw source (`.env`, config with DB credentials)
-            // over HTTP. Skip the vhost; the site row and file copy below still
-            // land, so nothing imported is lost - it just needs a human to set
-            // the port/command from the site's Settings afterward.
-            let runtime = &site_item.runtime;
-            // Multi-IP: an imported site starts on the primary address (its row's
-            // `ip_id` is NULL), sent explicitly rather than left for the agent to guess.
-            let (web_server, web_server_warning) = import_web_server(
-                imported_web_server(migration_inventory.as_ref(), domain, runtime),
-                apache_installed,
-                domain,
-            );
-            if let Some(ref w) = web_server_warning {
-                tracing::warn!("Migration {id}: {w}");
-            }
-            let mut nginx_body = serde_json::json!({
-                "runtime": runtime,
-                "bind_ip": crate::services::server_ips::PRIMARY,
-                "web_server": web_server,
-            });
-            let mut needs_config: Option<String> = None;
-
-            if runtime == "php" {
-                match agent.get("/php/versions").await {
-                    Ok(resp) => {
-                        let running_version = resp
-                            .get("versions")
-                            .and_then(|v| v.as_array())
-                            .and_then(|versions| {
-                                versions.iter().find(|v| {
-                                    v.get("installed").and_then(|b| b.as_bool()).unwrap_or(false)
-                                        && v.get("fpm_running").and_then(|b| b.as_bool()).unwrap_or(false)
-                                })
-                            })
-                            .and_then(|v| v.get("version").and_then(|s| s.as_str()).map(str::to_string));
-                        match running_version {
-                            Some(ver) => {
-                                nginx_body["php_socket"] =
-                                    serde_json::json!(format!("unix:/run/php/php{ver}-fpm.sock"));
-                                // The row is inserted after the vhost: send the pool
-                                // its column defaults will describe.
-                                nginx_body["php_pool"] = crate::routes::php_settings::php_pool_json(
-                                    &crate::routes::php_settings::new_row(),
-                                );
-                            }
-                            None => {
-                                needs_config = Some(
-                                    "no running PHP-FPM version was found on this server - \
-                                     install one and set it from the site's PHP Version \
-                                     control after import"
-                                        .to_string(),
-                                );
-                            }
-                        }
-                    }
-                    Err(_) => {
-                        needs_config = Some(
-                            "could not check installed PHP versions on this server - set \
-                             the PHP version from the site's Settings after import"
-                                .to_string(),
-                        );
-                    }
-                }
-            } else if runtime != "static" {
-                needs_config = Some(format!(
-                    "{runtime} sites need a port and start command, which can't be \
-                     detected from the backup - set them from the site's Settings after import"
-                ));
-            }
-
-            if let Some(ref reason) = needs_config {
-                tracing::warn!("Migration {id}: site {domain} imported without a vhost: {reason}");
-            } else {
-                let agent_path = format!("/nginx/sites/{domain}");
-                if let Err(e) = agent.put(&agent_path, nginx_body).await {
-                    let msg = format!("Nginx config failed for {domain}: {e}");
-                    tracing::error!("{msg}");
-                    emit_step(&logs, id, &step_key, &format!("Site {domain}"), "error", Some(msg.clone()));
-                    if let Some(arr) = results["errors"].as_array_mut() { arr.push(serde_json::json!(msg)); }
-                    completed += 1;
-                    continue;
-                }
-            }
-
-            // 2. Insert site record into DB
-            //
-            // `server_id` is the migration row's, so the vhost written above, the
-            // claim recorded above it, this permanent binding and the file copy
-            // below all name one machine. A site row outlives the request that made
-            // it and is what every later handler reads to decide which host to talk
-            // to, so a wrong value here is not a failed import - it is a site that
-            // is quietly asked about on the wrong machine for the rest of its life.
-            //
-            // Status is 'error' rather than 'active' when no vhost was written -
-            // nothing serves this domain yet, and 'active' would say otherwise.
-            let initial_status = if needs_config.is_some() { "error" } else { "active" };
-            let site_result = sqlx::query_as::<_, (Uuid,)>(
-                "INSERT INTO sites (user_id, server_id, domain, runtime, status, web_server) \
-                 VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
-            )
-            .bind(user_id)
-            .bind(server_id)
-            .bind(domain)
-            .bind(runtime)
-            .bind(initial_status)
-            .bind(web_server)
-            .fetch_one(&db)
-            .await;
-
-            let site_id = match site_result {
-                Ok((sid,)) => sid,
-                Err(e) => {
-                    let msg = format!("DB insert failed for {domain}: {e}");
-                    tracing::error!("{msg}");
-                    emit_step(&logs, id, &step_key, &format!("Site {domain}"), "error", Some(msg.clone()));
-                    if let Some(arr) = results["errors"].as_array_mut() { arr.push(serde_json::json!(msg)); }
-                    completed += 1;
-                    continue;
-                }
-            };
-
-            imported_sites.push((domain.to_ascii_lowercase(), site_id));
-
-            // 3. Copy files via agent
-            let import_body = serde_json::json!({
-                "migration_id": agent_migration_id,
-                "domain": domain,
-                "source_dir": site_item.doc_root,
-                // Same runtime the vhost was just created with, so the files
-                // land in the directory that vhost serves.
-                "runtime": runtime,
-            });
-
-            if let Err(e) = agent
-                .post_long("/migration/import-site", Some(import_body), 300)
-                .await
-            {
-                let msg = format!("File import failed for {domain}: {e}");
-                tracing::error!("{msg}");
-                emit_step(&logs, id, &step_key, &format!("Site {domain}"), "error", Some(msg.clone()));
-                if let Some(arr) = results["errors"].as_array_mut() { arr.push(serde_json::json!(msg)); }
-                // Site record exists but files failed - mark as error status
-                let _ = sqlx::query("UPDATE sites SET status = 'error', updated_at = NOW() WHERE id = $1")
-                    .bind(site_id)
-                    .execute(&db)
-                    .await;
-                completed += 1;
-                continue;
-            }
-
-            let mut done_message = match &needs_config {
-                Some(reason) => format!("Imported - needs configuration: {reason}"),
-                None => "Imported".to_string(),
-            };
-            if let Some(ref w) = web_server_warning {
-                done_message = format!("{done_message}. Warning: {w}");
-                if let Some(arr) = results["warnings"].as_array_mut() {
-                    arr.push(serde_json::json!(w));
-                }
-            }
-            emit_step(
-                &logs,
-                id,
-                &step_key,
-                &format!("Site {domain}"),
-                "done",
-                Some(done_message),
-            );
-            if let Some(arr) = results["sites_imported"].as_array_mut() {
-                arr.push(serde_json::json!({
-                    "domain": domain,
-                    "site_id": site_id,
-                    "needs_config": needs_config,
-                }));
-            }
-            if let Some(reason) = needs_config {
-                if let Some(arr) = results["errors"].as_array_mut() {
-                    arr.push(serde_json::json!(format!("{domain}: {reason}")));
-                }
-            }
-
-            completed += 1;
-            tracing::info!(
-                "Migration {id}: imported site {domain} ({completed}/{total_steps})"
-            );
-        }
-
-        // ── Import databases ──────────────────────────────────
-        for db_item in &databases {
-            let db_name = &db_item.name;
-            let engine = &db_item.engine;
-            let step_key = format!("db_{db_name}");
-
-            emit_step(
-                &logs,
-                id,
-                &step_key,
-                &format!("Importing database {db_name}"),
-                "in_progress",
-                None,
-            );
-
-            // ── Which site does this database belong to? ──
-            //
-            // Resolved BEFORE anything is created, because the answer decides
-            // whether this database can be imported at all. `databases.site_id`
-            // is NOT NULL with no default, so a row without one cannot be
-            // written - and the container is created first, so discovering that
-            // after the fact leaves a running database the panel can never list,
-            // reach or delete, holding a password that exists nowhere else.
-            //
-            // Explicit wins; a single-site run is unambiguous and resolves
-            // itself; anything else is refused with the reason, rather than
-            // attached to whichever site happened to be imported first.
-            let site_id = match db_item.site_domain.as_deref().map(str::trim) {
-                Some(d) if !d.is_empty() => {
-                    let wanted = d.trim_end_matches('.').to_ascii_lowercase();
-                    match imported_sites.iter().find(|(dom, _)| *dom == wanted) {
-                        Some((_, sid)) => Some(*sid),
-                        // Not imported in this run - but it may be a site the
-                        // caller already has, which is what makes "import the
-                        // site first, then the databases" work. Through the
-                        // shared helper, never a query of our own: a private
-                        // domain lookup here is the shape `domain-claim` §B2
-                        // forbids, because that is how paths came to disagree.
-                        None => {
-                            crate::helpers::site_id_for_owned_domain(&db, &wanted, user_id).await
-                        }
-                    }
-                }
-                _ => match imported_sites.as_slice() {
-                    [(_, sid)] => Some(*sid),
-                    _ => None,
-                },
-            };
-
-            let site_id = match site_id {
-                Some(sid) => sid,
-                None => {
-                    let msg = if db_item.site_domain.is_some() {
-                        format!(
-                            "Database {db_name} names a site that is not in this import and does not \
-                             already exist on this account. Nothing was created."
-                        )
-                    } else if imported_sites.is_empty() {
-                        format!(
-                            "Database {db_name} was not imported: a database has to belong to a site, \
-                             and this run imported none. Import the site first, then run the database \
-                             import again. Nothing was created."
-                        )
-                    } else {
-                        format!(
-                            "Database {db_name} was not imported: this run has {} sites and the archive \
-                             does not record which one owns it. Choose the site for it and import again. \
-                             Nothing was created.",
-                            imported_sites.len()
-                        )
-                    };
-                    tracing::warn!("{msg}");
-                    emit_step(&logs, id, &step_key, &format!("Database {db_name}"), "error", Some(msg.clone()));
-                    if let Some(arr) = results["databases_failed"].as_array_mut() { arr.push(serde_json::json!(db_name)); }
-                    if let Some(arr) = results["errors"].as_array_mut() { arr.push(serde_json::json!(msg)); }
-                    completed += 1;
-                    continue;
-                }
-            };
-
-            // Generate password
-            let password = Uuid::new_v4().to_string().replace('-', "");
-
-            // Find available port
-            let (range_start, range_end) = match engine.as_str() {
-                "mysql" | "mariadb" => (3307, 3400),
-                _ => (5433, 5500),
-            };
-
-            let port_row: Option<(i32,)> = sqlx::query_as(
-                "SELECT s.port FROM generate_series($1::int, $2::int) AS s(port) \
-                 WHERE s.port NOT IN (SELECT port FROM databases WHERE port IS NOT NULL) \
-                 LIMIT 1",
-            )
-            .bind(range_start)
-            .bind(range_end)
-            .fetch_optional(&db)
-            .await
-            .unwrap_or(None);
-
-            let port = match port_row {
-                Some((p,)) => p,
-                None => {
-                    let msg = format!("No available port for database {db_name}");
-                    tracing::error!("{msg}");
-                    emit_step(&logs, id, &step_key, &format!("Database {db_name}"), "error", Some(msg.clone()));
-                    if let Some(arr) = results["databases_failed"].as_array_mut() { arr.push(serde_json::json!(db_name)); }
-                    if let Some(arr) = results["errors"].as_array_mut() { arr.push(serde_json::json!(msg)); }
-                    completed += 1;
-                    continue;
-                }
-            };
-
-            // Insert the DB record BEFORE calling the agent - mirrors
-            // `databases::create`'s own "insert first" pattern
-            // (routes/databases.rs:233-244, comment: "Insert DB record first to
-            // atomically claim the port (unique index prevents races)"). The
-            // port SELECT above is unlocked, exactly like `find_available_port`,
-            // so it cannot rule out a second concurrent picker on its own - a
-            // second migration import, or an ordinary `POST /databases` running
-            // the identical unlocked query. What used to make that race land as
-            // an opaque Docker bind failure was the ORDER: the old code called
-            // the agent with the picked port first and only inserted this row
-            // 30+ lines later, so `idx_databases_port_unique` could not
-            // adjudicate the race until after the agent (and Docker) had already
-            // been asked to bind the same port twice. Inserting first lets
-            // Postgres reject the losing side's row before either one reaches
-            // the agent.
-            let encrypted_password =
-                crate::services::secrets_crypto::encrypt_credential(&password, &jwt_secret)
-                    .unwrap_or_else(|_| password.clone());
-            let inserted = sqlx::query_as::<_, (Uuid,)>(
-                "INSERT INTO databases (site_id, engine, name, db_user, db_password_enc, container_id, port) \
-                 VALUES ($1, $2, $3, $4, $5, '', $6) \
-                 ON CONFLICT ON CONSTRAINT databases_site_name_unique DO NOTHING RETURNING id",
-            )
-            .bind(site_id)
-            .bind(engine)
-            .bind(db_name)
-            .bind(db_name)
-            .bind(&encrypted_password)
-            .bind(port)
-            .fetch_optional(&db)
-            .await;
-
-            let db_id = match inserted {
-                Ok(Some((rid,))) => rid,
-                Ok(None) => {
-                    let msg =
-                        format!("Database {db_name} already exists on that site - not imported.");
-                    tracing::warn!("{msg}");
-                    emit_step(&logs, id, &step_key, &format!("Database {db_name}"), "error", Some(msg.clone()));
-                    if let Some(arr) = results["databases_failed"].as_array_mut() { arr.push(serde_json::json!(db_name)); }
-                    if let Some(arr) = results["errors"].as_array_mut() { arr.push(serde_json::json!(msg)); }
-                    completed += 1;
-                    continue;
-                }
-                // `databases_site_name_unique` is named explicitly above, so a
-                // unique violation reaching here can only be the OTHER unique
-                // index, `idx_databases_port_unique` - a concurrent picker won
-                // the same port first. Named separately from a generic DB error
-                // because it tells the operator the truth: retrying the same
-                // database, unmodified, is expected to work.
-                Err(e) if e.to_string().contains("idx_databases_port_unique") => {
-                    let msg = format!(
-                        "Port {port} for database {db_name} was claimed by a concurrent \
-                         operation - not imported. Retry the import for this database."
-                    );
-                    tracing::warn!("{msg}");
-                    emit_step(&logs, id, &step_key, &format!("Database {db_name}"), "error", Some(msg.clone()));
-                    if let Some(arr) = results["databases_failed"].as_array_mut() { arr.push(serde_json::json!(db_name)); }
-                    if let Some(arr) = results["errors"].as_array_mut() { arr.push(serde_json::json!(msg)); }
-                    completed += 1;
-                    continue;
-                }
-                Err(e) => {
-                    let msg = format!("Could not record database {db_name}: {e}");
-                    tracing::error!("{msg}");
-                    emit_step(&logs, id, &step_key, &format!("Database {db_name}"), "error", Some(msg.clone()));
-                    if let Some(arr) = results["databases_failed"].as_array_mut() { arr.push(serde_json::json!(db_name)); }
-                    if let Some(arr) = results["errors"].as_array_mut() { arr.push(serde_json::json!(msg)); }
-                    completed += 1;
-                    continue;
-                }
-            };
-
-            // Create database container via agent. The row above now holds this
-            // exact port under a uniqueness guarantee, so this call - and Docker
-            // - are the only thing left that can fail.
-            let create_body = serde_json::json!({
-                "name": db_name,
-                "engine": engine,
-                "password": password,
-                "port": port,
-            });
-
-            let (container_id, container_name) = match agent.post("/databases", Some(create_body)).await {
-                Ok(resp) => {
-                    let cid = resp.get("container_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    let cname = resp.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    (cid, cname)
-                }
-                Err(e) => {
-                    let msg = format!("Database container creation failed for {db_name}: {e}");
-                    tracing::error!("{msg}");
-                    emit_step(&logs, id, &step_key, &format!("Database {db_name}"), "error", Some(msg.clone()));
-                    if let Some(arr) = results["databases_failed"].as_array_mut() { arr.push(serde_json::json!(db_name)); }
-                    if let Some(arr) = results["errors"].as_array_mut() { arr.push(serde_json::json!(msg)); }
-                    // The row claimed this port and name but no container exists
-                    // for it - delete it (mirrors `databases::create`'s own
-                    // agent-failure cleanup) so a retry isn't blocked by a row
-                    // for a database that was never actually created.
-                    let _ = sqlx::query("DELETE FROM databases WHERE id = $1")
-                        .bind(db_id)
-                        .execute(&db)
-                        .await;
-                    completed += 1;
-                    continue;
-                }
-            };
-
-            // Record the real container_id now that the agent has returned one
-            // (mirrors `databases::create`'s own post-agent UPDATE). Not fatal to
-            // the import if this write fails - the row and the container both
-            // exist either way, this only affects later delete/restart lookups -
-            // so a failure here is logged and the import continues rather than
-            // tearing down a container that is already running.
-            if let Err(e) = sqlx::query("UPDATE databases SET container_id = $1 WHERE id = $2")
-                .bind(&container_id)
-                .bind(db_id)
-                .execute(&db)
-                .await
-            {
-                tracing::error!(
-                    "Migration {id}: database {db_name} was created but its container_id \
-                     could not be recorded: {e}"
-                );
-            }
-
-            // Wait for engine to be ready
-            emit_step(
-                &logs,
-                id,
-                &step_key,
-                &format!("Waiting for {db_name} engine"),
-                "in_progress",
-                None,
-            );
-
-            // Poll until the engine answers, rather than sleeping a fixed five
-            // seconds and hoping.
-            //
-            // `mariadb:11` runs a bootstrap server during initialisation and does
-            // not accept the application user until that finishes, which takes
-            // well over five seconds on an ordinary box. The import then failed
-            // with `ERROR 1045 (28000): Access denied` - a credentials message
-            // for a timing problem, so the operator is sent to look at a password
-            // that was never wrong. Driven on a fresh box at s369; this is the
-            // step whose own label already claims to be waiting for the engine.
-            {
-                let probe = serde_json::json!({
-                    "container": container_name,
-                    "engine": engine,
-                    "database": db_name,
-                    "user": db_name,
-                    "password": password,
-                    "sql": "SELECT 1",
-                });
-                let deadline =
-                    std::time::Instant::now() + Duration::from_secs(ENGINE_READY_TIMEOUT_SECS);
-                let mut ready = false;
-                while std::time::Instant::now() < deadline {
-                    if agent
-                        .post("/databases/query", Some(probe.clone()))
-                        .await
-                        .is_ok()
-                    {
-                        ready = true;
-                        break;
-                    }
-                    tokio::time::sleep(Duration::from_secs(2)).await;
-                }
-                if !ready {
-                    tracing::warn!(
-                        "Migration {id}: {db_name}'s engine did not answer within \
-                         {ENGINE_READY_TIMEOUT_SECS}s; importing anyway so the real error is \
-                         reported rather than a timeout of our own"
-                    );
-                }
-            }
-
-            // Import SQL dump via agent
-            let import_body = serde_json::json!({
-                "migration_id": agent_migration_id,
-                "sql_file": db_item.file,
-                "container_name": container_name,
-                "db_name": db_name,
-                "engine": engine,
-                "user": db_name,
-                "password": password,
-            });
-
-            match agent
-                .post_long("/migration/import-database", Some(import_body), 600)
-                .await
-            {
-                Ok(_) => {
-                    emit_step(
-                        &logs,
-                        id,
-                        &step_key,
-                        &format!("Database {db_name}"),
-                        "done",
-                        Some("Imported".into()),
-                    );
-                    if let Some(arr) = results["databases_imported"].as_array_mut() {
-                        arr.push(serde_json::json!({ "name": db_name, "port": port }));
-                    }
-                }
-                Err(e) => {
-                    let msg = format!("SQL import failed for {db_name}: {e}");
-                    tracing::error!("{msg}");
-                    emit_step(&logs, id, &step_key, &format!("Database {db_name}"), "error", Some(msg.clone()));
-                    if let Some(arr) = results["databases_failed"].as_array_mut() { arr.push(serde_json::json!(db_name)); }
-                    if let Some(arr) = results["errors"].as_array_mut() { arr.push(serde_json::json!(msg)); }
-                }
-            }
-
-            completed += 1;
-            tracing::info!(
-                "Migration {id}: processed database {db_name} ({completed}/{total_steps})"
-            );
-        }
-
-        // ── Finalize ──────────────────────────────────────────
-        let has_errors = !results["errors"]
-            .as_array()
-            .map(|a| a.is_empty())
-            .unwrap_or(true);
-        let final_status = if has_errors { "done" } else { "done" }; // always "done" - errors are in result JSON
-
-        let _ = sqlx::query(
-            "UPDATE migrations SET status = $1, result = $2, updated_at = NOW() WHERE id = $3",
-        )
-        .bind(final_status)
-        .bind(&results)
-        .bind(id)
-        .execute(&db)
-        .await;
-
-        activity::log_activity(
-            &db,
-            user_id,
-            &email,
-            "migration.import",
-            Some("migration"),
-            Some(&migration_source),
-            None,
-            None,
-            key_id,
-        )
-        .await;
-
+        run_import(&ctx, &run).await;
         emit_step(&logs, id, "complete", "Migration complete", "done", None);
-        tracing::info!("Migration {id} completed");
-
-        // Keep the log channel alive for 60s so the frontend can catch up
+        tracing::info!("Migration {id} import finished");
+        // Keep the log channel alive for 60s so the frontend can catch up.
         tokio::time::sleep(Duration::from_secs(60)).await;
         logs.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
     });
 
-    Ok((
-        StatusCode::ACCEPTED,
-        Json(serde_json::json!({ "migration_id": id })),
-    ))
+    Ok((StatusCode::ACCEPTED, Json(serde_json::json!({ "migration_id": id }))))
 }
+
+/// The refusal message when the analysis' disk check failed (`disk.ok=false`).
+pub(crate) fn disk_refusal(inventory: &serde_json::Value) -> Option<String> {
+    let disk = inventory.get("disk")?;
+    if disk.get("ok").and_then(|b| b.as_bool()) != Some(false) {
+        return None;
+    }
+    let reason = disk.get("reason").and_then(|r| r.as_str()).filter(|r| !r.is_empty()).unwrap_or("too little free space");
+    Some(format!("Not enough disk space for this import: {reason}. Free some space and analyse the archive again."))
+}
+
+/// Statuses an import (or re-run) can start from (W5-D).
+pub(crate) const IMPORTABLE_STATUSES: &[&str] = &["analyzed", "done", "failed"];
+
+/// The validated selection of one run.
+#[derive(Debug, Default, Clone)]
+pub(crate) struct ImportPlan {
+    pub default_php_version: Option<String>,
+    pub sites: Vec<SiteChoice>,
+    pub databases: Vec<ImportDbItem>,
+    pub mail_domains: Vec<String>,
+    pub force_items: std::collections::HashSet<String>,
+}
+
+impl ImportPlan {
+    fn is_empty(&self) -> bool {
+        self.sites.is_empty() && self.databases.is_empty() && self.mail_domains.is_empty()
+    }
+
+    /// What `migrations.selected_items` keeps (for `retry`). No forced item:
+    /// a retry never re-forces by itself.
+    fn as_stored(&self) -> ImportRequest {
+        ImportRequest {
+            default_php_version: self.default_php_version.clone(),
+            sites: Some(self.sites.clone()),
+            databases: Some(self.databases.clone()),
+            mail_domains: Some(self.mail_domains.clone()),
+            force_items: Vec::new(),
+            retry: false,
+        }
+    }
+}
+
+fn inventory_names<'a>(inventory: &'a serde_json::Value, list: &str, field: &str) -> Vec<&'a str> {
+    inventory
+        .get(list)
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|x| x.get(field).and_then(|d| d.as_str())).collect())
+        .unwrap_or_default()
+}
+
+fn valid_php(v: &str) -> bool {
+    crate::routes::sites::PHP_VERSIONS.contains(&v)
+}
+
+/// Checks the request against the stored inventory. Everything selected must
+/// be something the analysis found; PHP versions are whitelisted.
+pub(crate) fn validate_selection(inventory: &serde_json::Value, body: &ImportRequest) -> Result<ImportPlan, String> {
+    let mut plan = ImportPlan::default();
+
+    if let Some(v) = body.default_php_version.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+        if !valid_php(v) {
+            return Err(format!("Unsupported PHP version {v}"));
+        }
+        plan.default_php_version = Some(v.to_string());
+    }
+
+    let site_names = inventory_names(inventory, "sites", "domain");
+    let mut seen = std::collections::HashSet::new();
+    for s in body.sites.iter().flatten() {
+        let d = s.domain.trim().trim_end_matches('.').to_ascii_lowercase();
+        let Some(found) = site_names.iter().find(|n| n.eq_ignore_ascii_case(&d)) else {
+            return Err(format!("{d} is not a site of this archive"));
+        };
+        if !seen.insert(d.clone()) {
+            continue;
+        }
+        let php_version = s.php_version.as_deref().map(str::trim).filter(|v| !v.is_empty());
+        if let Some(v) = php_version
+            && !valid_php(v)
+        {
+            return Err(format!("Unsupported PHP version {v} for {d}"));
+        }
+        plan.sites.push(SiteChoice {
+            domain: found.to_ascii_lowercase(),
+            php_version: php_version.map(str::to_string),
+            options: s.options.clone(),
+        });
+    }
+
+    let db_names = inventory_names(inventory, "databases", "name");
+    let mut seen = std::collections::HashSet::new();
+    for d in body.databases.iter().flatten() {
+        if !db_names.contains(&d.name.as_str()) {
+            return Err(format!("{} is not a database of this archive", d.name));
+        }
+        if seen.insert(d.name.clone()) {
+            plan.databases.push(ImportDbItem {
+                name: d.name.clone(),
+                site_domain: d
+                    .site_domain
+                    .as_deref()
+                    .map(|s| s.trim().trim_end_matches('.').to_ascii_lowercase())
+                    .filter(|s| !s.is_empty()),
+            });
+        }
+    }
+
+    let mail_names = inventory_names(inventory, "mail_domains", "domain");
+    for m in body.mail_domains.iter().flatten() {
+        let m = m.trim().to_ascii_lowercase();
+        if !mail_names.iter().any(|n| n.eq_ignore_ascii_case(&m)) {
+            return Err(format!("{m} is not a mail domain of this archive"));
+        }
+        if !plan.mail_domains.contains(&m) {
+            plan.mail_domains.push(m);
+        }
+    }
+
+    for f in &body.force_items {
+        let Some((kind, key)) = ledger::parse_item_ref(f.trim()) else {
+            return Err(format!("Invalid item to force: {f}"));
+        };
+        plan.force_items.insert(ledger::item_ref(kind, key));
+    }
+    Ok(plan)
+}
+
+/// Reads `migrations.selected_items`: the current shape (an [`ImportRequest`])
+/// or the historical `{"sites": ["d"], "databases": ["n"]}`.
+pub(crate) fn selection_from_stored(v: &serde_json::Value) -> ImportRequest {
+    if let Ok(r) = serde_json::from_value::<ImportRequest>(v.clone()) {
+        return r;
+    }
+    let names = |k: &str| -> Vec<String> {
+        v.get(k)
+            .and_then(|a| a.as_array())
+            .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+            .unwrap_or_default()
+    };
+    ImportRequest {
+        sites: Some(
+            names("sites")
+                .into_iter()
+                .map(|domain| SiteChoice { domain, php_version: None, options: Default::default() })
+                .collect(),
+        ),
+        databases: Some(
+            names("databases")
+                .into_iter()
+                .map(|name| ImportDbItem { name, site_domain: None })
+                .collect(),
+        ),
+        ..Default::default()
+    }
+}
+
+/// What the spawned run needs besides the [`ImportCtx`].
+struct RunInputs {
+    plan: ImportPlan,
+    inventory: serde_json::Value,
+    headers: axum::http::HeaderMap,
+    role: String,
+    agents: crate::services::agent::AgentRegistry,
+    email: String,
+    key_id: Option<Uuid>,
+    source: String,
+}
+
+type Logs = std::sync::Arc<
+    std::sync::Mutex<std::collections::HashMap<Uuid, (Vec<ProvisionStep>, broadcast::Sender<ProvisionStep>, Instant)>>,
+>;
+
+/// Minimum spacing of `in_progress` events for one step (D10: 1 event / 2 s).
+const PROGRESS_THROTTLE: Duration = Duration::from_secs(2);
+
+/// Pure throttle rule: terminal events always pass; an `in_progress` event of a
+/// step passes when the previous one is at least [`PROGRESS_THROTTLE`] old.
+pub(crate) fn progress_passes(status: &str, last: Option<Instant>, now: Instant) -> bool {
+    status != "in_progress" || last.is_none_or(|t| now.duration_since(t) >= PROGRESS_THROTTLE)
+}
+
+/// The [`ProgressFn`] of a run: throttled, redacted, into the SSE log.
+fn progress_fn(logs: Logs, id: Uuid) -> ProgressFn {
+    let last: std::sync::Mutex<std::collections::HashMap<String, Instant>> = Default::default();
+    std::sync::Arc::new(move |step: &str, label: &str, status: &str, message: Option<String>| {
+        let now = Instant::now();
+        {
+            let mut map = last.lock().unwrap_or_else(|e| e.into_inner());
+            if !progress_passes(status, map.get(step).copied(), now) {
+                return;
+            }
+            if status == "in_progress" {
+                map.insert(step.to_string(), now);
+            } else {
+                map.remove(step);
+            }
+        }
+        emit_step(&logs, id, step, label, status, message.map(|m| ledger::redact(&m)));
+    })
+}
+
+/// The import loop: preflight, sites, databases, mail, then the verdict.
+async fn run_import(ctx: &ImportCtx, inp: &RunInputs) {
+    let id = ctx.migration_id;
+    let plan = &inp.plan;
+    let inventory = &inp.inventory;
+    let hestia = inventory.get("source").and_then(|s| s.as_str()) == Some("hestiacp");
+    let runner = ItemRunner::new(ctx, &plan.force_items);
+
+    // ── preflight (always re-evaluated, never gated) ──────────
+    let apache_installed =
+        apache_installed_in(ctx.agent.get("/services/install-status").await.ok().as_ref());
+    let needs_apache = plan.sites.iter().any(|s| {
+        imported_web_server(Some(inventory), &s.domain, site_runtime(inventory, &s.domain)) == "apache"
+    });
+    if needs_apache {
+        let o = if apache_installed {
+            ItemOutcome::done("Apache is installed")
+        } else {
+            ItemOutcome::warning("Apache is not installed: Apache sites are imported in nginx mode")
+        };
+        record_preflight(&runner, "apache", "Apache", &o).await;
+    }
+    let mut local_db_ready = true;
+    if hestia && !plan.databases.is_empty() {
+        let st = ctx.agent.get("/localdb/status").await.ok();
+        let (ok, o) = local_db_outcome(st.as_ref());
+        local_db_ready = ok;
+        record_preflight(&runner, "mariadb_local", "Local MariaDB server", &o).await;
+    }
+    let mut mail_ready = true;
+    if !plan.mail_domains.is_empty() {
+        let st = ctx.agent.get("/mail/status").await.ok();
+        mail_ready = st.as_ref().and_then(|s| s.get("installed")).and_then(|b| b.as_bool()).unwrap_or(false);
+        let o = if mail_ready {
+            ItemOutcome::done("Mail server installed")
+        } else {
+            ItemOutcome::failed("The mail server is not installed: install it from Mail, then retry")
+        };
+        record_preflight(&runner, "mail", "Mail server", &o).await;
+    }
+
+    // ── sites ─────────────────────────────────────────────────
+    let env = SiteEnv {
+        run: &runner,
+        agents: &inp.agents,
+        headers: &inp.headers,
+        role: &inp.role,
+        inventory,
+        hestia,
+        apache_installed,
+        default_php_version: plan.default_php_version.as_deref(),
+        php_ready: Default::default(),
+    };
+    let mut site_ids: Vec<(String, Uuid)> = Vec::new();
+    for choice in &plan.sites {
+        if let Some(sid) = import_site::import_site(&env, choice).await {
+            site_ids.push((choice.domain.clone(), sid));
+        }
+    }
+
+    // ── databases ─────────────────────────────────────────────
+    for db_item in &plan.databases {
+        let name = db_item.name.as_str();
+        let label = format!("Database {name}");
+        let inv_db = inventory_database(inventory, name).cloned().unwrap_or_default();
+        let wanted = db_item
+            .site_domain
+            .clone()
+            .or_else(|| inv_db.get("suggested_site").and_then(|s| s.as_str()).map(|s| s.to_ascii_lowercase()));
+        let site_id = resolve_db_site(ctx, wanted.as_deref(), &site_ids, plan.sites.len()).await;
+        runner
+            .run("db", name, &label, |forced| async move {
+                let site_id = match site_id {
+                    Ok(sid) => sid,
+                    Err(msg) => return ItemOutcome::failed(msg),
+                };
+                if hestia {
+                    if !local_db_ready {
+                        return ItemOutcome::failed(
+                            "The local MariaDB server is not installed: install it from the wizard, then retry",
+                        );
+                    }
+                    crate::services::import_db::import_hestia_db(&ctx.with_force(forced), name, site_id).await
+                } else {
+                    import_container_db(ctx, &inv_db, name, site_id).await
+                }
+            })
+            .await;
+    }
+
+    // ── mail ──────────────────────────────────────────────────
+    for domain in &plan.mail_domains {
+        import_mail(&runner, ctx, domain, mail_ready).await;
+    }
+
+    // ── verdict ───────────────────────────────────────────────
+    let counts = runner.counts();
+    let rows = ledger::list(&ctx.db, id).await.unwrap_or_default();
+    let result = result_counters(&rows, counts);
+    let _ = sqlx::query("UPDATE migrations SET status = 'done', result = $1, updated_at = NOW() WHERE id = $2")
+        .bind(&result)
+        .bind(id)
+        .execute(&ctx.db)
+        .await;
+    activity::log_activity(
+        &ctx.db,
+        ctx.user_id,
+        &inp.email,
+        "migration.import",
+        Some("migration"),
+        Some(&inp.source),
+        None,
+        None,
+        inp.key_id,
+    )
+    .await;
+}
+
+fn site_runtime<'a>(inventory: &'a serde_json::Value, domain: &str) -> &'a str {
+    import_site::inventory_site(inventory, domain)
+        .and_then(|s| s.get("runtime"))
+        .and_then(|r| r.as_str())
+        .unwrap_or("static")
+}
+
+fn inventory_database<'a>(inventory: &'a serde_json::Value, name: &str) -> Option<&'a serde_json::Value> {
+    inventory
+        .get("databases")?
+        .as_array()?
+        .iter()
+        .find(|d| d.get("name").and_then(|n| n.as_str()) == Some(name))
+}
+
+/// Preflight rows are rewritten on every run (they describe the server now).
+async fn record_preflight(runner: &ItemRunner<'_>, key: &str, label: &str, o: &ItemOutcome) {
+    let ctx = runner.ctx;
+    if let Err(e) = ledger::finish(&ctx.db, ctx.migration_id, "preflight", key, o).await {
+        tracing::warn!("Migration {}: preflight {key} not recorded: {e}", ctx.migration_id);
+    }
+    let status = match o.status {
+        ItemStatus::Failed => "error",
+        ItemStatus::Warning => "warning",
+        _ => "done",
+    };
+    (ctx.progress)(&ledger::item_ref("preflight", key), label, status, Some(o.message.clone()));
+}
+
+/// `GET /localdb/status` read for the preflight: `(usable, outcome)`.
+pub(crate) fn local_db_outcome(status: Option<&serde_json::Value>) -> (bool, ItemOutcome) {
+    let b = |k: &str| status.and_then(|s| s.get(k)).and_then(|v| v.as_bool()).unwrap_or(false);
+    match (status.is_some(), b("installed"), b("running")) {
+        (false, _, _) => (false, ItemOutcome::failed("Could not ask the server about its local MariaDB")),
+        (true, false, _) => (
+            false,
+            ItemOutcome::failed("The local MariaDB server is not installed: install it from the wizard, then retry"),
+        ),
+        (true, true, false) => (false, ItemOutcome::failed("The local MariaDB server is installed but not running")),
+        (true, true, true) => (true, ItemOutcome::done("Local MariaDB server ready")),
+    }
+}
+
+/// Which site a database belongs to: the operator's choice, else the analysis'
+/// suggestion, else the only site of the selection. Looked up among this run's
+/// sites, then any site of this migration's ledger, then the caller's existing
+/// sites (so "sites first, databases later" works across runs).
+async fn resolve_db_site(
+    ctx: &ImportCtx,
+    wanted: Option<&str>,
+    this_run: &[(String, Uuid)],
+    selected_sites: usize,
+) -> Result<Uuid, String> {
+    match wanted {
+        Some(d) => {
+            if let Some((_, sid)) = this_run.iter().find(|(dom, _)| dom == d) {
+                return Ok(*sid);
+            }
+            if let Some(row) = ledger::get(&ctx.db, ctx.migration_id, "site", d).await
+                && let Some(sid) = ledger::site_id_of(&row)
+            {
+                return Ok(sid);
+            }
+            crate::helpers::site_id_for_owned_domain(&ctx.db, d, ctx.user_id).await.ok_or_else(|| {
+                format!("Its site {d} is not in this import and does not exist on this account. Nothing was created.")
+            })
+        }
+        None => match (this_run, selected_sites) {
+            ([(_, sid)], 1) => Ok(*sid),
+            ([], _) => Err(
+                "A database has to belong to a site, and no site of this import exists. Choose its site and retry. Nothing was created."
+                    .into(),
+            ),
+            _ => Err(
+                "The archive does not say which site owns it. Choose its site in the wizard and retry. Nothing was created."
+                    .into(),
+            ),
+        },
+    }
+}
+
+/// One mail domain: the executor (W4) returns several items; the whole call is
+/// skipped only when every item of the domain is finished and none is forced.
+async fn import_mail(runner: &ItemRunner<'_>, ctx: &ImportCtx, domain: &str, mail_ready: bool) {
+    let label = format!("Mail {domain}");
+    if !mail_ready {
+        runner
+            .run("mail_domain", domain, &label, |_| async {
+                ItemOutcome::failed("The mail server is not installed: install it from Mail, then retry")
+            })
+            .await;
+        return;
+    }
+    let rows = ledger::list(&ctx.db, ctx.migration_id).await.unwrap_or_default();
+    let mine: Vec<&ledger::LedgerRow> = rows.iter().filter(|r| mail_row_of(r, domain)).collect();
+    let forced = runner.forced.iter().any(|f| {
+        ledger::parse_item_ref(f).is_some_and(|(k, key)| mail_key_of(k, key, domain))
+    });
+    let domain_done = mine
+        .iter()
+        .any(|r| r.kind == "mail_domain" && ledger::COMPLETED.contains(&r.status.as_str()));
+    let all_done = domain_done && mine.iter().all(|r| ledger::COMPLETED.contains(&r.status.as_str()));
+    if all_done && !forced {
+        let _ = runner.gate("mail_domain", domain, &label).await; // reports "skipped", writes nothing
+        return;
+    }
+    if let Err(e) = ledger::begin(&ctx.db, ctx.migration_id, "mail_domain", domain).await {
+        tracing::warn!("Migration {}: could not mark mail_domain:{domain} running: {e}", ctx.migration_id);
+    }
+    (ctx.progress)(&ledger::item_ref("mail_domain", domain), &label, "in_progress", None);
+
+    let outcomes = crate::services::import_mail::import_mail_domain(&ctx.with_force(forced), domain).await;
+    let mut domain_recorded = false;
+    let mut worst = ItemStatus::Done;
+    for (item, outcome) in &outcomes {
+        let Some((kind, key)) = ledger::parse_item_ref(item) else {
+            tracing::warn!("Migration {}: mail executor returned an unknown item {item}", ctx.migration_id);
+            continue;
+        };
+        domain_recorded |= kind == "mail_domain" && key == domain;
+        worst = worse(worst, outcome.status);
+        let item_label = match kind {
+            "mail_domain" => label.clone(),
+            "mailbox" => format!("Mailbox {key}"),
+            "mail_alias" => format!("Mail alias {key}"),
+            "maildir" => format!("Messages of {key}"),
+            _ => key.to_string(),
+        };
+        runner.record(kind, key, &item_label, outcome).await;
+    }
+    if !domain_recorded {
+        let o = match worst {
+            ItemStatus::Failed => ItemOutcome::failed("Some items of this mail domain failed"),
+            ItemStatus::Warning => ItemOutcome::warning("Imported with warnings"),
+            _ => ItemOutcome::done("Imported"),
+        };
+        runner.record("mail_domain", domain, &label, &o).await;
+    }
+}
+
+fn worse(a: ItemStatus, b: ItemStatus) -> ItemStatus {
+    let rank = |s: ItemStatus| match s {
+        ItemStatus::Done | ItemStatus::Skipped => 0,
+        ItemStatus::Warning => 1,
+        ItemStatus::Failed => 2,
+    };
+    if rank(b) > rank(a) { b } else { a }
+}
+
+/// Whether a ledger item belongs to a mail domain: the domain row itself, or a
+/// mailbox / alias / maildir whose address is `@<domain>`.
+pub(crate) fn mail_key_of(kind: &str, key: &str, domain: &str) -> bool {
+    match kind {
+        "mail_domain" => key.eq_ignore_ascii_case(domain),
+        "mailbox" | "mail_alias" | "maildir" => key
+            .rsplit_once('@')
+            .is_some_and(|(_, d)| d.eq_ignore_ascii_case(domain)),
+        _ => false,
+    }
+}
+
+fn mail_row_of(r: &ledger::LedgerRow, domain: &str) -> bool {
+    mail_key_of(&r.kind, &r.key, domain)
+}
+
+/// `migrations.result`: the historical keys, as counters only (W5-R), plus this
+/// run's counters.
+pub(crate) fn result_counters(rows: &[ledger::LedgerRow], run: RunCounts) -> serde_json::Value {
+    let count = |kind: &str, statuses: &[&str]| {
+        rows.iter().filter(|r| r.kind == kind && statuses.contains(&r.status.as_str())).count()
+    };
+    serde_json::json!({
+        "sites_imported": count("site", &["done", "warning"]),
+        "sites_skipped": count("site", &["skipped"]),
+        "databases_imported": count("db", &["done", "warning"]),
+        "databases_failed": count("db", &["failed"]),
+        "errors": rows.iter().filter(|r| r.status == "failed").count(),
+        "warnings": rows.iter().filter(|r| r.status == "warning").count(),
+        "run": run,
+    })
+}
+
+/// Database import into a fresh container (cPanel / Plesk archives): the
+/// historical path, kept as is (the HestiaCP path is `import_db`, W2).
+async fn import_container_db(
+    ctx: &ImportCtx,
+    inv_db: &serde_json::Value,
+    db_name: &str,
+    site_id: Uuid,
+) -> ItemOutcome {
+    let db = &ctx.db;
+    let agent = &ctx.agent;
+    let id = ctx.migration_id;
+    let engine = inv_db.get("engine").and_then(|e| e.as_str()).unwrap_or("mysql").to_string();
+    let Some(sql_file) = inv_db.get("file").and_then(|f| f.as_str()) else {
+        return ItemOutcome::failed("The analysis did not record a dump file for this database");
+    };
+    let step = ledger::item_ref("db", db_name);
+
+    let password = Uuid::new_v4().to_string().replace('-', "");
+    let (range_start, range_end) = match engine.as_str() {
+        "mysql" | "mariadb" => (3307, 3400),
+        _ => (5433, 5500),
+    };
+    let port_row: Option<(i32,)> = sqlx::query_as(
+        "SELECT s.port FROM generate_series($1::int, $2::int) AS s(port) \
+         WHERE s.port NOT IN (SELECT port FROM databases WHERE port IS NOT NULL) LIMIT 1",
+    )
+    .bind(range_start)
+    .bind(range_end)
+    .fetch_optional(db)
+    .await
+    .unwrap_or(None);
+    let Some((port,)) = port_row else {
+        return ItemOutcome::failed(format!("No available port for database {db_name}"));
+    };
+
+    // Row first: `idx_databases_port_unique` settles a concurrent port pick
+    // before Docker is ever asked to bind it twice.
+    let encrypted_password = crate::services::secrets_crypto::encrypt_credential(&password, &ctx.jwt_secret)
+        .unwrap_or_else(|_| password.clone());
+    let inserted = sqlx::query_as::<_, (Uuid,)>(
+        "INSERT INTO databases (site_id, engine, name, db_user, db_password_enc, container_id, port) \
+         VALUES ($1, $2, $3, $4, $5, '', $6) \
+         ON CONFLICT ON CONSTRAINT databases_site_name_unique DO NOTHING RETURNING id",
+    )
+    .bind(site_id)
+    .bind(&engine)
+    .bind(db_name)
+    .bind(db_name)
+    .bind(&encrypted_password)
+    .bind(port)
+    .fetch_optional(db)
+    .await;
+    let db_id = match inserted {
+        Ok(Some((rid,))) => rid,
+        Ok(None) => return ItemOutcome::failed(format!("Database {db_name} already exists on that site - not imported.")),
+        Err(e) if e.to_string().contains("idx_databases_port_unique") => {
+            return ItemOutcome::failed(format!(
+                "Port {port} for database {db_name} was claimed by a concurrent operation - not imported. Retry."
+            ));
+        }
+        Err(e) => return ItemOutcome::failed(format!("Could not record database {db_name}: {e}")),
+    };
+
+    let create_body = serde_json::json!({ "name": db_name, "engine": engine, "password": password, "port": port });
+    let (container_id, container_name) = match agent.post("/databases", Some(create_body)).await {
+        Ok(resp) => (
+            resp.get("container_id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            resp.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        ),
+        Err(e) => {
+            let _ = sqlx::query("DELETE FROM databases WHERE id = $1").bind(db_id).execute(db).await;
+            return ItemOutcome::failed(format!("Database container creation failed for {db_name}: {e}"));
+        }
+    };
+    if let Err(e) = sqlx::query("UPDATE databases SET container_id = $1 WHERE id = $2")
+        .bind(&container_id)
+        .bind(db_id)
+        .execute(db)
+        .await
+    {
+        tracing::error!("Migration {id}: database {db_name} created but its container_id was not recorded: {e}");
+    }
+
+    // A fresh `mariadb:11` refuses the application user while it bootstraps:
+    // wait for it to answer rather than report a credentials error for a timing one.
+    (ctx.progress)(&step, &format!("Database {db_name}"), "in_progress", Some("Waiting for the engine".into()));
+    let probe = serde_json::json!({
+        "container": container_name, "engine": engine, "database": db_name,
+        "user": db_name, "password": password, "sql": "SELECT 1",
+    });
+    let deadline = Instant::now() + Duration::from_secs(ENGINE_READY_TIMEOUT_SECS);
+    while Instant::now() < deadline {
+        if agent.post("/databases/query", Some(probe.clone())).await.is_ok() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    }
+
+    let import_body = serde_json::json!({
+        "migration_id": ctx.agent_migration_id, "sql_file": sql_file, "container_name": container_name,
+        "db_name": db_name, "engine": engine, "user": db_name, "password": password,
+    });
+    match agent.post_long("/migration/import-database", Some(import_body), CONTAINER_DB_IMPORT_TIMEOUT_SECS).await {
+        Ok(_) => ItemOutcome::done("Imported").with_details(serde_json::json!({ "port": port, "engine": engine })),
+        Err(e) => ItemOutcome::failed(format!("SQL import failed for {db_name}: {e}")),
+    }
+}
+
+/// Budget of the historical synchronous dump import (container databases). The
+/// spawned loop is not under any HTTP timeout, so this only bounds a wedged call.
+const CONTAINER_DB_IMPORT_TIMEOUT_SECS: u64 = 3600;
 
 // ──────────────────────────────────────────────────────────────
 // GET /api/migration/{id}/progress - SSE stream
@@ -1528,16 +1535,121 @@ pub async fn remove(
 }
 
 // --- import-hestia (05) ---
-// STEP 0 SKELETON (owner: W5): step-0 skeleton handlers (501); the owner replaces them (contract W5-R).
 
-/// GET /api/migration/{id}/report
-pub async fn report(AuthUser(_claims): AuthUser) -> Result<Json<serde_json::Value>, ApiError> {
-    Err(crate::error::err_coded(StatusCode::NOT_IMPLEMENTED, "not implemented yet", "not_implemented"))
+async fn owned_migration(state: &AppState, id: Uuid, user: Uuid) -> Result<Migration, ApiError> {
+    sqlx::query_as("SELECT * FROM migrations WHERE id = $1 AND user_id = $2")
+        .bind(id)
+        .bind(user)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| internal_error("migration", e))?
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "Migration not found"))
 }
 
-/// GET /api/migration/{id}/preflight
-pub async fn preflight(AuthUser(_claims): AuthUser) -> Result<Json<serde_json::Value>, ApiError> {
-    Err(crate::error::err_coded(StatusCode::NOT_IMPLEMENTED, "not implemented yet", "not_implemented"))
+/// GET /api/migration/{id}/report - the ledger, per item, with a summary and
+/// the manual actions left (W5-R). Durable: it survives the end of the SSE
+/// stream, a page reload and a panel restart.
+pub async fn report(
+    State(state): State<AppState>,
+    AuthUser(claims): AuthUser,
+    Path(id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    require_admin(&claims.role)?;
+    let migration = owned_migration(&state, id, claims.sub).await?;
+    let rows = ledger::list(&state.db, id).await.map_err(|e| internal_error("report", e))?;
+    Ok(Json(serde_json::json!({
+        "status": migration.status,
+        "summary": ledger::summary(&rows),
+        "items": rows.iter().map(ledger::public_row).collect::<Vec<_>>(),
+        "manual_actions": ledger::manual_actions(&rows, migration.inventory.as_ref()),
+    })))
+}
+
+#[derive(serde::Deserialize)]
+pub struct PreflightQuery {
+    /// Comma-separated PHP versions the wizard currently selects (overrides and
+    /// default), on top of those the inventory names.
+    #[serde(default)]
+    pub php: Option<String>,
+}
+
+/// PHP versions an import of these sites needs, from the inventory and the
+/// wizard's current choices, deduplicated and whitelisted.
+pub(crate) fn php_needed(inventory: Option<&serde_json::Value>, extra: Option<&str>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let from_inv = inventory
+        .and_then(|i| i.get("sites"))
+        .and_then(|s| s.as_array())
+        .into_iter()
+        .flatten()
+        .filter(|s| s.get("runtime").and_then(|r| r.as_str()) == Some("php"))
+        .filter_map(|s| s.get("php_version").and_then(|v| v.as_str()));
+    let from_query = extra.unwrap_or("").split(',').map(str::trim);
+    for v in from_inv.chain(from_query) {
+        if valid_php(v) && !out.iter().any(|o| o == v) {
+            out.push(v.to_string());
+        }
+    }
+    out
+}
+
+/// GET /api/migration/{id}/preflight - what the target server is missing for
+/// this import (W5-R): local MariaDB, mail server, PHP versions, Apache, disk.
+pub async fn preflight(
+    State(state): State<AppState>,
+    AuthUser(claims): AuthUser,
+    Path(id): Path<Uuid>,
+    axum::extract::Query(q): axum::extract::Query<PreflightQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    require_admin(&claims.role)?;
+    let migration = owned_migration(&state, id, claims.sub).await?;
+    let agent = crate::helpers::agent_for_site_server(&state, migration.server_id, &migration.backup_path).await?;
+
+    let (localdb, mail, php, install) = tokio::join!(
+        agent.get("/localdb/status"),
+        agent.get("/mail/status"),
+        agent.get("/php/versions"),
+        agent.get("/services/install-status"),
+    );
+    let localdb = localdb.ok();
+    let b = |v: Option<&serde_json::Value>, k: &str| v.and_then(|s| s.get(k)).and_then(|x| x.as_bool()).unwrap_or(false);
+    let mail = mail.ok();
+    let installed_php: Vec<String> = php
+        .ok()
+        .and_then(|v| v.get("versions").and_then(|a| a.as_array()).cloned())
+        .unwrap_or_default()
+        .iter()
+        .filter(|x| x.get("installed").and_then(|b| b.as_bool()).unwrap_or(false))
+        .filter_map(|x| x.get("version").and_then(|s| s.as_str()).map(str::to_string))
+        .collect();
+    let needed = php_needed(migration.inventory.as_ref(), q.php.as_deref());
+    let missing: Vec<&String> = needed.iter().filter(|v| !installed_php.contains(v)).collect();
+    let legacy: Vec<&String> = needed.iter().filter(|v| ledger::LEGACY_PHP_VERSIONS.contains(&v.as_str())).collect();
+    let schemes: Vec<String> = mail
+        .as_ref()
+        .and_then(|m| m.get("password_schemes"))
+        .and_then(|s| s.as_array())
+        .map(|a| a.iter().filter_map(|x| x.as_str().map(|s| s.to_ascii_uppercase())).collect())
+        .unwrap_or_default();
+    let disk = migration
+        .inventory
+        .as_ref()
+        .and_then(|i| i.get("disk"))
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
+
+    Ok(Json(serde_json::json!({
+        "mariadb_local": {
+            "installed": b(localdb.as_ref(), "installed"),
+            "running": b(localdb.as_ref(), "running"),
+            "version": localdb.as_ref().and_then(|s| s.get("version")).cloned().unwrap_or(serde_json::Value::Null),
+            "reachable": localdb.is_some(),
+        },
+        "mail": { "installed": b(mail.as_ref(), "installed"), "schemes": schemes },
+        "php": { "installed": installed_php, "missing_for_selection": missing, "legacy": legacy },
+        "apache": { "installed": apache_installed_in(install.ok().as_ref()) },
+        "disk": disk,
+    })))
 }
 // --- end import-hestia (05) ---
 
@@ -1591,5 +1703,155 @@ mod web_server_tests {
         // Unknown domain or no inventory: nginx.
         assert_eq!(imported_web_server(Some(&inv), "zz.example", "php"), "nginx");
         assert_eq!(imported_web_server(None, "a.example", "php"), "nginx");
+    }
+}
+
+#[cfg(test)]
+mod import_loop_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn inv() -> serde_json::Value {
+        json!({
+            "id": "m1", "source": "hestiacp",
+            "sites": [
+                { "domain": "x.tld", "runtime": "php", "php_version": "8.3" },
+                { "domain": "old.tld", "runtime": "php", "php_version": null },
+                { "domain": "s.tld", "runtime": "static" }
+            ],
+            "databases": [{ "name": "adm_x", "file": "db/adm_x/adm_x.mysql.sql.gz", "engine": "mariadb" }],
+            "mail_domains": [{ "domain": "d.be" }]
+        })
+    }
+
+    fn req(v: serde_json::Value) -> ImportRequest {
+        serde_json::from_value(v).unwrap()
+    }
+
+    #[test]
+    fn the_selection_must_come_from_the_inventory() {
+        let p = validate_selection(&inv(), &req(json!({
+            "default_php_version": "8.3",
+            "sites": [{ "domain": "X.TLD.", "php_version": "8.4", "doc_root": "ignored", "runtime": "node" }, { "domain": "x.tld" }],
+            "databases": [{ "name": "adm_x", "site_domain": "X.tld", "file": "../../etc/passwd" }],
+            "mail_domains": ["D.be"],
+            "force_items": ["db:adm_x"]
+        })))
+        .unwrap();
+        assert_eq!(p.sites.len(), 1);
+        assert_eq!(p.sites[0].domain, "x.tld");
+        assert_eq!(p.sites[0].php_version.as_deref(), Some("8.4"));
+        assert_eq!(p.databases[0].site_domain.as_deref(), Some("x.tld"));
+        assert_eq!(p.mail_domains, vec!["d.be"]);
+        assert!(p.force_items.contains("db:adm_x"));
+
+        for bad in [
+            json!({ "sites": [{ "domain": "evil.tld" }] }),
+            json!({ "sites": [{ "domain": "x.tld", "php_version": "4.4" }] }),
+            json!({ "default_php_version": "8.3; rm -rf /" }),
+            json!({ "databases": [{ "name": "other" }] }),
+            json!({ "mail_domains": ["other.be"] }),
+            json!({ "force_items": ["nope:x"] }),
+        ] {
+            assert!(validate_selection(&inv(), &req(bad.clone())).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_retry_replays_the_stored_selection_in_either_shape() {
+        let p = validate_selection(&inv(), &req(json!({ "sites": [{ "domain": "x.tld", "php_version": "8.4" }] }))).unwrap();
+        let stored = serde_json::to_value(p.as_stored()).unwrap();
+        assert!(stored["force_items"].as_array().is_some_and(|f| f.is_empty()));
+        let back = selection_from_stored(&stored);
+        assert_eq!(back.sites.unwrap()[0].php_version.as_deref(), Some("8.4"));
+        // Rows written before the ledger existed.
+        let old = selection_from_stored(&json!({ "sites": ["x.tld"], "databases": ["adm_x"] }));
+        assert!(!old.is_empty());
+        assert_eq!(old.sites.unwrap()[0].domain, "x.tld");
+        assert_eq!(old.databases.unwrap()[0].name, "adm_x");
+        assert!(ImportRequest::default().is_empty());
+    }
+
+    #[test]
+    fn in_progress_events_are_throttled_terminal_ones_never() {
+        let t = Instant::now();
+        assert!(progress_passes("in_progress", None, t));
+        assert!(!progress_passes("in_progress", Some(t), t + Duration::from_millis(1500)));
+        assert!(progress_passes("in_progress", Some(t), t + Duration::from_secs(2)));
+        for s in ["done", "error", "warning", "skipped", "pending"] {
+            assert!(progress_passes(s, Some(t), t), "{s}");
+        }
+    }
+
+    #[test]
+    fn the_local_mariadb_preflight_names_what_is_missing() {
+        assert!(!local_db_outcome(None).0);
+        let (ok, o) = local_db_outcome(Some(&json!({ "installed": false })));
+        assert!(!ok && o.message.contains("not installed"));
+        assert!(!local_db_outcome(Some(&json!({ "installed": true, "running": false }))).0);
+        assert!(local_db_outcome(Some(&json!({ "installed": true, "running": true }))).0);
+    }
+
+    #[test]
+    fn mail_items_belong_to_their_domain() {
+        assert!(mail_key_of("mail_domain", "D.be", "d.be"));
+        assert!(mail_key_of("mailbox", "a@d.be", "d.be"));
+        assert!(mail_key_of("maildir", "a@D.BE", "d.be"));
+        assert!(!mail_key_of("mailbox", "a@xd.be", "d.be"));
+        assert!(!mail_key_of("mail_alias", "a@d.be.evil", "d.be"));
+        assert!(!mail_key_of("db", "d.be", "d.be"));
+    }
+
+    #[test]
+    fn preflight_lists_the_php_versions_the_selection_needs() {
+        let n = php_needed(Some(&inv()), Some("8.4, 8.3,bogus"));
+        assert!(n.contains(&"8.3".to_string()) && n.contains(&"8.4".to_string()));
+        assert!(!n.iter().any(|v| v == "bogus"));
+        assert_eq!(n.iter().filter(|v| *v == "8.3").count(), 1);
+    }
+
+    #[test]
+    fn an_async_analysis_is_told_apart_from_an_inventory() {
+        assert_eq!(analysis_job_id(&json!({ "id": "a", "job_id": "j1" })).as_deref(), Some("j1"));
+        assert_eq!(analysis_job_id(&json!({ "id": "a", "sites": [], "job_id": "j1" })), None);
+        assert_eq!(analysis_job_id(&json!({ "id": "a", "sites": [] })), None);
+        assert_eq!(analysis_job_id(&json!({ "id": "a", "job_id": "" })), None);
+    }
+
+    #[test]
+    fn a_failed_disk_check_refuses_the_import() {
+        assert!(disk_refusal(&json!({})).is_none());
+        assert!(disk_refusal(&json!({ "disk": { "ok": true } })).is_none());
+        let r = disk_refusal(&json!({ "disk": { "ok": false, "reason": "need 12 GB, 3 GB free" } })).unwrap();
+        assert!(r.contains("need 12 GB, 3 GB free"));
+        assert!(disk_refusal(&json!({ "disk": { "ok": false } })).unwrap().contains("too little free space"));
+    }
+
+    #[test]
+    fn auto_is_replaced_by_the_detected_source() {
+        assert_eq!(detected_source(&json!({ "source": "hestiacp" }), "auto"), "hestiacp");
+        assert_eq!(detected_source(&json!({}), "cpanel"), "cpanel");
+        assert_eq!(detected_source(&json!({ "source": "weird" }), "auto"), "auto");
+    }
+
+    #[test]
+    fn the_result_keeps_the_historical_keys_as_counters() {
+        let row = |kind: &str, status: &str| ledger::LedgerRow {
+            kind: kind.into(),
+            key: "k".into(),
+            status: status.into(),
+            message: String::new(),
+            details: json!({}),
+            attempts: 1,
+            updated_at: chrono::Utc::now(),
+        };
+        let rows = vec![row("site", "done"), row("site", "skipped"), row("db", "failed"), row("files", "warning")];
+        let r = result_counters(&rows, RunCounts { done: 1, skipped: 2, warning: 0, failed: 1 });
+        assert_eq!(r["sites_imported"], 1);
+        assert_eq!(r["sites_skipped"], 1);
+        assert_eq!(r["databases_failed"], 1);
+        assert_eq!(r["errors"], 1);
+        assert_eq!(r["warnings"], 1);
+        assert_eq!(r["run"]["skipped"], 2);
     }
 }
