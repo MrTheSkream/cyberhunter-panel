@@ -28,15 +28,11 @@ use crate::services::agent::{AgentError, AgentRegistry};
 use crate::services::domain_claim::{ensure_claimable, Holder};
 use crate::services::import_sftp::import_sftp;
 use crate::services::import_types::{wait_job, ImportCtx, ItemOutcome, ItemStatus};
-use crate::services::migration_ledger::{self as ledger, Decision, LEGACY_PHP_VERSIONS};
+use crate::routes::sites::{DEFAULT_PHP_NO_EXEC_DIRS, LEGACY_PHP_VERSIONS};
+use crate::services::migration_ledger::{self as ledger, Decision};
 
 /// `POST /php/install` budget (W5-F step 2: up to 10 min of apt).
 pub const PHP_INSTALL_TIMEOUT_SECS: u64 = 700;
-
-/// PHP execution is blocked in these folders for every imported PHP site (D9).
-/// Mirrors W3's default list (`POST /api/sites`), not in this branch yet.
-pub const DEFAULT_PHP_NO_EXEC_DIRS: &[&str] =
-    &["/wp-content/uploads", "/sites/default/files", "/storage/app/public", "/uploads", "/upload"];
 
 /// Hard ceiling on aliases per site (W3-V).
 pub const MAX_ALIASES: usize = 20;
@@ -296,33 +292,6 @@ async fn write_vhost(ctx: &ImportCtx, site_id: Uuid) -> Result<(), String> {
         .await
         .map(|_| ())
         .map_err(|e| ledger::redact(&e.to_string()))
-}
-
-/// Same statement as `upload_ssl` / W3's `sites::record_uploaded_ssl`, which is
-/// not in this branch yet: an imported certificate is an uploaded one
-/// (`ssl_challenge` NULL), renewable by the existing auto-renewal (D3).
-async fn record_imported_ssl(
-    db: &sqlx::PgPool,
-    site_id: Uuid,
-    cert_path: Option<&str>,
-    key_path: Option<&str>,
-    expiry: Option<chrono::DateTime<chrono::Utc>>,
-) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        "UPDATE sites SET ssl_enabled = true, ssl_cert_path = COALESCE($1, ssl_cert_path), \
-         ssl_key_path = COALESCE($2, ssl_key_path), ssl_expiry = COALESCE($3, ssl_expiry), \
-         ssl_profile = NULL, \
-         ssl_challenge = NULL, ssl_cert_subject = NULL, ssl_wildcard = NULL, \
-         ssl_dns_zone_id = NULL, \
-         ssl_renewal_at = NULL, ssl_renewal_checked_at = NULL, updated_at = NOW() WHERE id = $4",
-    )
-    .bind(cert_path)
-    .bind(key_path)
-    .bind(expiry)
-    .bind(site_id)
-    .execute(db)
-    .await
-    .map(|_| ())
 }
 
 /// Ensures a PHP version is installed (`php:<v>` item). `Err` = not usable.
@@ -836,11 +805,11 @@ async fn import_ssl(ctx: &ImportCtx, site_id: Uuid, domain: &str, inv: &Value) -
             return ItemOutcome::warning(format!("Certificate not installed: {e}; the site is served over HTTP"));
         }
     };
-    let expiry = str_of(&resp, "expiry")
-        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-        .map(|d| d.with_timezone(&chrono::Utc));
+    // The parser every SSL door uses: an unparsed expiry would leave
+    // `ssl_expiry` NULL and the certificate outside auto-renewal (W3 note).
+    let expiry = str_of(&resp, "expiry").and_then(crate::helpers::parse_agent_cert_expiry);
     if let Err(e) =
-        record_imported_ssl(&ctx.db, site_id, str_of(&resp, "cert_path"), str_of(&resp, "key_path"), expiry).await
+        crate::routes::sites::record_uploaded_ssl(&ctx.db, site_id, str_of(&resp, "cert_path"), str_of(&resp, "key_path"), expiry).await
     {
         return ItemOutcome::warning(format!("Certificate installed but not recorded: {e}"));
     }

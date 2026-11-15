@@ -255,9 +255,14 @@ check_calls_guard "$APPS_BE" deploy          "docker_apps::deploy"
 
 # The two that are not plain fn bodies: the migration import's work happens in a
 # spawned task, and the preview path reports rather than rejects.
+# 05-import-hestia (W5-F): the per-site work, claim included, lives in
+# services/import_site.rs, which the loop in routes/migration.rs drives.
+IMPSITE=panel/backend/src/services/import_site.rs
 if S=$(subj "$MIG"); then
   if derives "$S" 'ensure_claimable'; then
     ok "migration::import claims through the shared guard"
+  elif derives "$S" 'import_site::import_site' && S2=$(subj "$IMPSITE") && derives "$S2" 'ensure_claimable'; then
+    ok "migration::import claims through the shared guard (via services::import_site)"
   else
     bad "migration::import no longer claims through the shared guard"
   fi

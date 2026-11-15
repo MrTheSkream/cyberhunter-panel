@@ -210,6 +210,14 @@ for f in "$SITES" "$STAGING" "$MIGR"; do
     bad "B- could not read $f"
   fi
 done
+# 05-import-hestia (W5-F): the migration import's `INSERT INTO sites` moved to
+# services/import_site.rs, driven by the spawned loop of routes/migration.rs;
+# the DOOR (lockdown refusal, ceiling exclusion) is still `migration::import`.
+if ! grep -q "^$MIGR:" <<< "$SITE_DOORS" \
+   && grep -q 'import_site::import_site' "$MIGR" \
+   && grep -q 'INSERT INTO sites' panel/backend/src/services/import_site.rs; then
+  SITE_DOORS="${SITE_DOORS}${MIGR}:import"$'\n'
+fi
 SITE_N=$(grep -c . <<< "$SITE_DOORS")
 
 # Four, and the count is asserted before the members are judged. If a fifth

@@ -56,11 +56,22 @@ fn success_details(report: &serde_json::Value, db_user: &str) -> serde_json::Val
     })
 }
 
+/// The contract's `replace` rule (W2-B) without `force`: an earlier attempt of
+/// this item in this migration was left `running` (process died) or `failed`.
+/// A failure because the base was someone else's (`exists_not_ours`) never
+/// turns into a licence to drop it on the next run.
+fn replace_allowed(prior: Option<(&str, &serde_json::Value)>) -> bool {
+    match prior {
+        Some(("running", _)) => true,
+        Some(("failed", d)) => d.get("code").and_then(|c| c.as_str()) != Some("exists_not_ours"),
+        _ => false,
+    }
+}
+
 fn outcome(status: ItemStatus, message: impl Into<String>, details: serde_json::Value) -> ItemOutcome {
     ItemOutcome { status, message: message.into(), details }
 }
 
-#[allow(dead_code)] // called by the import loop (W5)
 pub async fn import_hestia_db(ctx: &ImportCtx, db_name: &str, site_id: Uuid) -> ItemOutcome {
     if !is_valid_local_ident(db_name, 64) {
         return ItemOutcome::failed(format!("{db_name}: database name not supported by the local server"));
@@ -99,18 +110,10 @@ pub async fn import_hestia_db(ctx: &ImportCtx, db_name: &str, site_id: Uuid) -> 
         return ItemOutcome::failed("target site not found on this server");
     }
 
-    // A previous attempt of this same item (the loop has already counted this one).
-    let attempts: i32 = sqlx::query_scalar::<_, i32>(
-        "SELECT attempts FROM migration_items WHERE migration_id = $1 AND kind = 'db' AND key = $2",
-    )
-    .bind(ctx.migration_id)
-    .bind(db_name)
-    .fetch_optional(&ctx.db)
-    .await
-    .ok()
-    .flatten()
-    .unwrap_or(1);
-    let retry = ctx.force || attempts > 1;
+    // While this runs the loop has marked the row `running`; the state of the
+    // attempt BEFORE this one is the ledger's prior state (W5-D).
+    let prior = crate::services::migration_ledger::prior_state(&ctx.db, ctx.migration_id, "db", db_name).await;
+    let retry = ctx.force || replace_allowed(prior.as_ref().map(|(s, d)| (s.as_str(), d)));
 
     // A local database of that name on this server: ours only on a retry of this
     // item for the same site. Otherwise it is never touched.
@@ -229,6 +232,18 @@ mod tests {
         assert!(!is_valid_local_ident("_a", 64));
         assert!(!is_valid_local_ident("a`b", 64));
         assert!(!is_valid_local_ident(&"a".repeat(65), 64));
+    }
+
+    #[test]
+    fn replace_follows_the_prior_attempt_never_a_foreign_base() {
+        let none = serde_json::json!({});
+        assert!(!replace_allowed(None), "first attempt");
+        assert!(replace_allowed(Some(("running", &none))), "process died mid-import");
+        assert!(replace_allowed(Some(("failed", &serde_json::json!({ "db_user": "u" })))));
+        let foreign = serde_json::json!({ "code": "exists_not_ours" });
+        assert!(!replace_allowed(Some(("failed", &foreign))), "someone else's base");
+        assert!(!replace_allowed(Some(("done", &none))));
+        assert!(!replace_allowed(Some(("skipped", &none))));
     }
 
     #[test]

@@ -1624,7 +1624,7 @@ pub async fn preflight(
         .collect();
     let needed = php_needed(migration.inventory.as_ref(), q.php.as_deref());
     let missing: Vec<&String> = needed.iter().filter(|v| !installed_php.contains(v)).collect();
-    let legacy: Vec<&String> = needed.iter().filter(|v| ledger::LEGACY_PHP_VERSIONS.contains(&v.as_str())).collect();
+    let legacy: Vec<&String> = needed.iter().filter(|v| crate::routes::sites::LEGACY_PHP_VERSIONS.contains(&v.as_str())).collect();
     let schemes: Vec<String> = mail
         .as_ref()
         .and_then(|m| m.get("password_schemes"))

@@ -157,18 +157,26 @@ fi
 # A count of mentions reached its threshold with a single attempt bounded,
 # because the error-message text names the constant too - an arm that could not
 # fail, verified by reverting the retry and watching it stay green.
+#
+# 05-import-hestia (W1-A): extraction is now ONE `tar xf` (tar recognises the
+# compression by signature, so there is no plain-tar retry). That single
+# attempt must be bounded by the constant; the two-attempt form is still read.
 bounded=$(grep -cE 'tokio::time::timeout\(remaining\(&extract_dir\)\?, extract\((true|false)\)\.output\(\)\)' <<< "$SRC_SVC")
-if [ "$bounded" -eq 2 ]; then
-  ok "both extraction attempts run under a timeout"
+single=$(grep -cE 'tokio::time::timeout\(std::time::Duration::from_secs\(EXTRACT_TIMEOUT_SECS\), cmd\.output\(\)\)' <<< "$SRC_SVC")
+attempts=2
+[ "$bounded" -eq 0 ] && [ "$single" -ge 1 ] && { bounded=$single; attempts=1; }
+if [ "$bounded" -eq "$attempts" ]; then
+  ok "every extraction attempt runs under a timeout ($bounded of $attempts)"
 else
-  bad "$bounded of 2 extraction attempts are bounded - the other can run forever"
+  bad "$bounded of $attempts extraction attempts are bounded - the other can run forever"
 fi
 
 # And they must share ONE deadline. Two fresh budgets make the real worst case
 # double the constant, which puts it back above the panel's budget - so the panel
 # wins the race again and writes the contentless message this whole design exists
 # to avoid.
-if has "$SRC_SVC" 'let deadline = std::time::Instant::now()'; then
+# With a single attempt the constant IS the ceiling.
+if [ "$attempts" -eq 1 ] || has "$SRC_SVC" 'let deadline = std::time::Instant::now()'; then
   ok "the two attempts share one deadline, so the constant is the true ceiling"
 else
   bad "each attempt gets a fresh budget - the real worst case is twice the constant"
@@ -186,8 +194,8 @@ fi
 # two cleanups that predate this fix entirely, so it stayed green against the
 # pre-fix tree while every other arm in this section went red - a check that
 # could not tell the fix from its absence.
-timeout_arms=$(awk '/Err\(_\) => \{/,/\}/' <<< "$SRC_SVC" | grep -c 'remove_dir_all(&extract_dir)')
-if [ "$timeout_arms" -ge 2 ]; then
+timeout_arms=$(awk '/Err\(_\) => \{/,/\}/' <<< "$SRC_SVC" | grep -cE 'remove_dir_all\(&(extract_dir|data)\)')
+if [ "$timeout_arms" -ge "$attempts" ]; then
   ok "each timeout branch removes its scratch directory ($timeout_arms of them)"
 else
   bad "$timeout_arms timeout branch(es) clean up - a stopped extraction leaves its tree in /tmp"

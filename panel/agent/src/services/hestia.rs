@@ -181,7 +181,6 @@ pub fn normalize_charset(raw: &str) -> Option<String> {
 /// Hestia keeps several FTP accounts as `:`-separated lists in `FTP_USER` and
 /// `FTP_MD5`; the panel has one SFTP account per site, so the FIRST pair wins
 /// (the inventory warns when there are more).
-#[allow(dead_code)] // called by W4 (SFTP password-hash route)
 pub fn ftp_hash(migration_id: &str, domain: &str) -> Option<(String, String)> {
     if !is_safe_component(domain) {
         return None;
@@ -204,7 +203,6 @@ pub fn ftp_hash_from(text: &str, domain: &str) -> Option<(String, String)> {
 }
 
 /// `web/<d>/hestia/web.conf` (or the older `web/<d>/web.conf`).
-#[allow(dead_code)] // reached through ftp_hash (W4)
 pub fn read_web_conf(domain_dir: &Path) -> Option<String> {
     ["hestia/web.conf", "web.conf"]
         .iter()

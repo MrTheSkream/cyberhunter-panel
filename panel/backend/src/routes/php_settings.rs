@@ -122,7 +122,6 @@ pub const PM_MODES: &[&str] = &["ondemand", "dynamic", "static"];
 /// `sites` column defaults (migration 20260312500000).
 pub const COLUMN_DEFAULT_MEMORY_MB: i32 = 256;
 pub const COLUMN_DEFAULT_MAX_WORKERS: i32 = 5;
-pub const COLUMN_DEFAULT_MAX_UPLOAD_MB: i32 = 64;
 
 /// The 8 php.ini keys the global editor (A2/A3) may set.
 pub const INI_KEYS: &[&str] = &[
@@ -167,21 +166,6 @@ impl<'a> PhpRow<'a> {
             max_workers: site.php_max_workers,
             max_upload_mb: site.max_upload_mb,
         }
-    }
-}
-
-/// What a brand-new row holds (column defaults). Used by the importer, which
-/// sends the vhost before the row exists.
-pub static NEW_ROW_SETTINGS: std::sync::LazyLock<Value> = std::sync::LazyLock::new(|| json!({}));
-
-pub fn new_row() -> PhpRow<'static> {
-    PhpRow {
-        settings: &NEW_ROW_SETTINGS,
-        isolation: true,
-        disable_shell: true,
-        memory_mb: COLUMN_DEFAULT_MEMORY_MB,
-        max_workers: COLUMN_DEFAULT_MAX_WORKERS,
-        max_upload_mb: COLUMN_DEFAULT_MAX_UPLOAD_MB,
     }
 }
 
@@ -1134,9 +1118,6 @@ mod tests {
         let p = php_pool_json(&r);
         assert_eq!(p["isolation"], false);
         assert_eq!(p["disable_shell"], false);
-        let n = new_row();
-        assert!(n.isolation && n.disable_shell);
-        assert_eq!(php_pool_json(&n)["values"]["upload_max_filesize"], "64M");
     }
 
     #[test]

@@ -437,7 +437,7 @@ pub async fn open_member(migration_id: &str, member: &str) -> Result<MemberStrea
 /// Child whose stdout is one archive member, decompressed per `.gz`/`.zst`;
 /// `kill_on_drop`; `member` relative, without `..`, without a leading `/`.
 /// A truncated or unreadable member kills the child (non-zero status).
-#[allow(dead_code)] // called by W2 (SQL import job)
+#[cfg_attr(not(test), allow(dead_code))] // contract API (W1-H); W2/W4 use open_member / extract_tar_member_with for byte progress
 pub async fn spawn_member_reader(migration_id: &str, member: &str) -> Result<tokio::process::Child, String> {
     open_member(migration_id, member).await.map(|m| m.child)
 }
@@ -484,6 +484,9 @@ pub fn tar_extract_args(dest: &Path, include: &[String], strip: u32, dot: bool, 
     }
     if opts.keep_newer_files {
         a.push("--keep-newer-files".into());
+        // One "Current ... is newer or same age" line per kept file would
+        // otherwise flood stderr on every relaunch of a maildir copy.
+        a.push("--warning=no-ignore-newer".into());
     }
     if !opts.excludes.is_empty() {
         a.push("--anchored".into());
@@ -558,10 +561,20 @@ pub async fn extract_tar_member_with(
     let mut tar = tar.spawn().map_err(|e| format!("could not start tar: {e}"))?;
     let mut tin = tar.stdin.take().ok_or("no tar stdin")?;
     let mut stderr = tar.stderr.take().ok_or("no tar stderr")?;
+    // Drained to the end (first 64 KiB kept): a stderr pipe left full would
+    // stop tar, and with it the whole extraction.
     let err_task = tokio::spawn(async move {
-        let mut s = Vec::new();
-        let _ = (&mut stderr).take(64 * 1024).read_to_end(&mut s).await;
-        String::from_utf8_lossy(&s).into_owned()
+        let mut kept = Vec::new();
+        let mut chunk = vec![0u8; 8192];
+        while let Ok(n) = stderr.read(&mut chunk).await {
+            if n == 0 {
+                break;
+            }
+            if kept.len() < 64 * 1024 {
+                kept.extend_from_slice(&chunk[..n.min(64 * 1024 - kept.len())]);
+            }
+        }
+        String::from_utf8_lossy(&kept).into_owned()
     });
 
     let mut write_ok = tin.write_all(&first).await.is_ok();
@@ -815,6 +828,9 @@ async fn analyze_full(
     let output = match tokio::time::timeout(std::time::Duration::from_secs(EXTRACT_TIMEOUT_SECS), cmd.output()).await {
         Ok(r) => r.map_err(|e| format!("Failed to extract: {e}"))?,
         Err(_) => {
+            // A stopped extraction must not leave a partial tree filling the
+            // staging: the analysis failed, so no cleanup may ever be asked for.
+            let _ = std::fs::remove_dir_all(&data);
             return Err(format!(
                 "Extracting {backup_path} exceeded {EXTRACT_TIMEOUT_SECS}s and was stopped. \
                  The archive is either much larger than this server can unpack in that \
@@ -824,6 +840,7 @@ async fn analyze_full(
         }
     };
     if !output.status.success() {
+        let _ = std::fs::remove_dir_all(&data);
         let stderr = String::from_utf8_lossy(&output.stderr);
         if stderr.contains("zstd") {
             return Err("install zstd: this archive is zstd-compressed".into());
@@ -2107,6 +2124,7 @@ mod tests {
         assert!(a.contains(&"--strip-components=2".to_string()));
         assert!(a.contains(&"./info".to_string()));
         assert!(a.contains(&"--keep-newer-files".to_string()));
+        assert!(a.contains(&"--warning=no-ignore-newer".to_string()));
         assert!(a.contains(&"--exclude=logs".to_string()) && a.contains(&"--exclude=./logs".to_string()));
         assert!(a.contains(&"--no-same-owner".to_string()) && a.contains(&"--no-same-permissions".to_string()));
         let b = tar_extract_args(dest, &inc, 1, false, &ExtractOpts::default());

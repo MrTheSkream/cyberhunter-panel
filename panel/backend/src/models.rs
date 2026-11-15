@@ -97,9 +97,12 @@ pub struct Site {
     pub ssl_renewal_at: Option<DateTime<Utc>>,
     pub ssl_renewal_checked_at: Option<DateTime<Utc>>,
     /// Which ACME challenge issued the installed certificate: `http-01` or
-    /// `dns-01`. NULL means "not recorded" - a row that predates the provenance
-    /// migration and that the activity-log backfill could not prove. Renewal
-    /// treats NULL as unknown and never as `http-01`; see
+    /// `dns-01`. NULL means "not recorded": a row that predates the provenance
+    /// migration and that the activity-log backfill could not prove, or an
+    /// uploaded / HestiaCP-imported certificate (`record_uploaded_ssl` clears
+    /// it). Renewal sends NULL down the HTTP-01 arm (and records `http-01` on
+    /// success); the issuer check every door runs first still refuses a
+    /// certificate CyberHunter - Panel did not issue. See
     /// [`crate::helpers::renewal_plan`].
     pub ssl_challenge: Option<String>,
     /// The name the certificate was actually ORDERED for. Equal to `domain`

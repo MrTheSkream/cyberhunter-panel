@@ -1459,6 +1459,7 @@ async fn provision_mail_host_cert(
         crate::helpers::foreign_cert_issuer(agent, domain).await
     };
 
+    let site_id_for_names = site.as_ref().map(|(id, ..)| *id);
     if let Some((site_id, site_owner, ssl_enabled, ssl_wildcard, ssl_challenge)) = site {
         if let MailCertVerdict::Refuse(blocker) = mail_cert_verdict(
             ssl_enabled,
@@ -1483,10 +1484,27 @@ async fn provision_mail_host_cert(
         return;
     }
 
-    match agent.post(&format!("/ssl/provision/{domain}"), Some(serde_json::json!({
+    let mut body = serde_json::json!({
         "email": user_email,
         "runtime": "static",
-    }))).await {
+    });
+    // A website of the same name keeps its other names (`www.`, aliases) on the
+    // re-issued certificate, as on every other HTTP-01 door (05 W3-S); without
+    // a site row the mail host is a single name. Not DNS-gated: this runs right
+    // after the panel itself wrote the records, where a resolver cache could
+    // still answer the old value, and the operator just asked for it.
+    let full_site: Option<crate::models::Site> = match site_id_for_names {
+        Some(id) => sqlx::query_as("SELECT * FROM sites WHERE id = $1")
+            .bind(id)
+            .fetch_optional(db)
+            .await
+            .unwrap_or(None),
+        None => None,
+    };
+    if let Some(ref s) = full_site {
+        crate::helpers::add_http01_names(agent, s, &mut body).await;
+    }
+    match crate::helpers::post_http01_order(agent, &format!("/ssl/provision/{domain}"), body).await {
         Ok(_) => {
             tracing::info!("Auto-SSL (mail): provisioned certificate for {domain}");
             // ⛔ The agent does not patch a vhost for a certificate - it

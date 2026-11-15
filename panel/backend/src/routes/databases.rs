@@ -1647,6 +1647,9 @@ pub async fn local_status(
         .map_err(|e| agent_error("Local MariaDB status", e))
 }
 
+/// Agent budget of `POST /localdb/install` (contract W2-A: `post_long` 900 s).
+const LOCAL_DB_INSTALL_TIMEOUT_SECS: u64 = 900;
+
 /// POST /api/databases/local/install - install MariaDB 11.4 (admin; up to 15 min).
 pub async fn local_install(
     State(state): State<AppState>,
@@ -1660,7 +1663,7 @@ pub async fn local_install(
     // The agent side is idempotent, so pressing Install again is harmless.
     let call = tokio::spawn({
         let agent = agent.clone();
-        async move { agent.post_long("/localdb/install", None, 900).await }
+        async move { agent.post_long("/localdb/install", None, LOCAL_DB_INSTALL_TIMEOUT_SECS).await }
     });
     let result = match tokio::time::timeout(
         std::time::Duration::from_secs(crate::services::agent::DB_RESTORE_TIMEOUT_SECS),

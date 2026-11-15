@@ -4764,14 +4764,14 @@ pub(crate) fn build_nginx_body(site: &crate::models::Site, bind_ip: Option<&str>
 }
 
 /// The import-hestia (05) vhost keys, shared by [`build_nginx_body`] and the
-/// two hand-built bodies (create, clone) so no path can send a different set.
+/// hand-built bodies (create, clone, staging) so no path can send a different set.
 ///
 /// `aliases`, `canonical_host` and `php_no_exec_dirs` travel only when the row
 /// holds a value: absent means "keep what the vhost has" for aliases (D4) and
 /// "none" for the other two, which is the agent's byte-identical rendering.
 /// `force_ssl` and `hsts` ALWAYS travel - the columns are NOT NULL and default
 /// to the historical behaviour, so sending them is never a change by itself.
-fn apply_vhost_extras(body: &mut serde_json::Value, site: &Site) {
+pub(crate) fn apply_vhost_extras(body: &mut serde_json::Value, site: &Site) {
     if let Some(ref aliases) = site.aliases {
         body["aliases"] = serde_json::json!(aliases);
     }

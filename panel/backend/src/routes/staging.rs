@@ -277,8 +277,9 @@ pub async fn create(
 
     // Insert staging site
     let staging: Site = sqlx::query_as(
-        "INSERT INTO sites (user_id, server_id, domain, runtime, status, proxy_port, php_version, app_command, parent_site_id, web_server) \
-         VALUES ($1, $2, $3, $4, 'creating', $5, $6, $7, $8, $9) RETURNING *",
+        "INSERT INTO sites (user_id, server_id, domain, runtime, status, proxy_port, php_version, app_command, parent_site_id, web_server, \
+         php_no_exec_dirs, force_ssl, hsts) \
+         VALUES ($1, $2, $3, $4, 'creating', $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *",
     )
     .bind(claims.sub)
     .bind(server_id)
@@ -291,6 +292,12 @@ pub async fn create(
     // Feature 4: a staging copy is served the way its parent is, so the
     // parent's .htaccess behaves the same there.
     .bind(&parent.web_server)
+    // import-hestia (05): the copy blocks PHP in the same upload folders and
+    // keeps the parent's SSL options. Its aliases and canonical host are NOT
+    // inherited - they name the parent's hosts, not the staging name.
+    .bind(&parent.php_no_exec_dirs)
+    .bind(parent.force_ssl)
+    .bind(parent.hsts)
     .fetch_one(&state.db)
     .await
     .map_err(|e| {
@@ -334,6 +341,8 @@ pub async fn create(
     if let Some(pool) = crate::routes::php_settings::php_pool_for_site(&staging) {
         agent_body["php_pool"] = pool;
     }
+    // Same vhost keys as every other body (no-exec folders, Force SSL / HSTS).
+    crate::routes::sites::apply_vhost_extras(&mut agent_body, &staging);
 
     let agent_path = format!("/nginx/sites/{}", staging_domain);
     if let Err(e) = agent.put(&agent_path, agent_body).await {

@@ -82,32 +82,13 @@ impl std::fmt::Debug for MailSecrets {
     }
 }
 
-/// `KEY='value'` pairs of one Hestia config line, in order.
-///
-/// Local on purpose: the shared `hestia::parse_pairs` (W1) can replace it once
-/// both are merged; the format is the same.
+/// `KEY='value'` pairs of one Hestia config line, by key: W1's
+/// [`crate::services::hestia::parse_pairs`], first occurrence of a key wins
+/// (as its own lookups do).
 pub fn pairs(line: &str) -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
-    let mut rest = line.trim();
-    while !rest.is_empty() {
-        let Some(eq) = rest.find('=') else { break };
-        let key = rest[..eq].trim().to_string();
-        let after = &rest[eq + 1..];
-        let (value, next) = if let Some(q) = after.strip_prefix('\'') {
-            match q.find('\'') {
-                Some(end) => (q[..end].to_string(), &q[end + 1..]),
-                None => (q.to_string(), ""),
-            }
-        } else {
-            match after.find(char::is_whitespace) {
-                Some(end) => (after[..end].to_string(), &after[end..]),
-                None => (after.to_string(), ""),
-            }
-        };
-        if !key.is_empty() && key.bytes().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == b'_') {
-            out.insert(key, value);
-        }
-        rest = next.trim_start();
+    for (k, v) in crate::services::hestia::parse_pairs(line) {
+        out.entry(k).or_insert(v);
     }
     out
 }
@@ -285,33 +266,10 @@ fn read_small(path: &Path) -> Option<String> {
     std::fs::read_to_string(path).ok()
 }
 
-/// `root` of `<staging>/meta.json` joined onto the staging: where the small
-/// files sit at their member paths (`""` in lazy mode, `data[/x]` in full).
-/// Mirrors W1's `migration::archive_root`, which replaces it at integration.
-pub fn archive_root(migration_id: &str) -> Result<std::path::PathBuf, String> {
-    let staging = crate::services::migration::staging_dir(migration_id)?;
-    let root = std::fs::read_to_string(staging.join("meta.json"))
-        .ok()
-        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
-        .and_then(|v| v.get("root").and_then(|r| r.as_str()).map(str::to_string))
-        .unwrap_or_default();
-    Ok(join_root(&staging, &root))
-}
-
-/// Pure part of [`archive_root`]: an unsafe `root` is ignored.
-pub fn join_root(staging: &Path, root: &str) -> std::path::PathBuf {
-    let r = root.trim().trim_start_matches("./").trim_matches('/');
-    if r.is_empty() || r.split('/').any(|c| c.is_empty() || c == "." || c == "..") || r.contains('\\') {
-        staging.to_path_buf()
-    } else {
-        staging.join(r)
-    }
-}
-
 /// Read one mail domain from the migration staging. `Err` when the domain is
 /// not in the backup.
 pub fn read_domain(migration_id: &str, domain: &str) -> Result<MailSecrets, String> {
-    let base = archive_root(migration_id)?.join("mail").join(domain);
+    let base = crate::services::migration::archive_root(migration_id)?.join("mail").join(domain);
     let domain_conf = read_small(&base.join("hestia").join(format!("{domain}.conf")))
         .ok_or_else(|| format!("mail domain {domain} is not in the backup"))?;
     let files = DomainFiles {
@@ -330,13 +288,31 @@ pub fn read_domain(migration_id: &str, domain: &str) -> Result<MailSecrets, Stri
 /// `full` mode the blob is on disk in the staging and is the only candidate.
 pub fn maildir_blob_candidates(migration_id: &str, domain: &str) -> Vec<String> {
     let names = [format!("mail/{domain}/accounts.tar.gz"), format!("mail/{domain}/accounts.tar.zst")];
-    if let Ok(staging) = archive_root(migration_id) {
-        let present: Vec<String> = names.iter().filter(|n| staging.join(n).is_file()).cloned().collect();
-        if !present.is_empty() {
-            return present;
+    // W1's locator answers for both modes (index in lazy, extracted tree in full).
+    let present: Vec<String> = names
+        .iter()
+        .filter(|n| crate::services::migration::member_size(migration_id, n).is_ok())
+        .cloned()
+        .collect();
+    if present.is_empty() { names.to_vec() } else { present }
+}
+
+/// Bytes of the regular files of a tree (symlinks not followed).
+pub fn tree_bytes(root: &Path) -> u64 {
+    let mut n = 0;
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+        for e in rd.flatten() {
+            let Ok(md) = e.metadata() else { continue };
+            if md.is_dir() {
+                stack.push(e.path());
+            } else if md.is_file() {
+                n += md.len();
+            }
         }
     }
-    names.to_vec()
+    n
 }
 
 /// Messages in a maildir tree: files directly under a `cur` or `new` directory.
@@ -494,16 +470,6 @@ contact@d.be:someone@else.org
         }
         assert!(is_valid_selector("mail") && is_valid_selector("dock_panel-1"));
         assert!(!is_valid_selector("a.b") && !is_valid_selector(""));
-    }
-
-    #[test]
-    fn the_archive_root_follows_meta_and_refuses_escapes() {
-        let s = Path::new("/var/lib/dockpanel/migration/x");
-        assert_eq!(join_root(s, ""), s.to_path_buf());
-        assert_eq!(join_root(s, "data"), s.join("data"));
-        assert_eq!(join_root(s, "./data/sub/"), s.join("data/sub"));
-        assert_eq!(join_root(s, "../etc"), s.to_path_buf());
-        assert_eq!(join_root(s, "data/../.."), s.to_path_buf());
     }
 
     #[test]

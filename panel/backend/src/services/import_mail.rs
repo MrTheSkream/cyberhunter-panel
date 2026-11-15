@@ -18,7 +18,6 @@
 //! panel (domain, mailbox, alias) is modified only when this migration created
 //! it: such rows are flagged `created_by_import` in their ledger item's
 //! `details` (written as soon as the row exists, and repeated in every outcome).
-#![allow(dead_code)] // called by the import loop (W5)
 
 use std::collections::BTreeSet;
 
@@ -170,7 +169,14 @@ async fn ledger(ctx: &ImportCtx, kind: &str, key: &str) -> (Option<String>, bool
     .ok()
     .flatten();
     match row {
-        Some((s, d)) => (Some(s), d.get("created_by_import").and_then(|v| v.as_bool()).unwrap_or(false)),
+        // While the loop runs an item, `ledger::begin` has moved its previous
+        // details under `_prior`: the ownership flag is looked for there too,
+        // or a retry would take its own mail domain for someone else's.
+        Some((s, d)) => {
+            let flag = |v: &serde_json::Value| v.get("created_by_import").and_then(|v| v.as_bool());
+            let ours = flag(&d).or_else(|| d.get("_prior").and_then(|p| p.get("details")).and_then(flag));
+            (Some(s), ours.unwrap_or(false))
+        }
         None => (None, false),
     }
 }
@@ -201,18 +207,46 @@ fn done_and_not_forced(ctx: &ImportCtx, status: &Option<String>) -> bool {
     !ctx.force && matches!(status.as_deref(), Some("done") | Some("warning") | Some("skipped"))
 }
 
-fn progress(ctx: &ImportCtx, label: &str, state: &str, msg: Option<String>) {
-    (ctx.progress)("mail", label, state, msg);
+/// Live event under the item's own ledger ref (`<kind>:<key>`), the step id the
+/// import loop records the final state with, so the wizard shows one row each.
+fn progress(ctx: &ImportCtx, kind: &str, key: &str, label: &str, state: &str, msg: Option<String>) {
+    (ctx.progress)(&crate::services::migration_ledger::item_ref(kind, key), label, state, msg);
 }
 
 /// Ledger keys: `mail_domain:<d>`, `mailbox:<email>`, `mail_alias:<src>`, `maildir:<email>`.
 pub async fn import_mail_domain(ctx: &ImportCtx, domain: &str) -> Vec<(String, ItemOutcome)> {
+    let mut out = import_mail_domain_inner(ctx, domain).await;
+    // The domain row's outcome REPLACES its ledger details: a failure that
+    // returned early (status unavailable, secrets unreadable...) would erase
+    // the `created_by_import` flag of a domain this migration created, and
+    // every later run - forced or not - would then call it someone else's.
+    let d = domain.trim().to_ascii_lowercase();
+    let (_, ours) = ledger(ctx, "mail_domain", &d).await;
+    if ours {
+        keep_ownership_flag(&mut out, &format!("mail_domain:{d}"));
+    }
+    out
+}
+
+/// Pure half of the wrapper above: stamps `created_by_import` on the outcome of `dkey`.
+fn keep_ownership_flag(out: &mut [(String, ItemOutcome)], dkey: &str) {
+    for (k, o) in out.iter_mut() {
+        if k == dkey {
+            if !o.details.is_object() {
+                o.details = json!({});
+            }
+            o.details["created_by_import"] = json!(true);
+        }
+    }
+}
+
+async fn import_mail_domain_inner(ctx: &ImportCtx, domain: &str) -> Vec<(String, ItemOutcome)> {
     let domain = domain.trim().to_ascii_lowercase();
     let dkey = format!("mail_domain:{domain}");
     if !crate::routes::is_valid_domain(&domain) {
         return vec![(dkey, ItemOutcome::failed("invalid mail domain name"))];
     }
-    progress(ctx, &domain, "in_progress", None);
+    progress(ctx, "mail_domain", &domain, &format!("Mail {domain}"), "in_progress", None);
 
     // (1) The mail server must be there (W5's preflight says so earlier).
     let status = match ctx.agent.get("/mail/status").await {
@@ -378,7 +412,7 @@ pub async fn import_mail_domain(ctx: &ImportCtx, domain: &str) -> Vec<(String, I
                 continue;
             }
         };
-        progress(ctx, &plan.email, "in_progress", None);
+        progress(ctx, "mailbox", &plan.email, &format!("Mailbox {}", plan.email), "in_progress", None);
         let existing: Option<(Uuid,)> = sqlx::query_as("SELECT id FROM mail_accounts WHERE email = $1")
             .bind(&plan.email)
             .fetch_optional(&ctx.db)
@@ -538,7 +572,7 @@ pub async fn import_mail_domain(ctx: &ImportCtx, domain: &str) -> Vec<(String, I
             continue;
         }
         let Some((local, _)) = email.split_once('@') else { continue };
-        progress(ctx, email, "in_progress", Some("copying messages".into()));
+        progress(ctx, "maildir", email, &format!("Messages of {email}"), "in_progress", Some("copying messages".into()));
         let job = ctx
             .agent
             .post(
@@ -559,7 +593,8 @@ pub async fn import_mail_domain(ctx: &ImportCtx, domain: &str) -> Vec<(String, I
                 continue;
             }
         };
-        match wait_job(ctx, &job_id, "maildir", email).await {
+        // Step id = the ledger item ref, as for every other job (`maildir:<email>`).
+        match wait_job(ctx, &job_id, &key, &format!("Messages of {email}")).await {
             Ok(v) => {
                 let report = v.get("report").filter(|r| r.is_object()).unwrap_or(&v);
                 let details = json!({
@@ -594,7 +629,7 @@ pub async fn import_mail_domain(ctx: &ImportCtx, domain: &str) -> Vec<(String, I
         Ok(()) if domain_warnings.is_empty() => outcome(ItemStatus::Done, "imported", details),
         Ok(()) => outcome(ItemStatus::Warning, domain_warnings.join("; "), details),
     };
-    progress(ctx, &domain, "done", None);
+    progress(ctx, "mail_domain", &domain, &format!("Mail {domain}"), "done", None);
     let mut all = vec![(dkey, domain_outcome)];
     all.extend(out);
     all
@@ -602,6 +637,17 @@ pub async fn import_mail_domain(ctx: &ImportCtx, domain: &str) -> Vec<(String, I
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn an_early_failure_keeps_the_domain_ours() {
+        let mut out = vec![
+            ("mail_domain:d.be".to_string(), ItemOutcome::failed("mail status unavailable")),
+            ("mailbox:a@d.be".to_string(), ItemOutcome::failed("x")),
+        ];
+        keep_ownership_flag(&mut out, "mail_domain:d.be");
+        assert_eq!(out[0].1.details["created_by_import"], true);
+        assert!(out[1].1.details.get("created_by_import").is_none());
+    }
+
     use super::*;
 
     fn acc(email: &str) -> SecretAccount {

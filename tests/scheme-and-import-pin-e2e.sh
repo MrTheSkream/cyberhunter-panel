@@ -334,7 +334,9 @@ done
 
 if S=$(subj "$MIG_SVC"); then
   # The analyser steps into a nested archive; both importers must step in too.
-  N=$(count "$S" 'find_backup_root\(&format!\("\{MIGRATION_DIR\}-\{migration_id\}"\)\)')
+  # 05-import-hestia (W1-S): the extraction lives in `staging_dir(id)/data`, so
+  # the importers resolve `find_backup_root(&data...)` on that directory.
+  N=$(count "$S" 'find_backup_root\(&format!\("\{MIGRATION_DIR\}-\{migration_id\}"\)\)|find_backup_root\(&data\.to_string_lossy\(\)\)')
   if [ "$N" -ge 2 ]; then
     ok "both importers resolve the archive root the way the analyser did"
   else
@@ -354,10 +356,13 @@ if S=$(subj "$MIG_SVC"); then
   # DO is pass the path through `relative_to`; what it must never do is hand a
   # `Path` conversion straight to the field.
   PARSERS_OK=1
-  for fn in parse_plesk parse_hestiacp; do
+  for fn in parse_plesk; do
     W=$(fnbody "$S" "$fn")
     derives "$W" 'relative_to\(&doc_root, root\)' || PARSERS_OK=0
   done
+  # 05-import-hestia (W1-A): the Hestia inventory no longer walks a tree; its
+  # doc_root is the archive-relative member path of the domain blob.
+  has "$S" 'doc_root: format!\("web/\{d\}/domain_data"\)' || PARSERS_OK=0
   if [ "$PARSERS_OK" = "1" ]; then
     ok "every path-walking parser makes its doc_root archive-relative"
   else
@@ -395,10 +400,12 @@ if S=$(subj "$MIG_SVC"); then
   # `file: name.clone()`. What matters is that a separator is present, because
   # `import_database` joins this onto the archive root.
   DBS_OK=1
-  for fn in parse_cpanel parse_plesk parse_hestiacp; do
+  for fn in parse_cpanel parse_plesk; do
     W=$(fnbody "$S" "$fn")
     derives "$W" 'file: format!\("[a-z_]+/' || DBS_OK=0
   done
+  # Hestia (W1-A): the dump is the archive member found under `db/<name>/`.
+  has "$S" 'starts_with\(&format!\("db/\{n\}/"\)\)' || DBS_OK=0
   if [ "$DBS_OK" = "1" ]; then
     ok "every parser carries the database's directory"
   else
@@ -411,7 +418,15 @@ if S=$(subj "$MIG_BE"); then
   # body a few lines up, so an unscoped grep stays green with the import body
   # empty - which is exactly what it did on the pre-fix tree when this arm was
   # first written (lesson #125: an arm satisfied by unrelated code is not an arm).
-  IMPORT_BODY=$(grep -A8 -E 'let import_body = serde_json::json!' <<< "$S" || true)
+  # 05-import-hestia (W5-F): the site-import request is built in
+  # services/import_site.rs::import_files. routes/migration.rs still has a
+  # `let import_body` - the CONTAINER DATABASE import, which rightly carries no
+  # runtime - so it must not be the subject when the new home exists.
+  if S2=$(subj panel/backend/src/services/import_site.rs); then
+    IMPORT_BODY=$(grep -A6 -E 'let mut body = json!\(\{' <<< "$(fnbody "$S2" import_files)" || true)
+  else
+    IMPORT_BODY=$(grep -A8 -E 'let import_body = serde_json::json!' <<< "$S" || true)
+  fi
   if [ -n "$IMPORT_BODY" ] && has "$IMPORT_BODY" '"runtime": runtime'; then
     ok "the panel tells the importer which runtime the vhost was created with"
   else

@@ -13,8 +13,8 @@
 //!
 //! The import loop (`routes::migration`) owns the writes: it calls [`begin`]
 //! before an item and [`finish`] after it. The executors of the other streams
-//! (`import_db`, `import_mail`, `import_sftp`) only READ, through [`get`],
-//! [`prior_state`] and [`previously_attempted`].
+//! (`import_db`, `import_mail`, `import_sftp`) only READ, through [`get`]
+//! and [`prior_state`].
 //!
 //! Nothing secret is ever written here (D11): [`finish`] passes the message and
 //! every string inside `details` through [`redact`], a last line of defence for
@@ -174,7 +174,6 @@ pub async fn list(db: &sqlx::PgPool, migration_id: Uuid) -> Result<Vec<LedgerRow
 /// While the loop runs an item its row says `running`; an executor that needs to
 /// know whether an earlier attempt of THIS migration got part-way (W2: drop and
 /// recreate a partial base) reads this instead. `None` = first attempt.
-#[allow(dead_code)] // for the executors of W2/W4; `previously_attempted` is its only caller here
 pub async fn prior_state(
     db: &sqlx::PgPool,
     migration_id: Uuid,
@@ -185,17 +184,6 @@ pub async fn prior_state(
     let prior = row.details.get(PRIOR_KEY)?;
     let status = prior.get("status")?.as_str()?.to_string();
     Some((status, prior.get("details").cloned().unwrap_or_else(|| json!({}))))
-}
-
-/// The contract's `replace` rule (W2-B): an earlier attempt of this item, in this
-/// migration, was left `running` or `failed`. Forcing is a separate signal
-/// (`ImportCtx.force`).
-#[allow(dead_code)] // read by `import_db` (W2) once it replaces its step-0 skeleton
-pub async fn previously_attempted(db: &sqlx::PgPool, migration_id: Uuid, kind: &str, key: &str) -> bool {
-    matches!(
-        prior_state(db, migration_id, kind, key).await,
-        Some((ref s, _)) if s == "running" || s == "failed"
-    )
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -376,10 +364,6 @@ pub fn public_row(row: &LedgerRow) -> Value {
     })
 }
 
-/// PHP versions with no security updates (D2). Mirrors W3's
-/// `sites::LEGACY_PHP_VERSIONS`, which is not in this branch yet.
-pub const LEGACY_PHP_VERSIONS: &[&str] = &["5.6", "7.4"];
-
 fn inventory_site<'a>(inventory: Option<&'a Value>, domain: &str) -> Option<&'a Value> {
     inventory?.get("sites")?.as_array()?.iter().find(|s| {
         s.get("domain").and_then(|d| d.as_str()).is_some_and(|d| d.eq_ignore_ascii_case(domain))
@@ -414,7 +398,7 @@ pub fn manual_actions(rows: &[LedgerRow], inventory: Option<&Value>) -> Vec<Stri
         match r.kind.as_str() {
             "site" if finished(&r) => {
                 if let Some(v) = d.get("php_version").and_then(|v| v.as_str())
-                    && LEGACY_PHP_VERSIONS.contains(&v)
+                    && crate::routes::sites::LEGACY_PHP_VERSIONS.contains(&v)
                 {
                     out.push(format!(
                         "{}: runs PHP {v}, which no longer gets security updates. Plan an upgrade.",

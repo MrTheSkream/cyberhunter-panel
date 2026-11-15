@@ -1119,12 +1119,27 @@ async fn import_into(
 
     // Dump member: the inventory's `file` when it is one of the two Hestia names.
     let candidates = dump_members(name);
-    let ordered: Vec<String> = match &req.file {
+    let wanted: Vec<String> = match &req.file {
         Some(f) if candidates.contains(f) => vec![f.clone()],
-        // Without it: `.gz` then `.zst`. A missing member makes the reader exit
-        // non-zero before any byte, which moves on to the next name.
+        // Without it: `.gz` then `.zst`.
         _ => candidates.to_vec(),
     };
+    // Only members the archive really holds (W1's locator: the index in lazy
+    // mode, the extracted tree in full mode); a stale `file` falls back to both.
+    let present = |names: &[String]| -> Vec<String> {
+        names
+            .iter()
+            .filter(|m| crate::services::migration::member_size(&req.migration_id, m).is_ok())
+            .cloned()
+            .collect()
+    };
+    let mut ordered = present(&wanted);
+    if ordered.is_empty() && wanted.len() == 1 {
+        ordered = present(&candidates);
+    }
+    if ordered.is_empty() {
+        return Err((format!("no dump of {name} in the archive (.mysql.sql.gz or .zst)"), created));
+    }
     let mut last_err = String::from("no dump found for this database in the archive");
     for member in &ordered {
         match stream_member(&req.migration_id, member, name, !uca, job).await {
@@ -1173,9 +1188,11 @@ async fn stream_member(
     rewrite: bool,
     job: &crate::services::migration_jobs::JobHandle,
 ) -> Result<Streamed, StreamError> {
-    let mut reader = crate::services::migration::spawn_member_reader(migration_id, member)
-        .await
-        .map_err(StreamError::ReaderFailed)?;
+    // Progress in COMPRESSED bytes of the blob, out of its size (W1-H).
+    let crate::services::migration::MemberStream { child: mut reader, read: blob_read, total: blob_total } =
+        crate::services::migration::open_member(migration_id, member)
+            .await
+            .map_err(StreamError::ReaderFailed)?;
     let rstdout = reader.stdout.take().ok_or_else(|| StreamError::Other("dump reader has no stdout".into()))?;
     if let Some(mut e) = reader.stderr.take() {
         tokio::spawn(async move {
@@ -1209,7 +1226,8 @@ async fn stream_member(
     let mut next_report = 0u64;
     let pumped = pump(rstdout, stdin, &mut filter, |n| {
         if n >= next_report {
-            job.progress("import", n, 0, &format!("{} MiB of SQL read", n / (1024 * 1024)));
+            let done = blob_read.load(std::sync::atomic::Ordering::Relaxed);
+            job.progress("import", done, blob_total, &format!("{} MiB of SQL read", n / (1024 * 1024)));
             next_report = n + 8 * 1024 * 1024;
         }
     })
@@ -1235,7 +1253,7 @@ async fn stream_member(
     if let Err(e) = pumped {
         return Err(StreamError::Other(format!("SQL import stream error: {e}")));
     }
-    job.progress("import", bytes, bytes, "SQL import finished");
+    job.progress("import", blob_total, blob_total, "SQL import finished");
     Ok(Streamed { bytes, replaced: filter.replaced, saw_create_table: filter.saw_create_table })
 }
 

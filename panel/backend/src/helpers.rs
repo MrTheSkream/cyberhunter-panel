@@ -1707,6 +1707,125 @@ pub(crate) fn log_agent_warnings(domain: &str, resp: &serde_json::Value) -> Vec<
     warnings
 }
 
+// ── DNS gate for automatic HTTP-01 orders (moved from auto_healer) ──────────
+
+/// What the DNS gate of an AUTOMATIC HTTP-01 order decided for one domain
+/// (conception 05 D3: `auto_healer::auto_renew_ssl`, the security scanner's
+/// auto-fix renewals, the mail auto-SSL). Manual buttons are not gated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DnsGate {
+    /// Go on with ARI and, when due, the order.
+    Proceed,
+    /// The domain points elsewhere: leave it alone for this pass.
+    Skip,
+}
+
+/// The pure DNS-gate decision: skip only on a positive answer that the domain
+/// resolves to none of this server's addresses. An empty server set means "we
+/// do not know our own addresses" and must proceed - otherwise one failed
+/// public-IP detection would quietly stop every HTTP-01 renewal on the box.
+/// A domain that resolves to nothing at all is skipped: HTTP-01 cannot reach
+/// it either. Addresses are compared parsed and canonical (an IPv4-mapped IPv6
+/// address equals its IPv4 form), never as strings.
+pub(crate) fn dns_gate(resolved: &[std::net::IpAddr], server: &[std::net::IpAddr]) -> DnsGate {
+    if server.is_empty() {
+        return DnsGate::Proceed;
+    }
+    let points_here = resolved
+        .iter()
+        .any(|r| server.iter().any(|s| s.to_canonical() == r.to_canonical()));
+    if points_here { DnsGate::Proceed } else { DnsGate::Skip }
+}
+
+/// Every address this server answers on: the primary public address (the one
+/// `GET /api/preflight/dns` and the site preflight judge against) plus each
+/// declared `server_ips` row, both its `ip` and its NAT `public_ip`.
+///
+/// Empty - "cannot judge", so the gate proceeds - when the primary address is
+/// unknown or the declared rows cannot be read: a partial set could make a site
+/// on the missing address look like it points elsewhere.
+async fn server_addresses(pool: &sqlx::PgPool, server_id: uuid::Uuid) -> Vec<std::net::IpAddr> {
+    let Some(primary) = public_ip_for_server(pool, Some(server_id)).await else {
+        return Vec::new();
+    };
+    let declared: Vec<(String, Option<String>)> =
+        match sqlx::query_as("SELECT ip, public_ip FROM server_ips WHERE server_id = $1")
+            .bind(server_id)
+            .fetch_all(pool)
+            .await
+        {
+            Ok(rows) => rows,
+            Err(e) => {
+                tracing::debug!("DNS gate: could not read the addresses of server {server_id}: {e}");
+                return Vec::new();
+            }
+        };
+    let mut out: Vec<std::net::IpAddr> = Vec::new();
+    let all = std::iter::once(primary)
+        .chain(declared.into_iter().flat_map(|(ip, public_ip)| std::iter::once(ip).chain(public_ip)));
+    for raw in all {
+        if let Ok(ip) = raw.trim().parse::<std::net::IpAddr>() {
+            if !out.contains(&ip) {
+                out.push(ip);
+            }
+        }
+    }
+    out
+}
+
+/// Resolve `domain` with the system resolver, as the DNS preflight does.
+/// `None` when the resolver did not answer in time (cannot judge); an empty
+/// list when it answered with nothing (NXDOMAIN and the like).
+async fn resolve_domain(domain: &str) -> Option<Vec<std::net::IpAddr>> {
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        tokio::net::lookup_host(format!("{domain}:80")),
+    )
+    .await
+    {
+        Ok(Ok(addrs)) => Some(addrs.map(|a| a.ip()).collect()),
+        Ok(Err(_)) => Some(Vec::new()),
+        Err(_) => None,
+    }
+}
+
+/// The DNS gate for one site on `server_id`.
+pub(crate) async fn dns_gate_for(pool: &sqlx::PgPool, server_id: uuid::Uuid, domain: &str) -> DnsGate {
+    let server = server_addresses(pool, server_id).await;
+    if server.is_empty() {
+        return DnsGate::Proceed;
+    }
+    match resolve_domain(domain).await {
+        Some(resolved) => dns_gate(&resolved, &server),
+        None => DnsGate::Proceed,
+    }
+}
+
+/// When each site's DNS-gate skip was last logged. In memory on purpose: a
+/// restart logging once more is harmless.
+static DNS_GATE_LOGGED: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<uuid::Uuid, std::time::Instant>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
+pub(crate) const DNS_GATE_LOG_EVERY: std::time::Duration = std::time::Duration::from_secs(24 * 3600);
+
+/// Pure: log again only when nothing was logged, or the last line is a day old.
+pub(crate) fn dns_gate_log_due(last: Option<std::time::Instant>, now: std::time::Instant) -> bool {
+    last.is_none_or(|t| now.saturating_duration_since(t) >= DNS_GATE_LOG_EVERY)
+}
+
+/// Whether to log this site's skip now, at most once a day; records it if so.
+pub(crate) fn dns_gate_should_log(site_id: uuid::Uuid) -> bool {
+    let now = std::time::Instant::now();
+    let mut map = DNS_GATE_LOGGED.lock().unwrap_or_else(|e| e.into_inner());
+    if dns_gate_log_due(map.get(&site_id).copied(), now) {
+        map.insert(site_id, now);
+        true
+    } else {
+        false
+    }
+}
+
 pub fn parse_agent_cert_expiry(raw: &str) -> Option<chrono::DateTime<chrono::Utc>> {
     let s = raw.trim();
     if s.is_empty() {
@@ -2485,5 +2604,63 @@ mod provision_log_tests {
             ),
             "dropping the map entry must close the receiver, or the SSE stream hangs"
         );
+    }
+}
+
+#[cfg(test)]
+mod dns_gate_tests {
+    use super::{dns_gate, dns_gate_log_due, DnsGate, DNS_GATE_LOG_EVERY};
+    use std::net::IpAddr;
+    use std::time::{Duration, Instant};
+
+    fn ips(v: &[&str]) -> Vec<IpAddr> {
+        v.iter().map(|s| s.parse().unwrap()).collect()
+    }
+
+    #[test]
+    fn a_domain_pointing_here_proceeds() {
+        assert_eq!(dns_gate(&ips(&["203.0.113.7"]), &ips(&["203.0.113.7"])), DnsGate::Proceed);
+        // One of several records is enough, and a declared address counts.
+        assert_eq!(
+            dns_gate(&ips(&["198.51.100.1", "203.0.113.9"]), &ips(&["203.0.113.7", "203.0.113.9"])),
+            DnsGate::Proceed
+        );
+        assert_eq!(dns_gate(&ips(&["2001:db8::1"]), &ips(&["203.0.113.7", "2001:db8::1"])), DnsGate::Proceed);
+    }
+
+    #[test]
+    fn a_domain_pointing_elsewhere_is_skipped() {
+        // Includes a Cloudflare-proxied site: it resolves to Cloudflare.
+        assert_eq!(dns_gate(&ips(&["104.16.1.1", "2606:4700::1"]), &ips(&["203.0.113.7"])), DnsGate::Skip);
+    }
+
+    #[test]
+    fn a_domain_resolving_to_nothing_is_skipped() {
+        assert_eq!(dns_gate(&[], &ips(&["203.0.113.7"])), DnsGate::Skip);
+    }
+
+    #[test]
+    fn unknown_server_addresses_never_skip() {
+        assert_eq!(dns_gate(&ips(&["104.16.1.1"]), &[]), DnsGate::Proceed);
+        assert_eq!(dns_gate(&[], &[]), DnsGate::Proceed);
+    }
+
+    #[test]
+    fn addresses_compare_parsed_and_canonical() {
+        assert_eq!(dns_gate(&ips(&["::ffff:203.0.113.7"]), &ips(&["203.0.113.7"])), DnsGate::Proceed);
+        assert_eq!(dns_gate(&ips(&["2001:0db8:0:0::1"]), &ips(&["2001:db8::1"])), DnsGate::Proceed);
+    }
+
+    #[test]
+    fn the_skip_is_logged_at_most_once_a_day() {
+        let now = Instant::now();
+        assert!(dns_gate_log_due(None, now));
+        assert!(!dns_gate_log_due(Some(now), now));
+        if let Some(earlier) = now.checked_sub(DNS_GATE_LOG_EVERY - Duration::from_secs(1)) {
+            assert!(!dns_gate_log_due(Some(earlier), now));
+        }
+        if let Some(day_ago) = now.checked_sub(DNS_GATE_LOG_EVERY) {
+            assert!(dns_gate_log_due(Some(day_ago), now));
+        }
     }
 }

@@ -356,7 +356,10 @@ async fn hestia_import_maildir(
     Ok((StatusCode::ACCEPTED, Json(serde_json::json!({ "job_id": job_id }))))
 }
 
-/// Stream one blob member into `tar -x` for one account; returns bytes read.
+/// One account of one maildir blob, through W1's extractor (handles inner
+/// archives with and without `./` names, `--strip-components`, compressed-byte
+/// progress, a blob that does not hold this account). Returns the bytes now
+/// under `dest`.
 async fn extract_account(
     job: &crate::services::migration_jobs::JobHandle,
     migration_id: &str,
@@ -364,69 +367,19 @@ async fn extract_account(
     account: &str,
     dest: &str,
 ) -> Result<u64, String> {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    let mut reader = crate::services::migration::spawn_member_reader(migration_id, member).await?;
-    let mut src = reader.stdout.take().ok_or("member reader has no stdout")?;
-    let mut tar = safe_command("tar")
-        .args([
-            "-x", "--no-same-owner", "--keep-newer-files", "--warning=no-ignore-newer",
-            "--strip-components=1", "-C", dest, "--", account,
-        ])
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
-        .map_err(|e| format!("tar failed to start: {e}"))?;
-    let mut sink = tar.stdin.take().ok_or("tar has no stdin")?;
-    // Drained concurrently (tail kept): a full stderr pipe would stop tar
-    // reading its stdin and hang the copy.
-    let mut tar_err = tar.stderr.take().ok_or("tar has no stderr")?;
-    let err_tail = tokio::spawn(async move {
-        let mut tail: Vec<u8> = Vec::new();
-        let mut chunk = vec![0u8; 8192];
-        while let Ok(n) = tar_err.read(&mut chunk).await {
-            if n == 0 {
-                break;
-            }
-            tail.extend_from_slice(&chunk[..n]);
-            if tail.len() > 4096 {
-                tail.drain(..tail.len() - 4096);
-            }
-        }
-        String::from_utf8_lossy(&tail).to_string()
-    });
-    let mut buf = vec![0u8; 256 * 1024];
-    let mut done: u64 = 0;
-    let mut last = std::time::Instant::now();
-    loop {
-        let n = src.read(&mut buf).await.map_err(|e| format!("read failed: {e}"))?;
-        if n == 0 {
-            break;
-        }
-        if sink.write_all(&buf[..n]).await.is_err() {
-            break; // tar exited early: its status says why
-        }
-        done += n as u64;
-        if last.elapsed() >= std::time::Duration::from_secs(2) {
-            job.progress("extract", done, 0, account);
-            last = std::time::Instant::now();
-        }
-    }
-    drop(sink);
-    // Closing our end lets a reader still writing (tar quit early) exit.
-    drop(src);
-    let status = tar.wait().await.map_err(|e| format!("tar failed: {e}"))?;
-    let stderr = err_tail.await.unwrap_or_default();
-    let reader_ok = reader.wait().await.map(|s| s.success()).unwrap_or(false);
-    if !status.success() {
-        let tail: String = stderr.trim().chars().rev().take(400).collect::<Vec<_>>().into_iter().rev().collect();
-        return Err(format!("tar failed for {member}: {tail}"));
-    }
-    if !reader_ok {
-        return Err(format!("could not read {member} from the backup"));
-    }
-    Ok(done)
+    let opts = crate::services::migration::ExtractOpts { keep_newer_files: true, ..Default::default() };
+    crate::services::migration::extract_tar_member_with(
+        migration_id,
+        member,
+        std::path::Path::new(dest),
+        &[account.to_string()],
+        1,
+        Some(job),
+        &opts,
+    )
+    .await?;
+    let p = std::path::PathBuf::from(dest);
+    Ok(tokio::task::spawn_blocking(move || crate::services::hestia_mail::tree_bytes(&p)).await.unwrap_or(0))
 }
 
 async fn import_maildir_job(
@@ -484,17 +437,6 @@ async fn import_maildir_job(
     Ok(serde_json::json!({ "bytes": bytes, "messages_estimate": messages }))
 }
 
-#[cfg(test)]
-mod hestia_import_tests {
-    use super::rsa_bits;
-
-    #[test]
-    fn rsa_size_is_read_from_the_public_text() {
-        assert_eq!(rsa_bits("Public-Key: (2048 bit)\nModulus:\n    00:ab"), Some(2048));
-        assert_eq!(rsa_bits("RSA Public-Key: (1024 bit)\n"), Some(1024));
-        assert_eq!(rsa_bits("garbage"), None);
-    }
-}
 // --- end import-hestia (05) ---
 
 // ── Mail server status + installation ────────────────────────────────────
@@ -3472,5 +3414,17 @@ mod tests {
             assert!(!cols[1].contains(",,"), "empty owner in list: {line:?}");
         }
         assert!(!t.contains("@disabled.com"), "a disabled domain must get no row");
+    }
+}
+
+#[cfg(test)]
+mod hestia_import_tests {
+    use super::rsa_bits;
+
+    #[test]
+    fn rsa_size_is_read_from_the_public_text() {
+        assert_eq!(rsa_bits("Public-Key: (2048 bit)\nModulus:\n    00:ab"), Some(2048));
+        assert_eq!(rsa_bits("RSA Public-Key: (1024 bit)\n"), Some(1024));
+        assert_eq!(rsa_bits("garbage"), None);
     }
 }

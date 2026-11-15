@@ -747,14 +747,41 @@ pub(crate) async fn auto_fix_safe_findings(
                         )
                         .await
                     }
-                    _ => agent
-                        .post_long(
-                            &format!("/ssl/provision/{domain}"),
-                            Some(agent_body),
-                            crate::routes::ssl::DNS01_ORDER_TIMEOUT_SECS,
-                        )
-                        .await
-                        .map_err(|e| e.to_string()),
+                    _ => {
+                        // DNS gate (conception 05 D3), as in `auto_renew_ssl`:
+                        // an unattended HTTP-01 order for a domain that resolves
+                        // to none of this host's addresses cannot validate and
+                        // only spends the CA's failed-validation allowance. No
+                        // write, no alert; checked again next scan.
+                        if crate::helpers::dns_gate_for(pool, member.id, domain).await
+                            == crate::helpers::DnsGate::Skip
+                        {
+                            if crate::helpers::dns_gate_should_log(site_id) {
+                                tracing::info!(
+                                    "Auto-fix: skipping SSL renewal for {domain} - it does not resolve \
+                                     to this server, so HTTP-01 cannot validate from here"
+                                );
+                            }
+                            continue;
+                        }
+                        // The site's other names ride on an ordinary HTTP-01
+                        // renewal (apex-only retry if one cannot validate); a
+                        // last-resort downgrade stays the single name its alert
+                        // describes. Same rule as `auto_renew_ssl`.
+                        if matches!(&plan, crate::helpers::RenewalPlan::Http01 { .. }) {
+                            crate::helpers::add_http01_names(&agent, &full, &mut agent_body).await;
+                        } else {
+                            crate::helpers::add_vhost_description(&mut agent_body, &full);
+                        }
+                        agent
+                            .post_long(
+                                &format!("/ssl/provision/{domain}"),
+                                Some(agent_body),
+                                crate::routes::ssl::DNS01_ORDER_TIMEOUT_SECS,
+                            )
+                            .await
+                            .map_err(|e| e.to_string())
+                    }
                 };
 
                 match outcome {
@@ -1219,6 +1246,14 @@ async fn renew_stack_certificate(pool: &PgPool, member: &FleetMember, domain: &s
         return true;
     }
 
+    // DNS gate (conception 05 D3): an unattended HTTP-01 order for a domain
+    // that does not resolve here cannot validate. Nothing written; the next
+    // scan asks again.
+    if crate::helpers::dns_gate_for(pool, member.id, domain).await == crate::helpers::DnsGate::Skip {
+        tracing::debug!("Auto-fix: Compose stack certificate of {domain} not renewed - it does not resolve to this server");
+        return true;
+    }
+
     tracing::info!("Auto-fix: renewing the Compose stack certificate for {domain}");
 
     // 5. Act. NO `runtime` key: that absence is the contract with the agent's
@@ -1525,6 +1560,14 @@ async fn renew_docker_app_certificate(pool: &PgPool, member: &FleetMember, domai
     .flatten();
 
     if recent.map(|r| r.0).unwrap_or(0) > 0 {
+        return true;
+    }
+
+    // DNS gate (conception 05 D3): an unattended HTTP-01 order for a domain
+    // that does not resolve here cannot validate. Nothing written; the next
+    // scan asks again.
+    if crate::helpers::dns_gate_for(pool, member.id, domain).await == crate::helpers::DnsGate::Skip {
+        tracing::debug!("Auto-fix: Docker app certificate of {domain} not renewed - it does not resolve to this server");
         return true;
     }
 

@@ -5,7 +5,6 @@
 //! (`POST /sftp/sites/{d}/password-hash`, by reference), so it never passes
 //! through the backend. Called by the import loop AFTER the site's files are in
 //! place (enabling SFTP re-owns the site directory and the PHP pool).
-#![allow(dead_code)] // called by the import loop (W5)
 
 use serde_json::json;
 use uuid::Uuid;
@@ -13,24 +12,12 @@ use uuid::Uuid;
 use crate::services::agent::AgentError;
 use crate::services::import_types::{ImportCtx, ItemOutcome, ItemStatus};
 
-/// `^[a-z_][a-z0-9_.-]{0,31}$` (D6), the agent's own rule; the agent also
-/// refuses reserved names and existing system accounts (409 `username_taken`).
+/// D6 / W4-S rule, shared with `enable_sftp`: `^[a-z_][a-z0-9_.-]{0,31}$`,
+/// not a reserved system name, not of the generated `sftp<digits>` /
+/// `sftpg<digits>` shape. The agent also refuses existing system accounts
+/// (409 `username_taken`).
 pub fn is_valid_sftp_username(name: &str) -> bool {
-    let b = name.as_bytes();
-    !b.is_empty()
-        && b.len() <= 32
-        && (b[0].is_ascii_lowercase() || b[0] == b'_')
-        && b[1..]
-            .iter()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, b'_' | b'.' | b'-'))
-}
-
-/// `sftp<digits>` / `sftpg<digits>` are the panel's generated names: an
-/// imported name of that shape would collide with a future allocation.
-fn is_panel_namespace(name: &str) -> bool {
-    ["sftpg", "sftp"].iter().any(|p| {
-        name.strip_prefix(p).is_some_and(|r| !r.is_empty() && r.bytes().all(|c| c.is_ascii_digit()))
-    })
+    crate::routes::sites::validate_sftp_username(name).is_ok()
 }
 
 /// `(ftp_user, number of FTP users of the domain)` from the stored inventory.
@@ -118,7 +105,7 @@ pub async fn import_sftp(ctx: &ImportCtx, site_id: Uuid, domain: &str) -> ItemOu
 
     // Name: Hestia's, unless invalid or already used in the panel.
     let wanted = hestia_user.to_ascii_lowercase();
-    let mut custom = if !is_valid_sftp_username(&wanted) || is_panel_namespace(&wanted) {
+    let mut custom = if !is_valid_sftp_username(&wanted) {
         warnings.push(format!("FTP user name {hestia_user} cannot be an SFTP name, sftp<uid> used"));
         None
     } else {
@@ -152,10 +139,19 @@ pub async fn import_sftp(ctx: &ImportCtx, site_id: Uuid, domain: &str) -> ItemOu
             r = ctx.agent.post(&path, Some(json!({ "uid": uid, "gid": gid }))).await;
         }
     }
-    if let Err(e) = r {
-        return ItemOutcome::failed(format!("SFTP enable failed: {e}"));
+    let enabled = match r {
+        Ok(v) => v,
+        Err(e) => return ItemOutcome::failed(format!("SFTP enable failed: {e}")),
+    };
+    // Keep the custom name ONLY when the agent says it created that account
+    // (same rule as `enable_sftp`): an agent that ignores the field creates
+    // `sftp<uid>`, and the PHP pool must not be handed to a missing user.
+    if let Some(name) = custom.clone()
+        && enabled.get("username").and_then(|v| v.as_str()) != Some(name.as_str())
+    {
+        warnings.push(format!("SFTP name {name} not supported by this server, sftp{uid} used"));
+        custom = None;
     }
-    let username = custom.clone().unwrap_or_else(|| format!("sftp{uid}"));
 
     if let Err(e) = sqlx::query(
         "UPDATE sites SET sftp_enabled = true, sftp_uid = $1, sftp_gid = $2, sftp_username = $3, \
@@ -176,11 +172,11 @@ pub async fn import_sftp(ctx: &ImportCtx, site_id: Uuid, domain: &str) -> ItemOu
     updated.sftp_enabled = true;
     updated.sftp_uid = Some(uid);
     updated.sftp_gid = Some(gid);
+    updated.sftp_username = custom.clone();
+    let username = crate::routes::sites::sftp_account_name(&updated);
     let bind_ip = crate::services::server_ips::nginx_bind_ip(&ctx.db, &updated).await;
-    let mut body = crate::routes::sites::build_nginx_body(&updated, bind_ip.as_deref());
-    // The pool must run as the account actually created (custom name, D6).
-    body["pool_user"] = json!(username);
-    body["pool_group"] = json!(format!("sftpg{gid}"));
+    // `pool_user` = the account actually created (custom name, D6), as on every rebuild.
+    let body = crate::routes::sites::build_nginx_body(&updated, bind_ip.as_deref());
     if let Err(e) = ctx.agent.put(&format!("/nginx/sites/{domain}"), body).await {
         warnings.push(format!("vhost not rebuilt for the SFTP owner, PHP may not write the files: {e}"));
     }
@@ -228,8 +224,9 @@ mod tests {
         for bad in ["", "Adm", "1abc", "-x", "a b", "a:b", long.as_str()] {
             assert!(!is_valid_sftp_username(bad), "{bad:?}");
         }
-        assert!(is_panel_namespace("sftp12") && is_panel_namespace("sftpg3"));
-        assert!(!is_panel_namespace("sftpuser") && !is_panel_namespace("sftp"));
+        assert!(!is_valid_sftp_username("sftp12") && !is_valid_sftp_username("sftpg3"));
+        assert!(is_valid_sftp_username("sftpuser") && is_valid_sftp_username("sftp"));
+        assert!(!is_valid_sftp_username("root") && !is_valid_sftp_username("www-data"));
     }
 
     #[test]

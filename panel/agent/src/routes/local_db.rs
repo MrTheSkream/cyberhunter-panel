@@ -205,7 +205,8 @@ async fn hestia_import(Json(b): Json<ImportReq>) -> Result<(StatusCode, Json<ser
     }
     crate::services::migration::staging_dir(&b.migration_id).map_err(|e| err(StatusCode::BAD_REQUEST, &e))?;
     require_running().await?;
-    let key = format!("{}:{}", b.migration_id, b.db_name);
+    // W1 convention: job keys are `<migration_id>:<item>`, item = `db:<name>`.
+    let key = format!("{}:db:{}", b.migration_id, b.db_name);
     let req = ldb::ImportRequest { migration_id: b.migration_id, db_name: b.db_name, replace: b.replace, file: b.file };
     let job_id = crate::services::migration_jobs::spawn("localdb_import", &key, move |job| ldb::hestia_import(req, job));
     Ok((StatusCode::ACCEPTED, Json(serde_json::json!({ "job_id": job_id }))))
