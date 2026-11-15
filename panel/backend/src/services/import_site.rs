@@ -422,7 +422,17 @@ pub async fn import_site(env: &SiteEnv<'_>, choice: &SiteChoice) -> Option<Uuid>
             (id, row.details.get("vhost").and_then(|v| v.as_bool()).unwrap_or(true))
         }
         Some(_forced) => {
-            let (outcome, sid, vhost_ok) = create_site(env, &domain, inv, choice).await;
+            let (mut outcome, sid, vhost_ok) = create_site(env, &domain, inv, choice).await;
+            // A resumed row that failed before being rewritten keeps its id in
+            // the ledger, or the next run would take it for someone else's.
+            if let Some(id) = sid
+                && outcome.details.get("site_id").is_none()
+            {
+                if !outcome.details.is_object() {
+                    outcome.details = json!({});
+                }
+                outcome.details["site_id"] = json!(id.to_string());
+            }
             env.run.record("site", &domain, &label, &outcome).await;
             match sid {
                 Some(id) if outcome.is_success() => (id, vhost_ok),
@@ -619,7 +629,8 @@ async fn create_site(
     let inv_bool = |k: &str| inv.get(k).and_then(|b| b.as_bool()).unwrap_or(true);
     let force_ssl = opts.force_ssl.unwrap_or_else(|| inv_bool("force_ssl"));
     let hsts = opts.hsts.unwrap_or_else(|| inv_bool("hsts"));
-    let no_exec: Option<Vec<String>> = (runtime == "php" && env.hestia)
+    // D9: written for every imported PHP site, whatever the source panel.
+    let no_exec: Option<Vec<String>> = (runtime == "php")
         .then(|| DEFAULT_PHP_NO_EXEC_DIRS.iter().map(|s| s.to_string()).collect());
     let status = if needs_config.is_some() { "error" } else { "active" };
 

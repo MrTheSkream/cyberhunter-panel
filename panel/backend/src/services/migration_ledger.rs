@@ -262,6 +262,26 @@ async fn write_status(
         details = json!({ "value": details });
     }
     let finished = status != "pending";
+    // "Already imported" (skipped) or "waiting" (pending) never replaces a
+    // finished result. The row may already say `running` because `begin` ran
+    // for this attempt: then its pre-attempt state is put back.
+    if status == "skipped" || status == "pending" {
+        let restored = sqlx::query(
+            "UPDATE migration_items SET status = details->'_prior'->>'status', \
+             details = COALESCE(details->'_prior'->'details', '{}'::jsonb), \
+             finished_at = NOW(), updated_at = NOW() \
+             WHERE migration_id = $1 AND kind = $2 AND key = $3 AND status = 'running' \
+               AND details->'_prior'->>'status' IN ('done', 'warning')",
+        )
+        .bind(migration_id)
+        .bind(kind)
+        .bind(key)
+        .execute(db)
+        .await?;
+        if restored.rows_affected() > 0 {
+            return Ok(());
+        }
+    }
     sqlx::query(
         "INSERT INTO migration_items (migration_id, kind, key, status, message, details, attempts, finished_at) \
          VALUES ($1, $2, $3, $4, $5, $6, CASE WHEN $4 = 'pending' THEN 0 ELSE 1 END, \

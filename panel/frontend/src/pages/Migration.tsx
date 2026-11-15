@@ -239,6 +239,9 @@ export default function Migration() {
   const [watchingId, setWatchingId] = useState<string | null>(null);
   const [forceTarget, setForceTarget] = useState<ReportItem | null>(null);
   const [forceText, setForceText] = useState("");
+  // Analysed migrations of this server, to reopen one (its report, a retry)
+  // after a reload or a panel restart.
+  const [recent, setRecent] = useState<MigrationRecord[]>([]);
   const [analyzingId, setAnalyzingId] = useState<string | null>(null);
   const [startedAt, setStartedAt] = useState(0);
   const [elapsed, setElapsed] = useState(0);
@@ -251,6 +254,23 @@ export default function Migration() {
   const inv = migration?.inventory ?? null;
   const isHestia = inv?.source === "hestiacp";
 
+  // The wizard's selection, from an inventory. Every way into a migration
+  // (fresh analysis, resumed import, reopened record) goes through here.
+  const initSelection = (i: Inventory) => {
+    setSelectedSites(new Set(i.sites.map((s) => s.domain)));
+    setSelectedDbs(new Set(i.databases.map((d) => d.name)));
+    setSelectedMail(new Set((i.mail_domains ?? []).map((m) => m.domain)));
+    setSiteChoices(Object.fromEntries(i.sites.map((s) => [s.domain, defaultChoice(s)])));
+    const domains = new Set(i.sites.map((s) => s.domain));
+    setDbSites(
+      Object.fromEntries(
+        i.databases
+          .filter((d) => d.suggested_site && domains.has(d.suggested_site))
+          .map((d) => [d.name, d.suggested_site as string]),
+      ),
+    );
+  };
+
   const settleAnalysis = (rec: MigrationRecord) => {
     setMigration(rec);
     setAnalyzingId(null);
@@ -260,21 +280,7 @@ export default function Migration() {
       setError(reason || "Analysis failed");
       return;
     }
-    if (rec.inventory) {
-      const i = rec.inventory;
-      setSelectedSites(new Set(i.sites.map((s) => s.domain)));
-      setSelectedDbs(new Set(i.databases.map((d) => d.name)));
-      setSelectedMail(new Set((i.mail_domains ?? []).map((m) => m.domain)));
-      setSiteChoices(Object.fromEntries(i.sites.map((s) => [s.domain, defaultChoice(s)])));
-      const domains = new Set(i.sites.map((s) => s.domain));
-      setDbSites(
-        Object.fromEntries(
-          i.databases
-            .filter((d) => d.suggested_site && domains.has(d.suggested_site))
-            .map((d) => [d.name, d.suggested_site as string]),
-        ),
-      );
-    }
+    if (rec.inventory) initSelection(rec.inventory);
     setStep(2);
   };
 
@@ -399,9 +405,11 @@ export default function Migration() {
         const activeServer = localStorage.getItem("dp-active-server");
         const onThisServer = (m: MigrationRecord) => !activeServer || !m.server_id || m.server_id === activeServer;
         if (startedHere.current) return;
+        setRecent(recent.filter((m) => m.inventory && onThisServer(m) && m.status !== "analyzing").slice(0, 5));
         const importing = recent.find((m) => m.status === "importing" && onThisServer(m));
         if (importing) {
           setMigration(importing);
+          if (importing.inventory) initSelection(importing.inventory);
           setStep(3);
           setWatchingId(importing.id);
           return;
@@ -480,13 +488,39 @@ export default function Migration() {
   const siteForDb = (name: string) =>
     dbSites[name] || (selectedSiteDomains.length === 1 ? selectedSiteDomains[0] : "");
   const dbsWithoutSite = Array.from(selectedDbs).filter((n) => !siteForDb(n));
+  const choiceOf = (prev: Record<string, SiteChoice>, domain: string): SiteChoice => {
+    const known = prev[domain];
+    if (known) return known;
+    const site = inv?.sites.find((s) => s.domain === domain);
+    return site ? defaultChoice(site) : { php_version: "", options: { ssl: false, aliases: true, canonical: true, sftp: false, force_ssl: true, hsts: true } };
+  };
   const setChoice = (domain: string, patch: Partial<SiteChoice>) =>
-    setSiteChoices((prev) => ({ ...prev, [domain]: { ...prev[domain], ...patch } }));
+    setSiteChoices((prev) => ({ ...prev, [domain]: { ...choiceOf(prev, domain), ...patch } }));
   const setOption = (domain: string, key: keyof SiteOptions, value: boolean) =>
-    setSiteChoices((prev) => ({
-      ...prev,
-      [domain]: { ...prev[domain], options: { ...prev[domain].options, [key]: value } },
-    }));
+    setSiteChoices((prev) => {
+      const cur = choiceOf(prev, domain);
+      return { ...prev, [domain]: { ...cur, options: { ...cur.options, [key]: value } } };
+    });
+
+  // Reopen an analysed migration: its review if never imported, its report otherwise.
+  const openMigration = (rec: MigrationRecord) => {
+    if (!rec.inventory) return;
+    startedHere.current = true;
+    setError("");
+    setLive({});
+    setReport(null);
+    setMigration(rec);
+    initSelection(rec.inventory);
+    if (rec.status === "analyzed") {
+      setStep(2);
+    } else if (rec.status === "importing") {
+      setStep(3);
+      setWatchingId(rec.id);
+    } else {
+      setStep(4);
+      loadReport(rec.id);
+    }
+  };
   const toggle = (set: Set<string>, value: string, on: boolean) => {
     const next = new Set(set);
     if (on) next.add(value);
@@ -556,7 +590,9 @@ export default function Migration() {
   const itemRow = (it: ReportItem, withActions: boolean) => {
     const ref = `${it.kind}:${it.key}`;
     const ev = live[ref];
-    const running = it.status === "running" || ev?.status === "in_progress";
+    // Status from the ledger (durable); only the message from the live stream,
+    // which may have dropped without a final event.
+    const running = it.status === "running";
     const status = running ? "in_progress" : it.status;
     const message = running && ev?.message ? ev.message : it.message;
     return (
@@ -697,6 +733,23 @@ export default function Migration() {
                   A large account takes minutes. This runs on the server, not in this tab - you can leave the page and
                   come back, and closing the browser will not stop it.
                 </p>
+              </div>
+            </div>
+          )}
+
+          {!analyzing && recent.length > 0 && (
+            <div className="border-t border-dark-700 pt-4">
+              <h3 className="text-xs font-bold text-dark-300 font-mono uppercase tracking-wider mb-2">Recent migrations</h3>
+              <div className="space-y-1">
+                {recent.map((m) => (
+                  <div key={m.id} className="flex items-center gap-3 text-sm">
+                    <span className="font-mono text-dark-100 truncate flex-1 min-w-0">{m.backup_path}</span>
+                    <span className="text-xs text-dark-400">{m.source} - {m.status} - {fmtDate(m.created_at)}</span>
+                    <button onClick={() => openMigration(m)} className="text-xs px-2 py-1 bg-dark-700 rounded hover:bg-dark-600 text-dark-100">
+                      {m.status === "analyzed" ? "Review" : m.status === "importing" ? "Follow" : "Report"}
+                    </button>
+                  </div>
+                ))}
               </div>
             </div>
           )}

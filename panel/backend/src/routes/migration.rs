@@ -625,6 +625,11 @@ pub async fn import(
         .inventory
         .clone()
         .ok_or_else(|| err(StatusCode::BAD_REQUEST, "This migration has no analysis to import from"))?;
+    // D8: an analysis that found too little disk refuses the import outright
+    // (the page refuses too, but a retry or a direct call must not slip by).
+    if let Some(reason) = disk_refusal(&inventory) {
+        return Err(crate::error::err_coded(StatusCode::CONFLICT, &reason, "insufficient_disk"));
+    }
     if !IMPORTABLE_STATUSES.contains(&migration.status.as_str()) {
         return Err(err(
             StatusCode::CONFLICT,
@@ -721,6 +726,16 @@ pub async fn import(
     });
 
     Ok((StatusCode::ACCEPTED, Json(serde_json::json!({ "migration_id": id }))))
+}
+
+/// The refusal message when the analysis' disk check failed (`disk.ok=false`).
+pub(crate) fn disk_refusal(inventory: &serde_json::Value) -> Option<String> {
+    let disk = inventory.get("disk")?;
+    if disk.get("ok").and_then(|b| b.as_bool()) != Some(false) {
+        return None;
+    }
+    let reason = disk.get("reason").and_then(|r| r.as_str()).filter(|r| !r.is_empty()).unwrap_or("too little free space");
+    Some(format!("Not enough disk space for this import: {reason}. Free some space and analyse the archive again."))
 }
 
 /// Statuses an import (or re-run) can start from (W5-D).
@@ -1760,6 +1775,15 @@ mod import_loop_tests {
         assert!(n.contains(&"8.3".to_string()) && n.contains(&"8.4".to_string()));
         assert!(!n.iter().any(|v| v == "bogus"));
         assert_eq!(n.iter().filter(|v| *v == "8.3").count(), 1);
+    }
+
+    #[test]
+    fn a_failed_disk_check_refuses_the_import() {
+        assert!(disk_refusal(&json!({})).is_none());
+        assert!(disk_refusal(&json!({ "disk": { "ok": true } })).is_none());
+        let r = disk_refusal(&json!({ "disk": { "ok": false, "reason": "need 12 GB, 3 GB free" } })).unwrap();
+        assert!(r.contains("need 12 GB, 3 GB free"));
+        assert!(disk_refusal(&json!({ "disk": { "ok": false } })).unwrap().contains("too little free space"));
     }
 
     #[test]
