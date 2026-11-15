@@ -6,6 +6,7 @@ import ProvisionLog from "../components/ProvisionLog";
 import { PrereqCallout, type PrereqResult } from "../components/Prerequisite";
 import { InfoTip } from "../components/FieldHelp";
 import ConfirmDialog from "../components/ConfirmDialog";
+import { MailAntivirusToggle } from "../components/ClamavCard";
 import { useServerIps, serverIpOptionLabel, type ServerIp } from "../utils/serverIps";
 
 interface MailServiceState {
@@ -706,6 +707,8 @@ export default function Mail() {
                   {rspamd.running ? "Disable" : "Enable"}
                 </button>
               )}
+              {/* ClamAV through Rspamd's antivirus module (06-clamav). */}
+              <MailAntivirusToggle rspamdKey={`${rspamd.installed}:${rspamd.running}`} />
             </div>
           )}
 

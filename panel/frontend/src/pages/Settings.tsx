@@ -7,6 +7,7 @@ import UpdatesContent from "./Updates";
 import { timeAgo } from "../utils/format";
 import { applyTheme, readStoredTheme } from "../hooks/useLayoutState";
 import ConfirmDialog from "../components/ConfirmDialog";
+import ClamavCard from "../components/ClamavCard";
 import {
   TwoFactorCard,
   PasskeysCard,
@@ -2736,6 +2737,11 @@ function ServiceInstallers({ pdnsApiUrl, setPdnsApiUrl, pdnsApiKey, setPdnsApiKe
               </div>
             );
           })}
+          {/* ClamAV installs through its own job (/antivirus/install), not
+              /services/install/*, so it is its own card. */}
+          <div className="sm:col-span-2">
+            <ClamavCard />
+          </div>
         </div>
 
         {/* PowerDNS API Configuration */}

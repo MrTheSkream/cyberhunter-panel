@@ -6,6 +6,7 @@ import { statusColors, runtimeLabelsDetailed as runtimeLabels } from "../constan
 import { PrereqCallout, useDnsPrereq, prereqBlocks } from "../components/Prerequisite";
 import PhpVersionPicker from "../components/PhpVersionPicker";
 import PhpSettingsCard from "../components/PhpSettingsCard";
+import { SiteAntivirusStatus } from "../components/AntivirusTab";
 import { useAuth } from "../context/AuthContext";
 import { useServerIps, serverIpOptionLabel } from "../utils/serverIps";
 import {
@@ -19,6 +20,8 @@ import {
 
 interface Site {
   id: string;
+  /** Server the site lives on (null on old rows = the local server). */
+  server_id?: string | null;
   domain: string;
   runtime: string;
   status: string;
@@ -775,7 +778,7 @@ export default function SiteDetail() {
       <div className="flex items-start justify-between mb-6">
         <div>
           <h1 className="text-sm font-medium text-dark-300 uppercase font-mono tracking-widest">{site.domain}</h1>
-          <div className="flex items-center gap-3 mt-2">
+          <div className="flex items-center flex-wrap gap-3 mt-2">
             <span className={`inline-flex px-2.5 py-0.5 rounded-full text-xs font-medium ${
               site.enabled === false ? "bg-warn-500/10 text-warn-400" : statusColors[site.status] || "bg-dark-700 text-dark-200"
             }`}>
@@ -815,6 +818,9 @@ export default function SiteDetail() {
                 Health {healthSummary.score}
               </span>
             )}
+            {/* ClamAV (06-clamav): hidden when it is not installed on the site's
+                server. Security -> Antivirus is admin-only, hence the link gate. */}
+            <SiteAntivirusStatus siteId={site.id} serverId={site.server_id} showSecurityLink={isAdmin} />
           </div>
         </div>
         <div>

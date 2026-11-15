@@ -5,6 +5,7 @@ import { api } from "../api";
 import PanicReport, { serverList, unreachableNames, type PanicResult, type UnreachableServer } from "../components/PanicReport";
 import ConfirmDialog from "../components/ConfirmDialog";
 import DiagnosticsContent from "./Diagnostics";
+import AntivirusTab from "../components/AntivirusTab";
 
 interface SecurityOverview {
   firewall_active: boolean;
@@ -304,7 +305,7 @@ export default function Security() {
   const [deleteTarget, setDeleteTarget] = useState<number | null>(null);
   const [message, setMessage] = useState({ text: "", type: "" });
   const [searchParams] = useSearchParams();
-  const SEC_TABS = ["overview", "scans", "diagnostics", "audit", "lockdown", "recordings", "approvals"] as const;
+  const SEC_TABS = ["overview", "scans", "antivirus", "diagnostics", "audit", "lockdown", "recordings", "approvals"] as const;
   type SecTab = typeof SEC_TABS[number];
   const resolveSecTab = (raw: string | null): SecTab =>
     raw && (SEC_TABS as readonly string[]).includes(raw) ? (raw as SecTab) : "overview";
@@ -759,6 +760,14 @@ export default function Security() {
           }`}
         >
           Scan History
+        </button>
+        <button
+          onClick={() => setTab("antivirus")}
+          className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${
+            tab === "antivirus" ? "bg-dark-800 text-dark-50 shadow-sm" : "text-dark-200 hover:text-dark-100"
+          }`}
+        >
+          Antivirus
         </button>
         <button
           onClick={() => setTab("diagnostics")}
@@ -1353,6 +1362,8 @@ export default function Security() {
           )}
         </div>
       )}
+
+      {tab === "antivirus" && <AntivirusTab />}
 
       {tab === "diagnostics" && (
         <DiagnosticsContent />
