@@ -327,6 +327,10 @@ async fn main() {
     // On boot nothing is running, so any row still claiming to be is stale.
     routes::migration::finalize_analyzing_on_startup(&state.db).await;
 
+    // Antivirus scans are followed by the `av_scanner` task of this process: one
+    // still `running` from a previous lifetime has nobody to finish it.
+    services::av_scanner::fail_running_on_startup(&state.db).await;
+
     // Supervised background task spawner: monitors JoinHandle, auto-restarts on panic
     // with exponential backoff, and respects shutdown signal.
     fn spawn_supervised<F, Fut>(
@@ -414,6 +418,9 @@ async fn main() {
 
     let (s_db, s_agents) = (state.db.clone(), state.agents.clone());
     spawn_supervised("wp_vuln_scanner", &shutdown_tx, move |rx| services::wp_vuln_scanner::run(s_db.clone(), s_agents.clone(), rx));
+
+    let (s_db, s_agents) = (state.db.clone(), state.agents.clone());
+    spawn_supervised("av_scanner", &shutdown_tx, move |rx| services::av_scanner::run(s_db.clone(), s_agents.clone(), rx));
 
     // Its GPU, service-health and container checks each ask ONE machine what it
     // has, so each runs per online server against that server's own agent.

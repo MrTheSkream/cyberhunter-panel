@@ -463,6 +463,8 @@ pub fn manual_actions(rows: &[LedgerRow], inventory: Option<&Value>) -> Vec<Stri
             _ => {}
         }
     }
+    // Feature 5 (A-H): owned by `import_mail`, one line whatever the number of domains.
+    out.extend(crate::services::import_mail::antivirus_manual_action(rows, inventory));
     out
 }
 
