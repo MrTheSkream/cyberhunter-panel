@@ -1763,16 +1763,36 @@ install_php() {
 # ── Apache behind nginx (.htaccess mode, feature 4) ─────────────────────
 # Decision D1: new PHP sites default to "nginx + Apache", so a fresh Debian/
 # Ubuntu box gets Apache here. nginx stays in front on 80/443; Apache listens
-# on 127.0.0.1:8091 ONLY. The steps and the two file bodies are the same as
-# panel/agent/src/services/apache.rs (install + configure_script); a unit test
-# there compares the bodies with this file, so edit both together.
+# on 127.0.0.1:8091 (plain HTTP) and 127.0.0.1:8092 (TLS with a self-signed
+# loopback certificate, for what nginx received over HTTPS: mod_rewrite's
+# %{HTTPS} comes from mod_ssl only) ONLY. The steps, the two file bodies and the
+# certificate function are the same as panel/agent/src/services/apache.rs
+# (install + configure_script); a unit test there compares them with this file,
+# so edit both together.
 # Never fatal: a box without Apache still serves PHP sites through nginx alone.
+cyberhunter_loopback_cert() {
+    mkdir -p /etc/apache2/ssl && chmod 755 /etc/apache2/ssl || return 1
+    if [ ! -s /etc/apache2/ssl/cyberhunter-loopback.key ] || ! openssl x509 -noout -checkend 2592000 -in /etc/apache2/ssl/cyberhunter-loopback.crt >/dev/null 2>&1; then
+        command -v openssl >/dev/null 2>&1 || { echo "openssl is not installed" >&2; return 1; }
+        rm -f /etc/apache2/ssl/cyberhunter-loopback.key.new /etc/apache2/ssl/cyberhunter-loopback.crt.new
+        if ! (umask 077 && openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 3650 -subj /CN=localhost -keyout /etc/apache2/ssl/cyberhunter-loopback.key.new -out /etc/apache2/ssl/cyberhunter-loopback.crt.new >/dev/null 2>&1); then
+            rm -f /etc/apache2/ssl/cyberhunter-loopback.key.new /etc/apache2/ssl/cyberhunter-loopback.crt.new
+            echo "openssl could not create the certificate" >&2
+            return 1
+        fi
+        mv -f /etc/apache2/ssl/cyberhunter-loopback.key.new /etc/apache2/ssl/cyberhunter-loopback.key && mv -f /etc/apache2/ssl/cyberhunter-loopback.crt.new /etc/apache2/ssl/cyberhunter-loopback.crt || return 1
+    fi
+    chown root:root /etc/apache2/ssl/cyberhunter-loopback.key /etc/apache2/ssl/cyberhunter-loopback.crt && chmod 600 /etc/apache2/ssl/cyberhunter-loopback.key && chmod 644 /etc/apache2/ssl/cyberhunter-loopback.crt
+}
+
 configure_apache() {
     mkdir -p /etc/apache2/conf-available /var/log/apache2 || return 1
     cat > /etc/apache2/ports.conf <<'APACHE_PORTS_EOF' || return 1
 # Managed by CyberHunter - Panel. Do not edit by hand.
 # Apache sits behind nginx and listens on the loopback only.
 Listen 127.0.0.1:8091
+# Requests nginx received over HTTPS: mod_ssl sets %{HTTPS} for mod_rewrite.
+Listen 127.0.0.1:8092 https
 APACHE_PORTS_EOF
     cat > /etc/apache2/conf-available/zz-cyberhunter.conf <<'APACHE_CONF_EOF' || return 1
 # Managed by CyberHunter - Panel. Do not edit by hand.
@@ -1790,7 +1810,16 @@ ServerSignature Off
     Redirect 404 /
     CustomLog /dev/null common
 </VirtualHost>
+<VirtualHost 127.0.0.1:8092>
+    ServerName default.invalid
+    SSLEngine on
+    SSLCertificateFile /etc/apache2/ssl/cyberhunter-loopback.crt
+    SSLCertificateKeyFile /etc/apache2/ssl/cyberhunter-loopback.key
+    Redirect 404 /
+    CustomLog /dev/null common
+</VirtualHost>
 APACHE_CONF_EOF
+    cyberhunter_loopback_cert || return 1
     a2dissite -q 000-default >/dev/null 2>&1 || true
     a2dismod -q -f mpm_prefork mpm_worker >/dev/null 2>&1 || true
     # D9 (05): ExecCGI is allowed in AllowOverride Options= so a client .htaccess
@@ -1802,15 +1831,17 @@ APACHE_CONF_EOF
         [ -e "$f" ] || continue
         a2dismod -q -f "$(basename "$f" .load)" >/dev/null 2>&1 || true
     done
-    a2enmod -q mpm_event proxy proxy_fcgi rewrite remoteip headers expires setenvif alias >/dev/null || return 1
+    a2enmod -q mpm_event proxy proxy_fcgi rewrite remoteip headers expires setenvif alias ssl >/dev/null || return 1
     a2disconf -q other-vhosts-access-log >/dev/null 2>&1 || true
     a2enconf -q zz-cyberhunter >/dev/null || return 1
-    local holder
-    holder=$(ss -ltnpH 'sport = :8091' 2>/dev/null | grep -v '"apache2"' || true)
-    if [ -n "$holder" ]; then
-        echo "Port 8091 is already in use by another program: $holder" >&2
-        return 1
-    fi
+    local holder port
+    for port in 8091 8092; do
+        holder=$(ss -ltnpH "sport = :$port" 2>/dev/null | grep -v '"apache2"' || true)
+        if [ -n "$holder" ]; then
+            echo "Port $port is already in use by another program: $holder" >&2
+            return 1
+        fi
+    done
     apache2ctl configtest || return 1
     systemctl unmask --runtime apache2.service >/dev/null 2>&1 || true
     systemctl enable apache2.service >/dev/null 2>&1 || true
@@ -1861,8 +1892,8 @@ install_apache() {
         svc_fail "Apache"
         return 0
     fi
-    if run "Configuring Apache (127.0.0.1:8091)" configure_apache; then
-        log "Apache listening on 127.0.0.1:8091 behind nginx"
+    if run "Configuring Apache (127.0.0.1:8091, 127.0.0.1:8092)" configure_apache; then
+        log "Apache listening on 127.0.0.1:8091 and 127.0.0.1:8092 behind nginx"
         svc_ok "Apache"
     else
         # A package installed just now is left stopped and off at boot rather

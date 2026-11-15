@@ -25,8 +25,28 @@ use std::time::Duration;
 pub const LISTEN_ADDR: &str = "127.0.0.1:8091";
 /// The port half of [`LISTEN_ADDR`], for the "is it free" probe.
 pub const LISTEN_PORT: u16 = 8091;
-/// What nginx's `proxy_pass` points at in Apache mode.
+/// What nginx's `proxy_pass` points at in Apache mode for a plain-HTTP request.
 pub const UPSTREAM: &str = "http://127.0.0.1:8091";
+
+/// Apache's second loopback address, with mod_ssl, for requests that reached
+/// nginx over HTTPS (contract A4). Why a second hop in TLS: mod_rewrite's
+/// `%{HTTPS}` comes from mod_ssl, never from an environment variable, so behind
+/// a plain-HTTP hop the ubiquitous `.htaccess` rule `RewriteCond %{HTTPS} off`
+/// + `RewriteRule ^ https://...` redirected forever. HestiaCP does the same
+/// (nginx -> Apache over TLS on a local port). Never on a public address.
+pub const SSL_LISTEN_ADDR: &str = "127.0.0.1:8092";
+/// The port half of [`SSL_LISTEN_ADDR`].
+pub const SSL_LISTEN_PORT: u16 = 8092;
+/// What nginx's `proxy_pass` points at in Apache mode for an HTTPS request.
+pub const SSL_UPSTREAM: &str = "https://127.0.0.1:8092";
+
+/// The self-signed loopback certificate the TLS listener presents. Only nginx
+/// on the same box ever sees it (`proxy_ssl_verify off`); it protects nothing
+/// and identifies nothing, it only makes mod_ssl set `HTTPS=on`.
+pub const LOOPBACK_CERT_DIR: &str = "/etc/apache2/ssl";
+pub const LOOPBACK_CERT: &str = "/etc/apache2/ssl/cyberhunter-loopback.crt";
+/// Root-owned, mode 0600.
+pub const LOOPBACK_KEY: &str = "/etc/apache2/ssl/cyberhunter-loopback.key";
 
 /// First line of every file the panel writes under /etc/apache2.
 pub const MANAGED_HEADER: &str = "# Managed by CyberHunter - Panel. Do not edit by hand.";
@@ -58,6 +78,7 @@ pub const MODULES: &[&str] = &[
     "expires",
     "setenvif",
     "alias",
+    "ssl",
 ];
 
 /// The refusal every Apache entry point gives on the RHEL family.
@@ -320,7 +341,7 @@ const ALLOW_OVERRIDE: &str = "AuthConfig Limit Indexes \
 Options=FollowSymLinks,SymLinksIfOwnerMatch,Indexes,MultiViews,ExecCGI Nonfatal=Override";
 
 /// The `AllowOverride` arguments every managed vhost carried before `ExecCGI`
-/// was listed; rewritten in place at agent start ([`reconcile_vhost_overrides`]).
+/// was listed; rewritten in place at agent start ([`reconcile_managed_vhosts`]).
 const ALLOW_OVERRIDE_BEFORE_EXECCGI: &str = "AuthConfig Limit Indexes \
 Options=FollowSymLinks,SymLinksIfOwnerMatch,Indexes,MultiViews Nonfatal=Override";
 
@@ -334,14 +355,40 @@ pub fn vhost_with_current_overrides(content: &str) -> Option<String> {
     Some(content.replace(&old, &format!("AllowOverride {ALLOW_OVERRIDE}\n")))
 }
 
-/// Agent start: bring every panel-managed Apache vhost to the current
-/// `AllowOverride` line (idempotent; a vhost Apache rejects is put back).
-pub async fn reconcile_vhost_overrides() {
+/// A managed vhost body brought to the current shape: the current
+/// `AllowOverride` line, and the TLS twin block ([`vhost_with_ssl_twin`]).
+/// `None` when it already is current. Pure.
+pub fn vhost_upgraded(content: &str) -> Option<String> {
+    let overrides = vhost_with_current_overrides(content);
+    let base = overrides.as_deref().unwrap_or(content);
+    vhost_with_ssl_twin(base).or(overrides)
+}
+
+/// Agent start: bring every panel-managed Apache vhost to the current shape
+/// ([`vhost_upgraded`]; idempotent, a vhost Apache rejects is put back). A
+/// vhost that gains its TLS block needs mod_ssl, the loopback certificate and
+/// the second `Listen`, so the global configuration is ensured first; when
+/// that fails those vhosts are left as they are (they keep working over
+/// plain HTTP) and the next start tries again.
+pub async fn reconcile_managed_vhosts() {
+    let mut pending: Vec<(String, String, bool)> = Vec::new();
     for domain in managed_domains() {
-        let path = vhost_path(&domain);
-        let Ok(current) = std::fs::read_to_string(&path) else { continue };
-        let Some(updated) = vhost_with_current_overrides(&current) else { continue };
+        let Ok(current) = std::fs::read_to_string(vhost_path(&domain)) else { continue };
+        let Some(updated) = vhost_upgraded(&current) else { continue };
+        let gains_tls = vhost_with_ssl_twin(&current).is_some();
+        pending.push((domain, updated, gains_tls));
+    }
+    if pending.iter().any(|(_, _, tls)| *tls) {
+        if let Err(e) = ensure_global_config().await {
+            tracing::warn!("Apache vhosts not given their TLS block: the global configuration could not be applied: {e}");
+            pending.retain(|(_, _, tls)| !*tls);
+        }
+    }
+    for (domain, updated, gains_tls) in pending {
         match apply_vhost(&domain, &updated).await {
+            Ok(_) if gains_tls => tracing::info!(
+                "Apache vhost of {domain}: now also served over TLS on {SSL_LISTEN_ADDR}"
+            ),
             Ok(_) => tracing::info!("Apache vhost of {domain}: ExecCGI may now be set from .htaccess"),
             Err(ApplyError::Rejected(e)) | Err(ApplyError::Failed(e)) => {
                 tracing::warn!("Could not update the Apache vhost of {domain}: {e}")
@@ -409,9 +456,6 @@ pub fn render_apache_vhost(v: &ApacheVhost) -> Result<String, String> {
     let domain = v.domain;
     let root = v.document_root;
     let mut out = String::new();
-    out.push_str(MANAGED_HEADER);
-    out.push('\n');
-    out.push_str(&format!("<VirtualHost {LISTEN_ADDR}>\n"));
     out.push_str(&format!("    ServerName {domain}\n"));
     if !aliases.is_empty() {
         out.push_str(&format!("    ServerAlias {}\n", aliases.join(" ")));
@@ -444,8 +488,102 @@ pub fn render_apache_vhost(v: &ApacheVhost) -> Result<String, String> {
     ));
     out.push_str(&format!("    ErrorLog {}\n", error_log_path(domain)));
     out.push_str("    CustomLog /dev/null common\n");
-    out.push_str("</VirtualHost>\n");
-    Ok(out)
+    Ok(vhost_file(&out))
+}
+
+/// The lines that make the second block of a vhost answer in TLS with the
+/// loopback certificate (see [`SSL_LISTEN_ADDR`]).
+fn ssl_vhost_lines() -> String {
+    format!(
+        "    SSLEngine on\n    SSLCertificateFile {LOOPBACK_CERT}\n    SSLCertificateKeyFile {LOOPBACK_KEY}\n"
+    )
+}
+
+/// A whole vhost file from the body of one site's `<VirtualHost>`: the same
+/// body twice, once on the plain-HTTP port and once on the TLS port (contract
+/// A3), so the two can never disagree. Pure.
+fn vhost_file(body: &str) -> String {
+    format!(
+        "{MANAGED_HEADER}\n\
+         <VirtualHost {LISTEN_ADDR}>\n\
+         {body}\
+         </VirtualHost>\n\
+         # The same site for requests nginx received over HTTPS: mod_ssl makes\n\
+         # %{{HTTPS}} \"on\" for mod_rewrite.\n\
+         <VirtualHost {SSL_LISTEN_ADDR}>\n\
+         {ssl}{body}\
+         </VirtualHost>\n",
+        ssl = ssl_vhost_lines()
+    )
+}
+
+/// A managed vhost written before the TLS twin existed (a single block on
+/// [`LISTEN_ADDR`]) brought to the current two-block shape, or `None` when
+/// there is nothing to do (already two blocks, not a managed file, no
+/// recognisable block). The result is exactly what [`render_apache_vhost`]
+/// gives for the same site. Pure.
+pub fn vhost_with_ssl_twin(content: &str) -> Option<String> {
+    if !content.starts_with(MANAGED_HEADER)
+        || content.contains(&format!("<VirtualHost {SSL_LISTEN_ADDR}>"))
+    {
+        return None;
+    }
+    let open = format!("<VirtualHost {LISTEN_ADDR}>\n");
+    let start = content.find(&open)? + open.len();
+    let len = content[start..].find("</VirtualHost>")?;
+    let body = &content[start..start + len];
+    if !body.contains("    ServerName ") || !body.ends_with('\n') {
+        return None;
+    }
+    Some(vhost_file(body))
+}
+
+/// How an nginx server block in Apache mode reaches Apache (contract A2): the
+/// three template fragments `apache_upstream_set` (server level),
+/// `apache_upstream` (the `proxy_pass` target) and `apache_proxy_ssl` (lines
+/// in `location @apache`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NginxUpstream {
+    pub server_set: String,
+    pub target: String,
+    pub proxy_ssl: String,
+}
+
+/// The upstream of a site's serving server block. A block that only serves
+/// HTTPS (`ssl` with `force_ssl`) goes to [`SSL_UPSTREAM`]; one that only
+/// serves HTTP (no `ssl`) to [`UPSTREAM`]; the single block that serves both
+/// (`ssl` without `force_ssl`) picks per request from `$scheme`. The `set`/`if`
+/// is at server level, where `if` is safe (no `if` inside the location). A
+/// `proxy_pass` with a variable and no URI part passes the request URI
+/// unchanged and needs no resolver for an IP literal. The `proxy_ssl_*` lines
+/// only act on the TLS hop: SNI and the name are the visitor's Host, so Apache
+/// picks the site's vhost and not the catch-all; the loopback certificate is
+/// self-signed, hence no verification. Pure.
+pub fn nginx_upstream(ssl: bool, force_ssl: bool) -> NginxUpstream {
+    let proxy_ssl = "        proxy_ssl_server_name on;\n        proxy_ssl_name $host;\n        proxy_ssl_verify off;\n";
+    match (ssl, force_ssl) {
+        (false, _) => NginxUpstream {
+            server_set: String::new(),
+            target: UPSTREAM.to_string(),
+            proxy_ssl: String::new(),
+        },
+        (true, true) => NginxUpstream {
+            server_set: String::new(),
+            target: SSL_UPSTREAM.to_string(),
+            proxy_ssl: proxy_ssl.to_string(),
+        },
+        (true, false) => NginxUpstream {
+            server_set: format!(
+                "    # This block serves both schemes: Apache's TLS port for HTTPS.\n    \
+                 set $apache_upstream {UPSTREAM};\n    \
+                 if ($scheme = https) {{\n        \
+                 set $apache_upstream {SSL_UPSTREAM};\n    \
+                 }}\n\n"
+            ),
+            target: "$apache_upstream".to_string(),
+            proxy_ssl: proxy_ssl.to_string(),
+        },
+    }
 }
 
 /// The names in an nginx config's first `server_name` line, minus `domain`.
@@ -466,32 +604,48 @@ pub fn aliases_in_nginx_config(conf: &str, domain: &str) -> Vec<String> {
     out
 }
 
-/// Add `alias` to an Apache vhost's `ServerAlias` line (or create the line
-/// right after `ServerName`). `None` when the vhost has no `ServerName` line or
-/// the alias is invalid; the content unchanged when it is already there.
+/// Add `alias` to the `ServerAlias` line of every `<VirtualHost>` in an Apache
+/// vhost (or create the line right after that block's `ServerName`): a managed
+/// vhost has two blocks, plain HTTP and TLS, that must answer the same names.
+/// `None` when the vhost has no `ServerName` line or the alias is invalid; the
+/// content unchanged when it is already there.
 pub fn vhost_with_alias_added(content: &str, alias: &str) -> Option<String> {
     if !crate::routes::is_valid_domain(alias) {
         return None;
     }
     let mut lines: Vec<String> = content.lines().map(str::to_string).collect();
-    let name_line = lines
+    let name_lines: Vec<usize> = lines
         .iter()
-        .position(|l| l.trim_start().starts_with("ServerName "))?;
-    if lines[name_line].split_whitespace().nth(1) == Some(alias) {
-        return Some(content.to_string());
+        .enumerate()
+        .filter(|(_, l)| l.trim_start().starts_with("ServerName "))
+        .map(|(i, _)| i)
+        .collect();
+    if name_lines.is_empty() {
+        return None;
     }
-    if let Some(i) = lines
-        .iter()
-        .position(|l| l.trim_start().starts_with("ServerAlias "))
-    {
-        let names: Vec<&str> = lines[i].split_whitespace().skip(1).collect();
-        if names.contains(&alias) {
-            return Some(content.to_string());
+    let mut changed = false;
+    // Last block first, so an inserted line never shifts an index still to come.
+    for &name_line in name_lines.iter().rev() {
+        if lines[name_line].split_whitespace().nth(1) == Some(alias) {
+            continue;
         }
-        let line = format!("{} {alias}", lines[i].trim_end());
-        lines[i] = line;
-    } else {
-        lines.insert(name_line + 1, format!("    ServerAlias {alias}"));
+        let end = (name_line + 1..lines.len())
+            .find(|&i| lines[i].trim() == "</VirtualHost>" || lines[i].trim_start().starts_with("ServerName "))
+            .unwrap_or(lines.len());
+        if let Some(i) = (name_line + 1..end).find(|&i| lines[i].trim_start().starts_with("ServerAlias ")) {
+            let names: Vec<&str> = lines[i].split_whitespace().skip(1).collect();
+            if names.contains(&alias) {
+                continue;
+            }
+            let line = format!("{} {alias}", lines[i].trim_end());
+            lines[i] = line;
+        } else {
+            lines.insert(name_line + 1, format!("    ServerAlias {alias}"));
+        }
+        changed = true;
+    }
+    if !changed {
+        return Some(content.to_string());
     }
     let mut out = lines.join("\n");
     out.push('\n');
@@ -523,22 +677,26 @@ pub fn vhost_with_alias_removed(content: &str, alias: &str) -> String {
 
 // ── Global configuration (contract A4) ──────────────────────────────────
 
-/// `/etc/apache2/ports.conf`: the loopback port and nothing else. Apache must
-/// never take 80/443 from nginx, nor listen on a public address.
+/// `/etc/apache2/ports.conf`: the two loopback ports and nothing else (plain
+/// HTTP, and TLS for what nginx received over HTTPS). Apache must never take
+/// 80/443 from nginx, nor listen on a public address.
 pub fn ports_conf() -> String {
     format!(
         "{MANAGED_HEADER}\n\
          # Apache sits behind nginx and listens on the loopback only.\n\
-         Listen {LISTEN_ADDR}\n"
+         Listen {LISTEN_ADDR}\n\
+         # Requests nginx received over HTTPS: mod_ssl sets %{{HTTPS}} for mod_rewrite.\n\
+         Listen {SSL_LISTEN_ADDR} https\n"
     )
 }
 
 /// `/etc/apache2/conf-available/zz-cyberhunter.conf`.
 ///
-/// The catch-all vhost matters: with `000-default` disabled, Apache would treat
-/// the FIRST site vhost on 127.0.0.1:8091 as the default for every unknown Host
-/// and serve another tenant's site. conf-enabled is included before
-/// sites-enabled, so this one is the first and answers 404.
+/// The catch-all vhosts matter: with `000-default` disabled, Apache would treat
+/// the FIRST site vhost on each port (127.0.0.1:8091 and 127.0.0.1:8092) as
+/// the default for every unknown Host and serve another tenant's site.
+/// conf-enabled is included before sites-enabled, so these are the first and
+/// answer 404.
 pub fn global_conf() -> String {
     format!(
         "{MANAGED_HEADER}\n\
@@ -555,26 +713,61 @@ pub fn global_conf() -> String {
          \x20   ServerName default.invalid\n\
          \x20   Redirect 404 /\n\
          \x20   CustomLog /dev/null common\n\
-         </VirtualHost>\n"
+         </VirtualHost>\n\
+         <VirtualHost {SSL_LISTEN_ADDR}>\n\
+         \x20   ServerName default.invalid\n\
+         {ssl}\
+         \x20   Redirect 404 /\n\
+         \x20   CustomLog /dev/null common\n\
+         </VirtualHost>\n",
+        ssl = ssl_vhost_lines()
+    )
+}
+
+/// Shell function that creates the self-signed loopback certificate the TLS
+/// listener presents ([`LOOPBACK_CERT`], key [`LOOPBACK_KEY`] root 0600).
+/// Idempotent: a present certificate valid for 30 more days is kept, only
+/// ownership and modes are re-asserted. Defined verbatim in both
+/// [`configure_script`] and `scripts/setup.sh` (a unit test compares them).
+pub fn loopback_cert_fn() -> String {
+    let (dir, crt, key) = (LOOPBACK_CERT_DIR, LOOPBACK_CERT, LOOPBACK_KEY);
+    format!(
+        r#"cyberhunter_loopback_cert() {{
+    mkdir -p {dir} && chmod 755 {dir} || return 1
+    if [ ! -s {key} ] || ! openssl x509 -noout -checkend 2592000 -in {crt} >/dev/null 2>&1; then
+        command -v openssl >/dev/null 2>&1 || {{ echo "openssl is not installed" >&2; return 1; }}
+        rm -f {key}.new {crt}.new
+        if ! (umask 077 && openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 3650 -subj /CN=localhost -keyout {key}.new -out {crt}.new >/dev/null 2>&1); then
+            rm -f {key}.new {crt}.new
+            echo "openssl could not create the certificate" >&2
+            return 1
+        fi
+        mv -f {key}.new {key} && mv -f {crt}.new {crt} || return 1
+    fi
+    chown root:root {key} {crt} && chmod 600 {key} && chmod 644 {crt}
+}}
+"#
     )
 }
 
 /// Shell script that applies the global configuration from files staged in
 /// `stage`. Idempotent, run as root outside the agent's sandbox. Exits non-zero
 /// with the reason on stderr; Apache is only (re)started once its config test
-/// passed and the port is known to be free.
+/// passed and both ports are known to be free.
 ///
 /// `scripts/setup.sh::configure_apache` performs the same steps.
 pub fn configure_script(stage: &str) -> String {
     let mods = MODULES.join(" ");
+    let cert_fn = loopback_cert_fn();
     format!(
         r#"set -u
 S='{stage}'
 fail() {{ echo "$*" >&2; exit 1; }}
-[ -x /usr/sbin/apache2 ] || fail "Apache is not installed"
+{cert_fn}[ -x /usr/sbin/apache2 ] || fail "Apache is not installed"
 mkdir -p /etc/apache2/conf-available {LOG_DIR} || fail "Cannot create the Apache directories"
 install -m 644 "$S/ports.conf" {PORTS_CONF_PATH} || fail "Cannot write {PORTS_CONF_PATH}"
 install -m 644 "$S/{GLOBAL_CONF_NAME}.conf" {GLOBAL_CONF_PATH} || fail "Cannot write {GLOBAL_CONF_PATH}"
+cyberhunter_loopback_cert || fail "Cannot create the Apache loopback certificate {LOOPBACK_CERT}"
 a2dissite -q 000-default >/dev/null 2>&1 || true
 a2dismod -q -f mpm_prefork mpm_worker >/dev/null 2>&1 || true
 a2dismod -q -f cgi cgid >/dev/null 2>&1 || true
@@ -585,8 +778,10 @@ done
 a2enmod -q {mods} >/dev/null || fail "a2enmod failed"
 a2disconf -q other-vhosts-access-log >/dev/null 2>&1 || true
 a2enconf -q {GLOBAL_CONF_NAME} >/dev/null || fail "a2enconf {GLOBAL_CONF_NAME} failed"
-holder=$(ss -ltnpH 'sport = :{LISTEN_PORT}' 2>/dev/null | grep -v '"apache2"' || true)
-[ -z "$holder" ] || fail "Port {LISTEN_PORT} is already in use by another program: $holder"
+for port in {LISTEN_PORT} {SSL_LISTEN_PORT}; do
+    holder=$(ss -ltnpH "sport = :$port" 2>/dev/null | grep -v '"apache2"' || true)
+    [ -z "$holder" ] || fail "Port $port is already in use by another program: $holder"
+done
 out=$(apache2ctl configtest 2>&1) || fail "Apache configuration test failed: $out"
 systemctl unmask --runtime {UNIT}.service >/dev/null 2>&1 || true
 systemctl enable {UNIT}.service >/dev/null 2>&1 || true
@@ -603,6 +798,8 @@ pub fn global_config_ok() -> bool {
         return false;
     }
     if !p(GLOBAL_CONF_ENABLED).exists()
+        || !p(LOOPBACK_CERT).exists()
+        || !p(LOOPBACK_KEY).exists()
         || p("/etc/apache2/sites-enabled/000-default.conf").exists()
         || p("/etc/apache2/mods-enabled/mpm_prefork.load").exists()
         || p("/etc/apache2/mods-enabled/mpm_worker.load").exists()
@@ -1151,10 +1348,7 @@ mod tests {
     #[test]
     fn renders_the_contract_vhost() {
         let out = render_apache_vhost(&vhost(&[])).unwrap();
-        let expected = "\
-# Managed by CyberHunter - Panel. Do not edit by hand.
-<VirtualHost 127.0.0.1:8091>
-    ServerName example.com
+        let body = "    ServerName example.com
     DocumentRoot /var/www/example.com/public
     <Directory /var/www/example.com/public>
         AllowOverride AuthConfig Limit Indexes Options=FollowSymLinks,SymLinksIfOwnerMatch,Indexes,MultiViews,ExecCGI Nonfatal=Override
@@ -1172,9 +1366,75 @@ mod tests {
     LimitRequestBody 67108864
     ErrorLog /var/log/apache2/example.com.error.log
     CustomLog /dev/null common
-</VirtualHost>
 ";
+        let expected = format!(
+            "# Managed by CyberHunter - Panel. Do not edit by hand.
+<VirtualHost 127.0.0.1:8091>
+{body}</VirtualHost>
+# The same site for requests nginx received over HTTPS: mod_ssl makes
+# %{{HTTPS}} \"on\" for mod_rewrite.
+<VirtualHost 127.0.0.1:8092>
+    SSLEngine on
+    SSLCertificateFile /etc/apache2/ssl/cyberhunter-loopback.crt
+    SSLCertificateKeyFile /etc/apache2/ssl/cyberhunter-loopback.key
+{body}</VirtualHost>
+"
+        );
         assert_eq!(out, expected);
+        // Loopback only, one block per port, TLS only on the second.
+        assert_eq!(out.matches("<VirtualHost ").count(), 2);
+        assert_eq!(out.matches("</VirtualHost>").count(), 2);
+        assert_eq!(out.matches("SSLEngine on").count(), 1);
+        assert!(out.find("<VirtualHost 127.0.0.1:8092>").unwrap() < out.find("SSLEngine on").unwrap());
+        assert!(!out.contains("0.0.0.0") && !out.contains("*:"));
+    }
+
+    /// The two blocks of a rendered vhost, without the TLS lines.
+    fn blocks(out: &str) -> (String, String) {
+        let plain = out.split("<VirtualHost 127.0.0.1:8091>\n").nth(1).unwrap().split("</VirtualHost>").next().unwrap();
+        let tls = out.split("<VirtualHost 127.0.0.1:8092>\n").nth(1).unwrap().split("</VirtualHost>").next().unwrap();
+        (plain.to_string(), tls.replace(&ssl_vhost_lines(), ""))
+    }
+
+    #[test]
+    fn both_blocks_carry_the_same_site_whatever_the_options() {
+        let aliases = vec!["www.example.com".to_string()];
+        let dirs = vec!["/uploads".to_string()];
+        let mut v = vhost(&aliases);
+        v.no_exec_dirs = &dirs;
+        for out in [render_apache_vhost(&vhost(&[])).unwrap(), render_apache_vhost(&v).unwrap()] {
+            let (plain, tls) = blocks(&out);
+            assert_eq!(plain, tls, "{out}");
+            assert!(plain.contains("    ServerName example.com\n"));
+        }
+    }
+
+    #[test]
+    fn a_single_block_vhost_is_upgraded_to_exactly_the_current_render() {
+        let aliases = vec!["www.example.com".to_string(), "example.org".to_string()];
+        let dirs = vec!["/wp-content/uploads".to_string()];
+        let mut v = vhost(&aliases);
+        v.no_exec_dirs = &dirs;
+        for current in [render_apache_vhost(&vhost(&[])).unwrap(), render_apache_vhost(&v).unwrap()] {
+            // What the panel wrote before the TLS twin: header + the 8091 block.
+            let cut = current.find("# The same site for requests").unwrap();
+            let old = current[..cut].to_string();
+            assert_eq!(old.matches("<VirtualHost").count(), 1);
+            assert_eq!(vhost_with_ssl_twin(&old).as_deref(), Some(current.as_str()));
+            // Idempotent, and never touches a file the panel did not write.
+            assert_eq!(vhost_with_ssl_twin(&current), None);
+            assert_eq!(vhost_with_ssl_twin(&old.replacen(MANAGED_HEADER, "# mine", 1)), None);
+            assert_eq!(vhost_with_ssl_twin(&format!("{MANAGED_HEADER}\n")), None);
+            // The startup reconcile does both upgrades at once, in one write.
+            let older = old.replace(
+                &format!("AllowOverride {ALLOW_OVERRIDE}\n"),
+                &format!("AllowOverride {ALLOW_OVERRIDE_BEFORE_EXECCGI}\n"),
+            );
+            assert_ne!(older, old);
+            assert_eq!(vhost_upgraded(&older).as_deref(), Some(current.as_str()));
+            assert_eq!(vhost_upgraded(&old).as_deref(), Some(current.as_str()));
+            assert_eq!(vhost_upgraded(&current), None);
+        }
     }
 
     #[test]
@@ -1201,15 +1461,17 @@ mod tests {
             &format!("AllowOverride {ALLOW_OVERRIDE_BEFORE_EXECCGI}\n"),
         );
         assert_ne!(old, current);
+        assert_eq!(old.matches(ALLOW_OVERRIDE_BEFORE_EXECCGI).count(), 2);
         assert_eq!(vhost_with_current_overrides(&old).as_deref(), Some(current.as_str()));
+        assert_eq!(vhost_upgraded(&old).as_deref(), Some(current.as_str()));
     }
 
     #[test]
     fn aliases_become_one_server_alias_line() {
         let aliases = vec!["www.example.com".to_string(), "example.org".to_string(), "example.com".to_string(), "www.example.com".to_string()];
         let out = render_apache_vhost(&vhost(&aliases)).unwrap();
-        assert!(out.contains("    ServerName example.com\n    ServerAlias www.example.com example.org\n    DocumentRoot"));
-        assert_eq!(out.matches("ServerAlias").count(), 1);
+        assert_eq!(out.matches("    ServerName example.com\n    ServerAlias www.example.com example.org\n    DocumentRoot").count(), 2);
+        assert_eq!(out.matches("ServerAlias").count(), 2);
     }
 
     #[test]
@@ -1319,13 +1581,17 @@ mod tests {
         other.php_socket = "/run/php/php8.3-fpm-other_org.sock";
         let b = render_apache_vhost(&other).unwrap();
 
-        // Exactly one proxy: handler, and it is this site's socket.
+        // Exactly one proxy: handler per block (plain HTTP and TLS), and it
+        // is this site's socket.
         for (out, mine, theirs) in [
             (&a, "php8.3-fpm-example_com.sock", "php8.3-fpm-other_org.sock"),
             (&b, "php8.3-fpm-other_org.sock", "php8.3-fpm-example_com.sock"),
         ] {
-            assert_eq!(out.matches("proxy:").count(), 1, "{out}");
-            assert_eq!(out.matches(".sock").count(), 1, "{out}");
+            assert_eq!(out.matches("proxy:").count(), 2, "{out}");
+            assert_eq!(out.matches(".sock").count(), 2, "{out}");
+            let (plain, tls) = blocks(out);
+            assert_eq!(plain.matches("proxy:").count(), 1);
+            assert_eq!(tls.matches("proxy:").count(), 1);
             assert!(out.contains(&format!("SetHandler \"proxy:unix:/run/php/{mine}|fcgi://localhost\"")));
             assert!(!out.contains(theirs));
         }
@@ -1366,16 +1632,21 @@ mod tests {
     fn alias_patching_round_trips() {
         let base = render_apache_vhost(&vhost(&[])).unwrap();
         let one = vhost_with_alias_added(&base, "www.example.com").unwrap();
-        assert!(one.contains("    ServerName example.com\n    ServerAlias www.example.com\n"));
+        assert_eq!(one.matches("    ServerName example.com\n    ServerAlias www.example.com\n").count(), 2);
         let two = vhost_with_alias_added(&one, "example.org").unwrap();
-        assert!(two.contains("    ServerAlias www.example.com example.org\n"));
+        assert_eq!(two.matches("    ServerAlias www.example.com example.org\n").count(), 2);
+        // Patched in place = what a render with those aliases gives.
+        let both = vec!["www.example.com".to_string(), "example.org".to_string()];
+        assert_eq!(two, render_apache_vhost(&vhost(&both)).unwrap());
+        let (plain, tls) = blocks(&two);
+        assert_eq!(plain, tls);
         assert_eq!(vhost_with_alias_added(&two, "example.org").unwrap(), two);
         assert_eq!(vhost_with_alias_added(&two, "example.com").unwrap(), two);
         assert!(vhost_with_alias_added(&two, "bad\nalias.com").is_none());
         assert!(vhost_with_alias_added("no server name here\n", "a.com").is_none());
 
         let back = vhost_with_alias_removed(&two, "www.example.com");
-        assert!(back.contains("    ServerAlias example.org\n"));
+        assert_eq!(back.matches("    ServerAlias example.org\n").count(), 2);
         let gone = vhost_with_alias_removed(&back, "example.org");
         assert_eq!(gone, base);
         assert_eq!(vhost_with_alias_removed(&base, "nothing.com"), base);
@@ -1385,8 +1656,9 @@ mod tests {
     fn global_config_binds_the_loopback_only() {
         let ports = ports_conf();
         let listens: Vec<&str> = ports.lines().filter(|l| l.trim_start().starts_with("Listen")).collect();
-        assert_eq!(listens, vec!["Listen 127.0.0.1:8091"]);
+        assert_eq!(listens, vec!["Listen 127.0.0.1:8091", "Listen 127.0.0.1:8092 https"]);
         assert!(!ports.contains(":80\n") && !ports.contains("443"));
+        assert!(public_listens_in_ports_conf(&ports).is_empty());
 
         let conf = global_conf();
         for needle in [
@@ -1396,9 +1668,13 @@ mod tests {
             "ServerTokens Prod\n",
             "ServerSignature Off\n",
             "<VirtualHost 127.0.0.1:8091>\n    ServerName default.invalid\n    Redirect 404 /\n",
+            "<VirtualHost 127.0.0.1:8092>\n    ServerName default.invalid\n    SSLEngine on\n    SSLCertificateFile /etc/apache2/ssl/cyberhunter-loopback.crt\n    SSLCertificateKeyFile /etc/apache2/ssl/cyberhunter-loopback.key\n    Redirect 404 /\n",
         ] {
             assert!(conf.contains(needle), "{needle:?}");
         }
+        // The catch-alls come first on both ports (conf-enabled before sites-enabled).
+        assert_eq!(conf.matches("ServerName default.invalid").count(), 2);
+        assert!(MODULES.contains(&"ssl"));
         assert!(!conf.contains("Listen"));
     }
 
@@ -1408,8 +1684,13 @@ mod tests {
         let pos = |n: &str| s.find(n).unwrap_or_else(|| panic!("missing {n:?}"));
         assert!(pos("install -m 644 \"$S/ports.conf\"") < pos("apache2ctl configtest"));
         assert!(pos("a2dissite -q 000-default") < pos("apache2ctl configtest"));
-        assert!(pos("a2enmod -q mpm_event proxy proxy_fcgi rewrite remoteip headers expires setenvif alias") < pos("apache2ctl configtest"));
-        assert!(pos("sport = :8091") < pos("reload-or-restart"));
+        assert!(pos("a2enmod -q mpm_event proxy proxy_fcgi rewrite remoteip headers expires setenvif alias ssl") < pos("apache2ctl configtest"));
+        assert!(pos("for port in 8091 8092; do") < pos("apache2ctl configtest"));
+        assert!(pos("ss -ltnpH \"sport = :$port\"") < pos("reload-or-restart"));
+        // The loopback certificate exists before Apache is asked to load it.
+        assert!(pos("cyberhunter_loopback_cert() {") < pos("cyberhunter_loopback_cert ||"));
+        assert!(pos("install -m 644 \"$S/ports.conf\"") < pos("cyberhunter_loopback_cert ||"));
+        assert!(pos("cyberhunter_loopback_cert ||") < pos("apache2ctl configtest"));
         assert!(pos("apache2ctl configtest") < pos("systemctl unmask --runtime apache2.service"));
         assert!(pos("systemctl unmask --runtime") < pos("reload-or-restart apache2.service"));
         assert!(s.contains("a2dismod -q -f mpm_prefork mpm_worker"));
@@ -1428,7 +1709,58 @@ mod tests {
         assert!(setup.contains(&format!("a2enmod -q {} >/dev/null", MODULES.join(" "))));
         assert!(setup.contains("systemctl mask --runtime apache2.service"));
         assert!(setup.contains("a2enconf -q zz-cyberhunter"));
-        assert!(setup.contains("sport = :8091"));
+        assert!(setup.contains("    for port in 8091 8092; do\n        holder=$(ss -ltnpH \"sport = :$port\""));
+        assert!(setup.contains(&loopback_cert_fn()), "setup.sh cyberhunter_loopback_cert differs");
+        // Called after both files are written, before the config test.
+        let start = setup.find("configure_apache() {").expect("configure_apache");
+        let body = &setup[start..];
+        let body = &body[..body.find("\n}\n").expect("end of configure_apache")];
+        let pos = |n: &str| body.find(n).unwrap_or_else(|| panic!("missing {n:?}"));
+        assert!(pos("APACHE_CONF_EOF\n    cyberhunter_loopback_cert || return 1") < pos("apache2ctl configtest"));
+    }
+
+    #[test]
+    fn loopback_certificate_is_created_once_and_kept_private() {
+        let f = loopback_cert_fn();
+        // Only when the key is missing or the certificate is absent or near
+        // expiry; otherwise only ownership and modes are re-asserted.
+        let check = "if [ ! -s /etc/apache2/ssl/cyberhunter-loopback.key ] || ! openssl x509 -noout -checkend 2592000 -in /etc/apache2/ssl/cyberhunter-loopback.crt >/dev/null 2>&1; then";
+        assert!(f.contains(check), "{f}");
+        let pos = |n: &str| f.find(n).unwrap_or_else(|| panic!("missing {n:?}"));
+        assert!(pos(check) < pos("openssl req -x509"));
+        assert_eq!(f.matches("openssl req").count(), 1);
+        // Written under umask 077 to side names, then moved in place.
+        assert!(f.contains("(umask 077 && openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 3650 -subj /CN=localhost -keyout /etc/apache2/ssl/cyberhunter-loopback.key.new -out /etc/apache2/ssl/cyberhunter-loopback.crt.new"));
+        assert!(pos("openssl req") < pos("mv -f /etc/apache2/ssl/cyberhunter-loopback.key.new /etc/apache2/ssl/cyberhunter-loopback.key"));
+        assert!(f.trim_end().ends_with("chown root:root /etc/apache2/ssl/cyberhunter-loopback.key /etc/apache2/ssl/cyberhunter-loopback.crt && chmod 600 /etc/apache2/ssl/cyberhunter-loopback.key && chmod 644 /etc/apache2/ssl/cyberhunter-loopback.crt\n}"));
+        // The paths the vhosts and the catch-all point at.
+        assert!(ssl_vhost_lines().contains(LOOPBACK_CERT) && ssl_vhost_lines().contains(LOOPBACK_KEY));
+        assert!(LOOPBACK_CERT.starts_with(&format!("{LOOPBACK_CERT_DIR}/")) && LOOPBACK_KEY.starts_with(&format!("{LOOPBACK_CERT_DIR}/")));
+        // Under /etc/apache2, already in the agent unit's ReadWritePaths.
+        assert!(LOOPBACK_CERT_DIR.starts_with("/etc/apache2/"));
+        assert!(configure_script("/x").contains(&f));
+    }
+
+    #[test]
+    fn nginx_upstream_follows_the_scheme_the_block_serves() {
+        // HTTP only.
+        let u = nginx_upstream(false, true);
+        assert_eq!(u, nginx_upstream(false, false));
+        assert_eq!(u.target, "http://127.0.0.1:8091");
+        assert!(u.server_set.is_empty() && u.proxy_ssl.is_empty());
+        // HTTPS only (port 80 is a redirect block).
+        let u = nginx_upstream(true, true);
+        assert_eq!(u.target, "https://127.0.0.1:8092");
+        assert!(u.server_set.is_empty());
+        assert_eq!(u.proxy_ssl, "        proxy_ssl_server_name on;\n        proxy_ssl_name $host;\n        proxy_ssl_verify off;\n");
+        // One block for both: picked per request, at server level.
+        let u = nginx_upstream(true, false);
+        assert_eq!(u.target, "$apache_upstream");
+        assert_eq!(
+            u.server_set,
+            "    # This block serves both schemes: Apache's TLS port for HTTPS.\n    set $apache_upstream http://127.0.0.1:8091;\n    if ($scheme = https) {\n        set $apache_upstream https://127.0.0.1:8092;\n    }\n\n"
+        );
+        assert_eq!(u.proxy_ssl, nginx_upstream(true, true).proxy_ssl);
     }
 
     #[test]
@@ -1462,6 +1794,7 @@ mod tests {
         let ss = "\
 LISTEN 0 511 127.0.0.1:8091 0.0.0.0:* users:((\"apache2\",pid=10,fd=3))
 LISTEN 0 511 [::1]:8091 [::]:* users:((\"apache2\",pid=10,fd=4))
+LISTEN 0 511 127.0.0.1:8092 0.0.0.0:* users:((\"apache2\",pid=10,fd=5))
 LISTEN 0 511 0.0.0.0:80 0.0.0.0:* users:((\"nginx\",pid=11,fd=6))
 ";
         assert!(public_apache_listeners(ss).is_empty());
@@ -1528,7 +1861,7 @@ LISTEN 0 511 *:80 *:* users:((\"apache2\",pid=12,fd=3))
 
     #[test]
     fn no_em_dash_in_generated_files() {
-        let all = format!("{}{}{}{}", ports_conf(), global_conf(), configure_script("/x"), render_apache_vhost(&vhost(&[])).unwrap());
+        let all = format!("{}{}{}{}{:?}", ports_conf(), global_conf(), configure_script("/x"), render_apache_vhost(&vhost(&[])).unwrap(), nginx_upstream(true, false));
         assert!(!all.contains('\u{2014}'));
     }
 }

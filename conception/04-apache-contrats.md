@@ -25,7 +25,7 @@ location ~* \.(?:jpe?g|png|gif|webp|avif|svg|ico|css|js|mjs|map|woff2?|ttf|otf|e
 }
 location / { try_files /nonexistent @apache; }
 location @apache {
-    proxy_pass http://127.0.0.1:8091;
+    proxy_pass http://127.0.0.1:8091;   # bloc qui ne sert que HTTP (voir ci-dessous pour HTTPS)
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -33,6 +33,25 @@ location @apache {
     proxy_read_timeout <fastcgi_read_timeout ou 300>s;
 }
 ```
+- **HTTPS vers le port TLS d'Apache.** Le bloc qui sert HTTPS (443 avec Force SSL) envoie à
+  `https://127.0.0.1:8092` avec `proxy_ssl_server_name on; proxy_ssl_name $host; proxy_ssl_verify off;`
+  (SNI = Host du visiteur, pour qu'Apache choisisse le vhost du site et non le catch-all ; certificat
+  de boucle locale auto-signé, d'où pas de vérification). Le bloc unique 80+443 (Force SSL désactivé)
+  choisit par requête, au niveau `server` (aucun `if` dans une `location`) :
+  `set $apache_upstream http://127.0.0.1:8091; if ($scheme = https) { set $apache_upstream https://127.0.0.1:8092; }`
+  puis `proxy_pass $apache_upstream;` (variable sans partie URI : l'URI est transmise telle quelle,
+  adresse IP littérale : pas de `resolver`). Un bloc qui ne sert que HTTP garde `http://127.0.0.1:8091`.
+  Raison : `%{HTTPS}` de mod_rewrite vient de mod_ssl, jamais d'une variable d'environnement ;
+  derrière un saut en HTTP clair il valait toujours `off`, et la règle `.htaccess` très répandue
+  `RewriteCond %{HTTPS} off` + `RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]` bouclait
+  sans fin (constaté au premier import HestiaCP réel). HestiaCP fait de même (nginx vers Apache en TLS
+  sur un port local). `X-Forwarded-Proto` et le `SetEnvIf ... HTTPS=on` restent (sans effet nuisible).
+  Port vu par l'application : le port réel de la connexion est `8092` (même classe de comportement
+  que le `8443` de Hestia : `UseCanonicalPhysicalPort On`, `%{SERVER_ADDR}`/le port local le
+  montreraient). Avec la valeur par défaut `UseCanonicalName Off`, `%{SERVER_PORT}` vient du `Host`
+  envoyé par nginx (sans port, donc le port par défaut du schéma) : mesuré en conteneur
+  (Debian 12, Apache 2.4 + nginx), `%{SERVER_PORT}` vaut `443` en HTTPS et la boucle disparaît
+  (l'ancien saut HTTP redirigeait vers lui-même en 301).
 - Pas d'`access_log off` : le journal d'accès nginx sert aux statistiques, à la bande passante et à fail2ban.
 - Ne doit **pas** contenir la ligne `index index.html index.htm;` (la retouche « static deny » au
   démarrage de l'agent et `update.sh` s'en servent comme repère).
@@ -62,6 +81,15 @@ location @apache {
     CustomLog /dev/null common
 </VirtualHost>
 ```
+- **Deux blocs, même contenu** : le bloc ci-dessus sur `127.0.0.1:8091`, puis le même corps (mêmes
+  ServerName/ServerAlias/DocumentRoot/Directory/FilesMatch/LocationMatch/ProxyTimeout/LimitRequestBody/
+  ErrorLog) dans `<VirtualHost 127.0.0.1:8092>` précédé de `SSLEngine on`,
+  `SSLCertificateFile /etc/apache2/ssl/cyberhunter-loopback.crt`,
+  `SSLCertificateKeyFile /etc/apache2/ssl/cyberhunter-loopback.key` (voir A2 pour la raison). Les
+  retouches (alias ajouté ou retiré, renommage, mise à jour `AllowOverride`) portent sur les deux blocs.
+  Un vhost géré à un seul bloc (écrit avant) reçoit son second bloc au prochain rendu, et au démarrage
+  de l'agent (configuration globale appliquée d'abord ; en cas d'échec, le vhost reste en HTTP seul et
+  le démarrage suivant réessaie).
 - Le socket est celui que `put_site` a résolu pour le pool du site (après l'attente du socket).
 - Écriture atomique ; `apachectl configtest` ; puis `systemctl reload apache2`.
 - **Isolation des sockets (durcissement)** : un `.htaccess` ne doit jamais pouvoir viser le socket
@@ -104,12 +132,20 @@ location @apache {
 - Écriture atomique ; `apachectl configtest` ; puis `systemctl reload apache2`.
 
 ### A4. Configuration globale Apache (écrite par l'installeur, idempotente)
-- `/etc/apache2/ports.conf` : `Listen 127.0.0.1:8091` uniquement.
+- `/etc/apache2/ports.conf` : `Listen 127.0.0.1:8091` et `Listen 127.0.0.1:8092 https` uniquement
+  (boucle locale, jamais `0.0.0.0`) ; le contrôle « port déjà pris par un autre programme » couvre les deux.
 - `a2dissite 000-default` ; `a2dismod mpm_prefork php*` ; `a2enmod mpm_event proxy proxy_fcgi
-  rewrite remoteip headers expires setenvif`.
+  rewrite remoteip headers expires setenvif alias ssl`.
+- Certificat de boucle locale auto-signé `/etc/apache2/ssl/cyberhunter-loopback.{crt,key}` (CN=localhost,
+  RSA 2048, 10 ans, clé root 0600), créé par la même fonction shell dans `configure_script` et
+  `setup.sh` (test de parité) : recréé seulement si la clé manque ou si le certificat manque ou expire
+  dans moins de 30 jours ; sinon seuls propriétaire et modes sont réaffirmés. `global_config_ok`
+  exige les deux fichiers. `/etc/apache2` est déjà dans `ReadWritePaths`.
 - `/etc/apache2/conf-available/cyberhunter.conf` (activée) :
   `RemoteIPHeader X-Real-IP`, `RemoteIPInternalProxy 127.0.0.1`,
-  `SetEnvIf X-Forwarded-Proto "^https$" HTTPS=on`, `ServerTokens Prod`, `ServerSignature Off`.
+  `SetEnvIf X-Forwarded-Proto "^https$" HTTPS=on`, `ServerTokens Prod`, `ServerSignature Off`, et un
+  vhost catch-all `default.invalid` (`Redirect 404 /`) sur chacun des deux ports (TLS avec le
+  certificat de boucle locale sur 8092).
 - **Apache ne doit jamais prendre le port 80** : avant `apt install apache2`,
   `systemctl mask --runtime apache2.service` (le démarrage automatique du paquet est empêché),
   écriture de la config ci-dessus, `configtest`, `systemctl unmask --runtime`, `enable --now`.

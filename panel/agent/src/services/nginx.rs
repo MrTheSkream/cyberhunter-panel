@@ -545,9 +545,10 @@ pub async fn reconcile_site_access() {
     use crate::services::site_access as sa;
 
     // 05-import-hestia (D9): managed Apache vhosts written before `ExecCGI`
-    // joined `Options=` are updated here, at agent start, the same way. Run
-    // from this existing startup step so the shared `main.rs` stays as is.
-    crate::services::apache::reconcile_vhost_overrides().await;
+    // joined `Options=`, or before their TLS twin block on 127.0.0.1:8092
+    // (feature 4, `%{HTTPS}`), are updated here, at agent start, the same way.
+    // Run from this existing startup step so the shared `main.rs` stays as is.
+    crate::services::apache::reconcile_managed_vhosts().await;
 
     let mut domains: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for dir in [sa::REDIRECTS_DIR, sa::AUTH_DIR] {
@@ -1045,7 +1046,6 @@ pub fn render_site_config_including(
         config.web_server.as_deref(),
     );
     ctx.insert("apache_mode", &apache_mode);
-    ctx.insert("apache_upstream", crate::services::apache::UPSTREAM);
     let apache_read_timeout = match (config.php_pool.as_ref(), apache_timeout_s) {
         (None, Some(t)) if apache_mode && t > 0 => t.min(86_400),
         (pool, _) => crate::services::apache::request_timeout_s(pool),
@@ -1111,6 +1111,12 @@ pub fn render_site_config_including(
     };
     ctx.insert("plain_listeners", &plain);
     ctx.insert("acme_block", acme);
+    // Apache mode: HTTPS requests go to Apache's TLS port so mod_rewrite sees
+    // `%{HTTPS}` on, plain HTTP to its HTTP port (contract A2).
+    let upstream = crate::services::apache::nginx_upstream(ssl, force_ssl);
+    ctx.insert("apache_upstream", &upstream.target);
+    ctx.insert("apache_upstream_set", &upstream.server_set);
+    ctx.insert("apache_proxy_ssl", &upstream.proxy_ssl);
     let no_exec = vx::validate_no_exec_dirs(config.php_no_exec_dirs.as_deref().unwrap_or(&[]))
         .map_err(tera::Error::msg)?;
     let no_exec_block = if config.runtime == "php" { vx::no_exec_block(&no_exec) } else { String::new() };
@@ -1911,7 +1917,13 @@ php_admin_value[open_basedir] = /var/www/example.com/:/tmp/:/usr/share/php/
                 "    location ~ /\\.(?!well-known) {\n        deny all;\n    }\n",
                 "    location ~* \\.(?:jpe?g|png|gif|webp|avif|svg|ico|css|js|mjs|map|woff2?|ttf|otf|eot|txt|xml|pdf|mp4|webm|mp3|ogg|zip|gz)$ {\n        try_files $uri @apache;\n        expires 30d;\n    }\n",
                 "    location / {\n        try_files /nonexistent @apache;\n    }\n",
-                "    location @apache {\n        proxy_pass http://127.0.0.1:8091;\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_set_header X-Forwarded-Proto $scheme;\n        proxy_read_timeout 300s;\n    }\n",
+                if ssl {
+                    // HTTPS only (port 80 redirects): Apache's TLS port, so
+                    // mod_rewrite's %{HTTPS} is on.
+                    "    location @apache {\n        proxy_pass https://127.0.0.1:8092;\n        proxy_ssl_server_name on;\n        proxy_ssl_name $host;\n        proxy_ssl_verify off;\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_set_header X-Forwarded-Proto $scheme;\n        proxy_read_timeout 300s;\n    }\n"
+                } else {
+                    "    location @apache {\n        proxy_pass http://127.0.0.1:8091;\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_set_header X-Forwarded-Proto $scheme;\n        proxy_read_timeout 300s;\n    }\n"
+                },
                 "access_log /var/log/nginx/example.com.access.log;",
                 "error_log /var/log/nginx/example.com.error.log;",
                 "client_max_body_size 64m;",
@@ -1921,9 +1933,12 @@ php_admin_value[open_basedir] = /var/www/example.com/:/tmp/:/usr/share/php/
             }
             // No PHP handled by nginx itself, no preset, and not the static
             // marker the static-deny retrofit and update.sh key on.
-            for absent in ["fastcgi_pass", "index index.html index.htm;", "index index.php", "access_log off", "fastcgi_cache"] {
+            for absent in ["fastcgi_pass", "index index.html index.htm;", "index index.php", "access_log off", "fastcgi_cache", "$apache_upstream"] {
                 assert!(!out.contains(absent), "ssl={ssl} has {absent:?}");
             }
+            assert_eq!(out.matches("proxy_pass ").count(), 1, "ssl={ssl}");
+            assert_eq!(out.contains("127.0.0.1:8091"), !ssl, "ssl={ssl}");
+            assert_eq!(out.contains("127.0.0.1:8092"), ssl, "ssl={ssl}");
             if ssl {
                 assert!(out.contains(":443 ssl;\n"));
                 assert!(out.contains("ssl_certificate /etc/dockpanel/ssl/example.com/fullchain.pem;"));
@@ -1932,6 +1947,34 @@ php_admin_value[open_basedir] = /var/www/example.com/:/tmp/:/usr/share/php/
                 assert!(out.contains("location /.well-known/acme-challenge/"));
             }
         }
+    }
+
+    #[test]
+    fn apache_mode_one_block_for_both_schemes_picks_the_upstream_per_request() {
+        let t = init_templates();
+        let c = with(apache_site(true, None), |c| c.force_ssl = Some(false));
+        let out = render_site_config(&t, "example.com", &c).unwrap();
+        // One server block, serving :80 and :443.
+        assert_eq!(out.matches("\nserver {").count() + usize::from(out.starts_with("server {")), 1, "{out}");
+        assert!(out.contains(":443 ssl;\n") && out.contains("    listen [::]:80;\n"));
+        // Picked at server level (no `if` inside a location), before the locations.
+        let set = "    set $apache_upstream http://127.0.0.1:8091;\n    if ($scheme = https) {\n        set $apache_upstream https://127.0.0.1:8092;\n    }\n";
+        assert_eq!(out.matches(set).count(), 1, "{out}");
+        assert!(out.find(set).unwrap() < out.find("    location ").unwrap());
+        assert!(out.contains(
+            "    location @apache {\n        proxy_pass $apache_upstream;\n        proxy_ssl_server_name on;\n        proxy_ssl_name $host;\n        proxy_ssl_verify off;\n        proxy_set_header Host $host;\n"
+        ), "{out}");
+        assert_eq!(out.matches("proxy_pass ").count(), 1);
+        assert!(out.contains("        proxy_set_header X-Forwarded-Proto $scheme;\n"));
+        // Every other combination names one fixed upstream.
+        for (ssl, force) in [(false, true), (false, false), (true, true)] {
+            let c = with(apache_site(ssl, None), |c| c.force_ssl = Some(force));
+            let out = render_site_config(&t, "example.com", &c).unwrap();
+            assert!(!out.contains("$apache_upstream"), "ssl={ssl} force={force}");
+        }
+        // HTTP-only sites keep the plain hop whatever force_ssl says.
+        let c = with(apache_site(false, None), |c| c.force_ssl = Some(false));
+        assert!(render_site_config(&t, "example.com", &c).unwrap().contains("        proxy_pass http://127.0.0.1:8091;\n        proxy_set_header Host $host;\n"));
     }
 
     #[test]
