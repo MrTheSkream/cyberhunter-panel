@@ -1781,4 +1781,14 @@ pub fn router() -> Router<AppState> {
         .route("/api/migration/{id}", get(migration::get_one).delete(migration::remove))
         .route("/api/migration/{id}/import", post(migration::import))
         .route("/api/migration/{id}/progress", get(migration::progress))
+        // --- import-hestia (05) ---
+        .route("/api/migration/{id}/report", get(migration::report)) // W5
+        .route("/api/migration/{id}/preflight", get(migration::preflight)) // W5
+        .route("/api/databases/local/status", get(databases::local_status)) // W2
+        .route("/api/databases/local/install", post(databases::local_install)) // W2
+        .route("/api/databases/local/config", put(databases::local_set_config)) // W2
+        .route("/api/sites/{id}/canonical-host", put(sites::set_canonical_host)) // W3
+        .route("/api/sites/{id}/php-no-exec", put(sites::set_php_no_exec)) // W3
+        .route("/api/sites/{id}/ssl-options", put(sites::set_ssl_options)) // W3
+        // --- end import-hestia (05) ---
 }

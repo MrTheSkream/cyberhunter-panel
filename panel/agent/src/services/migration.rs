@@ -811,6 +811,40 @@ pub async fn cleanup(migration_id: &str) -> Result<(), String> {
     Ok(())
 }
 
+// --- import-hestia (05) ---
+// STEP 0 SKELETON (owner: W1): public helpers of contract W1-H for W2/W4.
+// W1 replaces these bodies with the real implementation.
+
+/// Staging directory of a migration (validates the id as a UUID).
+#[allow(dead_code)]
+pub fn staging_dir(_migration_id: &str) -> Result<std::path::PathBuf, String> {
+    Err("not implemented".into())
+}
+
+/// Child whose stdout is one archive member, decompressed per `.gz`/`.zst`;
+/// `kill_on_drop`; `member` relative, without `..` nor a leading `/`.
+#[allow(dead_code)]
+pub async fn spawn_member_reader(
+    _migration_id: &str,
+    _member: &str,
+) -> Result<tokio::process::Child, String> {
+    Err("not implemented".into())
+}
+
+/// Streams one archive member into `tar x --no-same-owner` under `dest`.
+#[allow(dead_code)]
+pub async fn extract_tar_member(
+    _migration_id: &str,
+    _member: &str,
+    _dest: &Path,
+    _include: &[String],
+    _strip: u32,
+    _job: Option<&crate::services::migration_jobs::JobHandle>,
+) -> Result<(), String> {
+    Err("not implemented".into())
+}
+// --- end import-hestia (05) ---
+
 #[cfg(test)]
 mod web_server_tests {
     use super::hestia_web_server;

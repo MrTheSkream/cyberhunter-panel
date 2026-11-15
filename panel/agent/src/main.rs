@@ -233,6 +233,9 @@ async fn main() {
         .merge(routes::server_utils::router())
         .merge(routes::traefik::router())
         .merge(routes::telemetry::router())
+        // --- import-hestia (05) ---
+        .merge(routes::local_db::router()) // W2
+        // --- end import-hestia (05) ---
         .route("/auth/rotate-token", axum::routing::post(routes::rotate_token))
         .layer(middleware::from_fn_with_state(state.clone(), routes::auth_middleware))
         .layer(middleware::from_fn(routes::audit_middleware))

@@ -167,7 +167,31 @@ pub fn router() -> Router<AppState> {
         .route("/mail/tls/enforce", post(tls_enforce))
         // Uninstall
         .route("/mail/uninstall", post(mail_uninstall))
+        // --- import-hestia (05) ---
+        .route("/mail/hestia/secrets", post(hestia_secrets))
+        .route("/mail/dkim/import", post(dkim_import))
+        .route("/mail/hestia/import-maildir", post(hestia_import_maildir))
+        // --- end import-hestia (05) ---
 }
+
+// --- import-hestia (05) ---
+// STUB(W4): step-0 skeletons (501); W4 replaces them (contract W4-A).
+
+/// POST /mail/hestia/secrets
+async fn hestia_secrets() -> ApiErr {
+    super::not_implemented()
+}
+
+/// POST /mail/dkim/import
+async fn dkim_import() -> ApiErr {
+    super::not_implemented()
+}
+
+/// POST /mail/hestia/import-maildir
+async fn hestia_import_maildir() -> ApiErr {
+    super::not_implemented()
+}
+// --- end import-hestia (05) ---
 
 // ── Mail server status + installation ────────────────────────────────────
 

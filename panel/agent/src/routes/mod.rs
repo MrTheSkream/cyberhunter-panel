@@ -38,6 +38,9 @@ pub mod terminal;
 pub mod updates;
 pub mod volume_backup;
 pub mod wordpress;
+// --- import-hestia (05) ---
+pub mod local_db; // W2
+// --- end import-hestia (05) ---
 
 use axum::{
     extract::Request,
@@ -107,6 +110,16 @@ pub fn is_valid_name(name: &str) -> bool {
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
+
+// --- import-hestia (05) ---
+/// Answer of every step-0 route skeleton until its owner implements it.
+pub fn not_implemented() -> (StatusCode, axum::Json<serde_json::Value>) {
+    (
+        StatusCode::NOT_IMPLEMENTED,
+        axum::Json(serde_json::json!({ "error": "not implemented yet", "code": "not_implemented" })),
+    )
+}
+// --- end import-hestia (05) ---
 
 /// Validate a Docker container ID (hex string, 1–64 chars).
 pub fn is_valid_container_id(id: &str) -> bool {

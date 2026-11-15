@@ -1527,6 +1527,20 @@ pub async fn remove(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
+// --- import-hestia (05) ---
+// STEP 0 SKELETON (owner: W5): step-0 skeleton handlers (501); the owner replaces them (contract W5-R).
+
+/// GET /api/migration/{id}/report
+pub async fn report(AuthUser(_claims): AuthUser) -> Result<Json<serde_json::Value>, ApiError> {
+    Err(crate::error::err_coded(StatusCode::NOT_IMPLEMENTED, "not implemented yet", "not_implemented"))
+}
+
+/// GET /api/migration/{id}/preflight
+pub async fn preflight(AuthUser(_claims): AuthUser) -> Result<Json<serde_json::Value>, ApiError> {
+    Err(crate::error::err_coded(StatusCode::NOT_IMPLEMENTED, "not implemented yet", "not_implemented"))
+}
+// --- end import-hestia (05) ---
+
 #[cfg(test)]
 mod web_server_tests {
     use super::{apache_installed_in, import_web_server, imported_web_server};

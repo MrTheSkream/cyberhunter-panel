@@ -5088,6 +5088,25 @@ where
     changed
 }
 
+// --- import-hestia (05) ---
+// STUB(W3): step-0 skeleton handlers (501); the owner replaces them (contract W3-V / W3-F).
+
+/// PUT /api/sites/{id}/canonical-host
+pub async fn set_canonical_host(AuthUser(_claims): AuthUser) -> Result<Json<serde_json::Value>, ApiError> {
+    Err(crate::error::err_coded(StatusCode::NOT_IMPLEMENTED, "not implemented yet", "not_implemented"))
+}
+
+/// PUT /api/sites/{id}/php-no-exec
+pub async fn set_php_no_exec(AuthUser(_claims): AuthUser) -> Result<Json<serde_json::Value>, ApiError> {
+    Err(crate::error::err_coded(StatusCode::NOT_IMPLEMENTED, "not implemented yet", "not_implemented"))
+}
+
+/// PUT /api/sites/{id}/ssl-options
+pub async fn set_ssl_options(AuthUser(_claims): AuthUser) -> Result<Json<serde_json::Value>, ApiError> {
+    Err(crate::error::err_coded(StatusCode::NOT_IMPLEMENTED, "not implemented yet", "not_implemented"))
+}
+// --- end import-hestia (05) ---
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -38,3 +38,11 @@ pub mod status_notices;
 pub mod uptime;
 pub mod security_hardening;
 pub mod telemetry_collector;
+// --- import-hestia (05) ---
+pub mod import_types; // W5
+pub mod import_site; // W5
+pub mod migration_ledger; // W5
+pub mod import_db; // W2
+pub mod import_mail; // W4
+pub mod import_sftp; // W4
+// --- end import-hestia (05) ---

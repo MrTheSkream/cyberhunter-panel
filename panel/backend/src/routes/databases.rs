@@ -1469,6 +1469,25 @@ pub async fn import(
     Ok(Json(result))
 }
 
+// --- import-hestia (05) ---
+// STUB(W2): step-0 skeleton handlers (501); the owner replaces them (contract W2-B / W5-R).
+
+/// GET /api/databases/local/status
+pub async fn local_status(AuthUser(_claims): AuthUser) -> Result<Json<serde_json::Value>, ApiError> {
+    Err(crate::error::err_coded(StatusCode::NOT_IMPLEMENTED, "not implemented yet", "not_implemented"))
+}
+
+/// POST /api/databases/local/install
+pub async fn local_install(AuthUser(_claims): AuthUser) -> Result<Json<serde_json::Value>, ApiError> {
+    Err(crate::error::err_coded(StatusCode::NOT_IMPLEMENTED, "not implemented yet", "not_implemented"))
+}
+
+/// PUT /api/databases/local/config
+pub async fn local_set_config(AuthUser(_claims): AuthUser) -> Result<Json<serde_json::Value>, ApiError> {
+    Err(crate::error::err_coded(StatusCode::NOT_IMPLEMENTED, "not implemented yet", "not_implemented"))
+}
+// --- end import-hestia (05) ---
+
 #[cfg(test)]
 mod tests {
     use super::is_reserved_db_name;

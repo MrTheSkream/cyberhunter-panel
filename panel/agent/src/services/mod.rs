@@ -45,3 +45,11 @@ pub mod volume_backup;
 pub mod waf;
 pub mod wordpress;
 pub mod wp_vulnerability;
+// --- import-hestia (05) ---
+pub mod hestia; // W1
+pub mod migration_files; // W1
+pub mod migration_jobs; // W1
+pub mod local_mariadb; // W2
+pub mod vhost_extras; // W3
+pub mod hestia_mail; // W4
+// --- end import-hestia (05) ---

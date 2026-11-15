@@ -91,4 +91,16 @@ pub fn router() -> Router<AppState> {
         .route("/sftp/sites/{domain}/enable", post(enable))
         .route("/sftp/sites/{domain}/disable", post(disable))
         .route("/sftp/sites/{domain}/password", post(set_password))
+        // --- import-hestia (05) ---
+        .route("/sftp/sites/{domain}/password-hash", post(set_password_hash))
+        // --- end import-hestia (05) ---
 }
+
+// --- import-hestia (05) ---
+// STUB(W4): step-0 skeleton (501); W4 replaces it (contract W4-S).
+
+/// POST /sftp/sites/{domain}/password-hash
+async fn set_password_hash() -> ApiErr {
+    super::not_implemented()
+}
+// --- end import-hestia (05) ---

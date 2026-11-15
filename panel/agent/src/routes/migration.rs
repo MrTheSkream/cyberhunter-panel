@@ -1,7 +1,7 @@
 use axum::{
     extract::State,
     http::StatusCode,
-    routing::post,
+    routing::{get, post},
     Json, Router,
 };
 
@@ -15,7 +15,25 @@ pub fn router() -> Router<AppState> {
         .route("/migration/import-site", post(import_site))
         .route("/migration/import-database", post(import_database))
         .route("/migration/cleanup", post(cleanup))
+        // --- import-hestia (05) ---
+        .route("/migration/jobs/{job_id}", get(job_status))
+        .route("/migration/hestia/import-ssl", post(hestia_import_ssl))
+        // --- end import-hestia (05) ---
 }
+
+// --- import-hestia (05) ---
+// STEP 0 SKELETON (owner: W1): 501 until W1 implements W1-J / W1-C.
+
+/// GET /migration/jobs/{job_id} - state of an import job (W1-J).
+async fn job_status() -> (StatusCode, Json<serde_json::Value>) {
+    crate::routes::not_implemented()
+}
+
+/// POST /migration/hestia/import-ssl - install a Hestia certificate (W1-C).
+async fn hestia_import_ssl() -> (StatusCode, Json<serde_json::Value>) {
+    crate::routes::not_implemented()
+}
+// --- end import-hestia (05) ---
 
 /// POST /migration/fetch - download a backup archive from a URL into the
 /// `/var/backups/dockpanel/` tree `analyze` already trusts, so an operator no
