@@ -443,7 +443,9 @@ export default function Mail() {
       const body: Record<string, unknown> = {};
       if (editPassword) body.password = editPassword;
       if (editQuota) body.quota_mb = parseInt(editQuota);
-      body.forward_to = editForward || null;
+      // "" clears the forward on the backend (null would leave it in place
+      // while keep_copy goes false, silently dropping local delivery).
+      body.forward_to = editForward.trim();
       body.keep_copy = editForward ? editKeepCopy : false;
       body.autoresponder_enabled = editAutoEnabled;
       if (editAutoSubject) body.autoresponder_subject = editAutoSubject;

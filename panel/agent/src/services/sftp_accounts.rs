@@ -709,7 +709,7 @@ mod tests {
 
     #[test]
     fn hestia_ftp_names_are_valid_custom_usernames() {
-        for ok in ["adm-jim_x", "adm-jim_101jeux", "_svc", "a", "a.b-c_d9"] {
+        for ok in ["adm-x_site", "adm-x_site1", "_svc", "a", "a.b-c_d9"] {
             assert!(is_valid_custom_username(ok), "{ok}");
         }
         let long = "a".repeat(33);

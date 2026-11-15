@@ -193,8 +193,12 @@ async fn mark_ours(ctx: &ImportCtx, kind: &str, key: &str) {
     }
 }
 
+/// A sub-item that already reached a final state is not redone unless forced:
+/// rewriting a `warning` mailbox would revert the password / `enabled` the
+/// operator set as the warning asked; re-extracting a maildir would bring
+/// back deleted messages. `skipped` counts too (the loop may store ours).
 fn done_and_not_forced(ctx: &ImportCtx, status: &Option<String>) -> bool {
-    !ctx.force && status.as_deref() == Some("done")
+    !ctx.force && matches!(status.as_deref(), Some("done") | Some("warning") | Some("skipped"))
 }
 
 fn progress(ctx: &ImportCtx, label: &str, state: &str, msg: Option<String>) {
@@ -288,6 +292,9 @@ pub async fn import_mail_domain(ctx: &ImportCtx, domain: &str) -> Vec<(String, I
                 ),
             )];
         }
+        // Ours from an earlier attempt: settings the operator may have changed
+        // since (catch-all, selector) are only rewritten on a forced re-import.
+        Some((id,)) if !ctx.force => id,
         Some((id,)) => {
             let _ = sqlx::query(
                 "UPDATE mail_domains SET dkim_selector = $1, catch_all = $2, updated_at = NOW() WHERE id = $3",

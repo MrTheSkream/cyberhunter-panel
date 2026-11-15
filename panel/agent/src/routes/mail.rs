@@ -347,7 +347,8 @@ async fn hestia_import_maildir(
     }
     crate::services::migration::staging_dir(&body.migration_id)
         .map_err(|e| err(StatusCode::BAD_REQUEST, &e))?;
-    let key = format!("{account}@{domain}");
+    // W1 convention: job keys are `<migration_id>:<item>`.
+    let key = format!("{}:maildir:{account}@{domain}", body.migration_id);
     let migration_id = body.migration_id.clone();
     let job_id = crate::services::migration_jobs::spawn("maildir", &key, move |job| async move {
         import_maildir_job(job, migration_id, domain, account).await
@@ -368,8 +369,8 @@ async fn extract_account(
     let mut src = reader.stdout.take().ok_or("member reader has no stdout")?;
     let mut tar = safe_command("tar")
         .args([
-            "-x", "--no-same-owner", "--keep-newer-files", "--strip-components=1",
-            "-C", dest, "--", account,
+            "-x", "--no-same-owner", "--keep-newer-files", "--warning=no-ignore-newer",
+            "--strip-components=1", "-C", dest, "--", account,
         ])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
@@ -378,6 +379,23 @@ async fn extract_account(
         .spawn()
         .map_err(|e| format!("tar failed to start: {e}"))?;
     let mut sink = tar.stdin.take().ok_or("tar has no stdin")?;
+    // Drained concurrently (tail kept): a full stderr pipe would stop tar
+    // reading its stdin and hang the copy.
+    let mut tar_err = tar.stderr.take().ok_or("tar has no stderr")?;
+    let err_tail = tokio::spawn(async move {
+        let mut tail: Vec<u8> = Vec::new();
+        let mut chunk = vec![0u8; 8192];
+        while let Ok(n) = tar_err.read(&mut chunk).await {
+            if n == 0 {
+                break;
+            }
+            tail.extend_from_slice(&chunk[..n]);
+            if tail.len() > 4096 {
+                tail.drain(..tail.len() - 4096);
+            }
+        }
+        String::from_utf8_lossy(&tail).to_string()
+    });
     let mut buf = vec![0u8; 256 * 1024];
     let mut done: u64 = 0;
     let mut last = std::time::Instant::now();
@@ -396,11 +414,14 @@ async fn extract_account(
         }
     }
     drop(sink);
-    let out = tar.wait_with_output().await.map_err(|e| format!("tar failed: {e}"))?;
+    // Closing our end lets a reader still writing (tar quit early) exit.
+    drop(src);
+    let status = tar.wait().await.map_err(|e| format!("tar failed: {e}"))?;
+    let stderr = err_tail.await.unwrap_or_default();
     let reader_ok = reader.wait().await.map(|s| s.success()).unwrap_or(false);
-    if !out.status.success() {
-        let e = String::from_utf8_lossy(&out.stderr);
-        return Err(format!("tar failed for {member}: {}", e.trim().chars().take(400).collect::<String>()));
+    if !status.success() {
+        let tail: String = stderr.trim().chars().rev().take(400).collect::<Vec<_>>().into_iter().rev().collect();
+        return Err(format!("tar failed for {member}: {tail}"));
     }
     if !reader_ok {
         return Err(format!("could not read {member} from the backup"));

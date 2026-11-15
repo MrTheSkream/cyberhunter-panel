@@ -285,11 +285,33 @@ fn read_small(path: &Path) -> Option<String> {
     std::fs::read_to_string(path).ok()
 }
 
+/// `root` of `<staging>/meta.json` joined onto the staging: where the small
+/// files sit at their member paths (`""` in lazy mode, `data[/x]` in full).
+/// Mirrors W1's `migration::archive_root`, which replaces it at integration.
+pub fn archive_root(migration_id: &str) -> Result<std::path::PathBuf, String> {
+    let staging = crate::services::migration::staging_dir(migration_id)?;
+    let root = std::fs::read_to_string(staging.join("meta.json"))
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .and_then(|v| v.get("root").and_then(|r| r.as_str()).map(str::to_string))
+        .unwrap_or_default();
+    Ok(join_root(&staging, &root))
+}
+
+/// Pure part of [`archive_root`]: an unsafe `root` is ignored.
+pub fn join_root(staging: &Path, root: &str) -> std::path::PathBuf {
+    let r = root.trim().trim_start_matches("./").trim_matches('/');
+    if r.is_empty() || r.split('/').any(|c| c.is_empty() || c == "." || c == "..") || r.contains('\\') {
+        staging.to_path_buf()
+    } else {
+        staging.join(r)
+    }
+}
+
 /// Read one mail domain from the migration staging. `Err` when the domain is
 /// not in the backup.
 pub fn read_domain(migration_id: &str, domain: &str) -> Result<MailSecrets, String> {
-    let staging = crate::services::migration::staging_dir(migration_id)?;
-    let base = staging.join("mail").join(domain);
+    let base = archive_root(migration_id)?.join("mail").join(domain);
     let domain_conf = read_small(&base.join("hestia").join(format!("{domain}.conf")))
         .ok_or_else(|| format!("mail domain {domain} is not in the backup"))?;
     let files = DomainFiles {
@@ -308,7 +330,7 @@ pub fn read_domain(migration_id: &str, domain: &str) -> Result<MailSecrets, Stri
 /// `full` mode the blob is on disk in the staging and is the only candidate.
 pub fn maildir_blob_candidates(migration_id: &str, domain: &str) -> Vec<String> {
     let names = [format!("mail/{domain}/accounts.tar.gz"), format!("mail/{domain}/accounts.tar.zst")];
-    if let Ok(staging) = crate::services::migration::staging_dir(migration_id) {
+    if let Ok(staging) = archive_root(migration_id) {
         let present: Vec<String> = names.iter().filter(|n| staging.join(n).is_file()).cloned().collect();
         if !present.is_empty() {
             return present;
@@ -472,6 +494,16 @@ contact@d.be:someone@else.org
         }
         assert!(is_valid_selector("mail") && is_valid_selector("dock_panel-1"));
         assert!(!is_valid_selector("a.b") && !is_valid_selector(""));
+    }
+
+    #[test]
+    fn the_archive_root_follows_meta_and_refuses_escapes() {
+        let s = Path::new("/var/lib/dockpanel/migration/x");
+        assert_eq!(join_root(s, ""), s.to_path_buf());
+        assert_eq!(join_root(s, "data"), s.join("data"));
+        assert_eq!(join_root(s, "./data/sub/"), s.join("data/sub"));
+        assert_eq!(join_root(s, "../etc"), s.to_path_buf());
+        assert_eq!(join_root(s, "data/../.."), s.to_path_buf());
     }
 
     #[test]
