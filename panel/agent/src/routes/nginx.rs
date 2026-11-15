@@ -644,13 +644,9 @@ async fn put_site_inner(
     if let Err(e) = std::fs::create_dir_all(&actual_root) {
         tracing::warn!("Failed to create document root {actual_root}: {e}");
     } else {
-        let index_path = format!("{actual_root}/index.html");
-        if !std::path::Path::new(&index_path).exists() {
-            let _ = std::fs::write(
-                &index_path,
-                crate::services::nginx::placeholder_page(&domain),
-            );
-        }
+        // Only into an empty root: this runs on every vhost write, and a
+        // site served by index.php has no index.html to protect it.
+        crate::services::nginx::write_placeholder_if_empty(std::path::Path::new(&actual_root), &domain);
     }
 
     // A parked body is not in service, so there is nothing for `nginx -t` to read

@@ -154,6 +154,8 @@ pub struct PhpRow<'a> {
     pub memory_mb: i32,
     pub max_workers: i32,
     pub max_upload_mb: i32,
+    /// The site's PHP version: 5.6 / 7.4 default `short_open_tag` to On.
+    pub php_version: Option<&'a str>,
 }
 
 impl<'a> PhpRow<'a> {
@@ -165,6 +167,7 @@ impl<'a> PhpRow<'a> {
             memory_mb: site.php_memory_mb,
             max_workers: site.php_max_workers,
             max_upload_mb: site.max_upload_mb,
+            php_version: site.php_version.as_deref(),
         }
     }
 }
@@ -365,7 +368,10 @@ pub fn is_legacy(settings: &Value) -> bool {
 /// site's own `php_memory_mb` is its value, not its default. Upload follows
 /// the nginx limit `max_upload_mb` (not clamped to the 2048 form bound -
 /// bounds apply to overrides only, and `update_limits` allows up to 10240).
-pub fn defaults(max_upload_mb: i32) -> BTreeMap<String, String> {
+/// `short_open_tag` defaults to On on the legacy versions (5.6 / 7.4): the
+/// sites they host were written for `<?` tags, and with it Off such a file is
+/// a parse error. A stored override still wins.
+pub fn defaults(max_upload_mb: i32, php_version: Option<&str>) -> BTreeMap<String, String> {
     let upload = i64::from(max_upload_mb.max(1));
     let mut d = BTreeMap::new();
     d.insert("memory_limit".into(), format!("{COLUMN_DEFAULT_MEMORY_MB}M"));
@@ -377,7 +383,8 @@ pub fn defaults(max_upload_mb: i32) -> BTreeMap<String, String> {
     d.insert("display_errors".into(), "Off".into());
     d.insert("error_reporting".into(), ERROR_REPORTING_PRODUCTION.into());
     d.insert("date.timezone".into(), DEFAULT_TIMEZONE.into());
-    d.insert("short_open_tag".into(), "Off".into());
+    let legacy_version = php_version.is_some_and(|v| crate::routes::sites::LEGACY_PHP_VERSIONS.contains(&v));
+    d.insert("short_open_tag".into(), if legacy_version { "On" } else { "Off" }.into());
     d.insert("allow_url_fopen".into(), "On".into());
     d.insert("session.gc_maxlifetime".into(), "1440".into());
     d
@@ -393,7 +400,7 @@ pub fn defaults(max_upload_mb: i32) -> BTreeMap<String, String> {
 pub fn effective_values(row: &PhpRow) -> BTreeMap<String, String> {
     let stored = stored_values(row.settings);
     let legacy = is_legacy(row.settings);
-    let mut eff = if legacy { BTreeMap::new() } else { defaults(row.max_upload_mb) };
+    let mut eff = if legacy { BTreeMap::new() } else { defaults(row.max_upload_mb, row.php_version) };
     for (k, v) in &stored {
         eff.insert(k.clone(), v.clone());
     }
@@ -574,7 +581,7 @@ pub fn response_json(site: &Site, can_admin: bool) -> Value {
     let legacy = is_legacy(row.settings);
     // Legacy: resetting a key re-inherits php.ini, so no code default is
     // claimed for anything but memory_limit (column default).
-    let mut defs = defaults(row.max_upload_mb);
+    let mut defs = defaults(row.max_upload_mb, row.php_version);
     if legacy {
         defs.retain(|k, _| k == "memory_limit");
     }
@@ -864,6 +871,7 @@ pub async fn put_site_php_settings(
         memory_mb: applied.memory_mb,
         max_workers: applied.max_workers,
         max_upload_mb: site.max_upload_mb,
+        php_version: site.php_version.as_deref(),
     })
     .unwrap_or(site.max_upload_mb);
     let agent = crate::helpers::agent_for_site_server(&state, site.server_id, &site.domain).await?;
@@ -1013,7 +1021,7 @@ mod tests {
     use super::*;
 
     fn row(settings: &Value) -> PhpRow<'_> {
-        PhpRow { settings, isolation: true, disable_shell: true, memory_mb: 256, max_workers: 5, max_upload_mb: 64 }
+        PhpRow { settings, isolation: true, disable_shell: true, memory_mb: 256, max_workers: 5, max_upload_mb: 64, php_version: Some("8.3") }
     }
 
     fn obj(v: Value) -> Map<String, Value> {
@@ -1067,6 +1075,27 @@ mod tests {
         assert_eq!(p["idle_timeout_s"], 10);
         assert_eq!(p["request_terminate_timeout_s"], 90);
         assert_eq!(p["extra"], json!([]));
+    }
+
+    #[test]
+    fn legacy_php_versions_default_short_open_tag_on() {
+        let s = json!({});
+        for v in ["5.6", "7.4"] {
+            let mut r = row(&s);
+            r.php_version = Some(v);
+            assert_eq!(php_pool_json(&r)["values"]["short_open_tag"], "On", "{v}");
+            assert_eq!(defaults(64, Some(v))["short_open_tag"], "On");
+            // A stored override still wins.
+            let off = json!({"values": {"short_open_tag": "Off"}});
+            let mut r = row(&off);
+            r.php_version = Some(v);
+            assert_eq!(php_pool_json(&r)["values"]["short_open_tag"], "Off", "{v}");
+        }
+        for v in [Some("8.1"), Some("8.3"), Some("8.5"), None] {
+            let mut r = row(&s);
+            r.php_version = v;
+            assert_eq!(php_pool_json(&r)["values"]["short_open_tag"], "Off", "{v:?}");
+        }
     }
 
     #[test]

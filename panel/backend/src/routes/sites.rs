@@ -4269,11 +4269,9 @@ pub async fn enable_sftp(
 
     let agent = crate::helpers::agent_for_site_server(&state, site.server_id, &site.domain).await?;
 
-    let (allocated,): (i32,) = sqlx::query_as("SELECT nextval('sftp_id_seq')::int")
-        .fetch_one(&state.db)
+    let (uid, gid) = reserve_sftp_ids(&state.db, &site)
         .await
         .map_err(|e| internal_error("allocate sftp uid", e))?;
-    let (uid, gid) = (allocated, allocated);
 
     let mut enable_body = serde_json::json!({ "uid": uid, "gid": gid });
     if let Some(ref name) = requested {
@@ -4294,6 +4292,8 @@ pub async fn enable_sftp(
         }
         e => agent_error("SFTP enable", e),
     })?;
+    // A resumed own leftover may live under another uid than the one asked.
+    let (uid, gid) = sftp_ids_from_agent(&enabled, uid, gid);
 
     // Store the custom name ONLY when the agent says it created that account.
     // An agent that predates custom names ignores the field and creates
@@ -4357,6 +4357,40 @@ pub async fn enable_sftp(
         out["warning"] = serde_json::json!(w);
     }
     Ok(Json(out))
+}
+
+/// The uid/gid `site`'s SFTP account is created under: the ones already on
+/// the row (an earlier enable attempt, or a disabled account), else a fresh
+/// `nextval('sftp_id_seq')` RECORDED ON THE ROW BEFORE the agent is called
+/// (`sftp_enabled` stays false). A retry after a failed enable therefore asks
+/// for the very same uid, which is what lets the agent recognise its own
+/// leftover and resume it instead of creating a second account. The
+/// `COALESCE` keeps a concurrent reservation's ids (one sequence value lost
+/// at worst, never two uids for one site).
+pub(crate) async fn reserve_sftp_ids(db: &sqlx::PgPool, site: &Site) -> Result<(i32, i32), sqlx::Error> {
+    if let (Some(uid), Some(gid)) = (site.sftp_uid, site.sftp_gid) {
+        return Ok((uid, gid));
+    }
+    let (allocated,): (i32,) = sqlx::query_as("SELECT nextval('sftp_id_seq')::int").fetch_one(db).await?;
+    sqlx::query_as(
+        "UPDATE sites SET sftp_uid = COALESCE(sftp_uid, $1), sftp_gid = COALESCE(sftp_gid, sftp_uid, $1), \
+         updated_at = NOW() WHERE id = $2 RETURNING sftp_uid, sftp_gid",
+    )
+    .bind(allocated)
+    .bind(site.id)
+    .fetch_one(db)
+    .await
+}
+
+/// The uid/gid the agent says the account lives under (a resumed leftover
+/// keeps its own); an agent that predates the fields answers neither, and
+/// the requested ones stand.
+pub(crate) fn sftp_ids_from_agent(enabled: &serde_json::Value, uid: i32, gid: i32) -> (i32, i32) {
+    let field = |k: &str| enabled.get(k).and_then(|v| v.as_i64()).and_then(|v| i32::try_from(v).ok());
+    match (field("uid"), field("gid")) {
+        (Some(u), Some(g)) => (u, g),
+        _ => (uid, gid),
+    }
 }
 
 /// POST /api/sites/{id}/sftp/disable - Tear down a site's SFTP account and

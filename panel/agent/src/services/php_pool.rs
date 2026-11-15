@@ -271,6 +271,20 @@ pub fn open_basedir_value(domain: &str) -> String {
     format!("/var/www/{domain}/:/tmp/:/usr/share/php/")
 }
 
+/// Short open tags for the legacy versions (D2). Sites imported on 5.6 / 7.4
+/// were written for hosts where `short_open_tag` was On; with it Off a `<?`
+/// block is plain text and the file ends in "Parse error: unexpected end of
+/// file". Pools of those versions therefore get it On, locked like the plan
+/// caps - unless the pool sets `short_open_tag` itself (`values` or `extra`),
+/// which wins. 8.x pools never get this line.
+pub const LEGACY_SHORT_OPEN_TAG_LINE: &str = "php_admin_value[short_open_tag] = On\n";
+
+fn legacy_short_open_tag_line(php_version: &str, pool: &PhpPool) -> Option<&'static str> {
+    let explicit = pool.values.contains_key("short_open_tag")
+        || pool.extra.iter().any(|(k, _)| k == "short_open_tag");
+    (is_legacy(php_version) && !explicit).then_some(LEGACY_SHORT_OPEN_TAG_LINE)
+}
+
 /// Render the pool file. Pure: the caller validates first.
 ///
 /// EVERY pool gets `open_basedir`, whatever its user and the `isolation` flag:
@@ -341,6 +355,9 @@ pub fn render_php_pool(
             "php_admin_value[open_basedir] = {}\n",
             open_basedir_value(domain)
         ));
+    }
+    if let Some(line) = legacy_short_open_tag_line(php_version, pool) {
+        out.push_str(line);
     }
     if pool.isolation {
         let site = format!("/var/www/{domain}");
@@ -1160,6 +1177,35 @@ php_admin_flag[log_errors] = on
         for v in ["5.6", "7.4"] {
             let out = render_php_pool("example.com", v, &a1(), "www-data", "www-data");
             assert_eq!(out, A1_RENDERED.replace("php8.3-fpm", &format!("php{v}-fpm")), "{v}");
+        }
+    }
+
+    #[test]
+    fn legacy_versions_get_short_open_tag_unless_the_pool_sets_it() {
+        let mut p = a1();
+        p.values.remove("short_open_tag");
+        let line = "php_admin_value[short_open_tag] = On\n";
+        for v in LEGACY_PHP_VERSIONS {
+            let out = render_php_pool("example.com", v, &p, "www-data", "www-data");
+            assert_eq!(out.matches("short_open_tag").count(), 1, "{v}: {out}");
+            assert!(out.contains(&format!("/usr/share/php/\n{line}")), "{v}: {out}");
+        }
+        // 8.x: never, and the rendering is the pinned one minus the Off line.
+        for &v in PHP_VERSIONS.iter().filter(|v| !is_legacy(v)) {
+            let out = render_php_pool("example.com", v, &p, "www-data", "www-data");
+            assert!(!out.contains("short_open_tag"), "{v}: {out}");
+        }
+        assert_eq!(render(&p), A1_RENDERED.replace("php_value[short_open_tag] = Off\n", ""));
+        // An explicit value (values or extra) wins: one line, theirs.
+        for v in LEGACY_PHP_VERSIONS {
+            let out = render_php_pool("example.com", v, &a1(), "www-data", "www-data");
+            assert_eq!(out.matches("short_open_tag").count(), 1, "{v}");
+            assert!(out.contains("php_value[short_open_tag] = Off\n") && !out.contains(line));
+            let mut q = p.clone();
+            q.extra.push(("short_open_tag".into(), "Off".into()));
+            let out = render_php_pool("example.com", v, &q, "www-data", "www-data");
+            assert_eq!(out.matches("short_open_tag").count(), 1, "{v}");
+            assert!(!out.contains(line));
         }
     }
 

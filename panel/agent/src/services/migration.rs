@@ -8,7 +8,7 @@ use crate::safe_cmd::safe_command;
 use crate::services::hestia;
 use crate::services::migration_files::{
     compute_disk, free_bytes, index_tar, is_metadata_member, is_unsafe_name, looks_like_tar, normalize_name,
-    parse_header, place_dir, remove_import_dirs, rewrite_root_files, scan_domain_data, site_space_needed, fix_walk,
+    parse_header, place_dir, ensure_hestia_compat_link, remove_import_dirs, rewrite_root_files, scan_domain_data, site_space_needed, fix_walk,
     DiskReport, EntryKind, IndexEntry, SiteScan, GIB,
 };
 use crate::services::migration_jobs::JobHandle;
@@ -1597,7 +1597,7 @@ pub async fn import_site_files(
     }
     let src = other_panel_source(migration_id, source_dir).await?;
     let dest = crate::services::nginx::document_root_for(&format!("/var/www/{domain}"), runtime);
-    rsync_other_panel(&src, Path::new(&dest), false).await?;
+    rsync_other_panel(&src, Path::new(&dest), false, domain).await?;
     Ok(format!("Copied files to {dest}"))
 }
 
@@ -1613,11 +1613,12 @@ async fn other_panel_source(migration_id: &str, source_dir: &str) -> Result<Path
     Ok(source)
 }
 
-async fn rsync_other_panel(src: &Path, dest: &Path, force: bool) -> Result<(), String> {
+async fn rsync_other_panel(src: &Path, dest: &Path, force: bool, domain: &str) -> Result<(), String> {
     std::fs::create_dir_all(dest).map_err(|e| format!("Failed to create {}: {e}", dest.display()))?;
-    let idx = dest.join("index.html");
-    if crate::services::nginx::is_placeholder_page(&idx) && !src.join("index.html").exists() {
-        let _ = std::fs::remove_file(&idx);
+    // Only the panel's exact filler goes, and only when the copied tree has
+    // no index.html of its own (it would outrank the site's index.php).
+    if crate::services::nginx::placeholder_to_drop(dest, src, domain) {
+        let _ = std::fs::remove_file(dest.join("index.html"));
     }
     let mut cmd = safe_command("rsync");
     cmd.arg("-a");
@@ -1716,7 +1717,7 @@ pub fn start_import_site(
             job.progress("place", 0, 0, "copying files");
             let src = other_panel_source(&id, &source_dir).await?;
             let dest = crate::services::nginx::document_root_for(&format!("/var/www/{domain}"), &runtime);
-            rsync_other_panel(&src, Path::new(&dest), force).await?;
+            rsync_other_panel(&src, Path::new(&dest), force, &domain).await?;
             let bytes = tokio::task::spawn_blocking({
                 let dest = PathBuf::from(&dest);
                 move || walk_tree(&dest).iter().map(|e| e.size).sum::<u64>()
@@ -1808,7 +1809,7 @@ async fn import_hestia_site_inner(
     let doc_excludes: Vec<&str> = if doc_root == site_dir { vec!["/.import-*", "/private"] } else { vec![] };
     match doc_used {
         Some(d) => {
-            place_dir(&work.join(d), &doc_root, force, &doc_excludes).await?;
+            place_dir(&work.join(d), &doc_root, force, &doc_excludes, domain).await?;
         }
         None => {
             std::fs::create_dir_all(&doc_root).map_err(|e| format!("could not create {}: {e}", doc_root.display()))?;
@@ -1816,7 +1817,7 @@ async fn import_hestia_site_inner(
     }
     let private_copied = work.join("private").is_dir();
     if private_copied {
-        place_dir(&work.join("private"), &private, force, &["/.hestia-import"]).await?;
+        place_dir(&work.join("private"), &private, force, &["/.hestia-import"], domain).await?;
     }
 
     // Custom nginx template (D7): saved out of the web root, never translated.
@@ -1853,6 +1854,9 @@ async fn import_hestia_site_inner(
     if private.is_dir() {
         chown_site_tree(&private).await;
     }
+    // HestiaCP's web root is `public_html`, ours `public`: code that builds
+    // `/var/www/<d>/public_html/...` itself still finds its files.
+    let compat_symlink = ensure_hestia_compat_link(site_dir, &doc_root);
     let fix = tokio::task::spawn_blocking({
         let (s, d, p, u) = (site_dir.to_path_buf(), doc_root.clone(), private.clone(), user.clone());
         move || fix_walk(&s, &d, &p, &u)
@@ -1874,6 +1878,7 @@ async fn import_hestia_site_inner(
         "symlinks_out": fix.symlinks_out,
         "upload_php_files": fix.upload_php_files,
         "custom_nginx_saved": custom_saved,
+        "compat_symlink": compat_symlink,
         "warnings": job.warnings(),
     }))
 }
@@ -2339,6 +2344,11 @@ mod tests {
         assert_eq!(report["private_copied"], true);
         assert_eq!(report["upload_php_files"], 1);
         assert!(report["paths_to_fix"].as_array().unwrap().iter().any(|p| p["file"] == "wp-config.php"));
+        // HestiaCP layout link, and no panel filler in front of index.php.
+        assert_eq!(std::fs::read_link(site_dir.join("public_html")).unwrap(), Path::new("public"));
+        assert!(site_dir.join("public_html/index.php").exists());
+        assert_eq!(report["compat_symlink"], format!("/var/www/{d}/public_html -> public"));
+        assert!(!site_dir.join("public/index.html").exists());
         assert!(
             !std::fs::read_dir(&site_dir).unwrap().flatten().any(|e| e.file_name().to_string_lossy().starts_with(".import-")),
             "work dir removed"

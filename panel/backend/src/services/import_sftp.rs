@@ -66,6 +66,17 @@ fn agent_code(e: &AgentError) -> Option<(u16, String)> {
     }
 }
 
+/// Did the agent refuse the requested NAME (409 `username_taken` / 400
+/// `invalid_username`)? Anything else - a provisioning failure - is not a
+/// reason to try another name.
+fn name_refused(e: &AgentError) -> bool {
+    match agent_code(e) {
+        Some((409, c)) => c.is_empty() || c == "username_taken",
+        Some((400, c)) => c.is_empty() || c == "invalid_username",
+        _ => false,
+    }
+}
+
 pub async fn import_sftp(ctx: &ImportCtx, site_id: Uuid, domain: &str) -> ItemOutcome {
     let site: crate::models::Site = match sqlx::query_as("SELECT * FROM sites WHERE id = $1")
         .bind(site_id)
@@ -109,8 +120,11 @@ pub async fn import_sftp(ctx: &ImportCtx, site_id: Uuid, domain: &str) -> ItemOu
         warnings.push(format!("FTP user name {hestia_user} cannot be an SFTP name, sftp<uid> used"));
         None
     } else {
-        let taken: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM sites WHERE sftp_username = $1)")
+        let taken: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM sites WHERE sftp_username = $1 AND id <> $2)",
+        )
             .bind(&wanted)
+            .bind(site_id)
             .fetch_one(&ctx.db)
             .await
             .unwrap_or(true);
@@ -122,27 +136,35 @@ pub async fn import_sftp(ctx: &ImportCtx, site_id: Uuid, domain: &str) -> ItemOu
         }
     };
 
-    let uid: i32 = match sqlx::query_scalar("SELECT nextval('sftp_id_seq')::int").fetch_one(&ctx.db).await {
-        Ok(u) => u,
+    // The same uid/gid as this site's previous attempt (recorded on the row
+    // before the agent call): a retry then asks the agent for the very
+    // account it may have left behind, which it resumes instead of refusing.
+    let (uid, gid) = match crate::routes::sites::reserve_sftp_ids(&ctx.db, &site).await {
+        Ok(ids) => ids,
         Err(e) => return ItemOutcome::failed(format!("could not allocate an SFTP uid: {e}")),
     };
-    let gid = uid;
     let path = format!("/sftp/sites/{domain}/enable");
     let mut r = ctx
         .agent
         .post(&path, Some(json!({ "uid": uid, "gid": gid, "username": custom })))
         .await;
-    if let (Err(e), Some(name)) = (&r, &custom) {
-        if matches!(agent_code(e), Some((409, _)) | Some((400, _))) {
-            warnings.push(format!("SFTP name {name} refused by the server ({e}), sftp<uid> used"));
-            custom = None;
-            r = ctx.agent.post(&path, Some(json!({ "uid": uid, "gid": gid }))).await;
-        }
+    // Fall back to `sftp<uid>` only on a genuine refusal of the NAME (decided
+    // by the agent before it creates anything): another site's or a system
+    // account (409), or a name this server rejects (400). Our own leftover
+    // is resumed by the agent and never answers 409. The fallback keeps the
+    // same uid, so it can never add a second account beside a first one.
+    if let (Err(e), Some(name)) = (&r, &custom)
+        && name_refused(e)
+    {
+        warnings.push(format!("SFTP name {name} refused by the server ({e}), sftp<uid> used"));
+        custom = None;
+        r = ctx.agent.post(&path, Some(json!({ "uid": uid, "gid": gid }))).await;
     }
     let enabled = match r {
         Ok(v) => v,
         Err(e) => return ItemOutcome::failed(format!("SFTP enable failed: {e}")),
     };
+    let (uid, gid) = crate::routes::sites::sftp_ids_from_agent(&enabled, uid, gid);
     // Keep the custom name ONLY when the agent says it created that account
     // (same rule as `enable_sftp`): an agent that ignores the field creates
     // `sftp<uid>`, and the PHP pool must not be handed to a missing user.
@@ -227,6 +249,26 @@ mod tests {
         assert!(!is_valid_sftp_username("sftp12") && !is_valid_sftp_username("sftpg3"));
         assert!(is_valid_sftp_username("sftpuser") && is_valid_sftp_username("sftp"));
         assert!(!is_valid_sftp_username("root") && !is_valid_sftp_username("www-data"));
+    }
+
+    #[test]
+    fn only_a_refused_name_falls_back_to_the_default() {
+        let st = |c: u16, b: &str| AgentError::Status(c, b.to_string());
+        assert!(name_refused(&st(409, r#"{"error":"x","code":"username_taken"}"#)));
+        assert!(name_refused(&st(400, r#"{"error":"x","code":"invalid_username"}"#)));
+        assert!(name_refused(&st(409, "not json")), "an older agent without codes");
+        // A provisioning failure (rolled back by the agent) is retried as is,
+        // never with another name: that is how a second account appeared.
+        assert!(!name_refused(&st(500, r#"{"error":"sshd reload failed"}"#)));
+        assert!(!name_refused(&st(409, r#"{"error":"x","code":"not_owner"}"#)));
+    }
+
+    #[test]
+    fn the_agents_uid_wins_over_the_requested_one() {
+        use crate::routes::sites::sftp_ids_from_agent;
+        assert_eq!(sftp_ids_from_agent(&json!({ "ok": true, "uid": 30000, "gid": 30000 }), 30008, 30008), (30000, 30000));
+        assert_eq!(sftp_ids_from_agent(&json!({ "ok": true, "username": "sftp30008" }), 30008, 30008), (30008, 30008));
+        assert_eq!(sftp_ids_from_agent(&json!({ "uid": "x", "gid": 1 }), 7, 7), (7, 7));
     }
 
     #[test]

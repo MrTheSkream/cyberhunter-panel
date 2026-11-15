@@ -736,16 +736,16 @@ pub async fn scan_domain_data<R: AsyncRead + Unpin>(
 // Placement and fix (import-site phases)
 // ---------------------------------------------------------------------------
 
-/// Empty, or holding only the panel's own placeholder `index.html`.
-pub fn is_effectively_empty(dir: &Path) -> bool {
+/// Empty, or holding only the panel's own placeholder `index.html` for
+/// `domain` (byte-identical to what the panel wrote).
+pub fn is_effectively_empty(dir: &Path, domain: &str) -> bool {
     let Ok(rd) = std::fs::read_dir(dir) else { return true };
     let entries: Vec<_> = rd.flatten().collect();
     match entries.as_slice() {
         [] => true,
         [only] => {
             only.file_name() == "index.html"
-                && only.file_type().map(|t| t.is_file()).unwrap_or(false)
-                && crate::services::nginx::is_placeholder_page(&only.path())
+                && crate::services::nginx::is_exact_placeholder_page(&only.path(), domain)
         }
         _ => false,
     }
@@ -753,9 +753,11 @@ pub fn is_effectively_empty(dir: &Path) -> bool {
 
 /// Moves `src` to `dest` by rename when `dest` is absent or effectively empty
 /// (same filesystem, no double occupation); otherwise `rsync -a` (`--delete`
-/// when `force`) and removes `src`. Returns `"rename"` or `"rsync"`.
-pub async fn place_dir(src: &Path, dest: &Path, force: bool, excludes: &[&str]) -> Result<&'static str, String> {
-    if is_effectively_empty(dest) {
+/// when `force`) and removes `src`. Returns `"rename"` or `"rsync"`. Either
+/// way the panel's placeholder for `domain` does not survive in `dest` unless
+/// `src` brings an `index.html` of its own.
+pub async fn place_dir(src: &Path, dest: &Path, force: bool, excludes: &[&str], domain: &str) -> Result<&'static str, String> {
+    if is_effectively_empty(dest, domain) {
         if dest.exists() {
             std::fs::remove_dir_all(dest).map_err(|e| format!("could not clear {}: {e}", dest.display()))?;
         }
@@ -768,9 +770,8 @@ pub async fn place_dir(src: &Path, dest: &Path, force: bool, excludes: &[&str]) 
         std::fs::create_dir_all(dest).map_err(|e| format!("could not create {}: {e}", dest.display()))?;
     } else {
         // An operator's file named index.html is kept; only ours goes.
-        let idx = dest.join("index.html");
-        if crate::services::nginx::is_placeholder_page(&idx) {
-            let _ = std::fs::remove_file(&idx);
+        if crate::services::nginx::placeholder_to_drop(dest, src, domain) {
+            let _ = std::fs::remove_file(dest.join("index.html"));
         }
     }
     let mut cmd = crate::safe_cmd::safe_command("rsync");
@@ -792,6 +793,38 @@ pub async fn place_dir(src: &Path, dest: &Path, force: bool, excludes: &[&str]) 
     }
     let _ = std::fs::remove_dir_all(src);
     Ok("rsync")
+}
+
+/// Name and (relative) target of the HestiaCP layout link.
+pub const HESTIA_COMPAT_LINK: &str = "public_html";
+pub const HESTIA_COMPAT_TARGET: &str = "public";
+
+/// HestiaCP layout compatibility: `<site_dir>/public_html -> public`, so code
+/// that builds `.../<d>/public_html/...` from `__DIR__` (a theme loader in
+/// `private/`, a cache path) still lands in the web root. Relative target, so
+/// a site rename (one `rename(2)` of the site dir) keeps it valid; it lives
+/// beside the web root, never inside it, so no vhost serves it, and its
+/// realpath is inside `open_basedir`. Owned like the web root (`lchown`, the
+/// link itself). Created only when `doc_root` is `<site_dir>/public` and no
+/// `public_html` entry exists (a dangling link counts as existing: an entry
+/// we did not write is never replaced). Returns the link description when the
+/// link is in place (created now or by an earlier run), `None` otherwise.
+pub fn ensure_hestia_compat_link(site_dir: &Path, doc_root: &Path) -> Option<String> {
+    if doc_root != site_dir.join(HESTIA_COMPAT_TARGET) || !doc_root.is_dir() {
+        return None;
+    }
+    let link = site_dir.join(HESTIA_COMPAT_LINK);
+    let describe = || Some(format!("{} -> {HESTIA_COMPAT_TARGET}", link.display()));
+    if std::fs::symlink_metadata(&link).is_ok() {
+        let ours = std::fs::read_link(&link).is_ok_and(|t| t == Path::new(HESTIA_COMPAT_TARGET));
+        return if ours { describe() } else { None };
+    }
+    std::os::unix::fs::symlink(HESTIA_COMPAT_TARGET, &link).ok()?;
+    if let Ok(meta) = std::fs::metadata(doc_root) {
+        use std::os::unix::fs::MetadataExt;
+        let _ = std::os::unix::fs::lchown(&link, Some(meta.uid()), Some(meta.gid()));
+    }
+    describe()
 }
 
 /// Lexical normalisation of `base/link` (no filesystem access).
@@ -1238,13 +1271,98 @@ mod tests {
     #[test]
     fn effectively_empty_dirs() {
         let base = std::env::temp_dir().join(format!("w1-empty-{}", uuid::Uuid::new_v4()));
-        assert!(is_effectively_empty(&base), "absent counts as empty");
+        assert!(is_effectively_empty(&base, "example.com"), "absent counts as empty");
         std::fs::create_dir_all(&base).unwrap();
-        assert!(is_effectively_empty(&base));
+        assert!(is_effectively_empty(&base, "example.com"));
         std::fs::write(base.join("index.html"), crate::services::nginx::placeholder_page("example.com")).unwrap();
-        assert!(is_effectively_empty(&base));
+        assert!(is_effectively_empty(&base, "example.com"));
+        assert!(!is_effectively_empty(&base, "other.org"), "another domain's page is not ours here");
+        // The marker sentence kept inside an edited page: the operator's now.
+        let edited = crate::services::nginx::placeholder_page("example.com").replace("<h1>", "<h1>Hi ");
+        std::fs::write(base.join("index.html"), edited).unwrap();
+        assert!(!is_effectively_empty(&base, "example.com"));
         std::fs::write(base.join("index.html"), "<h1>mine</h1>").unwrap();
-        assert!(!is_effectively_empty(&base));
+        assert!(!is_effectively_empty(&base, "example.com"));
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[tokio::test]
+    async fn rename_placement_never_keeps_the_placeholder() {
+        let base = std::env::temp_dir().join(format!("w1-place-{}", uuid::Uuid::new_v4()));
+        let (src, dest) = (base.join("src"), base.join("public"));
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::create_dir_all(&dest).unwrap();
+        std::fs::write(src.join("index.php"), "<?php echo 1;").unwrap();
+        std::fs::write(dest.join("index.html"), crate::services::nginx::placeholder_page("example.com")).unwrap();
+        assert_eq!(place_dir(&src, &dest, false, &[], "example.com").await.unwrap(), "rename");
+        assert!(dest.join("index.php").is_file());
+        assert!(!dest.join("index.html").exists(), "the filler would outrank index.php");
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn placeholder_drop_predicate() {
+        use crate::services::nginx::{placeholder_page, placeholder_to_drop};
+        let base = std::env::temp_dir().join(format!("w1-drop-{}", uuid::Uuid::new_v4()));
+        let (src, dest) = (base.join("src"), base.join("public"));
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::create_dir_all(&dest).unwrap();
+        std::fs::write(src.join("index.php"), "<?php").unwrap();
+        // No index.html at all: nothing to drop.
+        assert!(!placeholder_to_drop(&dest, &src, "example.com"));
+        std::fs::write(dest.join("index.html"), placeholder_page("example.com")).unwrap();
+        assert!(placeholder_to_drop(&dest, &src, "example.com"));
+        assert!(!placeholder_to_drop(&dest, &src, "other.org"), "generated for another domain");
+        // The imported tree brings its own index.html: it replaces ours anyway.
+        std::fs::write(src.join("index.html"), "<p>site</p>").unwrap();
+        assert!(!placeholder_to_drop(&dest, &src, "example.com"));
+        std::fs::remove_file(src.join("index.html")).unwrap();
+        // Edited by the operator (marker sentence still there): kept.
+        let edited = format!("{}\n", placeholder_page("example.com"));
+        std::fs::write(dest.join("index.html"), edited).unwrap();
+        assert!(!placeholder_to_drop(&dest, &src, "example.com"));
+        // A symlink to an identical page is not a file we wrote.
+        std::fs::remove_file(dest.join("index.html")).unwrap();
+        std::fs::write(base.join("copy.html"), placeholder_page("example.com")).unwrap();
+        std::os::unix::fs::symlink(base.join("copy.html"), dest.join("index.html")).unwrap();
+        assert!(!placeholder_to_drop(&dest, &src, "example.com"));
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn hestia_compat_link() {
+        let base = std::env::temp_dir().join(format!("w1-compat-{}", uuid::Uuid::new_v4()));
+        let site = base.join("example.com");
+        let doc = site.join("public");
+        std::fs::create_dir_all(doc.join("assets")).unwrap();
+        std::fs::write(doc.join("assets/theme.js"), "x").unwrap();
+        // Doc root that is the site dir itself (node/proxy): no link.
+        assert_eq!(ensure_hestia_compat_link(&site, &site), None);
+        let made = ensure_hestia_compat_link(&site, &doc).unwrap();
+        assert!(made.ends_with("public_html -> public"), "{made}");
+        let link = site.join("public_html");
+        assert_eq!(std::fs::read_link(&link).unwrap(), Path::new("public"));
+        assert_eq!(std::fs::read_to_string(link.join("assets/theme.js")).unwrap(), "x");
+        // Idempotent (re-import).
+        assert_eq!(ensure_hestia_compat_link(&site, &doc), Some(made));
+        // A site rename moves the dir; the relative link still resolves.
+        let renamed = base.join("example.org");
+        std::fs::rename(&site, &renamed).unwrap();
+        assert_eq!(std::fs::read_to_string(renamed.join("public_html/assets/theme.js")).unwrap(), "x");
+        std::fs::remove_file(renamed.join("public_html")).unwrap();
+        // An existing public_html we did not write is left alone.
+        std::fs::create_dir(renamed.join("public_html")).unwrap();
+        assert_eq!(ensure_hestia_compat_link(&renamed, &renamed.join("public")), None);
+        assert!(std::fs::symlink_metadata(renamed.join("public_html")).unwrap().is_dir());
+        std::fs::remove_dir(renamed.join("public_html")).unwrap();
+        std::os::unix::fs::symlink("/nowhere", renamed.join("public_html")).unwrap();
+        assert_eq!(ensure_hestia_compat_link(&renamed, &renamed.join("public")), None, "dangling link kept");
+        assert_eq!(std::fs::read_link(renamed.join("public_html")).unwrap(), Path::new("/nowhere"));
+        // Site deletion (remove_dir_all) does not follow the link into public.
+        std::fs::remove_file(renamed.join("public_html")).unwrap();
+        ensure_hestia_compat_link(&renamed, &renamed.join("public")).unwrap();
+        std::fs::remove_dir_all(&renamed).unwrap();
+        assert!(!renamed.exists());
         std::fs::remove_dir_all(&base).unwrap();
     }
 }

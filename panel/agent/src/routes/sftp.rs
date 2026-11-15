@@ -52,9 +52,16 @@ async fn enable(
     if !is_valid_domain(&domain) {
         return Err(err(StatusCode::BAD_REQUEST, "Invalid domain"));
     }
-    sftp_accounts::provision(&domain, body.uid, body.gid, body.username.as_deref())
-        .await
-        .map_err(|e| match e {
+    // Detached task: a client that gives up (backend timeout) drops this
+    // handler's future, and a provision cancelled mid-way would skip its own
+    // rollback. The spawned task always runs to completion or to its undo.
+    let task_domain = domain.clone();
+    let done = tokio::spawn(async move {
+        sftp_accounts::provision(&task_domain, body.uid, body.gid, body.username.as_deref()).await
+    })
+    .await
+    .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &format!("SFTP enable task failed: {e}")))?
+    .map_err(|e| match e {
             sftp_accounts::ProvisionError::InvalidUsername(m) => {
                 coded(StatusCode::BAD_REQUEST, &m, "invalid_username")
             }
@@ -63,9 +70,14 @@ async fn enable(
             }
             sftp_accounts::ProvisionError::Failed(m) => err(StatusCode::INTERNAL_SERVER_ERROR, &m),
         })?;
+    // The account's own uid/gid: a resumed leftover may live under another
+    // uid than the one requested, and the backend must record that one.
     Ok(Json(serde_json::json!({
         "ok": true,
-        "username": sftp_accounts::account_name(body.uid),
+        "username": done.username,
+        "uid": done.uid,
+        "gid": done.gid,
+        "resumed": done.resumed,
     })))
 }
 

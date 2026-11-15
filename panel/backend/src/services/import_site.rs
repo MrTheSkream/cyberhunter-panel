@@ -260,7 +260,7 @@ fn files_details(report: &Value) -> Value {
     let mut d = json!({});
     for k in [
         "doc_root_used", "private_copied", "files_bytes", "rewritten", "paths_to_fix", "symlinks_out",
-        "upload_php_files", "custom_nginx_saved", "warnings",
+        "upload_php_files", "custom_nginx_saved", "compat_symlink", "warnings",
     ] {
         if let Some(v) = report.get(k) {
             d[k] = v.clone();
@@ -881,6 +881,10 @@ mod tests {
         assert!(files_report_has_notes(&json!({ "symlinks_out": ["x -> /etc"] })));
         let d = files_details(&json!({ "files_bytes": 5, "unknown": "dropped" }));
         assert_eq!(d, json!({ "files_bytes": 5 }));
+        // The HestiaCP layout link is reported in the details, never as a note.
+        let link = json!({ "compat_symlink": "/var/www/x/public_html -> public", "warnings": [] });
+        assert!(!files_report_has_notes(&link));
+        assert_eq!(files_details(&link)["compat_symlink"], "/var/www/x/public_html -> public");
     }
 
     #[test]

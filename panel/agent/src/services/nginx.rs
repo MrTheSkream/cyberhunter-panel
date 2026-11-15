@@ -49,6 +49,37 @@ pub fn is_placeholder_page(path: &std::path::Path) -> bool {
         .unwrap_or(false)
 }
 
+/// Strict form of [`is_placeholder_page`] for code that DELETES the page:
+/// `path` is a regular file (not a symlink) byte-identical to
+/// [`placeholder_page`]`(domain)`. A page the operator edited, even by one
+/// byte, is theirs and stays.
+pub fn is_exact_placeholder_page(path: &std::path::Path, domain: &str) -> bool {
+    let is_file = std::fs::symlink_metadata(path).map(|m| m.file_type().is_file()).unwrap_or(false);
+    is_file
+        && std::fs::read(path)
+            .map(|body| body == placeholder_page(domain).as_bytes())
+            .unwrap_or(false)
+}
+
+/// Whether placing `incoming` (an imported tree) into `doc_root` should first
+/// drop `doc_root/index.html`: only our exact filler for `domain`, and only
+/// when the imported tree brings no `index.html` of its own. Otherwise the
+/// filler would outrank the site's `index.php` in `DirectoryIndex`/`index`.
+pub fn placeholder_to_drop(doc_root: &std::path::Path, incoming: &std::path::Path, domain: &str) -> bool {
+    let theirs = std::fs::symlink_metadata(incoming.join("index.html")).is_ok();
+    !theirs && is_exact_placeholder_page(&doc_root.join("index.html"), domain)
+}
+
+/// Writes the filler page into `doc_root` only when that directory has no
+/// entries at all (a brand-new site). Every vhost write calls this, and a
+/// site whose content is `index.php` (an import, a WordPress upload) has no
+/// `index.html`: writing one there would make nginx/Apache serve our filler
+/// in front of the site. Returns whether it wrote.
+pub fn write_placeholder_if_empty(doc_root: &std::path::Path, domain: &str) -> bool {
+    let empty = std::fs::read_dir(doc_root).map(|mut rd| rd.next().is_none()).unwrap_or(false);
+    empty && std::fs::write(doc_root.join("index.html"), placeholder_page(domain)).is_ok()
+}
+
 pub fn document_root_for(site_dir: &str, runtime: &str) -> String {
     match runtime {
         "proxy" | "node" | "python" => site_dir.to_string(),
@@ -1206,6 +1237,12 @@ fn legacy_php_pool_config(
         "php_admin_value[open_basedir] = {}\n",
         crate::services::php_pool::open_basedir_value(domain)
     );
+    // 5.6 / 7.4 only (see `php_pool::LEGACY_SHORT_OPEN_TAG_LINE`); 8.x unchanged.
+    let short_tags = if crate::services::php_pool::is_legacy(php_version) {
+        crate::services::php_pool::LEGACY_SHORT_OPEN_TAG_LINE
+    } else {
+        ""
+    };
     format!(
         r#"[{pool_name}]
 user = {user}
@@ -1226,7 +1263,7 @@ php_admin_value[memory_limit] = {memory_mb}M
 php_admin_value[upload_max_filesize] = 64M
 php_admin_value[post_max_size] = 64M
 php_admin_value[max_execution_time] = 300
-{open_basedir}"#,
+{open_basedir}{short_tags}"#,
         start = std::cmp::min(2, max_workers),
         spare = std::cmp::min(3, max_workers),
     )
@@ -1659,6 +1696,38 @@ mod php_settings_tests {
                 "php_admin_value[open_basedir] = /var/www/example.com/:/tmp/:/usr/share/php/\n"
             ));
         }
+    }
+
+    #[test]
+    fn legacy_pool_turns_short_open_tag_on_for_legacy_versions_only() {
+        let base = legacy_php_pool_config("example.com", "example_com", "8.3", 256, 5, "www-data", "www-data");
+        for v in ["8.1", "8.2", "8.3", "8.4", "8.5"] {
+            let out = legacy_php_pool_config("example.com", "example_com", v, 256, 5, "www-data", "www-data");
+            assert!(!out.contains("short_open_tag"), "{v}");
+            assert_eq!(out, base.replace("php8.3-fpm", &format!("php{v}-fpm")));
+        }
+        for v in ["5.6", "7.4"] {
+            let out = legacy_php_pool_config("example.com", "example_com", v, 256, 5, "www-data", "www-data");
+            let expected = format!("{}php_admin_value[short_open_tag] = On\n", base.replace("php8.3-fpm", &format!("php{v}-fpm")));
+            assert_eq!(out, expected, "{v}");
+        }
+    }
+
+    #[test]
+    fn placeholder_written_only_into_an_empty_root() {
+        let base = std::env::temp_dir().join(format!("ph-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&base).unwrap();
+        assert!(write_placeholder_if_empty(&base, "example.com"));
+        assert!(is_exact_placeholder_page(&base.join("index.html"), "example.com"));
+        // A second vhost write leaves the page alone (not empty any more).
+        assert!(!write_placeholder_if_empty(&base, "example.com"));
+        // An imported PHP site: index.php, no index.html. A vhost write (the
+        // SSL step re-PUTs it) must not put the filler in front of it.
+        std::fs::remove_file(base.join("index.html")).unwrap();
+        std::fs::write(base.join("index.php"), "<?php").unwrap();
+        assert!(!write_placeholder_if_empty(&base, "example.com"));
+        assert!(!base.join("index.html").exists());
+        std::fs::remove_dir_all(&base).unwrap();
     }
 
     /// The legacy pool body, pinned byte for byte: a request without

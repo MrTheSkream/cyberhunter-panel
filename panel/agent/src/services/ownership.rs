@@ -276,8 +276,10 @@ pub fn fail2ban_jail(path: &str, domain: &str) -> Owner {
 /// Unlike every other resource type in this file, the marker isn't read from
 /// the resource itself (a Linux account has nowhere safe to carry one - its
 /// own home directory is inside the chroot jail the account can write to) but
-/// from a dedicated file `services::sftp_accounts::provision` writes, once,
-/// only after every provisioning step has already succeeded. A caller-passed
+/// from a dedicated file `services::sftp_accounts::provision` writes as soon
+/// as it has created the account (a failed enable's rollback removes it with
+/// the account; a resumed enable needs it to prove the leftover is this
+/// site's). A caller-passed
 /// uid alone is not proof: `sites.sftp_uid` should always be right, but this
 /// is the same fail-closed shape every other `owned_*` function here uses
 /// rather than trusting a derived or passed-in identifier on its own.

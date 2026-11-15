@@ -119,12 +119,107 @@ pub fn account_name(uid: i32) -> String {
     crate::services::ownership::sftp_account_name(uid)
 }
 
-/// Resolve and check the account name `provision` will create.
-async fn resolve_username(uid: i32, requested: Option<&str>) -> Result<String, ProvisionError> {
+/// The fields of a `getent passwd <name>` line the resume decision needs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PasswdEntry {
+    pub uid: i32,
+    pub gid: i32,
+    pub home: String,
+}
+
+/// Parse one `name:x:uid:gid:gecos:home:shell` line (pure, tested).
+pub fn parse_passwd_line(line: &str) -> Option<PasswdEntry> {
+    let f: Vec<&str> = line.trim_end_matches(['\n', '\r']).split(':').collect();
+    if f.len() != 7 {
+        return None;
+    }
+    Some(PasswdEntry { uid: f[2].parse().ok()?, gid: f[3].parse().ok()?, home: f[5].to_string() })
+}
+
+async fn getent_passwd(name: &str) -> Option<PasswdEntry> {
+    let out = safe_command("getent").args(["passwd", name]).output().await.ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    parse_passwd_line(String::from_utf8_lossy(&out.stdout).lines().next()?)
+}
+
+/// `gid` of a group, from `getent group <name>`.
+async fn getent_group_gid(name: &str) -> Option<i32> {
+    let out = safe_command("getent").args(["group", name]).output().await.ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&out.stdout).lines().next()?.split(':').nth(2)?.parse().ok()
+}
+
+/// Does the marker body name `domain` (whole line, as `ownership::sftp_user`)?
+pub fn marker_names_domain(body: &str, domain: &str) -> bool {
+    let want = format!("Domain={domain}");
+    body.lines().any(|l| l.trim() == want)
+}
+
+/// What [`provision`] does with the account name it was asked for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AccountPlan {
+    /// No such account: create it under the requested uid/gid.
+    Create,
+    /// The account exists and is provably this site's own (a leftover of an
+    /// earlier attempt): complete it under ITS uid/gid, never a second one.
+    Resume { uid: i32, gid: i32 },
+    /// The name belongs to someone else (or cannot be proven ours): 409.
+    Taken(&'static str),
+}
+
+/// Decide create / resume / refuse for `name` on `domain` (pure, tested).
+///
+/// `existing` is `getent passwd <name>`; `marker` is the owner marker of
+/// `existing.uid` (markers are keyed by uid). Resume needs ALL of: the marker
+/// names this domain (whole line), names this user (`User=`, or no `User=`
+/// line and the uid's default `sftp<uid>`), and the account's home is this
+/// domain's jail. A uid different from the one requested still resumes - a
+/// refusal there is exactly what made the import fall back to `sftp<uid>` and
+/// leave two system users on one chroot. Anything less is `Taken`: a name
+/// owned by another site or not panel-made is never adopted.
+pub fn decide_account(
+    domain: &str,
+    name: &str,
+    existing: Option<&PasswdEntry>,
+    marker: Option<&str>,
+    group_of_that_name_exists: bool,
+) -> AccountPlan {
+    let Some(e) = existing else {
+        return if group_of_that_name_exists { AccountPlan::Taken("group_exists") } else { AccountPlan::Create };
+    };
+    let Some(body) = marker else {
+        return AccountPlan::Taken("not_panel_owned");
+    };
+    if !marker_names_domain(body, domain) {
+        return AccountPlan::Taken("other_site");
+    }
+    let user_matches = match crate::services::ownership::marker_user(body) {
+        Some(u) => u == name,
+        None => name == sftp_username(e.uid),
+    };
+    if !user_matches {
+        return AccountPlan::Taken("other_user");
+    }
+    if e.home != jail_root(domain) {
+        return AccountPlan::Taken("other_home");
+    }
+    AccountPlan::Resume { uid: e.uid, gid: e.gid }
+}
+
+/// Resolve and check the account name `provision` will create or resume.
+async fn resolve_username(
+    domain: &str,
+    uid: i32,
+    requested: Option<&str>,
+) -> Result<(String, AccountPlan), ProvisionError> {
     let default = sftp_username(uid);
     let name = match requested.map(str::trim).filter(|n| !n.is_empty()) {
-        None => return Ok(default),
-        Some(n) if n == default => return Ok(default),
+        None => default,
+        Some(n) if n == default => default,
         Some(n) => n.to_string(),
     };
     match username_static_conflict(&name, uid) {
@@ -141,13 +236,155 @@ async fn resolve_username(uid: i32, requested: Option<&str>) -> Result<String, P
         }
         None => {}
     }
-    if getent_has("passwd", &name).await || getent_has("group", &name).await {
+    let existing = getent_passwd(&name).await;
+    let marker = existing.as_ref().and_then(|e| std::fs::read_to_string(owner_marker_path(e.uid)).ok());
+    let group_exists = existing.is_none() && getent_has("group", &name).await;
+    let plan = decide_account(domain, &name, existing.as_ref(), marker.as_deref(), group_exists);
+    if let AccountPlan::Taken(why) = plan {
         return Err(ProvisionError::UsernameTaken(format!(
-            "SFTP username {name:?} already exists on this server"
+            "SFTP username {name:?} already exists on this server ({why})"
         )));
     }
-    Ok(name)
+    Ok((name, plan))
 }
+
+// --- Rollback of a failed enable ---
+
+/// One thing an enable call created or changed, recorded the moment it is
+/// done so a later failure can undo exactly that - nothing pre-existing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UndoStep {
+    /// `groupdel` a group this call created (shared or per-site).
+    GroupDel(String),
+    /// `userdel` an account this call created.
+    UserDel { name: String, uid: i32 },
+    /// Drop a supplementary membership this call added to an existing account.
+    GroupMembership { user: String, group: String },
+    /// Remove an owner marker this call wrote where none existed.
+    RemoveMarker(i32),
+    /// Put back the marker body this call overwrote.
+    RestoreMarker { uid: i32, body: String },
+    /// `rmdir` (NOT recursive) a directory this call created. `content/` is a
+    /// bind mount of the real site: a recursive removal could delete the site
+    /// if the unmount failed, `rmdir` just fails on it.
+    RemoveDir(String),
+    /// Stop, disable and remove a mount unit this call wrote.
+    MountUnit(String),
+    /// Give a site directory this call re-owned back to `www-data`.
+    RevertChown(String),
+    /// Remove the sshd drop-in this call wrote (then validate + reload).
+    SshdDropin,
+}
+
+/// LIFO list of [`UndoStep`]s. A failed enable runs it once; a successful
+/// one drops it.
+#[derive(Debug, Default)]
+pub struct UndoLog {
+    steps: Vec<UndoStep>,
+}
+
+impl UndoLog {
+    pub fn push(&mut self, step: UndoStep) {
+        self.steps.push(step);
+    }
+
+    /// The order [`UndoLog::run`] undoes in: newest first (pure, tested).
+    pub fn plan(&self) -> Vec<UndoStep> {
+        self.steps.iter().rev().cloned().collect()
+    }
+
+    /// Undo everything recorded, newest first, best effort and logged; then,
+    /// if the sshd drop-in changed, validate and reload so the running sshd
+    /// matches the files on disk.
+    pub async fn run(self) {
+        let sshd_changed = self.steps.contains(&UndoStep::SshdDropin);
+        // An account whose `userdel` failed keeps its marker, so the next
+        // enable can still prove it is this site's and resume it.
+        let mut kept_accounts: Vec<i32> = Vec::new();
+        for step in self.plan() {
+            match &step {
+                UndoStep::RemoveMarker(uid) | UndoStep::RestoreMarker { uid, .. } if kept_accounts.contains(uid) => {
+                    tracing::warn!("SFTP rollback: keeping the owner marker of uid {uid}, its account is still there");
+                    continue;
+                }
+                _ => {}
+            }
+            if !undo_one(&step).await
+                && let UndoStep::UserDel { uid, .. } = step
+            {
+                kept_accounts.push(uid);
+            }
+        }
+        if sshd_changed && let Err(e) = reload_sshd_validated().await {
+            tracing::warn!("SFTP rollback: sshd reload after removing the drop-in failed: {e}");
+        }
+    }
+}
+
+/// Run one privileged command for the rollback; a failure is logged, not
+/// fatal. `true` = it succeeded.
+async fn undo_cmd(program: &str, args: &[&str]) -> bool {
+    match safe_command_unsandboxed(program, &[]).args(args).output().await {
+        Ok(o) if o.status.success() => true,
+        Ok(o) => {
+            tracing::warn!(
+                "SFTP rollback: {program} {} failed: {}",
+                args.join(" "),
+                String::from_utf8_lossy(&o.stderr).trim()
+            );
+            false
+        }
+        Err(e) => {
+            tracing::warn!("SFTP rollback: {program} failed to run: {e}");
+            false
+        }
+    }
+}
+
+/// `remove_file` for the rollback: an already-absent file counts as done.
+fn undo_remove_file(path: &str) -> bool {
+    match std::fs::remove_file(path) {
+        Ok(()) => true,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => true,
+        Err(e) => {
+            tracing::warn!("SFTP rollback: could not remove {path}: {e}");
+            false
+        }
+    }
+}
+
+/// Undo one step; `true` = done.
+async fn undo_one(step: &UndoStep) -> bool {
+    match step {
+        UndoStep::GroupDel(group) => undo_cmd("groupdel", &[group]).await,
+        UndoStep::UserDel { name, uid } => {
+            // Nothing should run as a just-created account; kill first anyway,
+            // `userdel` refuses a uid with a live process.
+            let _ = undo_cmd("pkill", &["-9", "-u", &uid.to_string()]).await;
+            undo_cmd("userdel", &[name]).await
+        }
+        UndoStep::GroupMembership { user, group } => undo_cmd("gpasswd", &["-d", user, group]).await,
+        UndoStep::RemoveMarker(uid) => undo_remove_file(&owner_marker_path(*uid)),
+        UndoStep::RestoreMarker { uid, body } => match std::fs::write(owner_marker_path(*uid), body) {
+            Ok(()) => true,
+            Err(e) => {
+                tracing::warn!("SFTP rollback: could not restore the owner marker of uid {uid}: {e}");
+                false
+            }
+        },
+        UndoStep::RemoveDir(dir) => undo_cmd("rmdir", &[dir]).await,
+        UndoStep::MountUnit(unit) => {
+            let _ = safe_command("systemctl").args(["disable", "--now", unit]).output().await;
+            let removed = undo_remove_file(&format!("/etc/systemd/system/{unit}"));
+            let _ = safe_command("systemctl").args(["daemon-reload"]).output().await;
+            removed
+        }
+        UndoStep::RevertChown(dir) => undo_cmd("chown", &["-R", "www-data:www-data", dir]).await,
+        UndoStep::SshdDropin => undo_remove_file(SSHD_DROPIN),
+    }
+}
+
+// --- end rollback ---
 
 /// The owner marker body: whole-line `Domain=` (read by
 /// [`crate::services::ownership::sftp_user`]) and `User=`.
@@ -307,12 +544,30 @@ async fn mount_unit_name(content_dir: &str) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
+/// What an enable call ended up with: the account name, the uid/gid it
+/// actually lives under (an own leftover may carry another uid than the one
+/// requested), and whether it completed an existing account.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Provisioned {
+    pub username: String,
+    pub uid: i32,
+    pub gid: i32,
+    pub resumed: bool,
+}
+
 /// Provision the SFTP account for `domain`: shared group (once), per-site
-/// user+group, the jail tree, the bind-mount unit, and re-owns the site's real
-/// content directory. Idempotent on the group/sshd-group-membership steps;
-/// NOT idempotent on the user/mount-unit steps (`enable_sftp` on the backend
-/// already no-ops when `sftp_enabled` is already true, so this only ever runs
-/// once per site).
+/// user+group, the owner marker, the jail tree, the bind-mount unit, re-owns
+/// the site's real content directory, and the sshd drop-in.
+///
+/// All-or-nothing: every object this call creates or changes is recorded in
+/// an [`UndoLog`] the moment it exists, and any failure (every `?` / early
+/// return inside [`provision_steps`]) undoes exactly those, newest first -
+/// nothing that existed before the call is removed.
+///
+/// Idempotent re-enable: when the requested account already exists AND is
+/// provably this site's own (see [`decide_account`]), the call completes it
+/// (groups, membership, marker, jail, mount, ownership, drop-in) and succeeds
+/// with that account's own uid/gid instead of refusing the name.
 ///
 /// `requested_username` (05-import-hestia D6): a custom account name instead
 /// of `sftp<uid>`, checked by [`resolve_username`] before anything is created
@@ -322,66 +577,147 @@ pub async fn provision(
     uid: i32,
     gid: i32,
     requested_username: Option<&str>,
-) -> Result<(), ProvisionError> {
-    let username = resolve_username(uid, requested_username).await?;
-    provision_as(domain, uid, gid, username).await.map_err(ProvisionError::Failed)
+) -> Result<Provisioned, ProvisionError> {
+    let (username, plan) = resolve_username(domain, uid, requested_username).await?;
+    let (uid, gid, resumed) = match plan {
+        AccountPlan::Resume { uid, gid } => (uid, gid, true),
+        _ => (uid, gid, false),
+    };
+    let mut undo = UndoLog::default();
+    match provision_steps(domain, uid, gid, &username, resumed, &mut undo).await {
+        Ok(()) => {
+            tracing::info!(
+                "SFTP provisioned for {domain}: user={username} uid={uid} gid={gid}{}",
+                if resumed { " (resumed an earlier attempt)" } else { "" }
+            );
+            Ok(Provisioned { username, uid, gid, resumed })
+        }
+        Err(e) => {
+            tracing::warn!("SFTP enable for {domain} failed, rolling back what it created: {e}");
+            undo.run().await;
+            Err(ProvisionError::Failed(e))
+        }
+    }
 }
 
-async fn provision_as(domain: &str, uid: i32, gid: i32, username: String) -> Result<(), String> {
+/// Run a privileged command; any failure is an error naming `what`.
+async fn run_priv(what: &str, program: &str, args: &[&str]) -> Result<(), String> {
+    let out = safe_command_unsandboxed(program, &[])
+        .args(args)
+        .output()
+        .await
+        .map_err(|e| format!("{what}: {program} failed to run: {e}"))?;
+    if !out.status.success() {
+        return Err(format!("{what} failed: {}", String::from_utf8_lossy(&out.stderr).trim()));
+    }
+    Ok(())
+}
+
+async fn provision_steps(
+    domain: &str,
+    uid: i32,
+    gid: i32,
+    username: &str,
+    resumed: bool,
+    undo: &mut UndoLog,
+) -> Result<(), String> {
     let groupname = sftp_groupname(gid);
     let site_dir = format!("/var/www/{domain}");
     if !std::path::Path::new(&site_dir).exists() {
         return Err(format!("{site_dir} does not exist - cannot enable SFTP"));
     }
+    // A marker for this uid naming ANOTHER domain: the uid is someone else's.
+    // Checked before anything is created.
+    let marker_path = owner_marker_path(uid);
+    let previous_marker = std::fs::read_to_string(&marker_path).ok();
+    if let Some(ref body) = previous_marker
+        && !marker_names_domain(body, domain)
+    {
+        return Err(format!("uid {uid} carries an owner marker for another site - refusing to reuse it"));
+    }
 
-    // 1. Shared secondary group - idempotent, ignore "already exists".
-    let _ = safe_command_unsandboxed("groupadd", &[])
-        .args([SFTP_GROUP])
-        .output()
-        .await;
+    // 1. Shared secondary group - created once, by the first site to enable.
+    if !getent_has("group", SFTP_GROUP).await {
+        run_priv(&format!("groupadd {SFTP_GROUP}"), "groupadd", &[SFTP_GROUP]).await?;
+        undo.push(UndoStep::GroupDel(SFTP_GROUP.to_string()));
+    }
 
-    // 2. Per-site primary group, then the user itself. Both are genuinely new
-    // per site - a failure here must be a real error, not swallowed.
-    let out = safe_command_unsandboxed("groupadd", &[])
-        .args(["-g", &gid.to_string(), &groupname])
-        .output()
-        .await
-        .map_err(|e| format!("groupadd failed to run: {e}"))?;
-    if !out.status.success() {
-        return Err(format!(
-            "groupadd {groupname} (gid {gid}) failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        ));
+    // 2. Per-site primary group: reused if an earlier attempt left it under
+    // the same gid, created otherwise.
+    match getent_group_gid(&groupname).await {
+        Some(g) if g == gid => {}
+        Some(g) => return Err(format!("group {groupname} exists with gid {g}, expected {gid}")),
+        None => {
+            run_priv(
+                &format!("groupadd {groupname} (gid {gid})"),
+                "groupadd",
+                &["-g", &gid.to_string(), &groupname],
+            )
+            .await?;
+            undo.push(UndoStep::GroupDel(groupname.clone()));
+        }
     }
 
     let jail = jail_root(domain);
-    let out = safe_command_unsandboxed("useradd", &[])
-        .args([
-            "-u",
-            &uid.to_string(),
-            "-g",
-            &groupname,
-            "-G",
-            SFTP_GROUP,
-            "-d",
-            &jail,
-            "-s",
-            "/usr/sbin/nologin",
-            &username,
-        ])
-        .output()
-        .await
-        .map_err(|e| format!("useradd failed to run: {e}"))?;
-    if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr).to_string();
-        // Roll back the group we just created - a half-provisioned site (group
-        // present, no user) is worse than none, since a retry's groupadd would
-        // then fail on "already exists" and mask the real problem.
-        let _ = safe_command_unsandboxed("groupdel", &[]).args([&groupname]).output().await;
-        return Err(format!("useradd {username} (uid {uid}) failed: {stderr}"));
+    // 3. Owner marker, written just before the account: it is what proves
+    // the account is this site's - to teardown, and to a resume after a crash
+    // or a rollback whose `userdel` failed (the rollback then keeps it).
+    let body = owner_marker_body(domain, username);
+    if previous_marker.as_deref() != Some(body.as_str()) {
+        if let Err(e) = std::fs::create_dir_all(OWNER_MARKER_DIR) {
+            return Err(format!("Failed to create {OWNER_MARKER_DIR}: {e}"));
+        }
+        undo.push(match previous_marker {
+            Some(prev) => UndoStep::RestoreMarker { uid, body: prev },
+            None => UndoStep::RemoveMarker(uid),
+        });
+        if let Err(e) = std::fs::write(&marker_path, &body) {
+            return Err(format!("Failed to write owner marker for uid {uid}: {e}"));
+        }
     }
 
-    // 3. Jail tree: root-owned boundary (OpenSSH requires this, not
+    // 4. The account itself: created, or (resume) brought back to shape.
+    if resumed {
+        run_priv(
+            &format!("usermod {username}"),
+            "usermod",
+            &["-g", &groupname, "-s", "/usr/sbin/nologin", username],
+        )
+        .await?;
+        let in_group = safe_command("id")
+            .args(["-nG", username])
+            .output()
+            .await
+            .map(|o| String::from_utf8_lossy(&o.stdout).split_whitespace().any(|g| g == SFTP_GROUP))
+            .unwrap_or(false);
+        if !in_group {
+            run_priv(&format!("usermod -aG {SFTP_GROUP} {username}"), "usermod", &["-aG", SFTP_GROUP, username])
+                .await?;
+            undo.push(UndoStep::GroupMembership { user: username.to_string(), group: SFTP_GROUP.to_string() });
+        }
+    } else {
+        run_priv(
+            &format!("useradd {username} (uid {uid})"),
+            "useradd",
+            &[
+                "-u",
+                &uid.to_string(),
+                "-g",
+                &groupname,
+                "-G",
+                SFTP_GROUP,
+                "-d",
+                &jail,
+                "-s",
+                "/usr/sbin/nologin",
+                username,
+            ],
+        )
+        .await?;
+        undo.push(UndoStep::UserDel { name: username.to_string(), uid });
+    }
+
+    // 5. Jail tree: root-owned boundary (OpenSSH requires this, not
     // configurable), empty content/ mountpoint. `/var/dockpanel-sftp` is a
     // brand-new top-level directory this feature creates on first use, so a
     // plain `std::fs::create_dir_all` here hits the same EROFS the vmail
@@ -390,8 +726,14 @@ async fn provision_as(domain: &str, uid: i32, gid: i32, username: String) -> Res
     // is not in it regardless of what ReadWritePaths later gets updated to
     // say - only the systemd-run escape can create it live. (Live-verified on
     // a fresh VPS: the plain std::fs call failed with exactly this error
-    // before this fix.)
+    // before this fix.) Each level this call creates is recorded, top first,
+    // so the rollback `rmdir`s them deepest first.
     let content_dir = jail_content_dir(domain);
+    for dir in ["/var/dockpanel-sftp".to_string(), jail.clone(), content_dir.clone()] {
+        if !std::path::Path::new(&dir).exists() {
+            undo.push(UndoStep::RemoveDir(dir));
+        }
+    }
     let out = safe_command_unsandboxed("mkdir", &[])
         .args(["-p", &content_dir])
         .output()
@@ -406,7 +748,7 @@ async fn provision_as(domain: &str, uid: i32, gid: i32, username: String) -> Res
     let _ = safe_command_unsandboxed("chown", &[]).args(["root:root", &jail]).output().await;
     let _ = safe_command_unsandboxed("chmod", &[]).args(["0755", &jail]).output().await;
 
-    // 4. Bind-mount content/ onto the REAL, unmoved site directory.
+    // 6. Bind-mount content/ onto the REAL, unmoved site directory.
     let unit_name = mount_unit_name(&content_dir).await?;
     let unit = format!(
         "[Unit]\n\
@@ -422,6 +764,9 @@ async fn provision_as(domain: &str, uid: i32, gid: i32, username: String) -> Res
          WantedBy=multi-user.target\n"
     );
     let unit_path = format!("/etc/systemd/system/{unit_name}");
+    if !std::path::Path::new(&unit_path).exists() {
+        undo.push(UndoStep::MountUnit(unit_name.clone()));
+    }
     if let Err(e) = std::fs::write(&unit_path, &unit) {
         return Err(format!("Failed to write mount unit {unit_path}: {e}"));
     }
@@ -438,10 +783,15 @@ async fn provision_as(domain: &str, uid: i32, gid: i32, username: String) -> Res
         ));
     }
 
-    // 5. The actual isolation: re-own the real site directory. PHP-FPM's pool
+    // 7. The actual isolation: re-own the real site directory. PHP-FPM's pool
     // is re-pointed at this same identity by the caller (`put_site`, driven by
     // `pool_user`/`pool_group` on the next vhost rebuild - the backend sends
-    // those the moment `sftp_enabled` flips true).
+    // those the moment `sftp_enabled` flips true). A fresh account's chown is
+    // reverted on rollback (the account is about to go); a resumed one's is
+    // not (its owner stays).
+    if !resumed {
+        undo.push(UndoStep::RevertChown(site_dir.clone()));
+    }
     let out = safe_command_unsandboxed("chown", &[])
         .args(["-R", &format!("{username}:{groupname}"), &site_dir])
         .output()
@@ -454,20 +804,8 @@ async fn provision_as(domain: &str, uid: i32, gid: i32, username: String) -> Res
         ));
     }
 
-    // 6. Owner marker - written last, only once every step above has actually
-    // succeeded, so a marker on disk is never a promise this function did not
-    // keep.
-    if let Err(e) = std::fs::create_dir_all(OWNER_MARKER_DIR) {
-        return Err(format!("Failed to create {OWNER_MARKER_DIR}: {e}"));
-    }
-    if let Err(e) = std::fs::write(owner_marker_path(uid), owner_marker_body(domain, &username)) {
-        return Err(format!("Failed to write owner marker for uid {uid}: {e}"));
-    }
-
-    ensure_sshd_dropin().await?;
-
-    tracing::info!("SFTP provisioned for {domain}: user={username} uid={uid} gid={gid}");
-    Ok(())
+    // 8. sshd drop-in, last: a failed reload rolls everything above back.
+    ensure_sshd_dropin(undo).await
 }
 
 /// Tear down everything [`provision`] created. `last_sftp_site` tells us
@@ -653,10 +991,15 @@ pub async fn set_password(uid: i32, plaintext: &str) -> Result<(), String> {
 /// `services::security`'s existing SSH-hardening functions use today, since
 /// that path has no `sshd -t` gate anywhere and a malformed Match block would
 /// otherwise lock out SSH access on reload with no warning.
-async fn ensure_sshd_dropin() -> Result<(), String> {
+///
+/// The write is recorded in `undo` before it happens: a failed validation or
+/// reload here (or anything later) removes the file this call wrote and
+/// reloads again, never a drop-in that was already there.
+async fn ensure_sshd_dropin(undo: &mut UndoLog) -> Result<(), String> {
     if std::path::Path::new(SSHD_DROPIN).exists() {
         return Ok(());
     }
+    undo.push(UndoStep::SshdDropin);
     let block = format!(
         "# Managed by CyberHunter - Panel - per-site SFTP jails (GH #108). Do not edit by hand;\n\
          # regenerated the next time a site's SFTP account is enabled/disabled.\n\
@@ -669,11 +1012,7 @@ async fn ensure_sshd_dropin() -> Result<(), String> {
     if let Err(e) = std::fs::write(SSHD_DROPIN, &block) {
         return Err(format!("Failed to write {SSHD_DROPIN}: {e}"));
     }
-    if let Err(e) = reload_sshd_validated().await {
-        let _ = std::fs::remove_file(SSHD_DROPIN);
-        return Err(e);
-    }
-    Ok(())
+    reload_sshd_validated().await
 }
 
 /// `sshd -t` then `systemctl reload sshd` - reload, not restart, so an
@@ -741,6 +1080,94 @@ mod tests {
         let body = owner_marker_body("x.tld", "adm-jim_x");
         assert!(body.lines().any(|l| l == "Domain=x.tld"));
         assert_eq!(crate::services::ownership::marker_user(&body).as_deref(), Some("adm-jim_x"));
+    }
+
+    // ── Rollback and idempotent re-enable ───────────────────────────────
+
+    fn entry(uid: i32, home: &str) -> PasswdEntry {
+        PasswdEntry { uid, gid: uid, home: home.to_string() }
+    }
+
+    #[test]
+    fn passwd_lines_parse_to_uid_gid_home() {
+        assert_eq!(
+            parse_passwd_line("adm-jim_x:x:30000:30000::/var/dockpanel-sftp/x.tld:/usr/sbin/nologin\n"),
+            Some(entry(30000, "/var/dockpanel-sftp/x.tld"))
+        );
+        assert_eq!(parse_passwd_line("bad:x:abc:1::/h:/bin/sh"), None);
+        assert_eq!(parse_passwd_line("short:x:1:1"), None);
+    }
+
+    /// The lab defect: the import's own leftover from a failed enable must be
+    /// completed, not refused (which made it fall back to a second user).
+    #[test]
+    fn an_own_leftover_is_resumed_under_its_own_uid() {
+        let jail = "/var/dockpanel-sftp/x.tld";
+        let marker = owner_marker_body("x.tld", "adm-jim_x");
+        let e = entry(30000, jail);
+        assert_eq!(
+            decide_account("x.tld", "adm-jim_x", Some(&e), Some(&marker), false),
+            AccountPlan::Resume { uid: 30000, gid: 30000 }
+        );
+        // An old marker (no User= line) proves only the uid's default name.
+        let old = "Domain=x.tld\n";
+        assert_eq!(
+            decide_account("x.tld", "sftp30000", Some(&e), Some(old), false),
+            AccountPlan::Resume { uid: 30000, gid: 30000 }
+        );
+        assert_eq!(decide_account("x.tld", "adm-jim_x", Some(&e), Some(old), false), AccountPlan::Taken("other_user"));
+    }
+
+    #[test]
+    fn a_name_that_is_not_provably_this_sites_stays_taken() {
+        let e = entry(30000, "/var/dockpanel-sftp/x.tld");
+        let mine = owner_marker_body("x.tld", "adm-jim_x");
+        // No marker: not panel-made (or not provable) - never adopted.
+        assert_eq!(decide_account("x.tld", "adm-jim_x", Some(&e), None, false), AccountPlan::Taken("not_panel_owned"));
+        // Another site's account, including a domain that merely shares a prefix.
+        let other = owner_marker_body("y.tld", "adm-jim_x");
+        assert_eq!(decide_account("x.tld", "adm-jim_x", Some(&e), Some(&other), false), AccountPlan::Taken("other_site"));
+        let prefix = owner_marker_body("x.tld.evil", "adm-jim_x");
+        assert_eq!(decide_account("x.tld", "adm-jim_x", Some(&e), Some(&prefix), false), AccountPlan::Taken("other_site"));
+        // Right marker, but the account is not jailed where this site's is.
+        let elsewhere = entry(30000, "/home/adm-jim_x");
+        assert_eq!(decide_account("x.tld", "adm-jim_x", Some(&elsewhere), Some(&mine), false), AccountPlan::Taken("other_home"));
+        // A group of that name with no user: not ours to create over.
+        assert_eq!(decide_account("x.tld", "adm-jim_x", None, None, true), AccountPlan::Taken("group_exists"));
+        assert_eq!(decide_account("x.tld", "adm-jim_x", None, None, false), AccountPlan::Create);
+    }
+
+    #[test]
+    fn the_rollback_undoes_newest_first() {
+        let mut undo = UndoLog::default();
+        let created = [
+            UndoStep::GroupDel(SFTP_GROUP.into()),
+            UndoStep::GroupDel("sftpg30000".into()),
+            UndoStep::RemoveMarker(30000),
+            UndoStep::UserDel { name: "adm-jim_x".into(), uid: 30000 },
+            UndoStep::RemoveDir("/var/dockpanel-sftp".into()),
+            UndoStep::RemoveDir("/var/dockpanel-sftp/x.tld".into()),
+            UndoStep::RemoveDir("/var/dockpanel-sftp/x.tld/content".into()),
+            UndoStep::MountUnit("var-dockpanel\\x2dsftp-x.tld-content.mount".into()),
+            UndoStep::RevertChown("/var/www/x.tld".into()),
+            UndoStep::SshdDropin,
+        ];
+        for s in created.iter().cloned() {
+            undo.push(s);
+        }
+        let plan = undo.plan();
+        let mut expected = created.to_vec();
+        expected.reverse();
+        assert_eq!(plan, expected);
+        let pos = |s: &UndoStep| plan.iter().position(|p| p == s).unwrap();
+        // The mount is gone before its mountpoint is rmdir'd, the content dir
+        // before its parents, the user before its groups, and the user before
+        // its marker (a `userdel` that fails keeps the proof of ownership).
+        assert!(pos(&created[7]) < pos(&created[6]));
+        assert!(pos(&created[6]) < pos(&created[5]) && pos(&created[5]) < pos(&created[4]));
+        assert!(pos(&created[3]) < pos(&created[1]) && pos(&created[1]) < pos(&created[0]));
+        assert!(pos(&created[3]) < pos(&created[2]));
+        assert_eq!(plan.first(), Some(&UndoStep::SshdDropin));
     }
 
     #[test]

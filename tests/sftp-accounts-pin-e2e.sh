@@ -88,8 +88,10 @@ must_contain "$SVC_FLAT" 'fnreload_sshd_validated' \
   "a dedicated validated-reload function exists"
 must_contain "$SVC_FLAT" 'safe_command("sshd").args(["-t"])' \
   "sshd -t runs before any reload this module triggers"
-must_contain "$SVC_FLAT" 'safe_command("systemctl").args(["reload","sshd"])' \
-  "sshd is reloaded, not restarted (a restart would drop live SSH sessions for an unrelated change)"
+must_contain "$SVC_FLAT" 'safe_command("systemctl").args(["try-reload-or-restart",unit])' \
+  "sshd is reloaded, not restarted (a restart would drop live SSH sessions for an unrelated change); try- form is a no-op when socket-activated sshd is idle"
+must_contain "$SVC_FLAT" 'letunit=crate::services::security::ssh_service_unit();' \
+  "the unit name is resolved (ssh on Debian/Ubuntu 24.04, sshd on RHEL), never hard-coded"
 case "$SVC_FLAT" in
   *'restart_sshd'*) bad "sftp_accounts.rs calls the existing no-validation restart_sshd path" ;;
   *) ok "sftp_accounts.rs never calls the existing no-validation restart_sshd path" ;;
