@@ -345,7 +345,8 @@ pub async fn is_installed() -> bool {
 async fn probe() -> Result<(String, String, bool, u64), String> {
     let rows = root_rows(&format!(
         "SELECT VERSION(), @@GLOBAL.sql_mode, \
-         (SELECT COUNT(*) FROM information_schema.COLLATIONS WHERE COLLATION_NAME='utf8mb4_uca1400_ai_ci'), \
+         (SELECT COUNT(*) FROM information_schema.COLLATIONS \
+          WHERE COLLATION_NAME IN ('utf8mb4_uca1400_ai_ci', 'uca1400_ai_ci')), \
          (SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME NOT IN ({SYSTEM_SCHEMAS}))"
     ))
     .await?;

@@ -689,7 +689,11 @@ async fn reload_sshd_validated() -> Result<(), String> {
             String::from_utf8_lossy(&test.stderr)
         ));
     }
-    let out = safe_command("systemctl").args(["reload", "sshd"]).output().await
+    // `ssh` on Debian/Ubuntu, `sshd` on RHEL; `try-reload-or-restart` is a
+    // no-op when a socket-activated sshd is idle (the next connection reads
+    // the new drop-in anyway) instead of failing with "unit not active".
+    let unit = crate::services::security::ssh_service_unit();
+    let out = safe_command("systemctl").args(["try-reload-or-restart", unit]).output().await
         .map_err(|e| format!("systemctl reload sshd failed to run: {e}"))?;
     if !out.status.success() {
         return Err(format!(

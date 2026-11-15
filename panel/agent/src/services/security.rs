@@ -788,11 +788,26 @@ async fn modify_sshd_config_at(main_path: &std::path::Path, key: &str, value: &s
     Ok(())
 }
 
+/// The OpenSSH server's systemd unit: `ssh.service` on Debian/Ubuntu (where
+/// `sshd.service` is not even an alias on Ubuntu 24.04, which socket-activates
+/// it through `ssh.socket`), `sshd.service` on the RHEL family.
+pub fn ssh_service_unit() -> &'static str {
+    let debian = ["/lib/systemd/system/ssh.service", "/usr/lib/systemd/system/ssh.service", "/etc/systemd/system/ssh.service"]
+        .iter()
+        .any(|p| std::path::Path::new(p).exists());
+    if debian { "ssh" } else { "sshd" }
+}
+
 /// Restart sshd service.
+///
+/// `try-restart`: under socket activation (Ubuntu 24.04 `ssh.socket`) the
+/// service may be idle; then there is nothing to restart and the next
+/// connection starts sshd with the new configuration. A plain `restart` would
+/// start a standalone daemon fighting the socket for port 22.
 async fn restart_sshd() -> Result<(), String> {
     let output = tokio::time::timeout(
         std::time::Duration::from_secs(30),
-        safe_command("systemctl").args(["restart", "sshd"]).output(),
+        safe_command("systemctl").args(["try-restart", ssh_service_unit()]).output(),
     ).await
         .map_err(|_| "sshd restart timed out".to_string())?
         .map_err(|e| format!("Failed to restart sshd: {e}"))?;
