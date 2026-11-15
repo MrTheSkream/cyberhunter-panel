@@ -1065,28 +1065,22 @@ pub async fn apply_fix(fix_type: &str, target: &str) -> Result<String, String> {
             Ok(format!("File removed: {}", canonical_str))
         }
         "quarantine_file" => {
-            let canonical = std::fs::canonicalize(target)
-                .map_err(|e| format!("Cannot resolve path {target}: {e}"))?;
-            let canonical_str = canonical.to_string_lossy();
-            if !canonical_str.starts_with("/var/www/") {
+            // Same quarantine as the antivirus (feature 5): metadata kept, so
+            // the file can be restored. Paths are resolved without following
+            // any symlink (see services::quarantine).
+            if !target.starts_with("/var/www/") {
                 return Err("Can only quarantine files under /var/www".into());
             }
-            let target = canonical_str.as_ref();
-            let quarantine_dir = "/var/lib/dockpanel/quarantine";
-            std::fs::create_dir_all(quarantine_dir).ok();
-            let filename = std::path::Path::new(target)
-                .file_name()
-                .and_then(|f| f.to_str())
-                .unwrap_or("unknown");
-            let timestamp = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
-            let quarantine_path = format!("{quarantine_dir}/{timestamp}_{filename}");
-            tokio::fs::rename(target, &quarantine_path)
+            let path = target.to_string();
+            let item = tokio::task::spawn_blocking(move || crate::services::quarantine::quarantine_www_path(&path))
                 .await
-                .map_err(|e| format!("Failed to quarantine {target}: {e}"))?;
-            Ok(format!("File quarantined: {target} -> {quarantine_path}"))
+                .map_err(|_| "Failed to quarantine: internal error".to_string())?
+                .map_err(|e| format!("Failed to quarantine {target}: {}", e.msg))?;
+            let id = item["quarantine_id"].as_str().unwrap_or_default();
+            Ok(format!(
+                "File quarantined: {target} -> {}/{id}",
+                crate::services::quarantine::QUARANTINE_ROOT
+            ))
         }
         _ => Err(format!("Unknown fix type: {fix_type}")),
     }

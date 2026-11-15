@@ -342,6 +342,8 @@ pub struct MailDomainConf {
     pub selector: String,
     pub catch_all: Option<String>,
     pub suspended: bool,
+    /// `ANTIVIRUS='yes'`: Hestia scanned this domain's mail (feature 5, A-H).
+    pub antivirus: bool,
 }
 
 pub fn parse_mail_conf(text: &str, domain: &str) -> Option<MailDomainConf> {
@@ -354,6 +356,7 @@ pub fn parse_mail_conf(text: &str, domain: &str) -> Option<MailDomainConf> {
         selector: if selector.is_empty() { "mail".into() } else { selector.to_string() },
         catch_all: if catch_all.is_empty() { None } else { Some(catch_all.to_string()) },
         suspended: get(&p, "SUSPENDED").eq_ignore_ascii_case("yes"),
+        antivirus: get(&p, "ANTIVIRUS").eq_ignore_ascii_case("yes"),
     })
 }
 
@@ -534,6 +537,9 @@ mod tests {
         assert!(mc.dkim);
         assert_eq!(mc.selector, "mail");
         assert_eq!(mc.catch_all, None);
+        assert!(!mc.antivirus, "no ANTIVIRUS key = false");
+        let av = parse_mail_conf("DOMAIN='example.org' ANTIVIRUS='yes' DKIM='no'", "example.org").unwrap();
+        assert!(av.antivirus && !av.dkim);
         let acc = parse_mail_accounts(
             "ACCOUNT='info' ALIAS='contact,hello' FWD='a@example.net' FWD_ONLY='' MD5='{BLF-CRYPT}$2y$x' QUOTA='unlimited' SUSPENDED='no'\n\
              ACCOUNT='sales' ALIAS='' FWD='' FWD_ONLY='no' MD5='$6$x' QUOTA='512' SUSPENDED='yes'\n",

@@ -96,6 +96,11 @@ async fn install_status() -> Result<Json<serde_json::Value>, ApiErr> {
     let apache_installed = apache_supported && crate::services::apache::is_installed().await;
     let apache_running = apache_installed && crate::services::apache::is_active().await;
 
+    // ClamAV (feature 5): same support rule as Apache (Debian/Ubuntu only).
+    let clamav_supported = crate::services::clamav::unsupported_reason().await.is_none();
+    let clamav_installed = clamav_supported && crate::services::clamav::is_installed().await;
+    let clamav_running = clamav_installed && is_active(crate::services::clamav::UNIT).await;
+
     let nodejs_installed = which("node").await;
     let composer_installed = which("composer").await;
 
@@ -122,6 +127,11 @@ async fn install_status() -> Result<Json<serde_json::Value>, ApiErr> {
             "installed": apache_installed,
             "running": apache_running,
             "supported": apache_supported,
+        },
+        "clamav": {
+            "installed": clamav_installed,
+            "running": clamav_running,
+            "supported": clamav_supported,
         },
         "nodejs": { "installed": nodejs_installed },
         "composer": { "installed": composer_installed },

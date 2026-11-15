@@ -1,3 +1,4 @@
+pub mod antivirus; // ClamAV (06)
 pub mod backup_drill;
 pub mod backup_verify;
 pub mod backups;

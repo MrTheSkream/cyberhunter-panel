@@ -236,6 +236,7 @@ async fn main() {
         // --- import-hestia (05) ---
         .merge(routes::local_db::router()) // W2
         // --- end import-hestia (05) ---
+        .merge(routes::antivirus::router()) // ClamAV (06)
         .route("/auth/rotate-token", axum::routing::post(routes::rotate_token))
         .layer(middleware::from_fn_with_state(state.clone(), routes::auth_middleware))
         .layer(middleware::from_fn(routes::audit_middleware))

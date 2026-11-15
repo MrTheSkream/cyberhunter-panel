@@ -53,3 +53,8 @@ pub mod local_mariadb; // W2
 pub mod vhost_extras; // W3
 pub mod hestia_mail; // W4
 // --- end import-hestia (05) ---
+// --- clamav (06) ---
+pub mod av_scan;
+pub mod clamav;
+pub mod quarantine;
+// --- end clamav (06) ---

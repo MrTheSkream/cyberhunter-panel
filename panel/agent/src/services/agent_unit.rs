@@ -218,4 +218,23 @@ mod tests {
             "the staging must stay inside a ReadWritePaths entry"
         );
     }
+
+    #[test]
+    fn clamav_paths_are_writable_and_optional() {
+        // Feature 5: clamd.conf, the Rspamd antivirus file, the quarantine.
+        let paths = read_write_paths(AGENT_UNIT);
+        for p in ["/etc/clamav", "/etc/rspamd", "/var/lib/dockpanel", "/etc/systemd/system"] {
+            assert!(paths.contains(&p), "{p} must be in ReadWritePaths");
+        }
+        // Absent until the package is installed: must be `-`-prefixed, or a box
+        // without ClamAV/Rspamd could not start the agent.
+        for p in ["-/etc/clamav", "-/etc/rspamd"] {
+            assert!(
+                AGENT_UNIT.lines().any(|l| l.starts_with("ReadWritePaths=") && l.split_whitespace().any(|w| w.ends_with(p) || w == p)),
+                "{p} must carry the `-` prefix"
+            );
+        }
+        assert!(crate::services::quarantine::QUARANTINE_ROOT.starts_with("/var/lib/dockpanel/"));
+        assert!(crate::services::clamav::SOCKET_DROPIN.starts_with("/etc/systemd/system/"));
+    }
 }
