@@ -45,3 +45,8 @@ Thumbs.db
 *.swo
 .claude/settings.local.json
 .claude/worktrees/
+# Sauvegardes réelles (HestiaCP…) déposées pour les tests d import : jamais dans git
+lab/*.tar
+lab/*.tar.gz
+lab/*.tar.zst
+lab/import/

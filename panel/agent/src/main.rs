@@ -93,6 +93,10 @@ async fn main() {
     // finish before the agent starts serving vhost writes of its own.
     services::nginx::retrofit_static_denies().await;
 
+    // Redirects and password protection (D4): legacy auth files rewritten at
+    // server level, and missing includes put back into live vhosts.
+    services::nginx::reconcile_site_access().await;
+
     // Pools written before every pool carried open_basedir get the default line
     // (Apache mode can hand a request to any pool's socket; open_basedir keeps
     // that pool inside its own site tree). Idempotent, managed pools only.

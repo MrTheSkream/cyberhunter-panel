@@ -35,6 +35,7 @@ pub mod security;
 pub mod security_scanner;
 pub mod server_ips;
 pub mod sftp_accounts;
+pub mod site_access;
 pub mod smtp;
 pub mod ssl;
 pub mod ssrf_guard;

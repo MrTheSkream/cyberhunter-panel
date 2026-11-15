@@ -497,6 +497,100 @@ pub async fn retrofit_static_denies() {
     }
 }
 
+/// Bring every site's redirects and password protection up to date (D4).
+///
+/// Two repairs, both idempotent: an auth file still in the pre-D4 format
+/// (`location X { auth_basic ... }`, which left PHP unprotected) is rewritten
+/// at `server` level, and a vhost lacking the `include` for a redirects or
+/// auth file that exists gets it at the template's place. Vhosts written
+/// before the templates carried these lines lost them at their last re-render.
+///
+/// Unlike [`retrofit_static_denies`] this runs even when `nginx -t` already
+/// fails: a legacy auth file protecting `/` (duplicate `location /`) is itself
+/// a cause of that failure, and converting it is the fix. Whatever the
+/// outcome, the post-edit `nginx -t` decides: pass, one reload; fail, every
+/// file put back as it was.
+pub async fn reconcile_site_access() {
+    use crate::services::site_access as sa;
+
+    let mut domains: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for dir in [sa::REDIRECTS_DIR, sa::AUTH_DIR] {
+        let Ok(entries) = std::fs::read_dir(dir) else { continue };
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if let Some(d) = name.strip_suffix(".conf") {
+                if crate::routes::is_valid_domain(d) {
+                    domains.insert(d.to_string());
+                }
+            }
+        }
+    }
+
+    // (path, previous, new)
+    let mut changes: Vec<(String, String, String)> = Vec::new();
+    for d in &domains {
+        let auth = sa::auth_file(d);
+        if let Ok(body) = std::fs::read_to_string(&auth) {
+            if let Some(converted) = sa::convert_legacy_auth(d, &body) {
+                changes.push((auth, body, converted));
+            }
+        }
+        let target = vhost_target(d);
+        let Ok(vhost) = std::fs::read_to_string(target.path()) else { continue };
+        match sa::ensure_includes(&vhost, d, sa::SiteIncludes::on_disk(d)) {
+            Ok(Some(patched)) => changes.push((target.path().to_string(), vhost, patched)),
+            Ok(None) => {}
+            Err(sa::NoAnchor) => tracing::warn!(
+                "{} has redirects or password protection but its vhost {} has no access_log line to place the include by; re-save the site to apply them",
+                d,
+                target.path()
+            ),
+        }
+    }
+    if changes.is_empty() {
+        return;
+    }
+
+    let was_valid = matches!(test_config().await, Ok(ref o) if o.success);
+    let mut written: Vec<(String, String)> = Vec::new();
+    for (path, previous, new) in &changes {
+        match sa::write_atomic(path, new) {
+            Ok(()) => written.push((path.clone(), previous.clone())),
+            Err(e) => tracing::warn!("Could not update {path}: {e}"),
+        }
+    }
+    if written.is_empty() {
+        return;
+    }
+
+    match test_config().await {
+        Ok(out) if out.success => {
+            let names: Vec<&str> = written.iter().map(|(p, _)| p.as_str()).collect();
+            tracing::info!(
+                "Updated redirects/password protection for {} file(s): {}",
+                written.len(),
+                names.join(", ")
+            );
+            reload().await.ok();
+        }
+        other => {
+            for (path, previous) in &written {
+                sa::restore_file(path, Some(previous));
+            }
+            let why = match other {
+                Ok(out) => out.stderr,
+                Err(e) => e.to_string(),
+            };
+            tracing::warn!(
+                "nginx -t rejected the redirects/password-protection update - all {} file(s) reverted (nginx -t {} before the update): {}",
+                written.len(),
+                if was_valid { "passed" } else { "already failed" },
+                why.trim()
+            );
+        }
+    }
+}
+
 /// Detect the server's primary (non-loopback, non-docker) interface IP for nginx listen directives.
 /// Returns empty string if detection fails (templates fall back to wildcard listen).
 pub fn detect_bind_ip() -> String {
@@ -788,6 +882,11 @@ fn is_safe_php_socket(socket: &str) -> bool {
 }
 
 /// Render the appropriate nginx config for a site.
+///
+/// The site's redirects and password-protection includes are emitted when
+/// their files exist on disk (see [`crate::services::site_access`]), so every
+/// re-render keeps them. The rendering itself is
+/// [`render_site_config_including`], which is pure.
 pub fn render_site_config(
     templates: &Tera,
     domain: &str,
@@ -807,6 +906,22 @@ pub fn render_site_config_with(
     domain: &str,
     config: &SiteConfig,
     apache_timeout_s: Option<u32>,
+) -> Result<String, tera::Error> {
+    let includes = crate::services::site_access::SiteIncludes::on_disk(domain);
+    render_site_config_including(templates, domain, config, apache_timeout_s, includes)
+}
+
+/// [`render_site_config_with`] with the per-site includes given rather than
+/// looked up: no filesystem access. Both includes go right above the serving
+/// block's `access_log` line (the 443 block with SSL), outside every runtime
+/// branch; with neither, the output is byte-identical to the templates
+/// without them.
+pub fn render_site_config_including(
+    templates: &Tera,
+    domain: &str,
+    config: &SiteConfig,
+    apache_timeout_s: Option<u32>,
+    includes: crate::services::site_access::SiteIncludes,
 ) -> Result<String, tera::Error> {
     // Validate fields that get inserted into nginx config
     if let Some(ref root) = config.root {
@@ -838,6 +953,8 @@ pub fn render_site_config_with(
     ctx.insert("root", config.root.as_deref().unwrap_or("/var/www"));
     ctx.insert("bind_ip", &bind_ip_for(domain, config));
     ctx.insert("runtime", &config.runtime);
+    ctx.insert("inc_redirects", &includes.redirects);
+    ctx.insert("inc_auth", &includes.auth);
 
     // Resource limits
     let rate_limit = config.rate_limit.unwrap_or(0);
@@ -1719,6 +1836,125 @@ php_admin_value[open_basedir] = /var/www/example.com/:/tmp/:/usr/share/php/
         for ssl in [false, true] {
             let out = render_site_config(&t, "example.com", &apache_site(ssl, Some(90))).unwrap();
             assert!(out.contains("        proxy_read_timeout 90s;\n"), "ssl={ssl}");
+        }
+    }
+
+    // ── redirects / password-protection includes (D4) ───────────────────
+
+    const INCLUDES_FRAGMENT: &str = "{% if inc_redirects %}    include /etc/nginx/redirects/{{ domain }}.conf;
+{% endif %}{% if inc_auth %}    include /etc/nginx/auth/{{ domain }}.conf;
+{% endif %}";
+
+    /// The templates as they were before the includes were added.
+    fn templates_without_includes() -> Tera {
+        let strip = |t: &str| {
+            let t = t.replace('\r', "");
+            assert!(t.contains(INCLUDES_FRAGMENT));
+            t.replace(INCLUDES_FRAGMENT, "")
+        };
+        let mut tera = Tera::default();
+        tera.add_raw_template("http.conf", &strip(include_str!("../templates/nginx/http.conf"))).unwrap();
+        tera.add_raw_template("https.conf", &strip(include_str!("../templates/nginx/https.conf"))).unwrap();
+        tera.add_raw_template("proxy.conf", &strip(include_str!("../templates/nginx/proxy.conf"))).unwrap();
+        tera
+    }
+
+    /// One config per template branch: php presets (nginx), apache mode,
+    /// static, proxy, node, python.
+    fn every_branch(ssl: bool) -> Vec<(String, SiteConfig)> {
+        let mut out = Vec::new();
+        for preset in ["generic", "wordpress", "laravel", "magento"] {
+            out.push((format!("php/{preset}"), with(php_site(ssl, Some(60)), |c| c.php_preset = Some(preset.into()))));
+        }
+        out.push(("apache".into(), apache_site(ssl, None)));
+        for rt in ["static", "proxy", "node", "python"] {
+            out.push((rt.into(), with(php_site(ssl, None), |c| {
+                c.runtime = rt.to_string();
+                c.proxy_port = Some(3000);
+            })));
+        }
+        out
+    }
+
+    use crate::services::site_access::SiteIncludes;
+    const BOTH: SiteIncludes = SiteIncludes { redirects: true, auth: true };
+
+    #[test]
+    fn without_include_files_rendering_is_byte_identical_to_before() {
+        let new = init_templates();
+        let old = templates_without_includes();
+        for ssl in [false, true] {
+            for (name, c) in every_branch(ssl) {
+                let a = render_site_config_including(&new, "example.com", &c, None, SiteIncludes::default()).unwrap();
+                let b = render_site_config_including(&old, "example.com", &c, None, BOTH).unwrap();
+                assert_eq!(a, b, "ssl={ssl} {name}");
+            }
+        }
+    }
+
+    #[test]
+    fn includes_land_in_the_serving_block_of_every_branch() {
+        let t = init_templates();
+        let block = "    include /etc/nginx/redirects/example.com.conf;
+    include /etc/nginx/auth/example.com.conf;
+    access_log /var/log/nginx/example.com.access.log;
+";
+        for ssl in [false, true] {
+            for (name, c) in every_branch(ssl) {
+                let out = render_site_config_including(&t, "example.com", &c, None, BOTH).unwrap();
+                assert_eq!(out.matches(block).count(), 1, "ssl={ssl} {name}
+{out}");
+                assert_eq!(out.matches("include /etc/nginx/auth/").count(), 1, "ssl={ssl} {name}");
+                assert_eq!(out.matches("include /etc/nginx/redirects/").count(), 1, "ssl={ssl} {name}");
+                // Inside the last server block, which is the 443 one with SSL;
+                // the :80 redirect-only block never gets them.
+                let last_server = out.rfind("
+server {").unwrap();
+                assert!(out.find("include /etc/nginx/").unwrap() > last_server, "ssl={ssl} {name}");
+                if ssl {
+                    assert!(out[last_server..].contains(":443 ssl;"), "ssl={ssl} {name}");
+                    assert!(!out[..last_server].contains("include /etc/nginx/"), "ssl={ssl} {name}");
+                }
+                // Only one of the two.
+                for one in [SiteIncludes { redirects: true, auth: false }, SiteIncludes { redirects: false, auth: true }] {
+                    let out = render_site_config_including(&t, "example.com", &c, None, one).unwrap();
+                    assert_eq!(out.contains("include /etc/nginx/redirects/example.com.conf;"), one.redirects);
+                    assert_eq!(out.contains("include /etc/nginx/auth/example.com.conf;"), one.auth);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn inserting_into_a_live_vhost_gives_what_the_template_renders() {
+        let t = init_templates();
+        for ssl in [false, true] {
+            for (name, c) in every_branch(ssl) {
+                let bare = render_site_config_including(&t, "example.com", &c, None, SiteIncludes::default()).unwrap();
+                for want in [BOTH, SiteIncludes { redirects: true, auth: false }, SiteIncludes { redirects: false, auth: true }] {
+                    let rendered = render_site_config_including(&t, "example.com", &c, None, want).unwrap();
+                    let inserted = crate::services::site_access::ensure_includes(&bare, "example.com", want)
+                        .unwrap()
+                        .unwrap();
+                    assert_eq!(inserted, rendered, "ssl={ssl} {name} {want:?}");
+                    assert_eq!(
+                        crate::services::site_access::ensure_includes(&rendered, "example.com", want),
+                        Ok(None)
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn no_template_sets_auth_basic_and_acme_stays_reachable() {
+        for t in [
+            include_str!("../templates/nginx/http.conf"),
+            include_str!("../templates/nginx/https.conf"),
+            include_str!("../templates/nginx/proxy.conf"),
+        ] {
+            assert!(!t.contains("auth_basic"));
+            assert!(t.contains("location /.well-known/acme-challenge/"));
         }
     }
 }
