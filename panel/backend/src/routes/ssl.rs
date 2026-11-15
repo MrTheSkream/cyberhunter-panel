@@ -381,13 +381,20 @@ pub async fn provision(
     if q.force {
         agent_body["force"] = serde_json::json!(true);
     }
+    // HTTP-01: the site's other names ride on the same order (apex-only retry
+    // when one of them cannot validate), and the vhost description so the
+    // agent's own re-render keeps the aliases until the full rebuild below.
+    crate::helpers::add_http01_names(&agent, &site, &mut agent_body).await;
 
-    // Call agent to provision SSL
+    // Call agent to provision SSL. The long budget: with extra names the agent
+    // may place a second, apex-only order after the first one fails, which does
+    // not fit the 60s quick budget.
     let agent_path = format!("/ssl/provision/{}", site.domain);
     let result = agent
-        .post(&agent_path, Some(agent_body))
+        .post_long(&agent_path, Some(agent_body), HTTP01_MULTI_NAME_TIMEOUT_SECS)
         .await
         .map_err(|e| acme_failure_or(&site.domain, "SSL provisioning", e))?;
+    let warnings = crate::helpers::log_agent_warnings(&site.domain, &result);
 
     // Parse expiry from agent response
     let ssl_expiry = result
@@ -453,6 +460,7 @@ pub async fn provision(
         "domain": site.domain,
         "ssl_enabled": true,
         "expiry": ssl_expiry,
+        "warnings": warnings,
     })))
 }
 
@@ -781,6 +789,10 @@ pub async fn status(
 /// expiry write and wrote a cooldown row. A budget below the agent's own wait is
 /// not a timeout, it is a guaranteed false failure.
 pub(crate) const DNS01_ORDER_TIMEOUT_SECS: u64 = 300;
+
+/// HTTP-01 order with extra names (05-import-hestia W3-S): the agent may place a
+/// second, apex-only order after the first is declined, each up to ~120s.
+pub(crate) const HTTP01_MULTI_NAME_TIMEOUT_SECS: u64 = 270;
 
 /// Renew a certificate over DNS-01, against the name it was actually issued for.
 ///
@@ -1150,6 +1162,14 @@ pub(crate) async fn renew_for_site(
         }
         crate::helpers::RenewalPlan::Http01 { .. }
         | crate::helpers::RenewalPlan::LastResortHttp01 { .. } => {
+            // The site's other names ride on an ordinary HTTP-01 renewal. A
+            // last-resort downgrade stays the single name its alert describes,
+            // and keeps only the vhost description.
+            if matches!(&plan, crate::helpers::RenewalPlan::Http01 { .. }) {
+                crate::helpers::add_http01_names(&agent, site, &mut agent_body).await;
+            } else {
+                crate::helpers::add_vhost_description(&mut agent_body, site);
+            }
             let agent_path = format!("/ssl/{}/renew", site.domain);
             agent
                 .post_long(&agent_path, Some(agent_body), DNS01_ORDER_TIMEOUT_SECS)
@@ -1167,6 +1187,7 @@ pub(crate) async fn renew_for_site(
     // for a certificate that is no longer one. And an unrecorded row records
     // itself here, which is what makes the whole rule converge: an unknown row
     // behaves as it does today exactly once, and is known ever after.
+    let warnings = crate::helpers::log_agent_warnings(&site.domain, &result);
     if let Some(expiry_str) = result.get("expiry").and_then(|v| v.as_str()) {
         if let Some(expiry) = crate::helpers::parse_agent_cert_expiry(expiry_str) {
             let _ = sqlx::query(
@@ -1190,7 +1211,7 @@ pub(crate) async fn renew_for_site(
         None,
     ).await;
 
-    Ok(Json(serde_json::json!({ "ok": true, "domain": site.domain })))
+    Ok(Json(serde_json::json!({ "ok": true, "domain": site.domain, "warnings": warnings })))
 }
 
 /// DELETE /api/ssl/{id} - Revoke and delete SSL certificate (admin only).

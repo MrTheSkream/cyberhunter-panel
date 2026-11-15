@@ -324,10 +324,10 @@ async fn read_crontab_entries() -> Vec<CronExport> {
 
 /// Check PHP version install/running status.
 async fn check_php_versions() -> Vec<PhpExport> {
-    let versions = ["8.1", "8.2", "8.3", "8.4", "8.5"];
+    let versions = crate::services::php_pool::PHP_VERSIONS;
     let mut results = Vec::new();
 
-    for v in &versions {
+    for v in versions {
         let installed = crate::services::pkg::is_installed(&format!("php{v}-fpm")).await;
 
         let fpm_running = if installed {

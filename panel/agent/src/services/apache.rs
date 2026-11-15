@@ -243,6 +243,9 @@ pub struct ApacheVhost<'a> {
     pub php_socket: &'a str,
     pub timeout_s: u32,
     pub max_upload_mb: u32,
+    /// Upload folders where PHP never runs (05-import-hestia D9). Empty = no
+    /// block, the vhost renders exactly as before.
+    pub no_exec_dirs: &'a [String],
 }
 
 /// A path that is safe to place unquoted in an Apache directive.
@@ -308,9 +311,44 @@ fn is_safe_path(path: &str) -> bool {
 
 /// `AllowOverride` arguments: categories whose directives cannot map a handler.
 /// `Options=` lists what `Options` may turn on or off from .htaccess (no
-/// ExecCGI, no Includes). No `FileInfo`, no `All`.
+/// Includes). `ExecCGI` is listed (05-import-hestia D9): HestiaCP sites ship
+/// `Options -Indexes -ExecCGI`, a 500 while the option is not listed. Turning
+/// it ON does nothing: `mod_cgi`/`mod_cgid` are disabled (`configure_script`,
+/// `global_config_ok`) and no handler can be mapped from .htaccess.
+/// No `FileInfo`, no `All`.
 const ALLOW_OVERRIDE: &str = "AuthConfig Limit Indexes \
+Options=FollowSymLinks,SymLinksIfOwnerMatch,Indexes,MultiViews,ExecCGI Nonfatal=Override";
+
+/// The `AllowOverride` arguments every managed vhost carried before `ExecCGI`
+/// was listed; rewritten in place at agent start ([`reconcile_vhost_overrides`]).
+const ALLOW_OVERRIDE_BEFORE_EXECCGI: &str = "AuthConfig Limit Indexes \
 Options=FollowSymLinks,SymLinksIfOwnerMatch,Indexes,MultiViews Nonfatal=Override";
+
+/// A managed vhost body with the pre-`ExecCGI` `AllowOverride` line updated,
+/// or `None` when there is nothing to change. Pure.
+pub fn vhost_with_current_overrides(content: &str) -> Option<String> {
+    let old = format!("AllowOverride {ALLOW_OVERRIDE_BEFORE_EXECCGI}\n");
+    if !content.contains(&old) {
+        return None;
+    }
+    Some(content.replace(&old, &format!("AllowOverride {ALLOW_OVERRIDE}\n")))
+}
+
+/// Agent start: bring every panel-managed Apache vhost to the current
+/// `AllowOverride` line (idempotent; a vhost Apache rejects is put back).
+pub async fn reconcile_vhost_overrides() {
+    for domain in managed_domains() {
+        let path = vhost_path(&domain);
+        let Ok(current) = std::fs::read_to_string(&path) else { continue };
+        let Some(updated) = vhost_with_current_overrides(&current) else { continue };
+        match apply_vhost(&domain, &updated).await {
+            Ok(_) => tracing::info!("Apache vhost of {domain}: ExecCGI may now be set from .htaccess"),
+            Err(ApplyError::Rejected(e)) | Err(ApplyError::Failed(e)) => {
+                tracing::warn!("Could not update the Apache vhost of {domain}: {e}")
+            }
+        }
+    }
+}
 
 /// The FileInfo directives re-allowed one by one (`AllowOverrideList`):
 /// rewriting, redirects, error documents, headers, content types and
@@ -354,6 +392,7 @@ pub fn render_apache_vhost(v: &ApacheVhost) -> Result<String, String> {
     if !is_safe_path(socket) || !socket.ends_with(".sock") {
         return Err("Invalid PHP-FPM socket for the Apache vhost".into());
     }
+    let no_exec = crate::services::vhost_extras::validate_no_exec_dirs(v.no_exec_dirs)?;
     let timeout = if v.timeout_s == 0 {
         DEFAULT_TIMEOUT_S
     } else {
@@ -390,6 +429,9 @@ pub fn render_apache_vhost(v: &ApacheVhost) -> Result<String, String> {
     out.push_str("    <FilesMatch \"^\\.(ht|user\\.ini)\">\n");
     out.push_str("        Require all denied\n");
     out.push_str("    </FilesMatch>\n");
+    // Defense in depth behind nginx's 403 (D9): server config, so a
+    // .htaccess cannot undo it.
+    out.push_str(&crate::services::vhost_extras::apache_no_exec_block(&no_exec));
     out.push_str("    <FilesMatch \"\\.php$\">\n");
     out.push_str(&format!(
         "        SetHandler \"proxy:unix:{socket}|fcgi://localhost\"\n"
@@ -535,6 +577,7 @@ install -m 644 "$S/ports.conf" {PORTS_CONF_PATH} || fail "Cannot write {PORTS_CO
 install -m 644 "$S/{GLOBAL_CONF_NAME}.conf" {GLOBAL_CONF_PATH} || fail "Cannot write {GLOBAL_CONF_PATH}"
 a2dissite -q 000-default >/dev/null 2>&1 || true
 a2dismod -q -f mpm_prefork mpm_worker >/dev/null 2>&1 || true
+a2dismod -q -f cgi cgid >/dev/null 2>&1 || true
 for f in /etc/apache2/mods-enabled/php*.load; do
     [ -e "$f" ] || continue
     a2dismod -q -f "$(basename "$f" .load)" >/dev/null 2>&1 || true
@@ -563,6 +606,10 @@ pub fn global_config_ok() -> bool {
         || p("/etc/apache2/sites-enabled/000-default.conf").exists()
         || p("/etc/apache2/mods-enabled/mpm_prefork.load").exists()
         || p("/etc/apache2/mods-enabled/mpm_worker.load").exists()
+        // `ExecCGI` is allowed from .htaccess (05-import-hestia D9) on the
+        // condition that no CGI module is loaded.
+        || p("/etc/apache2/mods-enabled/cgi.load").exists()
+        || p("/etc/apache2/mods-enabled/cgid.load").exists()
     {
         return false;
     }
@@ -1063,6 +1110,7 @@ mod tests {
             php_socket: "unix:/run/php/php8.3-fpm-example_com.sock",
             timeout_s: 120,
             max_upload_mb: 64,
+            no_exec_dirs: &[],
         }
     }
 
@@ -1109,7 +1157,7 @@ mod tests {
     ServerName example.com
     DocumentRoot /var/www/example.com/public
     <Directory /var/www/example.com/public>
-        AllowOverride AuthConfig Limit Indexes Options=FollowSymLinks,SymLinksIfOwnerMatch,Indexes,MultiViews Nonfatal=Override
+        AllowOverride AuthConfig Limit Indexes Options=FollowSymLinks,SymLinksIfOwnerMatch,Indexes,MultiViews,ExecCGI Nonfatal=Override
         AllowOverrideList RewriteEngine RewriteBase RewriteCond RewriteRule RewriteOptions Redirect RedirectMatch RedirectPermanent RedirectTemp ErrorDocument Header RequestHeader AddType ForceType RemoveType RemoveHandler AddDefaultCharset AddCharset RemoveCharset AddEncoding RemoveEncoding AddLanguage RemoveLanguage LanguagePriority FileETag MultiviewsMatch SetEnv SetEnvIf SetEnvIfNoCase BrowserMatch BrowserMatchNoCase UnsetEnv PassEnv SetOutputFilter AddOutputFilter AddOutputFilterByType
         Options +SymLinksIfOwnerMatch -FollowSymLinks -Indexes -ExecCGI -Includes
         Require all granted
@@ -1127,6 +1175,33 @@ mod tests {
 </VirtualHost>
 ";
         assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn no_exec_folders_are_denied_before_the_php_handler() {
+        let dirs = vec!["/uploads/".to_string(), "/wp-content/uploads".to_string()];
+        let mut v = vhost(&[]);
+        v.no_exec_dirs = &dirs;
+        let out = render_apache_vhost(&v).unwrap();
+        let block = "    <LocationMatch \"(?i)^(?:/uploads|/wp-content/uploads)/.*\\.(?:php[0-9]?|phtml|pht|phps|phar)(/|$)\">\n        Require all denied\n    </LocationMatch>\n";
+        assert!(out.find(block).unwrap() < out.find("<FilesMatch \"\\.php$\">").unwrap(), "{out}");
+        // Absent = the contract vhost, unchanged.
+        assert!(!render_apache_vhost(&vhost(&[])).unwrap().contains("LocationMatch"));
+        let bad = vec!["/a/../b".to_string()];
+        v.no_exec_dirs = &bad;
+        assert!(render_apache_vhost(&v).is_err());
+    }
+
+    #[test]
+    fn existing_vhosts_get_execcgi_once() {
+        let current = render_apache_vhost(&vhost(&[])).unwrap();
+        assert_eq!(vhost_with_current_overrides(&current), None);
+        let old = current.replace(
+            &format!("AllowOverride {ALLOW_OVERRIDE}\n"),
+            &format!("AllowOverride {ALLOW_OVERRIDE_BEFORE_EXECCGI}\n"),
+        );
+        assert_ne!(old, current);
+        assert_eq!(vhost_with_current_overrides(&old).as_deref(), Some(current.as_str()));
     }
 
     #[test]
@@ -1209,9 +1284,12 @@ mod tests {
         for needed in ["AuthConfig", "Limit", "Indexes", "Nonfatal=Override"] {
             assert!(cats.contains(&needed), "{needed} missing from {ao:?}");
         }
-        // Options may not switch on CGI or SSI from .htaccess.
+        // Options may not switch on SSI from .htaccess. ExecCGI is listed
+        // (05-import-hestia D9) and inert: the CGI modules are disabled.
         let opts = cats.iter().find_map(|c| c.strip_prefix("Options=")).expect("Options=");
-        assert!(!opts.contains("ExecCGI") && !opts.contains("Includes"), "{opts}");
+        assert!(!opts.contains("Includes"), "{opts}");
+        assert!(opts.split(',').any(|o| o == "ExecCGI"), "{opts}");
+        assert!(configure_script("/stage").contains("a2dismod -q -f cgi cgid"));
         assert!(opts.split(',').any(|o| o == "FollowSymLinks"), "{opts}");
         assert!(out.contains("Options +SymLinksIfOwnerMatch -FollowSymLinks -Indexes -ExecCGI -Includes
 "));

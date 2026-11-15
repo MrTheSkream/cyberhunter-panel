@@ -7,7 +7,17 @@ interface PhpVersion {
   installed: boolean;
   fpm_running: boolean;
   socket: string;
+  /** End-of-life branch (5.6, 7.4). Absent on older agents: see LEGACY below. */
+  legacy?: boolean;
 }
+
+/**
+ * Versions past end of life, offered for sites imported from an older panel.
+ * Used when the agent does not flag `legacy` itself.
+ */
+const LEGACY = new Set(["5.6", "7.4"]);
+const isLegacyVersion = (v: PhpVersion | undefined, version: string) =>
+  v?.legacy ?? LEGACY.has(version);
 
 interface Props {
   value: string;
@@ -52,6 +62,8 @@ export default function PhpVersionPicker({
   const [installId, setInstallId] = useState<string | null>(null);
   const [installing, setInstalling] = useState<string | null>(null);
   const [error, setError] = useState("");
+  // The server's own caveat about what it just installed (a legacy version).
+  const [warning, setWarning] = useState("");
 
   // Returns null for "could not ask", which is not the same answer as "asked and
   // there is nothing". Conflating them made a fetch hiccup immediately after a
@@ -125,10 +137,14 @@ export default function PhpVersionPicker({
 
   const handleInstall = async () => {
     setError("");
+    setWarning("");
     setInstalling(value);
     try {
-      const res = await api.post<{ install_id: string }>("/php/install", { version: value });
+      const res = await api.post<{ install_id: string; warning?: string }>("/php/install", {
+        version: value,
+      });
       setInstallId(res.install_id);
+      if (res.warning) setWarning(res.warning);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Could not start the install");
       setInstalling(null);
@@ -161,9 +177,10 @@ export default function PhpVersionPicker({
   };
 
   const label = (v: PhpVersion) => {
-    if (!v.installed) return `PHP ${v.version} - not installed`;
-    if (!v.fpm_running) return `PHP ${v.version} - installed, FPM stopped`;
-    return `PHP ${v.version}`;
+    const legacy = isLegacyVersion(v, v.version) ? " (legacy)" : "";
+    if (!v.installed) return `PHP ${v.version}${legacy} - not installed`;
+    if (!v.fpm_running) return `PHP ${v.version}${legacy} - installed, FPM stopped`;
+    return `PHP ${v.version}${legacy}`;
   };
 
   // Whatever the server offers, plus the current value if the server does not
@@ -172,11 +189,12 @@ export default function PhpVersionPicker({
   // nothing at all and the control would render blank over a site that is
   // running something.
   const base: PhpVersion[] = loadFailed
-    ? ["8.5", "8.4", "8.3", "8.2", "8.1"].map((version) => ({
+    ? ["8.5", "8.4", "8.3", "8.2", "8.1", "7.4", "5.6"].map((version) => ({
         version,
         installed: true,
         fpm_running: true,
         socket: "",
+        legacy: LEGACY.has(version),
       }))
     : [...versions];
   if (value && !base.some((v) => v.version === value)) {
@@ -185,6 +203,7 @@ export default function PhpVersionPicker({
   const offered = base.sort((a, b) =>
     b.version.localeCompare(a.version, undefined, { numeric: true }),
   );
+  const selectedLegacy = !!value && isLegacyVersion(selected, value);
 
   return (
     <div className={className}>
@@ -197,10 +216,36 @@ export default function PhpVersionPicker({
       >
         {offered.map((v) => (
           <option key={v.version} value={v.version}>
-            {loadFailed ? `PHP ${v.version}` : label(v)}
+            {loadFailed
+              ? `PHP ${v.version}${isLegacyVersion(v, v.version) ? " (legacy)" : ""}`
+              : label(v)}
           </option>
         ))}
       </select>
+
+      {/* An <option> cannot carry a badge, so the selected one gets it here. */}
+      {selectedLegacy && (
+        <span
+          className="mt-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-warn-500/10 text-warn-400 border border-warn-500/30"
+          title="This PHP branch reached end of life and no longer receives security fixes."
+        >
+          Legacy, no security updates
+        </span>
+      )}
+
+      {warning && (
+        <div className="mt-2 px-3 py-2 rounded-lg text-xs bg-warn-500/10 text-warn-400 border border-warn-500/30 flex items-start justify-between gap-2">
+          <span>{warning}</span>
+          <button
+            type="button"
+            onClick={() => setWarning("")}
+            className="text-warn-400 hover:text-warn-300"
+            aria-label="Dismiss"
+          >
+            &times;
+          </button>
+        </div>
+      )}
 
       {needsInstall && !installing && (
         <div className="mt-2 px-3 py-2.5 bg-warn-500/10 border border-warn-500/30 rounded-lg">

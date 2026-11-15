@@ -78,6 +78,49 @@ fn checked_pool(
     }
 }
 
+/// 05-import-hestia (W3-S): what a provision/renew body adds for a site's
+/// other names and for the vhost the certificate door re-renders. All
+/// optional; absent = as before (a single-name order, settings read back
+/// from the vhost on disk).
+#[derive(Deserialize, Default)]
+struct SiteNames {
+    /// HTTP-01 names ordered besides the domain (at most 10).
+    #[serde(default)]
+    extra_names: Option<Vec<String>>,
+    /// Retry with the domain alone when the CA declines the extra names.
+    #[serde(default)]
+    fallback_apex_only: bool,
+    #[serde(default)]
+    aliases: Option<Vec<String>>,
+    #[serde(default)]
+    canonical_host: Option<String>,
+    #[serde(default)]
+    php_no_exec_dirs: Option<Vec<String>>,
+    #[serde(default)]
+    force_ssl: Option<bool>,
+    #[serde(default)]
+    hsts: Option<bool>,
+}
+
+impl SiteNames {
+    /// The validated extra names, or the 400 that refuses them before any
+    /// ACME traffic.
+    fn extra(&self, domain: &str) -> Result<Vec<String>, (StatusCode, Json<serde_json::Value>)> {
+        ssl::validate_extra_names(domain, self.extra_names.as_deref().unwrap_or(&[])).map_err(|e| {
+            (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": e })))
+        })
+    }
+
+    /// Copy the vhost-description fields into a `SiteConfig`.
+    fn apply(self, c: &mut SiteConfig) {
+        c.aliases = self.aliases;
+        c.canonical_host = self.canonical_host;
+        c.php_no_exec_dirs = self.php_no_exec_dirs;
+        c.force_ssl = self.force_ssl;
+        c.hsts = self.hsts;
+    }
+}
+
 #[derive(Deserialize)]
 struct ProvisionRequest {
     email: String,
@@ -107,6 +150,8 @@ struct ProvisionRequest {
     /// that never learned to ask - fail closed at the writer.
     #[serde(default)]
     force: bool,
+    #[serde(flatten)]
+    names: SiteNames,
 }
 
 /// POST /ssl/provision/{domain} - Provision Let's Encrypt cert and enable SSL.
@@ -131,12 +176,15 @@ async fn provision(
     })?;
 
     // 2. Provision certificate via HTTP-01 challenge
+    let extra = body.names.extra(&domain)?;
     let opts = ssl::ProvisionOpts {
         profile: body.profile.as_deref(),
         replaces_pem: body.replaces_pem.as_deref(),
         // The operator's explicit intent, and the only way past the writer's
         // foreign-certificate refusal.
         replace_foreign: body.force,
+        extra_names: &extra,
+        fallback_apex_only: body.names.fallback_apex_only,
     };
     // Only what the CA actually said is labelled. The panel hides every agent 5xx
     // behind an incident id - correctly, because this route also fails for reasons
@@ -150,7 +198,7 @@ async fn provision(
         .map_err(|e| ca_or_internal(e))?;
 
     // 3. Rewrite nginx config with SSL enabled
-    let site_config = SiteConfig {
+    let mut site_config = SiteConfig {
         runtime: body.runtime,
         root: body.root,
         proxy_port: body.proxy_port,
@@ -178,7 +226,13 @@ async fn provision(
         bind_ip: None,
         php_pool: checked_pool(&domain, body.php_pool),
         web_server: body.web_server,
+        aliases: None,
+        canonical_host: None,
+        php_no_exec_dirs: None,
+        force_ssl: None,
+        hsts: None,
     };
+    body.names.apply(&mut site_config);
 
     let canonical = ssl::enable_ssl_for_site(&state.templates, &domain, &site_config)
         .await
@@ -196,6 +250,8 @@ async fn provision(
         "key_path": cert_info.key_path,
         "expiry": cert_info.expiry,
         "profile": cert_info.profile,
+        "names": cert_info.names,
+        "warnings": cert_info.warnings,
         // Reported so the panel can say so out loud rather than leaving the
         // operator with a site that serves HTTPS and advertises HTTP.
         "canonical_url": canonical,
@@ -343,6 +399,11 @@ async fn upload_cert(
         bind_ip: None,
         php_pool: None,
         web_server: None,
+        aliases: None,
+        canonical_host: None,
+        php_no_exec_dirs: None,
+        force_ssl: None,
+        hsts: None,
     };
 
     let canonical = ssl::enable_ssl_for_site(&state.templates, &body.domain, &site_config)
@@ -393,6 +454,8 @@ struct RenewRequest {
     php_pool: Option<crate::services::php_pool::PhpPool>,
     #[serde(default)]
     profile: Option<String>,
+    #[serde(flatten)]
+    names: SiteNames,
 }
 
 /// POST /ssl/{domain}/renew - Renew a Let's Encrypt certificate via
@@ -428,6 +491,7 @@ async fn renew(
     let cert_path = format!("/etc/dockpanel/ssl/{domain}/fullchain.pem");
     let replaces_pem = tokio::fs::read_to_string(&cert_path).await.ok();
 
+    let extra = body.names.extra(&domain)?;
     let opts = ssl::ProvisionOpts {
         profile: body.profile.as_deref(),
         replaces_pem: replaces_pem.as_deref(),
@@ -438,17 +502,22 @@ async fn renew(
         //    panel believed when it called. There is no renewal that needs to
         //    replace a stranger's certificate.
         replace_foreign: false,
+        extra_names: &extra,
+        fallback_apex_only: body.names.fallback_apex_only,
     };
 
+    // A declined multi-name order followed by the apex-only retry is two
+    // orders: give it twice the budget.
+    let budget = if !extra.is_empty() && body.names.fallback_apex_only { 240 } else { 120 };
     let cert_info = tokio::time::timeout(
-        Duration::from_secs(120),
+        Duration::from_secs(budget),
         ssl::provision_cert(&account, &domain, Some(&opts)),
     )
     .await
     .map_err(|_| {
         (
             StatusCode::GATEWAY_TIMEOUT,
-            Json(serde_json::json!({ "error": "Certificate renewal timed out after 120s" })),
+            Json(serde_json::json!({ "error": format!("Certificate renewal timed out after {budget}s") })),
         )
     })?
     .map_err(|e| {
@@ -484,7 +553,7 @@ async fn renew(
         // Regenerate nginx config so any config changes since the original
         // provision are picked up.
         Some(runtime) => {
-            let site_config = SiteConfig {
+            let mut site_config = SiteConfig {
                 runtime,
                 root: body.root,
                 proxy_port: body.proxy_port,
@@ -512,7 +581,13 @@ async fn renew(
                 bind_ip: None,
                 php_pool: checked_pool(&domain, body.php_pool),
                 web_server: body.web_server,
+                aliases: None,
+                canonical_host: None,
+                php_no_exec_dirs: None,
+                force_ssl: None,
+                hsts: None,
             };
+            body.names.apply(&mut site_config);
             match ssl::enable_ssl_for_site(&state.templates, &domain, &site_config).await {
                 Ok(outcome) => canonical = Some(outcome),
                 Err(e) => tracing::warn!("Nginx reload after renewal failed for {domain}: {e}"),
@@ -540,6 +615,8 @@ async fn renew(
         "domain": domain,
         "expiry": cert_info.expiry,
         "profile": cert_info.profile,
+        "names": cert_info.names,
+        "warnings": cert_info.warnings,
         "canonical_url": canonical,
     })))
 }
@@ -698,6 +775,9 @@ async fn provision_dns01(
         profile: body.profile.as_deref(),
         replaces_pem: body.replaces_pem.as_deref(),
         replace_foreign: body.force,
+        // DNS-01 orders the zone (and its wildcard), never aliases.
+        extra_names: &[],
+        fallback_apex_only: false,
     };
     let cert_info = ssl::provision_cert_dns01(
         &account,
@@ -741,6 +821,7 @@ async fn provision_dns01(
                 waf_enabled: None, waf_mode: None,
                 csp_policy: None, permissions_policy: None, bot_protection: None,
                 pool_user: None, pool_group: None, bind_ip: None, php_pool: None, web_server: None,
+                aliases: None, canonical_host: None, php_no_exec_dirs: None, force_ssl: None, hsts: None,
             };
 
             canonical = Some(

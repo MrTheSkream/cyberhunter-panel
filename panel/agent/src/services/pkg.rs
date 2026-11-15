@@ -176,6 +176,9 @@ fn php_rpm_name(debian: &str) -> &str {
         "readline" => "php-readline",
         "curl" => "php-curl",
         "sqlite3" => "php-sqlite3",
+        // AppStream ships `php-soap`; `mcrypt` has no AppStream package and
+        // stays unmapped (the candidate probe skips it).
+        "soap" => "php-soap",
         _ => debian,
     }
 }
@@ -944,7 +947,7 @@ mod tests {
 
     #[test]
     fn collapses_every_php_fpm_version_to_the_single_rpm_package() {
-        for v in ["8.1", "8.2", "8.3", "8.4", "8.5"] {
+        for v in crate::services::php_pool::PHP_VERSIONS {
             assert_eq!(rpm_name(&format!("php{v}-fpm")), "php-fpm");
         }
         assert_eq!(rpm_name("php-fpm"), "php-fpm");
@@ -985,7 +988,7 @@ mod tests {
     #[test]
     fn translates_unit_names_not_just_package_names() {
         assert_eq!(rpm_service_name("redis-server"), "redis");
-        for v in ["8.1", "8.2", "8.3", "8.4", "8.5"] {
+        for v in crate::services::php_pool::PHP_VERSIONS {
             assert_eq!(rpm_service_name(&format!("php{v}-fpm")), "php-fpm");
         }
     }

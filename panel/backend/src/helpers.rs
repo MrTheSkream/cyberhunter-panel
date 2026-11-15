@@ -1552,6 +1552,146 @@ pub fn cert_provenance(status: &serde_json::Value) -> CertProvenance {
     CertProvenance::Foreign(issuer.to_string())
 }
 
+/// Whether the RECORDED challenge sends a site down the HTTP-01 renewal arm.
+///
+/// The same rule as the first match of [`renewal_plan`]: positive evidence of
+/// `http-01`, or nothing recorded at all. NULL is what an imported certificate
+/// carries (HestiaCP import, conception 05 D3), and it renews over HTTP-01 like
+/// any other unrecorded row; the issuer check every door runs before ordering
+/// is what still refuses a certificate somebody else issued.
+pub(crate) fn recorded_challenge_is_http01(ssl_challenge: Option<&str>) -> bool {
+    matches!(ssl_challenge, None | Some("http-01"))
+}
+
+/// The most extra HTTP-01 names one order may carry (agent contract W3-S).
+pub(crate) const MAX_EXTRA_SSL_NAMES: usize = 10;
+
+fn normalise_host(name: &str) -> String {
+    name.trim().trim_end_matches('.').to_ascii_lowercase()
+}
+
+/// Clean a list of names into the `extra_names` of an HTTP-01 order for
+/// `domain`: lowercased, wildcards dropped (HTTP-01 cannot validate them), the
+/// domain itself dropped (it is always ordered), anything that is not a host
+/// name dropped (one bad alias must not make the agent reject the whole
+/// request), duplicates dropped, at most [`MAX_EXTRA_SSL_NAMES`].
+pub(crate) fn clean_extra_names(domain: &str, names: &[String]) -> Vec<String> {
+    let domain = normalise_host(domain);
+    let mut out: Vec<String> = Vec::new();
+    for raw in names {
+        if out.len() >= MAX_EXTRA_SSL_NAMES {
+            break;
+        }
+        let name = normalise_host(raw);
+        if name.is_empty()
+            || name.contains('*')
+            || name == domain
+            || !crate::routes::is_valid_domain(&name)
+            || out.contains(&name)
+        {
+            continue;
+        }
+        out.push(name);
+    }
+    out
+}
+
+/// The names an agent `GET /nginx/aliases/{domain}` payload says the vhost on
+/// disk serves. Anything malformed reads as "none".
+pub(crate) fn served_aliases(payload: &serde_json::Value) -> Vec<String> {
+    payload
+        .get("aliases")
+        .and_then(|a| a.as_array())
+        .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+        .unwrap_or_default()
+}
+
+/// For a site whose `aliases` column is NULL (not managed by the database):
+/// `www.<domain>` when, and only when, the vhost on disk already serves it.
+/// Any other on-disk alias is left out on purpose: the database does not vouch
+/// for it, and the fallback order would drop it anyway.
+pub(crate) fn www_extra_name(domain: &str, served: &[String]) -> Vec<String> {
+    let www = format!("www.{}", normalise_host(domain));
+    if served.iter().any(|a| normalise_host(a) == www) {
+        clean_extra_names(domain, &[www])
+    } else {
+        Vec::new()
+    }
+}
+
+/// The `extra_names` of an HTTP-01 order for `site`.
+///
+/// `site.aliases` is authoritative when it is set (an empty list means no extra
+/// name, and no agent call). When it is NULL, the agent is asked which names the
+/// vhost on disk serves, and only `www.<domain>` is kept; an agent that cannot
+/// answer (unreachable, or too old for the route) means no extra name, which is
+/// exactly what every order carried before.
+pub(crate) async fn ssl_extra_names(
+    agent: &crate::services::agent::AgentHandle,
+    site: &crate::models::Site,
+) -> Vec<String> {
+    if let Some(aliases) = &site.aliases {
+        return clean_extra_names(&site.domain, aliases);
+    }
+    match agent.get(&format!("/nginx/aliases/{}", site.domain)).await {
+        Ok(payload) => www_extra_name(&site.domain, &served_aliases(&payload)),
+        Err(e) => {
+            tracing::debug!("Could not read the served names of {}: {e}", site.domain);
+            Vec::new()
+        }
+    }
+}
+
+/// The vhost-description fields an SSL provision/renew body carries, so the
+/// agent's transient re-render keeps them until the full rebuild that follows.
+/// Same rule as the vhost body: each optional field only when it is set.
+pub(crate) fn add_vhost_description(body: &mut serde_json::Value, site: &crate::models::Site) {
+    if let Some(aliases) = &site.aliases {
+        body["aliases"] = serde_json::json!(aliases);
+    }
+    if let Some(canonical) = &site.canonical_host {
+        body["canonical_host"] = serde_json::json!(canonical);
+    }
+    if let Some(dirs) = &site.php_no_exec_dirs {
+        body["php_no_exec_dirs"] = serde_json::json!(dirs);
+    }
+    body["force_ssl"] = serde_json::json!(site.force_ssl);
+    body["hsts"] = serde_json::json!(site.hsts);
+}
+
+/// Everything an HTTP-01 order for the site's own domain adds to its body: the
+/// extra names, the apex-only fallback (an alias that does not point here must
+/// not cost the domain its certificate), and the vhost description.
+///
+/// ⛔ HTTP-01 only. A DNS-01 / wildcard order keeps its single subject.
+pub(crate) async fn add_http01_names(
+    agent: &crate::services::agent::AgentHandle,
+    site: &crate::models::Site,
+    body: &mut serde_json::Value,
+) {
+    body["extra_names"] = serde_json::json!(ssl_extra_names(agent, site).await);
+    body["fallback_apex_only"] = serde_json::json!(true);
+    add_vhost_description(body, site);
+}
+
+/// The `warnings` of an agent SSL response (for example a name the fallback
+/// order left out).
+pub(crate) fn agent_warnings(resp: &serde_json::Value) -> Vec<String> {
+    resp.get("warnings")
+        .and_then(|w| w.as_array())
+        .map(|w| w.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+        .unwrap_or_default()
+}
+
+/// [`agent_warnings`], each one logged at `warn` against `domain`.
+pub(crate) fn log_agent_warnings(domain: &str, resp: &serde_json::Value) -> Vec<String> {
+    let warnings = agent_warnings(resp);
+    for w in &warnings {
+        tracing::warn!("SSL for {domain}: {w}");
+    }
+    warnings
+}
+
 pub fn parse_agent_cert_expiry(raw: &str) -> Option<chrono::DateTime<chrono::Utc>> {
     let s = raw.trim();
     if s.is_empty() {
@@ -1693,6 +1833,91 @@ mod cert_provenance_tests {
             ),
             Some("CN=Cloudflare Origin Certificate, O=CloudFlare, Inc., C=US".to_string())
         );
+    }
+}
+
+#[cfg(test)]
+mod ssl_extra_names_tests {
+    use super::{
+        agent_warnings, cert_provenance, clean_extra_names, recorded_challenge_is_http01,
+        served_aliases, www_extra_name, CertProvenance, MAX_EXTRA_SSL_NAMES,
+    };
+    use serde_json::json;
+
+    fn s(v: &[&str]) -> Vec<String> {
+        v.iter().map(|x| x.to_string()).collect()
+    }
+
+    #[test]
+    fn cleanup_drops_wildcards_the_domain_and_duplicates() {
+        let got = clean_extra_names(
+            "example.com",
+            &s(&["www.example.com", "*.example.com", "example.com", "WWW.Example.com.", "shop.example.com"]),
+        );
+        assert_eq!(got, s(&["www.example.com", "shop.example.com"]));
+    }
+
+    #[test]
+    fn cleanup_drops_names_that_are_not_hosts() {
+        let got = clean_extra_names("example.com", &s(&["", "  ", "bad name.com", "-x.example.com", "ok.example.com"]));
+        assert_eq!(got, s(&["ok.example.com"]));
+    }
+
+    #[test]
+    fn cleanup_caps_the_list() {
+        let many: Vec<String> = (0..25).map(|i| format!("a{i}.example.com")).collect();
+        let got = clean_extra_names("example.com", &many);
+        assert_eq!(got.len(), MAX_EXTRA_SSL_NAMES);
+        assert_eq!(got[0], "a0.example.com");
+        assert_eq!(got[MAX_EXTRA_SSL_NAMES - 1], format!("a{}.example.com", MAX_EXTRA_SSL_NAMES - 1));
+    }
+
+    #[test]
+    fn cleanup_of_an_empty_list_is_empty() {
+        assert!(clean_extra_names("example.com", &[]).is_empty());
+    }
+
+    #[test]
+    fn www_is_kept_only_when_the_vhost_serves_it() {
+        assert_eq!(
+            www_extra_name("example.com", &s(&["www.example.com", "other.example.com"])),
+            s(&["www.example.com"])
+        );
+        assert_eq!(www_extra_name("Example.com", &s(&["WWW.example.com"])), s(&["www.example.com"]));
+        assert!(www_extra_name("example.com", &s(&["other.example.com"])).is_empty());
+        assert!(www_extra_name("example.com", &[]).is_empty());
+    }
+
+    #[test]
+    fn the_served_alias_payload_is_read_defensively() {
+        assert_eq!(served_aliases(&json!({ "aliases": ["www.a.com", 3, "b.a.com"] })), s(&["www.a.com", "b.a.com"]));
+        assert!(served_aliases(&json!({})).is_empty());
+        assert!(served_aliases(&json!({ "aliases": "www.a.com" })).is_empty());
+        assert!(served_aliases(&json!(null)).is_empty());
+    }
+
+    #[test]
+    fn agent_warnings_are_read_defensively() {
+        assert_eq!(
+            agent_warnings(&json!({ "warnings": ["www.x.tld not included: dns"] })),
+            s(&["www.x.tld not included: dns"])
+        );
+        assert!(agent_warnings(&json!({ "expiry": "x" })).is_empty());
+    }
+
+    /// An imported certificate: no challenge recorded, a Let's Encrypt issuer.
+    /// It goes down the HTTP-01 arm and the issuer check lets it through; the
+    /// same row with another issuer is still refused by that check.
+    #[test]
+    fn an_imported_lets_encrypt_certificate_renews_over_http01() {
+        assert!(recorded_challenge_is_http01(None));
+        assert!(recorded_challenge_is_http01(Some("http-01")));
+        assert!(!recorded_challenge_is_http01(Some("dns-01")));
+
+        let le = cert_provenance(&json!({ "has_cert": true, "issuer": "CN=R11, O=Let's Encrypt, C=US" }));
+        assert_eq!(le, CertProvenance::DockPanelIssued);
+        let other = cert_provenance(&json!({ "has_cert": true, "issuer": "CN=Sectigo RSA DV, O=Sectigo Limited, C=GB" }));
+        assert!(matches!(other, CertProvenance::Foreign(_)), "another issuer keeps the refusal");
     }
 }
 
