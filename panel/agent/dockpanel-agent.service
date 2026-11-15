@@ -84,7 +84,12 @@ RestrictNamespaces=~user
 # writes mariadb.conf.d/99-cyberhunter.cnf (bind, sql_mode). Optional, hence the `-`.
 # The import itself stages under /var/lib/dockpanel/migration and writes
 # /var/www and /var/vmail, all three already listed.
-ReadWritePaths=/etc/nginx /etc/dockpanel /var/run/dockpanel /var/backups/dockpanel /var/lib/dockpanel /var/www /var/log /etc/systemd/system /opt -/etc/letsencrypt -/etc/apt -/etc/fail2ban -/etc/powerdns -/etc/modsecurity -/etc/cloudflared -/etc/postfix -/etc/dovecot -/var/spool/postfix -/var/spool/cron -/var/vmail -/var/cache/nginx -/etc/ufw -/var/lib/ufw -/etc/php -/etc/ssh -/var/dockpanel-sftp -/etc/apache2 -/etc/mysql
+# /etc/clamav (feature 5) is clamd.conf, whose limits the panel sets; /etc/rspamd
+# is local.d/antivirus.conf, the mail antivirus. Both optional, hence the `-`.
+# When ClamAV or Rspamd is installed after the agent started, the entry was
+# ignored at start: the writes then fall back to an unsandboxed `install`
+# (apache::write_file), as for /etc/apache2.
+ReadWritePaths=/etc/nginx /etc/dockpanel /var/run/dockpanel /var/backups/dockpanel /var/lib/dockpanel /var/www /var/log /etc/systemd/system /opt -/etc/letsencrypt -/etc/apt -/etc/fail2ban -/etc/powerdns -/etc/modsecurity -/etc/cloudflared -/etc/postfix -/etc/dovecot -/var/spool/postfix -/var/spool/cron -/var/vmail -/var/cache/nginx -/etc/ufw -/var/lib/ufw -/etc/php -/etc/ssh -/var/dockpanel-sftp -/etc/apache2 -/etc/mysql -/etc/clamav -/etc/rspamd
 
 MemoryMax=512M
 LimitNOFILE=65535

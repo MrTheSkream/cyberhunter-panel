@@ -1209,6 +1209,7 @@ async fn finish_hestia(
         let maildir = blob_of(&format!("mail/{d}/accounts")).map(|e| e.size).unwrap_or(0);
         mail_domains.push(serde_json::json!({
             "domain": d, "selector": mc.selector, "dkim": mc.dkim, "catch_all": mc.catch_all,
+            "antivirus": mc.antivirus,
             "accounts": accounts.len(), "aliases": accounts.iter().map(|a| a.aliases.len()).sum::<usize>(),
             "maildir_bytes": maildir,
         }));

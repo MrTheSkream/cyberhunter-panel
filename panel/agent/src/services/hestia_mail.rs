@@ -66,6 +66,8 @@ pub struct MailSecrets {
     /// SECRET.
     pub dkim_private_pem: Option<String>,
     pub catch_all: Option<String>,
+    /// Hestia scanned this domain's mail with ClamAV (`ANTIVIRUS='yes'`).
+    pub antivirus: bool,
     pub accounts: Vec<HestiaAccount>,
     pub aliases: Vec<HestiaAlias>,
 }
@@ -76,6 +78,7 @@ impl std::fmt::Debug for MailSecrets {
             .field("selector", &self.selector)
             .field("dkim_private_pem", &self.dkim_private_pem.as_ref().map(|_| "<redacted>"))
             .field("catch_all", &self.catch_all)
+            .field("antivirus", &self.antivirus)
             .field("accounts", &self.accounts)
             .field("aliases", &self.aliases)
             .finish()
@@ -248,12 +251,13 @@ pub fn build_secrets(domain: &str, files: &DomainFiles) -> MailSecrets {
         .filter(|s| is_valid_selector(s))
         .unwrap_or_else(|| "mail".to_string());
     let catch_all = non_empty(mail_conf.get("CATCHALL")).map(|c| c.to_ascii_lowercase());
+    let antivirus = yes(mail_conf.get("ANTIVIRUS"));
     let dkim_private_pem = files
         .dkim_pem
         .as_ref()
         .map(|p| p.trim().to_string())
         .filter(|p| p.starts_with("-----BEGIN") && p.contains("PRIVATE KEY-----"));
-    MailSecrets { selector, dkim_private_pem, catch_all, accounts, aliases }
+    MailSecrets { selector, dkim_private_pem, catch_all, antivirus, accounts, aliases }
 }
 
 const MAX_META_FILE: u64 = 4 * 1024 * 1024;
@@ -426,8 +430,14 @@ contact@d.be:someone@else.org
         let s = build_secrets("d.be", &files());
         assert_eq!(s.selector, "mail");
         assert_eq!(s.catch_all, None);
+        assert!(!s.antivirus, "ANTIVIRUS='no'");
         assert!(s.dkim_private_pem.is_some());
+        assert_eq!(serde_json::to_value(&s).unwrap()["antivirus"], false);
         let mut f = files();
+        f.mail_conf = "DOMAIN='d.be' ANTIVIRUS='yes' DKIM='yes' DKIM_SELECTOR='mail'".into();
+        let s = build_secrets("d.be", &f);
+        assert!(s.antivirus);
+        assert_eq!(serde_json::to_value(&s).unwrap()["antivirus"], true);
         f.mail_conf = "DOMAIN='d.be' DKIM_SELECTOR='bad/sel' CATCHALL='info@d.be'".into();
         f.dkim_pem = Some("not a key".into());
         let s = build_secrets("d.be", &f);
