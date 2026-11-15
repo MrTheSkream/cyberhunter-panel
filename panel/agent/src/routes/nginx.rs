@@ -2896,9 +2896,18 @@ async fn waf_configure(
     std::fs::create_dir_all(log_dir).ok();
     std::fs::create_dir_all("/etc/modsecurity/sites").ok();
 
-    // Generate per-site config
-    let crs_dir = "/etc/modsecurity/crs";
-    let has_crs = std::path::Path::new(&format!("{crs_dir}/crs-setup.conf")).exists();
+    // Generate per-site config. The CRS rules are included from wherever they
+    // really are: `/etc/modsecurity/crs/rules` (our v4 download, or a symlink)
+    // or the Debian/Ubuntu package's `/usr/share/modsecurity-crs/rules`.
+    // The symlink is (re)made here too, not only by the installer: per-site
+    // files written by an older agent hard-code `/etc/modsecurity/crs/rules`,
+    // and `nginx -t` loads every site's file, not just this one.
+    let crs_path = std::path::Path::new(services::waf::CRS_DIR);
+    let distro_rules = std::path::Path::new(services::waf::DISTRO_RULES_DIR);
+    if let Err(e) = services::waf::link_distro_rules(crs_path, distro_rules) {
+        tracing::warn!("Could not link the distro CRS rules into {}: {e}", services::waf::CRS_DIR);
+    }
+    let crs_include = services::waf::render_crs_include(crs_path, distro_rules);
 
     let config = format!(
         "# WAF config for {domain} (managed by CyberHunter - Panel)\n\
@@ -2908,15 +2917,7 @@ async fn waf_configure(
          SecAuditLogType Serial\n\
          {crs_include}\n\
          # Allow larger request bodies for file uploads\n\
-         SecRequestBodyLimit 52428800\n",
-        crs_include = if has_crs {
-            format!(
-                "Include {crs_dir}/crs-setup.conf\n\
-                 Include {crs_dir}/rules/*.conf"
-            )
-        } else {
-            "# OWASP CRS not found - basic protection only".to_string()
-        }
+         SecRequestBodyLimit 52428800\n"
     );
 
     let config_path = format!("/etc/modsecurity/sites/{safe_domain}.conf");

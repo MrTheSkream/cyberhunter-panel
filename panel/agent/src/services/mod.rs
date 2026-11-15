@@ -42,5 +42,6 @@ pub mod ssrf_guard;
 pub mod staging;
 pub mod traefik;
 pub mod volume_backup;
+pub mod waf;
 pub mod wordpress;
 pub mod wp_vulnerability;

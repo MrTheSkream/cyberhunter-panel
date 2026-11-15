@@ -1317,9 +1317,24 @@ async fn install_waf() -> Result<Json<serde_json::Value>, ApiErr> {
         std::fs::create_dir_all(dir).ok();
     }
 
-    // 3. Download OWASP CRS v4
-    let crs_dir = "/etc/modsecurity/crs";
-    if !std::path::Path::new(&format!("{crs_dir}/crs-setup.conf")).exists() {
+    // 3. OWASP CRS. `libmodsecurity3` Recommends the distro `modsecurity-crs`
+    // package (3.3.5 on Ubuntu 24.04), which leaves only `crs-setup.conf` and
+    // the exclusion files in /etc/modsecurity/crs and the rules in
+    // /usr/share/modsecurity-crs/rules. Link those rules in as
+    // /etc/modsecurity/crs/rules so both layouts look alike on disk (the
+    // per-site config resolves the real location either way). Only when no
+    // usable setup + rules pair exists is CRS v4 downloaded.
+    use crate::services::waf;
+    let crs_dir = waf::CRS_DIR;
+    let crs_path = std::path::Path::new(waf::CRS_DIR);
+    let distro_rules = std::path::Path::new(waf::DISTRO_RULES_DIR);
+    match waf::link_distro_rules(crs_path, distro_rules) {
+        Ok(true) => tracing::info!("Linked {crs_dir}/rules to the distro CRS rules"),
+        Ok(false) => {}
+        Err(e) => tracing::warn!("Could not link {crs_dir}/rules to the distro CRS rules: {e}"),
+    }
+    let mut crs_downloaded = false;
+    if waf::resolve_rules_dir(crs_path, distro_rules).is_none() {
         let dl = tokio::time::timeout(
             Duration::from_secs(120),
             safe_command_unsandboxed("sh", &[])
@@ -1338,6 +1353,7 @@ async fn install_waf() -> Result<Json<serde_json::Value>, ApiErr> {
         match dl {
             Ok(Ok(o)) if o.status.success() => {
                 tracing::info!("OWASP CRS v4.25.0 downloaded");
+                crs_downloaded = true;
             }
             _ => {
                 tracing::warn!("OWASP CRS download failed - WAF will work without rules");
@@ -1442,8 +1458,14 @@ SecStatusEngine Off
         tracing::warn!("nginx -t failed after WAF install - module may need manual load_module directive");
     }
 
-    tracing::info!("WAF installed (ModSecurity3 + OWASP CRS)");
-    Ok(ok("WAF installed: ModSecurity3 with OWASP Core Rule Set v4.25.0"))
+    // Report the CRS that will actually load, not the one we hoped for.
+    let msg = match waf::resolve_rules_dir(crs_path, distro_rules) {
+        Some(_) if crs_downloaded => "WAF installed: ModSecurity3 with OWASP Core Rule Set v4.25.0".to_string(),
+        Some(dir) => format!("WAF installed: ModSecurity3 with the existing OWASP Core Rule Set ({})", dir.display()),
+        None => "WAF installed: ModSecurity3 without the OWASP Core Rule Set (download failed, basic protection only)".to_string(),
+    };
+    tracing::info!("{msg}");
+    Ok(ok(&msg))
 }
 
 async fn uninstall_waf() -> Result<Json<serde_json::Value>, ApiErr> {
