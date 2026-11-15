@@ -923,6 +923,14 @@ pub fn render_site_config_with(
     )
 }
 
+/// The names beyond `domain` that the site's vhost on disk serves (its parked
+/// body for a disabled site); empty when there is no vhost.
+pub fn served_aliases(domain: &str) -> Vec<String> {
+    std::fs::read_to_string(vhost_target(domain).path())
+        .map(|v| crate::services::apache::aliases_in_nginx_config(&v, domain))
+        .unwrap_or_default()
+}
+
 /// `aliases: None` means "keep the names the vhost on disk serves"
 /// (05-import-hestia W3-V): this is where they are read, from the file the
 /// render will replace (the parked body of a disabled site). `None` back when

@@ -514,9 +514,7 @@ async fn renew(
     let (extra, fallback) = match body.names.extra_names {
         Some(_) => (body.names.extra(&domain)?, body.names.fallback_apex_only),
         None => {
-            let served = std::fs::read_to_string(crate::services::nginx::vhost_target(&domain).path())
-                .map(|v| crate::services::apache::aliases_in_nginx_config(&v, &domain))
-                .unwrap_or_default();
+            let served = crate::services::nginx::served_aliases(&domain);
             let kept = kept_names(&domain, replaces_pem.as_deref(), &served);
             let fallback = !kept.is_empty();
             (kept, fallback)

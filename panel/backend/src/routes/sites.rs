@@ -4792,7 +4792,11 @@ fn apply_vhost_extras(body: &mut serde_json::Value, site: &Site) {
 pub(crate) fn sftp_account_name(site: &Site) -> String {
     match site.sftp_username.as_deref() {
         Some(name) if !name.is_empty() => name.to_string(),
-        _ => format!("sftp{}", site.sftp_uid.map(|u| u.to_string()).unwrap_or_default()),
+        // Same convention as the agent's `sftp_accounts::sftp_username`.
+        _ => {
+            let uid = site.sftp_uid.unwrap_or_default();
+            format!("sftp{uid}")
+        }
     }
 }
 
