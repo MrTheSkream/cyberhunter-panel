@@ -1,7 +1,18 @@
 import { useAuth } from "../context/AuthContext";
 import { Link, Navigate } from "react-router-dom";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { api, ApiError } from "../api";
+
+// Inventory as the agent reports it (05-import-hestia W1-A). Every HestiaCP
+// field is optional: cPanel and Plesk inventories only carry the first ones.
+// It never contains a password, hash or key, and neither does this page.
+interface SiteSsl {
+  present: boolean;
+  issuer?: string | null;
+  not_after?: string | null;
+  covers?: string[];
+  expired?: boolean;
+}
 
 interface MigrationSite {
   domain: string;
@@ -9,6 +20,19 @@ interface MigrationSite {
   size_bytes: number;
   runtime: string;
   file_count: number;
+  web_server?: string;
+  php_version?: string | null;
+  php_version_source?: string | null;
+  aliases?: string[];
+  canonical_host?: string | null;
+  ssl?: SiteSsl | null;
+  force_ssl?: boolean;
+  hsts?: boolean;
+  ftp_user?: string | null;
+  suspended?: boolean;
+  custom_nginx_template?: string | null;
+  paths_to_fix?: { file: string; occurrences: number }[];
+  upload_php_files?: number;
 }
 
 interface MigrationDb {
@@ -16,11 +40,33 @@ interface MigrationDb {
   file: string;
   size_bytes: number;
   engine: string;
+  db_user?: string;
+  suggested_site?: string | null;
+  suggested_via?: string | null;
+}
+
+interface MigrationMailDomain {
+  domain: string;
+  accounts: number;
+  aliases: number;
+  dkim?: boolean;
+  maildir_bytes?: number;
 }
 
 interface MigrationMail {
   email: string;
   domain: string;
+  hash_scheme?: string | null;
+  forward_to?: string | null;
+  suspended?: boolean;
+}
+
+interface DiskCheck {
+  staging_free?: number;
+  www_free?: number;
+  www_needed_estimate?: number;
+  ok?: boolean;
+  reason?: string | null;
 }
 
 interface Inventory {
@@ -29,6 +75,10 @@ interface Inventory {
   sites: MigrationSite[];
   databases: MigrationDb[];
   mail_accounts: MigrationMail[];
+  mail_domains?: MigrationMailDomain[];
+  ftp_accounts?: { user: string; domain: string; hash_scheme?: string }[];
+  disk?: DiskCheck;
+  hestia_user?: string;
   warnings: string[];
 }
 
@@ -50,6 +100,64 @@ interface ProgressStep {
   message?: string;
 }
 
+interface ReportItem {
+  kind: string;
+  key: string;
+  status: string;
+  message: string;
+  details: Record<string, unknown>;
+  attempts: number;
+  updated_at: string;
+}
+
+interface Report {
+  status: string;
+  summary: Record<string, number>;
+  items: ReportItem[];
+  manual_actions: string[];
+}
+
+interface Preflight {
+  mariadb_local: { installed: boolean; running: boolean; version: string | null; reachable: boolean };
+  mail: { installed: boolean; schemes: string[] };
+  php: { installed: string[]; missing_for_selection: string[]; legacy: string[] };
+  apache: { installed: boolean };
+  disk: DiskCheck;
+}
+
+interface SiteOptions {
+  ssl: boolean;
+  aliases: boolean;
+  canonical: boolean;
+  sftp: boolean;
+  force_ssl: boolean;
+  hsts: boolean;
+}
+
+interface SiteChoice {
+  php_version: string; // "" = archive's version, else the wizard default
+  options: SiteOptions;
+}
+
+// Same list as the panel's `PHP_VERSIONS`; the server validates anyway.
+const PHP_CHOICES = ["5.6", "7.4", "8.1", "8.2", "8.3", "8.4", "8.5"];
+const LEGACY_PHP = ["5.6", "7.4"];
+const KIND_LABEL: Record<string, string> = {
+  preflight: "Check",
+  site: "Site",
+  php: "PHP",
+  files: "Files",
+  ssl: "Certificate",
+  sftp: "SFTP",
+  db: "Database",
+  mail_domain: "Mail domain",
+  mailbox: "Mailbox",
+  mail_alias: "Mail alias",
+  maildir: "Messages",
+};
+const FINISHED = ["done", "warning"];
+const FORCE_PHRASE = "overwrite";
+
 const fmtElapsed = (s: number) =>
   s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
 
@@ -60,16 +168,53 @@ const fmtSize = (b: number) => {
   return `${b} B`;
 };
 
+const fmtDate = (s?: string | null) => (s ? new Date(s).toLocaleDateString() : "");
+
+const defaultChoice = (s: MigrationSite): SiteChoice => ({
+  php_version: "",
+  options: {
+    ssl: !!s.ssl?.present && !s.ssl?.expired,
+    aliases: true,
+    canonical: true,
+    sftp: !!s.ftp_user,
+    force_ssl: s.force_ssl ?? true,
+    hsts: s.hsts ?? true,
+  },
+});
+
+function StatusIcon({ status }: { status: string }) {
+  if (status === "in_progress" || status === "running")
+    return <div className="w-4 h-4 border-2 border-rust-500 border-t-transparent rounded-full animate-spin shrink-0" />;
+  if (status === "done")
+    return (
+      <svg className="w-4 h-4 text-rust-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+      </svg>
+    );
+  if (status === "error" || status === "failed")
+    return (
+      <svg className="w-4 h-4 text-danger-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+      </svg>
+    );
+  if (status === "warning" || status === "skipped")
+    return (
+      <svg className={`w-4 h-4 shrink-0 ${status === "warning" ? "text-warn-500" : "text-dark-400"}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+      </svg>
+    );
+  return <div className="w-4 h-4 rounded-full border-2 border-dark-500 shrink-0" />;
+}
+
+const statusText = (s: string) =>
+  s === "failed" || s === "error" ? "text-danger-400" : s === "warning" ? "text-warn-400" : s === "skipped" ? "text-dark-400" : "text-dark-100";
+
 export default function Migration() {
   const { user } = useAuth();
-  // The admin redirect used to sit above these hooks. That was survivable while
-  // every hook was a `useState`, but this page now runs effects on mount, and a
-  // conditional return before them makes the hook count differ between the
-  // render where `user` is still loading and the one after it - React's
-  // "rendered more hooks than during the previous render". The guard moved
-  // below the hooks; the redirect is unchanged.
+  // Every hook sits above the admin redirect: a conditional return before an
+  // effect makes the hook count differ between renders.
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
-  const [source, setSource] = useState("cpanel");
+  const [source, setSource] = useState("auto");
   const [inputMode, setInputMode] = useState<"path" | "url">("path");
   const [backupPath, setBackupPath] = useState("");
   const [backupUrl, setBackupUrl] = useState("");
@@ -78,55 +223,63 @@ export default function Migration() {
   const [migration, setMigration] = useState<MigrationRecord | null>(null);
   const [selectedSites, setSelectedSites] = useState<Set<string>>(new Set());
   const [selectedDbs, setSelectedDbs] = useState<Set<string>>(new Set());
-  // Which site each selected database belongs to, keyed by database name. A
-  // database row cannot exist without a site, and a control-panel archive does
-  // not record the pairing - so it is the operator's to state. Left empty when
-  // there is exactly one site to choose, because then there is nothing to ask.
+  const [selectedMail, setSelectedMail] = useState<Set<string>>(new Set());
+  const [siteChoices, setSiteChoices] = useState<Record<string, SiteChoice>>({});
+  const [defaultPhp, setDefaultPhp] = useState("8.3");
+  // Which site each selected database belongs to. Prefilled from the analysis'
+  // suggestion; a database without a site is refused by the server.
   const [dbSites, setDbSites] = useState<Record<string, string>>({});
-  const [progress, setProgress] = useState<ProgressStep[]>([]);
-  const [importing, setImporting] = useState(false);
+  const [preflight, setPreflight] = useState<Preflight | null>(null);
+  const [preflightBusy, setPreflightBusy] = useState(false);
+  const [installNote, setInstallNote] = useState("");
+  // Live overlay from the SSE stream, keyed by "<kind>:<key>". The durable
+  // truth is the report (ledger), polled while the import runs.
+  const [live, setLive] = useState<Record<string, ProgressStep>>({});
+  const [report, setReport] = useState<Report | null>(null);
+  const [watchingId, setWatchingId] = useState<string | null>(null);
+  const [forceTarget, setForceTarget] = useState<ReportItem | null>(null);
+  const [forceText, setForceText] = useState("");
   const [analyzingId, setAnalyzingId] = useState<string | null>(null);
-  // When the run began, not when this tab started watching it - a resumed
-  // analysis has to show the age of the work, not the age of the page.
   const [startedAt, setStartedAt] = useState(0);
   const [elapsed, setElapsed] = useState(0);
   const [resumed, setResumed] = useState(false);
   const eventSourceRef = useRef<EventSource | null>(null);
-  // The mount fetch below and the Analyze button both want to own `analyzingId`.
-  // A fast click beats the fetch, and the resume would then quietly replace the
-  // run the operator just started with an older one - same page, same spinner,
-  // wrong migration. A ref, not state: the resume's callback closed over its
-  // render and would never see a state update made after it began.
+  // The mount fetch and the Analyze button both want to own `analyzingId`; a
+  // ref, so the resume callback sees a click made after it began.
   const startedHere = useRef(false);
 
-  // The analysis has finished on the server, one way or the other. Everything
-  // that used to happen inline after `await` happens here instead, because the
-  // record can now arrive from three places: the initial POST, the poller, or a
-  // run this tab did not start.
+  const inv = migration?.inventory ?? null;
+  const isHestia = inv?.source === "hestiacp";
+
   const settleAnalysis = (rec: MigrationRecord) => {
     setMigration(rec);
     setAnalyzingId(null);
     setAnalyzing(false);
-    if (rec.status === "failed") {
+    if (rec.status === "failed" && !rec.inventory) {
       const reason = (rec.result as { error?: string } | null)?.error;
       setError(reason || "Analysis failed");
       return;
     }
     if (rec.inventory) {
-      setSelectedSites(new Set(rec.inventory.sites.map((s) => s.domain)));
-      setSelectedDbs(new Set(rec.inventory.databases.map((d) => d.name)));
+      const i = rec.inventory;
+      setSelectedSites(new Set(i.sites.map((s) => s.domain)));
+      setSelectedDbs(new Set(i.databases.map((d) => d.name)));
+      setSelectedMail(new Set((i.mail_domains ?? []).map((m) => m.domain)));
+      setSiteChoices(Object.fromEntries(i.sites.map((s) => [s.domain, defaultChoice(s)])));
+      const domains = new Set(i.sites.map((s) => s.domain));
+      setDbSites(
+        Object.fromEntries(
+          i.databases
+            .filter((d) => d.suggested_site && domains.has(d.suggested_site))
+            .map((d) => [d.name, d.suggested_site as string]),
+        ),
+      );
     }
     setStep(2);
   };
 
-  // Step 1: Analyze - accepted, then polled.
-  //
-  // This used to hold one request open for the whole analysis, which is minutes
-  // for any real cPanel account. Every gateway in front of the panel gives up
-  // sooner than that, so the browser was shown a timeout - issue #91's `Request
-  // failed (524)`, which is this file's own fallback message rendering a
-  // Cloudflare error page that carried no JSON to read. The work always
-  // continued on the server; nothing was ever able to come back and say so.
+  // Step 1: Analyze - accepted (202), then polled. The verdict lives in the
+  // row, so a reload or a closed tab loses nothing.
   const handleAnalyze = async () => {
     const trimmedPath = backupPath.trim();
     const trimmedUrl = backupUrl.trim();
@@ -154,40 +307,23 @@ export default function Migration() {
     }
   };
 
-  // Poll the record until it stops saying `analyzing`. The verdict lives in the
-  // row rather than in this component, so a refused poll is a network blip and
-  // not an answer - keep asking. The run is bounded on the agent side, so this
-  // always terminates.
   useEffect(() => {
     if (!analyzingId) return;
     let stopped = false;
-
-    const ticker = window.setInterval(
-      () => setElapsed(Math.floor((Date.now() - startedAt) / 1000)),
-      1000,
-    );
+    const ticker = window.setInterval(() => setElapsed(Math.floor((Date.now() - startedAt) / 1000)), 1000);
     const poller = window.setInterval(async () => {
       try {
         const rec = await api.get<MigrationRecord>(`/migration/${analyzingId}`);
         if (!stopped && rec.status !== "analyzing") settleAnalysis(rec);
       } catch (e) {
-        // A transient failure is not an answer - the row outlives this tab, so
-        // keep asking. A 404 or a 403 is: the record is gone, or is not ours, and
-        // no amount of asking changes that. Without this the spinner turned
-        // forever over a run that no longer existed, which is a different way of
-        // telling the operator nothing - and the shape #91 was reported for.
+        // A transient failure is not an answer; a 404 or 403 is.
         if (e instanceof ApiError && (e.status === 403 || e.status === 404)) {
           setAnalyzingId(null);
           setAnalyzing(false);
-          setError(
-            e.status === 404
-              ? "This analysis is no longer on the server. Start it again."
-              : e.message,
-          );
+          setError(e.status === 404 ? "This analysis is no longer on the server. Start it again." : e.message);
         }
       }
     }, 3000);
-
     return () => {
       stopped = true;
       window.clearInterval(ticker);
@@ -195,26 +331,83 @@ export default function Migration() {
     };
   }, [analyzingId, startedAt]);
 
-  // Pick an analysis back up after a reload. Persisting the verdict is only half
-  // the fix; without this the operator still watches a run they can no longer
-  // see, which is the complaint #91 was actually about.
+  // ── import watching: SSE overlay + durable report polling ──────────────
+  const loadReport = useCallback(async (id: string) => {
+    try {
+      const r = await api.get<Report>(`/migration/${id}/report`);
+      setReport(r);
+      return r;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const openStream = useCallback((id: string) => {
+    eventSourceRef.current?.close();
+    const es = new EventSource(`/api/migration/${id}/progress`);
+    eventSourceRef.current = es;
+    es.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data) as ProgressStep;
+        setLive((prev) => ({ ...prev, [data.step]: data }));
+      } catch {
+        /* keep-alive or malformed line */
+      }
+    };
+    // The stream is an overlay: when it drops (end of run, panel restart), the
+    // report poll below carries on and decides when the run is over.
+    es.onerror = () => es.close();
+  }, []);
+
+  useEffect(() => {
+    if (!watchingId) return;
+    let stopped = false;
+    openStream(watchingId);
+    loadReport(watchingId);
+    const poller = window.setInterval(async () => {
+      try {
+        const rec = await api.get<MigrationRecord>(`/migration/${watchingId}`);
+        if (stopped) return;
+        await loadReport(watchingId);
+        if (rec.status !== "importing") {
+          setMigration(rec);
+          setWatchingId(null);
+          setStep(4);
+        }
+      } catch (e) {
+        if (e instanceof ApiError && (e.status === 403 || e.status === 404)) {
+          setWatchingId(null);
+          setError(e.message);
+        }
+      }
+    }, 5000);
+    return () => {
+      stopped = true;
+      window.clearInterval(poller);
+      eventSourceRef.current?.close();
+    };
+  }, [watchingId, openStream, loadReport]);
+
+  // Pick an analysis or an import back up after a reload.
   const isAdmin = user?.role === "admin";
   useEffect(() => {
     if (!isAdmin) return;
     (async () => {
       try {
         const recent = await api.get<MigrationRecord[]>("/migration");
-        // Scoped to the server the operator is looking at. The list is per-user
-        // and not per-server, so on a fleet this would otherwise adopt a run on
-        // a different machine and present it as this one's - with a path from
-        // that server's filesystem in the field.
+        // Scoped to the server the operator is looking at.
         const activeServer = localStorage.getItem("dp-active-server");
-        const live = recent.find(
-          (m) =>
-            m.status === "analyzing" &&
-            (!activeServer || !m.server_id || m.server_id === activeServer),
-        );
-        if (!live || startedHere.current) return;
+        const onThisServer = (m: MigrationRecord) => !activeServer || !m.server_id || m.server_id === activeServer;
+        if (startedHere.current) return;
+        const importing = recent.find((m) => m.status === "importing" && onThisServer(m));
+        if (importing) {
+          setMigration(importing);
+          setStep(3);
+          setWatchingId(importing.id);
+          return;
+        }
+        const live = recent.find((m) => m.status === "analyzing" && onThisServer(m));
+        if (!live) return;
         setBackupPath(live.backup_path);
         setSource(live.source);
         setMigration(live);
@@ -229,104 +422,179 @@ export default function Migration() {
     })();
   }, [isAdmin]);
 
-  // The sites this run will create, which are the only ones a database imported
-  // alongside them can be attached to - plus whatever the operator has already.
-  const selectedSiteDomains = migration?.inventory
-    ? migration.inventory.sites.filter((s) => selectedSites.has(s.domain)).map((s) => s.domain)
-    : [];
-  // One site is not a question. Several is, and an unanswered one is refused by
-  // the server rather than guessed at, so the button below refuses first.
-  const siteForDb = (name: string) =>
-    dbSites[name] || (selectedSiteDomains.length === 1 ? selectedSiteDomains[0] : "");
-  const dbsWithoutSite = Array.from(selectedDbs).filter((n) => !siteForDb(n));
+  useEffect(() => () => eventSourceRef.current?.close(), []);
 
-  // Step 3: Import
-  const handleImport = async () => {
-    if (!migration?.inventory) return;
-    setError("");
-    setImporting(true);
-    setProgress([]);
-    setStep(3);
+  // ── preflight ───────────────────────────────────────────────────────────
+  const phpWanted = (() => {
+    if (!inv) return [] as string[];
+    const out = new Set<string>();
+    for (const s of inv.sites) {
+      if (!selectedSites.has(s.domain) || s.runtime !== "php") continue;
+      const v = siteChoices[s.domain]?.php_version || s.php_version || defaultPhp;
+      if (v) out.add(v);
+    }
+    return Array.from(out).sort();
+  })();
+  const phpKey = phpWanted.join(",");
 
+  const loadPreflight = useCallback(async () => {
+    if (!migration?.id || !migration.inventory) return;
+    setPreflightBusy(true);
     try {
-      await api.post(`/migration/${migration.id}/import`, {
-        sites: migration.inventory.sites
-          .filter((s) => selectedSites.has(s.domain))
-          .map((s) => ({ domain: s.domain, doc_root: s.doc_root, runtime: s.runtime })),
-        databases: migration.inventory.databases
-          .filter((d) => selectedDbs.has(d.name))
-          .map((d) => ({
-            name: d.name,
-            file: d.file,
-            engine: d.engine,
-            site_domain: siteForDb(d.name) || undefined,
-          })),
-      });
+      setPreflight(
+        await api.get<Preflight>(`/migration/${migration.id}/preflight?php=${encodeURIComponent(phpKey)}`),
+      );
+    } catch {
+      setPreflight(null);
+    } finally {
+      setPreflightBusy(false);
+    }
+  }, [migration?.id, migration?.inventory, phpKey]);
 
-      // Connect SSE for progress
-      const es = new EventSource(`/api/migration/${migration.id}/progress`);
-      eventSourceRef.current = es;
-      es.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data) as ProgressStep;
-          setProgress((prev) => {
-            const existing = prev.findIndex((p) => p.step === data.step);
-            if (existing >= 0) {
-              const updated = [...prev];
-              updated[existing] = data;
-              return updated;
-            }
-            return [...prev, data];
-          });
-          if (data.step === "complete") {
-            es.close();
-            setImporting(false);
-            setStep(4);
-            // Refresh migration record
-            api.get<MigrationRecord>(`/migration/${migration.id}`).then(setMigration).catch(() => {});
-          }
-        } catch {}
-      };
-      es.onerror = () => {
-        es.close();
-        setImporting(false);
-        if (progress.length === 0) setStep(4);
-      };
+  useEffect(() => {
+    if (step === 2) loadPreflight();
+  }, [step, loadPreflight]);
+
+  const installPhp = async (version: string) => {
+    setInstallNote("");
+    try {
+      await api.post("/php/install", { version });
+      setInstallNote(`PHP ${version} is being installed. This takes a few minutes; refresh the checks afterwards. The import also installs a missing version by itself.`);
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Import failed");
-      setImporting(false);
+      setInstallNote(e instanceof ApiError ? e.message : `Could not start the PHP ${version} install`);
     }
   };
 
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => { eventSourceRef.current?.close(); };
-  }, []);
+  const installLocalDb = async () => {
+    setInstallNote("");
+    try {
+      await api.post("/databases/local/install", {});
+      setInstallNote("The local MariaDB server is being installed. Refresh the checks in a few minutes.");
+    } catch (e) {
+      setInstallNote(e instanceof ApiError ? e.message : "Could not start the MariaDB install");
+    }
+  };
 
-  // Every hook above this line, without exception - see the note at the top.
+  // ── selection helpers ───────────────────────────────────────────────────
+  const selectedSiteDomains = inv ? inv.sites.filter((s) => selectedSites.has(s.domain)).map((s) => s.domain) : [];
+  const siteForDb = (name: string) =>
+    dbSites[name] || (selectedSiteDomains.length === 1 ? selectedSiteDomains[0] : "");
+  const dbsWithoutSite = Array.from(selectedDbs).filter((n) => !siteForDb(n));
+  const setChoice = (domain: string, patch: Partial<SiteChoice>) =>
+    setSiteChoices((prev) => ({ ...prev, [domain]: { ...prev[domain], ...patch } }));
+  const setOption = (domain: string, key: keyof SiteOptions, value: boolean) =>
+    setSiteChoices((prev) => ({
+      ...prev,
+      [domain]: { ...prev[domain], options: { ...prev[domain].options, [key]: value } },
+    }));
+  const toggle = (set: Set<string>, value: string, on: boolean) => {
+    const next = new Set(set);
+    if (on) next.add(value);
+    else next.delete(value);
+    return next;
+  };
+  const sitesNeedingPhp = inv
+    ? inv.sites.filter(
+        (s) => selectedSites.has(s.domain) && s.runtime === "php" && !s.php_version && !siteChoices[s.domain]?.php_version && !defaultPhp,
+      )
+    : [];
+  const selectionCount = selectedSites.size + selectedDbs.size + selectedMail.size;
+  const diskBlocked = isHestia && inv?.disk?.ok === false;
+
+  // ── import (first run, retry, force) ────────────────────────────────────
+  const startImport = async (body: Record<string, unknown>) => {
+    if (!migration) return;
+    setError("");
+    setLive({});
+    setReport(null);
+    try {
+      await api.post(`/migration/${migration.id}/import`, body);
+      setStep(3);
+      setWatchingId(migration.id);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Import failed");
+    }
+  };
+
+  const handleImport = () => {
+    if (!inv) return;
+    startImport({
+      default_php_version: defaultPhp || undefined,
+      sites: inv.sites
+        .filter((s) => selectedSites.has(s.domain))
+        .map((s) => {
+          const c = siteChoices[s.domain] ?? defaultChoice(s);
+          return {
+            domain: s.domain,
+            php_version: c.php_version || undefined,
+            options: c.options,
+          };
+        }),
+      databases: inv.databases
+        .filter((d) => selectedDbs.has(d.name))
+        .map((d) => ({ name: d.name, site_domain: siteForDb(d.name) || undefined })),
+      mail_domains: Array.from(selectedMail),
+    });
+  };
+
+  const handleRetry = () => startImport({ retry: true });
+
+  const confirmForce = () => {
+    if (!forceTarget || forceText.trim().toLowerCase() !== FORCE_PHRASE) return;
+    const ref = `${forceTarget.kind}:${forceTarget.key}`;
+    setForceTarget(null);
+    setForceText("");
+    startImport({ retry: true, force_items: [ref] });
+  };
+
   if (!isAdmin) return <Navigate to="/" replace />;
 
-  const inv = migration?.inventory;
+  const summary = report?.summary ?? {};
+  const items = (report?.items ?? []).filter((i) => i.kind !== "preflight" || i.status !== "done");
+  const failedCount = summary.failed ?? 0;
+
+  const itemRow = (it: ReportItem, withActions: boolean) => {
+    const ref = `${it.kind}:${it.key}`;
+    const ev = live[ref];
+    const running = it.status === "running" || ev?.status === "in_progress";
+    const status = running ? "in_progress" : it.status;
+    const message = running && ev?.message ? ev.message : it.message;
+    return (
+      <div key={ref} className="flex items-start gap-3 py-1.5 border-b border-dark-700/60 last:border-0">
+        <div className="pt-0.5"><StatusIcon status={status} /></div>
+        <div className="w-24 shrink-0 text-xs text-dark-400 pt-0.5">{KIND_LABEL[it.kind] ?? it.kind}</div>
+        <div className="flex-1 min-w-0">
+          <div className={`text-sm font-mono break-all ${statusText(status)}`}>{it.key}</div>
+          {message && <div className="text-xs text-dark-300 mt-0.5 break-words">{message}</div>}
+        </div>
+        {it.attempts > 1 && <span className="text-xs text-dark-500 pt-0.5">{it.attempts} attempts</span>}
+        {withActions && FINISHED.includes(it.status) && it.kind !== "preflight" && it.kind !== "php" && (
+          <button
+            onClick={() => { setForceTarget(it); setForceText(""); }}
+            className="text-xs text-dark-300 hover:text-rust-400 underline shrink-0"
+          >
+            Force re-import
+          </button>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="p-6 space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-dark-50 font-mono">Migration Wizard</h1>
-        {/* "and email" used to be here. It was never true: there is no mail import
-            route and no mail import function - the request body carries only `sites`
-            and `databases`. cPanel archives are PARSED for mail accounts so the
-            wizard can list them, and Plesk and HestiaCP do not even do that. The
-            screen already said so 160 lines below, under the inventory. A header
-            that promises what its own body retracts is worse than silence. #107. */}
-        <p className="text-sm text-dark-300 mt-1">Import sites and databases from cPanel, Plesk, or HestiaCP - mail accounts are listed for reference, not moved</p>
+        <p className="text-sm text-dark-300 mt-1">
+          Import sites and databases from cPanel, Plesk, or HestiaCP. A HestiaCP user backup also brings its certificates,
+          FTP accounts (as SFTP) and mail, with the same passwords.
+        </p>
       </div>
 
-      {/* Step indicator */}
       <div className="flex items-center gap-2 text-xs font-mono">
         {[1, 2, 3, 4].map((s) => (
           <div key={s} className={`flex items-center gap-1 ${step >= s ? "text-rust-400" : "text-dark-400"}`}>
             <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${step >= s ? "bg-rust-500 text-dark-950" : "bg-dark-700 text-dark-400"}`}>{s}</div>
-            <span className="hidden sm:inline">{["Source", "Review", "Import", "Done"][s - 1]}</span>
+            <span className="hidden sm:inline">{["Source", "Review", "Import", "Report"][s - 1]}</span>
             {s < 4 && <span className="text-dark-600 mx-1">-</span>}
           </div>
         ))}
@@ -341,8 +609,9 @@ export default function Migration() {
         <div className="bg-dark-800 border border-dark-600 rounded-lg p-6 space-y-5">
           <h2 className="text-lg font-bold text-dark-50 font-mono">Select Backup Source</h2>
 
-          <div className="flex gap-3">
+          <div className="flex gap-3 flex-wrap">
             {[
+              { id: "auto", label: "Auto-detect", desc: "Recognise the panel from the archive" },
               { id: "cpanel", label: "cPanel", desc: "Full backup (.tar.gz)" },
               { id: "plesk", label: "Plesk", desc: "Domain backup" },
               { id: "hestiacp", label: "HestiaCP", desc: "User backup (.tar)" },
@@ -350,7 +619,7 @@ export default function Migration() {
               <button
                 key={s.id}
                 onClick={() => setSource(s.id)}
-                className={`flex-1 p-4 rounded-lg border text-left transition-colors ${source === s.id ? "border-rust-500 bg-rust-500/10" : "border-dark-600 bg-dark-900 hover:border-dark-400"}`}
+                className={`flex-1 min-w-[10rem] p-4 rounded-lg border text-left transition-colors ${source === s.id ? "border-rust-500 bg-rust-500/10" : "border-dark-600 bg-dark-900 hover:border-dark-400"}`}
               >
                 <div className={`text-sm font-bold ${source === s.id ? "text-rust-400" : "text-dark-200"}`}>{s.label}</div>
                 <div className="text-xs text-dark-400 mt-1">{s.desc}</div>
@@ -380,7 +649,7 @@ export default function Migration() {
                 <input
                   value={backupPath}
                   onChange={(e) => setBackupPath(e.target.value)}
-                  placeholder="/var/backups/backup-1.2.2026_12-00-00_username.tar.gz"
+                  placeholder="/var/backups/user.2026-01-01_00-00-00.tar"
                   className="w-full px-3 py-2 bg-dark-900 border border-dark-600 rounded-lg text-dark-50 text-sm focus:border-rust-500 focus:outline-none font-mono"
                 />
                 <p className="text-xs text-dark-400 mt-1">
@@ -388,6 +657,7 @@ export default function Migration() {
                   It must be under <code className="text-dark-200">/var/backups/</code>.{" "}
                   <code className="text-dark-200">/tmp/</code> will not work: the agent runs with
                   a private <code className="text-dark-200">/tmp</code> and cannot see the host's.
+                  Leave the archive in place until the import is finished.
                 </p>
               </>
             ) : (
@@ -396,7 +666,7 @@ export default function Migration() {
                 <input
                   value={backupUrl}
                   onChange={(e) => setBackupUrl(e.target.value)}
-                  placeholder="https://example.com/backup-1.2.2026_12-00-00_username.tar.gz"
+                  placeholder="https://example.com/backup.tar.gz"
                   className="w-full px-3 py-2 bg-dark-900 border border-dark-600 rounded-lg text-dark-50 text-sm focus:border-rust-500 focus:outline-none font-mono"
                 />
                 <p className="text-xs text-dark-400 mt-1">
@@ -417,20 +687,15 @@ export default function Migration() {
 
           {analyzing && (
             <div className="flex items-start gap-3 px-4 py-3 bg-dark-900 border border-dark-600 rounded-lg">
-              <svg className="w-4 h-4 mt-0.5 animate-spin text-rust-400 shrink-0" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8V0C5.4 0 0 5.4 0 12h4z" />
-              </svg>
+              <StatusIcon status="in_progress" />
               <div className="text-sm">
                 <p className="text-dark-100">
-                  {resumed
-                    ? "Picking up an analysis that was already running on the server."
-                    : "Unpacking and reading the archive."}{" "}
+                  {resumed ? "Picking up an analysis that was already running on the server." : "Reading the archive."}{" "}
                   <span className="font-mono text-dark-200">{fmtElapsed(elapsed)}</span>
                 </p>
                 <p className="text-xs text-dark-400 mt-1">
-                  A full cPanel account takes minutes. This runs on the server, not in this tab -
-                  you can leave the page and come back, and closing the browser will not stop it.
+                  A large account takes minutes. This runs on the server, not in this tab - you can leave the page and
+                  come back, and closing the browser will not stop it.
                 </p>
               </div>
             </div>
@@ -444,42 +709,209 @@ export default function Migration() {
           <div className="bg-dark-800 border border-dark-600 rounded-lg p-5">
             <h2 className="text-lg font-bold text-dark-50 font-mono mb-1">Analysis Results</h2>
             <p className="text-sm text-dark-300">
-              Found {inv.sites.length} site{inv.sites.length !== 1 ? "s" : ""}, {inv.databases.length} database{inv.databases.length !== 1 ? "s" : ""}, {inv.mail_accounts.length} email account{inv.mail_accounts.length !== 1 ? "s" : ""}
+              {inv.source}{inv.hestia_user ? ` (${inv.hestia_user})` : ""}: {inv.sites.length} site{inv.sites.length !== 1 ? "s" : ""},{" "}
+              {inv.databases.length} database{inv.databases.length !== 1 ? "s" : ""},{" "}
+              {(inv.mail_domains ?? []).length > 0 ? `${inv.mail_domains!.length} mail domain(s), ` : ""}
+              {inv.mail_accounts.length} email account{inv.mail_accounts.length !== 1 ? "s" : ""}
             </p>
           </div>
 
+          {/* Disk */}
+          {inv.disk && (
+            <div className={`px-4 py-3 rounded-lg border text-sm ${inv.disk.ok === false ? "bg-danger-500/10 border-danger-500/30 text-danger-400" : "bg-dark-800 border-dark-600 text-dark-300"}`}>
+              {inv.disk.ok === false ? (
+                <>Not enough disk space: {inv.disk.reason || "free some space and analyse again"}. The import is refused until then.</>
+              ) : (
+                <>
+                  Disk: {inv.disk.www_free != null ? `${fmtSize(inv.disk.www_free)} free for sites` : "checked"}
+                  {inv.disk.www_needed_estimate ? `, about ${fmtSize(inv.disk.www_needed_estimate)} needed` : ""}.
+                </>
+              )}
+            </div>
+          )}
+
           {inv.warnings.length > 0 && (
-            <div className="px-4 py-3 bg-warn-500/10 border border-warn-500/30 rounded-lg">
+            <div className="px-4 py-3 bg-warn-500/10 border border-warn-500/30 rounded-lg space-y-1">
               {inv.warnings.map((w, i) => (
                 <p key={i} className="text-sm text-warn-400">{w}</p>
               ))}
             </div>
           )}
 
+          {/* Preflight */}
+          {isHestia && (
+            <div className="bg-dark-800 border border-dark-600 rounded-lg p-5 space-y-2">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-bold text-dark-50 font-mono uppercase tracking-wider">Server checks</h3>
+                <button onClick={loadPreflight} disabled={preflightBusy} className="text-xs text-dark-300 hover:text-rust-400 underline disabled:opacity-50">
+                  {preflightBusy ? "Checking..." : "Refresh checks"}
+                </button>
+              </div>
+              {!preflight && !preflightBusy && <p className="text-xs text-dark-400">The server could not be asked.</p>}
+              {preflight && (
+                <div className="space-y-1.5 text-sm">
+                  {selectedDbs.size > 0 && (
+                    <div className="flex items-center gap-2">
+                      <StatusIcon status={preflight.mariadb_local.installed && preflight.mariadb_local.running ? "done" : "failed"} />
+                      <span className="text-dark-100">
+                        Local MariaDB server{preflight.mariadb_local.version ? ` ${preflight.mariadb_local.version}` : ""}
+                        {!preflight.mariadb_local.installed ? ": not installed" : !preflight.mariadb_local.running ? ": not running" : ""}
+                      </span>
+                      {!preflight.mariadb_local.installed && (
+                        <button onClick={installLocalDb} className="ml-auto text-xs px-2 py-1 bg-dark-700 rounded hover:bg-dark-600 text-dark-100">Install</button>
+                      )}
+                    </div>
+                  )}
+                  {selectedMail.size > 0 && (
+                    <div className="flex items-center gap-2">
+                      <StatusIcon status={preflight.mail.installed ? "done" : "failed"} />
+                      <span className="text-dark-100">Mail server{preflight.mail.installed ? "" : ": not installed"}</span>
+                      {!preflight.mail.installed && (
+                        <Link to="/mail" className="ml-auto text-xs px-2 py-1 bg-dark-700 rounded hover:bg-dark-600 text-dark-100">Open Mail</Link>
+                      )}
+                    </div>
+                  )}
+                  {phpWanted.length > 0 && (
+                    <div className="flex items-start gap-2">
+                      <StatusIcon status={preflight.php.missing_for_selection.length === 0 ? "done" : "warning"} />
+                      <div className="flex-1">
+                        <span className="text-dark-100">PHP {phpWanted.join(", ")}</span>
+                        {preflight.php.missing_for_selection.length > 0 && (
+                          <span className="text-dark-300">: missing {preflight.php.missing_for_selection.join(", ")} (installed by the import if needed)</span>
+                        )}
+                        {preflight.php.legacy.length > 0 && (
+                          <p className="text-xs text-warn-400">Legacy, no security updates: PHP {preflight.php.legacy.join(", ")}</p>
+                        )}
+                      </div>
+                      <div className="flex gap-1">
+                        {preflight.php.missing_for_selection.map((v) => (
+                          <button key={v} onClick={() => installPhp(v)} className="text-xs px-2 py-1 bg-dark-700 rounded hover:bg-dark-600 text-dark-100">Install {v}</button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {inv.sites.some((s) => selectedSites.has(s.domain) && s.web_server === "apache") && (
+                    <div className="flex items-center gap-2">
+                      <StatusIcon status={preflight.apache.installed ? "done" : "warning"} />
+                      <span className="text-dark-100">
+                        Apache{preflight.apache.installed ? "" : ": not installed, Apache sites will be imported in nginx mode (.htaccess not read)"}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+              {installNote && <p className="text-xs text-dark-300">{installNote}</p>}
+            </div>
+          )}
+
           {/* Sites */}
           {inv.sites.length > 0 && (
             <div className="bg-dark-800 border border-dark-600 rounded-lg p-5">
-              <h3 className="text-sm font-bold text-dark-50 font-mono uppercase tracking-wider mb-3">Sites ({selectedSites.size}/{inv.sites.length})</h3>
-              <div className="space-y-2">
-                {inv.sites.map((s) => (
-                  <label key={s.domain} className="flex items-center gap-3 p-2 rounded hover:bg-dark-700/30 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={selectedSites.has(s.domain)}
-                      onChange={(e) => {
-                        const next = new Set(selectedSites);
-                        e.target.checked ? next.add(s.domain) : next.delete(s.domain);
-                        setSelectedSites(next);
-                      }}
-                      className="w-4 h-4 text-rust-500 border-dark-500 rounded"
-                    />
-                    <div className="flex-1 min-w-0">
-                      <span className="text-sm text-dark-50 font-mono">{s.domain}</span>
-                      <span className="text-xs text-dark-400 ml-2">{s.runtime} &middot; {fmtSize(s.size_bytes)} &middot; {s.file_count} files</span>
-                    </div>
+              <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
+                <h3 className="text-sm font-bold text-dark-50 font-mono uppercase tracking-wider">Sites ({selectedSites.size}/{inv.sites.length})</h3>
+                {isHestia && (
+                  <label className="text-xs text-dark-300 flex items-center gap-2">
+                    PHP for sites on the HestiaCP default
+                    <select value={defaultPhp} onChange={(e) => setDefaultPhp(e.target.value)} className="px-2 py-1 bg-dark-900 border border-dark-500 rounded text-xs text-dark-50 font-mono">
+                      {PHP_CHOICES.map((v) => <option key={v} value={v}>{v}{LEGACY_PHP.includes(v) ? " (legacy)" : ""}</option>)}
+                    </select>
                   </label>
-                ))}
+                )}
               </div>
+              <div className="space-y-2">
+                {inv.sites.map((s) => {
+                  const c = siteChoices[s.domain] ?? defaultChoice(s);
+                  const on = selectedSites.has(s.domain);
+                  const effectivePhp = c.php_version || s.php_version || defaultPhp;
+                  return (
+                    <div key={s.domain} className={`p-3 rounded border ${on ? "border-dark-500 bg-dark-900/40" : "border-dark-700"}`}>
+                      <label className="flex items-center gap-3 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={on}
+                          onChange={(e) => setSelectedSites(toggle(selectedSites, s.domain, e.target.checked))}
+                          className="w-4 h-4 text-rust-500 border-dark-500 rounded"
+                        />
+                        <span className="text-sm text-dark-50 font-mono">{s.domain}</span>
+                        <span className="text-xs text-dark-400">
+                          {s.runtime}{s.web_server ? ` - ${s.web_server}` : ""} - {fmtSize(s.size_bytes)}{s.file_count ? ` - ${s.file_count} files` : ""}
+                        </span>
+                        {s.suspended && <span className="text-xs text-warn-400">suspended in HestiaCP</span>}
+                      </label>
+                      {on && isHestia && (
+                        <div className="mt-2 ml-7 grid gap-2 text-xs text-dark-300">
+                          {s.runtime === "php" && (
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span>PHP</span>
+                              <select
+                                aria-label={`PHP version for ${s.domain}`}
+                                value={c.php_version}
+                                onChange={(e) => setChoice(s.domain, { php_version: e.target.value })}
+                                className="px-2 py-1 bg-dark-900 border border-dark-500 rounded text-xs text-dark-50 font-mono"
+                              >
+                                <option value="">{s.php_version ? `${s.php_version} (from HestiaCP)` : `default (${defaultPhp})`}</option>
+                                {PHP_CHOICES.map((v) => <option key={v} value={v}>{v}</option>)}
+                              </select>
+                              {LEGACY_PHP.includes(effectivePhp) && (
+                                <span className="text-warn-400">Legacy, no security updates</span>
+                              )}
+                            </div>
+                          )}
+                          {(s.aliases ?? []).length > 0 && (
+                            <label className="flex items-center gap-2">
+                              <input type="checkbox" checked={c.options.aliases} onChange={(e) => setOption(s.domain, "aliases", e.target.checked)} />
+                              Aliases: <span className="font-mono text-dark-200">{(s.aliases ?? []).join(", ")}</span>
+                            </label>
+                          )}
+                          {s.canonical_host && (
+                            <label className="flex items-center gap-2">
+                              <input type="checkbox" checked={c.options.canonical} onChange={(e) => setOption(s.domain, "canonical", e.target.checked)} />
+                              Redirect to {s.canonical_host === "www" ? `www.${s.domain}` : s.domain}
+                            </label>
+                          )}
+                          {s.ssl?.present && (
+                            <label className="flex items-center gap-2">
+                              <input type="checkbox" checked={c.options.ssl} disabled={!!s.ssl.expired} onChange={(e) => setOption(s.domain, "ssl", e.target.checked)} />
+                              Certificate{s.ssl.issuer ? ` (${s.ssl.issuer})` : ""}
+                              {s.ssl.not_after && <span className={s.ssl.expired ? "text-danger-400" : "text-dark-400"}>{s.ssl.expired ? "expired" : "expires"} {fmtDate(s.ssl.not_after)}</span>}
+                            </label>
+                          )}
+                          <div className="flex items-center gap-4">
+                            <label className="flex items-center gap-2">
+                              <input type="checkbox" checked={c.options.force_ssl} onChange={(e) => setOption(s.domain, "force_ssl", e.target.checked)} />
+                              Force SSL
+                            </label>
+                            <label className="flex items-center gap-2">
+                              <input type="checkbox" checked={c.options.hsts} onChange={(e) => setOption(s.domain, "hsts", e.target.checked)} />
+                              HSTS
+                            </label>
+                          </div>
+                          {s.ftp_user && (
+                            <label className="flex items-center gap-2">
+                              <input type="checkbox" checked={c.options.sftp} onChange={(e) => setOption(s.domain, "sftp", e.target.checked)} />
+                              SFTP account <span className="font-mono text-dark-200">{s.ftp_user}</span> (HestiaCP FTP password kept)
+                            </label>
+                          )}
+                          {s.custom_nginx_template && (
+                            <p className="text-warn-400">Custom nginx template {s.custom_nginx_template}: not translated, saved in private/ for review.</p>
+                          )}
+                          {(s.paths_to_fix ?? []).length > 0 && (
+                            <p className="text-warn-400">
+                              Old HestiaCP paths in: {(s.paths_to_fix ?? []).map((p) => `${p.file} (${p.occurrences})`).join(", ")}
+                            </p>
+                          )}
+                          {(s.upload_php_files ?? 0) > 0 && (
+                            <p className="text-warn-400">{s.upload_php_files} PHP file(s) in upload folders: they will be blocked from running.</p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              {sitesNeedingPhp.length > 0 && (
+                <p className="text-xs text-warn-400 mt-3">Choose a PHP version for {sitesNeedingPhp.map((s) => s.domain).join(", ")}.</p>
+              )}
             </div>
           )}
 
@@ -489,117 +921,156 @@ export default function Migration() {
               <h3 className="text-sm font-bold text-dark-50 font-mono uppercase tracking-wider mb-3">Databases ({selectedDbs.size}/{inv.databases.length})</h3>
               <div className="space-y-2">
                 {inv.databases.map((d) => (
-                  <label key={d.name} className="flex items-center gap-3 p-2 rounded hover:bg-dark-700/30 cursor-pointer">
+                  <div key={d.name} className="flex items-center gap-3 p-2 rounded hover:bg-dark-700/30 flex-wrap">
                     <input
                       type="checkbox"
+                      aria-label={`Import database ${d.name}`}
                       checked={selectedDbs.has(d.name)}
-                      onChange={(e) => {
-                        const next = new Set(selectedDbs);
-                        e.target.checked ? next.add(d.name) : next.delete(d.name);
-                        setSelectedDbs(next);
-                      }}
+                      onChange={(e) => setSelectedDbs(toggle(selectedDbs, d.name, e.target.checked))}
                       className="w-4 h-4 text-rust-500 border-dark-500 rounded"
                     />
-                    <div className="flex-1">
+                    <div className="flex-1 min-w-0">
                       <span className="text-sm text-dark-50 font-mono">{d.name}</span>
-                      <span className="text-xs text-dark-400 ml-2">{d.engine} &middot; {fmtSize(d.size_bytes)}</span>
+                      <span className="text-xs text-dark-400 ml-2">
+                        {d.engine} - {fmtSize(d.size_bytes)}{d.db_user ? ` - user ${d.db_user}` : ""}
+                        {d.suggested_site ? ` - suggested ${d.suggested_site}${d.suggested_via ? ` (${d.suggested_via})` : ""}` : ""}
+                      </span>
                     </div>
-                    {/* A database belongs to a site - the archive does not say
-                        which, so this is the only place the answer can come
-                        from. Shown only when there is a choice to make. */}
                     {selectedDbs.has(d.name) && selectedSiteDomains.length > 1 && (
                       <select
                         aria-label={`Site for database ${d.name}`}
                         value={siteForDb(d.name)}
-                        onClick={(e) => e.preventDefault()}
                         onChange={(e) => setDbSites({ ...dbSites, [d.name]: e.target.value })}
                         className="px-2 py-1 bg-dark-900 border border-dark-500 rounded text-xs text-dark-50 font-mono"
                       >
-                        <option value="">Choose a site…</option>
-                        {selectedSiteDomains.map((dom) => (
-                          <option key={dom} value={dom}>{dom}</option>
-                        ))}
+                        <option value="">Choose a site...</option>
+                        {selectedSiteDomains.map((dom) => <option key={dom} value={dom}>{dom}</option>)}
                       </select>
                     )}
-                  </label>
+                  </div>
                 ))}
               </div>
+              {isHestia && selectedDbs.size > 0 && (
+                <p className="text-xs text-dark-400 mt-3">
+                  Imported into the server's local MariaDB with their original users and passwords: the sites' configuration files keep working unchanged.
+                </p>
+              )}
               {selectedDbs.size > 0 && selectedSiteDomains.length === 0 && (
                 <p className="text-xs text-warn-400 mt-3">
-                  A database has to belong to a site. Select at least one site above, or import the
-                  site first and run this again - otherwise these databases will be refused.
-                </p>
-              )}
-              {selectedSiteDomains.length === 1 && selectedDbs.size > 0 && (
-                <p className="text-xs text-dark-400 mt-3">
-                  Databases will be attached to <span className="font-mono text-dark-200">{selectedSiteDomains[0]}</span>.
+                  A database has to belong to a site. Select at least one site above, or import the site first and run this again.
                 </p>
               )}
             </div>
           )}
 
-          {/* Mail (info only) */}
-          {inv.mail_accounts.length > 0 && (
+          {/* Mail */}
+          {isHestia && (inv.mail_domains ?? []).length > 0 ? (
             <div className="bg-dark-800 border border-dark-600 rounded-lg p-5">
-              <h3 className="text-sm font-bold text-dark-50 font-mono uppercase tracking-wider mb-3">Email Accounts ({inv.mail_accounts.length})</h3>
-              <p className="text-xs text-dark-400 mb-2">Email accounts will need to be recreated manually in the Mail section.</p>
-              <div className="flex flex-wrap gap-2">
-                {inv.mail_accounts.map((m) => (
-                  <span key={m.email} className="px-2 py-1 bg-dark-700 rounded text-xs text-dark-200 font-mono">{m.email}</span>
-                ))}
+              <h3 className="text-sm font-bold text-dark-50 font-mono uppercase tracking-wider mb-3">Mail ({selectedMail.size}/{inv.mail_domains!.length})</h3>
+              <div className="space-y-3">
+                {inv.mail_domains!.map((m) => {
+                  const boxes = inv.mail_accounts.filter((a) => a.domain === m.domain);
+                  return (
+                    <div key={m.domain}>
+                      <label className="flex items-center gap-3 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={selectedMail.has(m.domain)}
+                          onChange={(e) => setSelectedMail(toggle(selectedMail, m.domain, e.target.checked))}
+                          className="w-4 h-4 text-rust-500 border-dark-500 rounded"
+                        />
+                        <span className="text-sm text-dark-50 font-mono">{m.domain}</span>
+                        <span className="text-xs text-dark-400">
+                          {m.accounts} mailbox(es), {m.aliases} alias(es){m.dkim ? ", DKIM" : ""}{m.maildir_bytes ? `, ${fmtSize(m.maildir_bytes)}` : ""}
+                        </span>
+                      </label>
+                      {boxes.length > 0 && (
+                        <div className="flex flex-wrap gap-2 mt-1.5 ml-7">
+                          {boxes.map((b) => {
+                            const unsupported = !!(preflight?.mail.installed && b.hash_scheme && preflight.mail.schemes.length > 0 && !preflight.mail.schemes.includes(b.hash_scheme.toUpperCase()));
+                            return (
+                              <span key={b.email} title={unsupported ? "Password scheme not supported here: the mailbox will be disabled until a new password is set" : undefined} className={`px-2 py-1 rounded text-xs font-mono ${unsupported ? "bg-warn-500/10 text-warn-400" : "bg-dark-700 text-dark-200"}`}>
+                                {b.email}{b.forward_to ? " (forward)" : ""}{unsupported ? " (password scheme not supported)" : ""}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
+              <p className="text-xs text-dark-400 mt-3">
+                No DNS record and no mail certificate are created: switch the MX records once you are ready.
+              </p>
             </div>
+          ) : (
+            inv.mail_accounts.length > 0 && (
+              <div className="bg-dark-800 border border-dark-600 rounded-lg p-5">
+                <h3 className="text-sm font-bold text-dark-50 font-mono uppercase tracking-wider mb-3">Email Accounts ({inv.mail_accounts.length})</h3>
+                <p className="text-xs text-dark-400 mb-2">Email accounts from this panel are listed for reference and need to be recreated in the Mail section.</p>
+                <div className="flex flex-wrap gap-2">
+                  {inv.mail_accounts.map((m) => (
+                    <span key={m.email} className="px-2 py-1 bg-dark-700 rounded text-xs text-dark-200 font-mono">{m.email}</span>
+                  ))}
+                </div>
+              </div>
+            )
           )}
 
-          <div className="flex gap-3">
+          <div className="flex gap-3 flex-wrap">
             <button onClick={() => setStep(1)} className="px-4 py-2 bg-dark-700 text-dark-200 rounded-lg text-sm hover:bg-dark-600 transition-colors">
               Back
             </button>
             <button
               onClick={handleImport}
-              disabled={(selectedSites.size === 0 && selectedDbs.size === 0) || dbsWithoutSite.length > 0}
+              disabled={selectionCount === 0 || dbsWithoutSite.length > 0 || diskBlocked || sitesNeedingPhp.length > 0}
               title={dbsWithoutSite.length > 0 ? `Choose a site for: ${dbsWithoutSite.join(", ")}` : undefined}
               className="px-5 py-2.5 bg-rust-500 text-dark-950 rounded-lg text-sm font-bold hover:bg-rust-400 transition-colors disabled:opacity-50"
             >
-              Import {selectedSites.size + selectedDbs.size} item{selectedSites.size + selectedDbs.size !== 1 ? "s" : ""}
+              Import {selectionCount} item{selectionCount !== 1 ? "s" : ""}
             </button>
+            {migration && migration.status !== "analyzed" && (
+              <button onClick={() => { setStep(4); loadReport(migration.id); }} className="px-4 py-2 bg-dark-700 text-dark-200 rounded-lg text-sm hover:bg-dark-600 transition-colors">
+                Previous report
+              </button>
+            )}
           </div>
           {dbsWithoutSite.length > 0 && (
-            <p className="text-xs text-warn-400">
-              Choose a site for {dbsWithoutSite.join(", ")} before importing.
-            </p>
+            <p className="text-xs text-warn-400">Choose a site for {dbsWithoutSite.join(", ")} before importing.</p>
           )}
         </div>
       )}
 
-      {/* Step 3: Progress */}
+      {/* Step 3: Progress (per item) */}
       {step === 3 && (
         <div className="bg-dark-800 border border-dark-600 rounded-lg p-5 space-y-3">
-          <h2 className="text-lg font-bold text-dark-50 font-mono">Importing...</h2>
-          <div className="space-y-2">
-            {progress.map((p) => (
-              <div key={p.step} className="flex items-center gap-3">
-                {p.status === "in_progress" && (
-                  <div className="w-4 h-4 border-2 border-rust-500 border-t-transparent rounded-full animate-spin shrink-0" />
-                )}
-                {p.status === "done" && (
-                  <svg className="w-4 h-4 text-rust-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>
-                )}
-                {p.status === "error" && (
-                  <svg className="w-4 h-4 text-danger-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
-                )}
-                {p.status === "skipped" && (
-                  <svg className="w-4 h-4 text-warn-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" /></svg>
-                )}
-                <span className={`text-sm font-mono ${p.status === "error" ? "text-danger-400" : p.status === "skipped" ? "text-warn-400" : "text-dark-100"}`}>
-                  {p.label}
-                </span>
-                {p.message && <span className="text-xs text-dark-400 ml-auto">{p.message}</span>}
-              </div>
-            ))}
-            {importing && progress.length === 0 && (
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-bold text-dark-50 font-mono">Importing...</h2>
+            <span className="text-xs text-dark-400">
+              {summary.done ?? 0} done, {summary.warning ?? 0} with warnings, {summary.failed ?? 0} failed
+            </span>
+          </div>
+          <p className="text-xs text-dark-400">
+            This runs on the server. You can leave the page: the import continues, and coming back here shows where it is.
+          </p>
+          <div>
+            {items.map((it) => itemRow(it, false))}
+            {/* Steps the ledger has not written yet (they appear in the stream first). */}
+            {Object.values(live)
+              .filter((p) => p.step !== "complete" && !items.some((it) => `${it.kind}:${it.key}` === p.step))
+              .map((p) => (
+                <div key={p.step} className="flex items-start gap-3 py-1.5">
+                  <div className="pt-0.5"><StatusIcon status={p.status} /></div>
+                  <div className="flex-1 min-w-0">
+                    <div className={`text-sm font-mono ${statusText(p.status)}`}>{p.label}</div>
+                    {p.message && <div className="text-xs text-dark-300">{p.message}</div>}
+                  </div>
+                </div>
+              ))}
+            {items.length === 0 && Object.keys(live).length === 0 && (
               <div className="flex items-center gap-3">
-                <div className="w-4 h-4 border-2 border-rust-500 border-t-transparent rounded-full animate-spin" />
+                <StatusIcon status="in_progress" />
                 <span className="text-sm text-dark-300">Starting import...</span>
               </div>
             )}
@@ -607,58 +1078,80 @@ export default function Migration() {
         </div>
       )}
 
-      {/* Step 4: Summary */}
+      {/* Step 4: Report */}
       {step === 4 && (
         <div className="space-y-4">
           <div className="bg-dark-800 border border-dark-600 rounded-lg p-5">
-            <h2 className="text-lg font-bold text-dark-50 font-mono mb-3">Migration Complete</h2>
-            <div className="space-y-2">
-              {progress.map((p) => (
-                <div key={p.step} className="flex items-center gap-3">
-                  {p.status === "done" ? (
-                    <svg className="w-4 h-4 text-rust-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>
-                  ) : p.status === "error" ? (
-                    <svg className="w-4 h-4 text-danger-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
-                  ) : p.status === "skipped" ? (
-                    <svg className="w-4 h-4 text-warn-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" /></svg>
-                  ) : null}
-                  <span className={`text-sm font-mono ${p.status === "error" ? "text-danger-400" : p.status === "skipped" ? "text-warn-400" : "text-dark-100"}`}>
-                    {p.label}
-                  </span>
-                  {p.message && <span className="text-xs text-dark-400 ml-auto">{p.message}</span>}
-                </div>
-              ))}
+            <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+              <h2 className="text-lg font-bold text-dark-50 font-mono">Import report</h2>
+              <span className="text-xs text-dark-300">
+                {summary.done ?? 0} done - {summary.warning ?? 0} with warnings - {summary.skipped ?? 0} skipped - {summary.failed ?? 0} failed
+                {(summary.pending ?? 0) > 0 ? ` - ${summary.pending} waiting` : ""}
+              </span>
             </div>
+            {!report && <p className="text-sm text-dark-400">Loading the report...</p>}
+            {report && items.length === 0 && <p className="text-sm text-dark-400">Nothing was imported.</p>}
+            <div>{items.map((it) => itemRow(it, true))}</div>
           </div>
 
-          {/* Non-fatal notes from the import (e.g. a HestiaCP Apache domain
-              imported in nginx mode). Read from the stored result, which is
-              refreshed when the progress stream completes. */}
-          {(() => {
-            const raw = migration?.result?.warnings;
-            const warnings = Array.isArray(raw) ? raw.filter((w): w is string => typeof w === "string") : [];
-            if (warnings.length === 0) return null;
-            return (
-              <div className="bg-warn-500/10 border border-warn-500/30 rounded-lg p-4 space-y-1.5">
-                <h3 className="text-sm font-medium text-warn-400">Warnings</h3>
-                {warnings.map((w, i) => (
-                  <p key={i} className="text-xs text-dark-200">{w}</p>
-                ))}
-              </div>
-            );
-          })()}
+          {report && report.manual_actions.length > 0 && (
+            <div className="bg-warn-500/10 border border-warn-500/30 rounded-lg p-4 space-y-1.5">
+              <h3 className="text-sm font-medium text-warn-400">Manual actions</h3>
+              {report.manual_actions.map((a, i) => (
+                <p key={i} className="text-xs text-dark-200">{a}</p>
+              ))}
+            </div>
+          )}
 
-          <div className="flex gap-3">
-            {/* `Link`, not `<a href>`: an anchor to an in-app route reloads the
-                whole SPA - it discards the router, refetches the bundle and
-                throws away the migration result the operator is looking at. */}
-            <Link to="/sites" className="px-4 py-2 bg-rust-500 text-dark-950 rounded-lg text-sm font-bold hover:bg-rust-400 transition-colors">
+          {forceTarget && (
+            <div className="bg-dark-800 border border-danger-500/40 rounded-lg p-4 space-y-2">
+              <p className="text-sm text-dark-100">
+                Force re-import of {KIND_LABEL[forceTarget.kind] ?? forceTarget.kind} <span className="font-mono">{forceTarget.key}</span>:
+                this overwrites data written since the first import.
+              </p>
+              <label className="block text-xs text-dark-300">
+                Type <span className="font-mono text-dark-100">{FORCE_PHRASE}</span> to confirm
+                <input
+                  value={forceText}
+                  onChange={(e) => setForceText(e.target.value)}
+                  className="mt-1 w-full px-3 py-2 bg-dark-900 border border-dark-600 rounded-lg text-dark-50 text-sm font-mono focus:border-danger-500 focus:outline-none"
+                />
+              </label>
+              <div className="flex gap-2">
+                <button
+                  onClick={confirmForce}
+                  disabled={forceText.trim().toLowerCase() !== FORCE_PHRASE}
+                  className="px-4 py-2 bg-danger-500 text-dark-950 rounded-lg text-sm font-bold disabled:opacity-50"
+                >
+                  Re-import
+                </button>
+                <button onClick={() => setForceTarget(null)} className="px-4 py-2 bg-dark-700 text-dark-200 rounded-lg text-sm hover:bg-dark-600">Cancel</button>
+              </div>
+            </div>
+          )}
+
+          <div className="flex gap-3 flex-wrap">
+            {failedCount + (summary.pending ?? 0) > 0 && (
+              <button onClick={handleRetry} className="px-4 py-2 bg-rust-500 text-dark-950 rounded-lg text-sm font-bold hover:bg-rust-400 transition-colors">
+                Retry failed
+              </button>
+            )}
+            {inv && (
+              <button onClick={() => setStep(2)} className="px-4 py-2 bg-dark-700 text-dark-200 rounded-lg text-sm hover:bg-dark-600 transition-colors">
+                Change selection
+              </button>
+            )}
+            {/* `Link`, not `<a href>`: an anchor reloads the whole SPA. */}
+            <Link to="/sites" className="px-4 py-2 bg-dark-700 text-dark-200 rounded-lg text-sm hover:bg-dark-600 transition-colors">
               View Sites
             </Link>
             <Link to="/databases" className="px-4 py-2 bg-dark-700 text-dark-200 rounded-lg text-sm hover:bg-dark-600 transition-colors">
               View Databases
             </Link>
-            <button onClick={() => { setStep(1); setMigration(null); setProgress([]); setError(""); }} className="px-4 py-2 bg-dark-700 text-dark-200 rounded-lg text-sm hover:bg-dark-600 transition-colors">
+            <button
+              onClick={() => { setStep(1); setMigration(null); setReport(null); setLive({}); setError(""); startedHere.current = true; }}
+              className="px-4 py-2 bg-dark-700 text-dark-200 rounded-lg text-sm hover:bg-dark-600 transition-colors"
+            >
               Start New Migration
             </button>
           </div>
