@@ -41,6 +41,18 @@ pub fn is_db_dir_name(name: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
+/// Names a dump directory may carry: [`is_db_dir_name`], plus the names of the
+/// shared local MariaDB server (`kind='local'`, 05-import-hestia), which may hold
+/// dots and capitals. A local name starts with an alphanumeric and never holds
+/// `..` or a separator, so `.` and `..` still cannot be spelled.
+pub fn is_dump_dir_name(name: &str) -> bool {
+    is_db_dir_name(name) || crate::services::local_mariadb::is_valid_local_name(name)
+}
+
+/// `container_name` meaning "the shared local MariaDB server" (W2-A): dump and
+/// restore then run as root through its socket, and `user`/`password` are ignored.
+pub const LOCAL_CONTAINER: &str = "local";
+
 /// Names this module MINTED, as opposed to names it merely accepts.
 ///
 /// ⚠ The distinction is the whole safety of the purge, and the obvious predicate
@@ -91,7 +103,7 @@ fn is_minted_dump_name(db_name: &str, name: &str) -> bool {
 /// future version writes - survives with its contents, and no future bug in the
 /// name guard can escalate into erasing a tree.
 pub async fn purge_dir(db_name: &str) -> Result<PurgeReport, String> {
-    if !is_db_dir_name(db_name) {
+    if !is_dump_dir_name(db_name) {
         return Err("Invalid database name".into());
     }
     let dir = backup_dir(db_name);
@@ -167,6 +179,9 @@ pub async fn dump_mysql(
     user: &str,
     password: &str,
 ) -> Result<BackupInfo, String> {
+    if container_name == LOCAL_CONTAINER {
+        return dump_local(db_name).await;
+    }
     if !is_safe_db_identifier(container_name) {
         return Err("Invalid container name".into());
     }
@@ -500,6 +515,9 @@ pub async fn restore_mysql(
     password: &str,
     filepath: &str,
 ) -> Result<(), String> {
+    if container_name == LOCAL_CONTAINER {
+        return restore_local(db_name, filepath).await;
+    }
     if !is_safe_db_identifier(container_name) {
         return Err("Invalid container name".into());
     }
@@ -718,6 +736,120 @@ pub async fn restore_mongo(
 
     result?;
     tracing::info!("MongoDB database {db_name} restored from {filepath}");
+    Ok(())
+}
+
+/// Dump one database of the shared local MariaDB server (root, socket).
+async fn dump_local(db_name: &str) -> Result<BackupInfo, String> {
+    if !crate::services::local_mariadb::is_valid_local_name(db_name) || !is_safe_db_identifier(db_name) {
+        return Err("Invalid database name".into());
+    }
+    let dest_dir = backup_dir(db_name);
+    std::fs::create_dir_all(&dest_dir).map_err(|e| format!("Failed to create backup dir: {e}"))?;
+    let timestamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
+    let filename = format!("{db_name}-{timestamp}.sql.gz");
+    let filepath = dest_dir.join(&filename);
+
+    let mut dump_child = safe_command("mariadb-dump")
+        .args([
+            "--no-defaults", "--protocol=socket", "-S", crate::services::local_mariadb::SOCKET,
+            "-u", "root", "--single-transaction", "--routines", "--events", "--triggers",
+            "--default-character-set=utf8mb4", "--max-allowed-packet=1G", db_name,
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|e| format!("Failed to spawn mariadb-dump: {e}"))?;
+    let dump_stdout = dump_child.stdout.take().ok_or("Failed to capture mariadb-dump stdout")?;
+    let file = std::fs::File::create(&filepath).map_err(|e| format!("Failed to create dump file: {e}"))?;
+    let mut gzip_child = safe_command("gzip")
+        .stdin(dump_stdout.into_owned_fd().map_err(|_| "Failed to get fd")?)
+        .stdout(std::process::Stdio::from(file))
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|e| format!("Failed to spawn gzip: {e}"))?;
+
+    let result = tokio::time::timeout(std::time::Duration::from_secs(3600), async {
+        let out = dump_child.wait_with_output().await.map_err(|e| format!("mariadb-dump wait error: {e}"))?;
+        let gz = gzip_child.wait().await.map_err(|e| format!("gzip wait error: {e}"))?;
+        if !out.status.success() {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            return Err(format!("MariaDB dump failed: {}", stderr.trim().chars().take(500).collect::<String>()));
+        }
+        if !gz.success() {
+            return Err("MariaDB dump failed: gzip error".to_string());
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|_| "Database dump timed out (60 minutes)".to_string())
+    .and_then(|r| r);
+    if let Err(e) = result {
+        std::fs::remove_file(&filepath).ok();
+        return Err(e);
+    }
+    let meta = std::fs::metadata(&filepath).map_err(|e| format!("Failed to read dump metadata: {e}"))?;
+    if meta.len() < 30 {
+        std::fs::remove_file(&filepath).ok();
+        return Err("Database dump produced empty output".to_string());
+    }
+    let sha256 = compute_file_sha256(filepath.to_str().ok_or("Invalid path encoding")?).await;
+    tracing::info!("Local MariaDB dump created: {filename} ({} bytes)", meta.len());
+    Ok(BackupInfo {
+        filename,
+        size_bytes: meta.len(),
+        created_at: chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+        sha256,
+        ..Default::default()
+    })
+}
+
+/// Restore a `.sql.gz` into one database of the shared local server, streamed.
+async fn restore_local(db_name: &str, filepath: &str) -> Result<(), String> {
+    if !crate::services::local_mariadb::is_valid_local_name(db_name) || !is_safe_db_identifier(db_name) {
+        return Err("Invalid database name".into());
+    }
+    let mut gunzip_child = safe_command("gunzip")
+        .args(["-c", "--", filepath])
+        .stdout(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|e| format!("Failed to spawn gunzip: {e}"))?;
+    let gunzip_stdout = gunzip_child.stdout.take().ok_or("Failed to capture gunzip stdout")?;
+    // --binary-mode: no client command (`system`, `source`) is taken from the dump.
+    let client = safe_command("mariadb")
+        .args([
+            "--no-defaults", "--protocol=socket", "-S", crate::services::local_mariadb::SOCKET,
+            "-u", "root", "--binary-mode", "--batch", "--max-allowed-packet=1G",
+            "--default-character-set=utf8mb4", db_name,
+        ])
+        .stdin(gunzip_stdout.into_owned_fd().map_err(|_| "Failed to get fd")?)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|e| format!("Failed to spawn mariadb: {e}"))?;
+    let result = tokio::time::timeout(std::time::Duration::from_secs(3600), async {
+        let gz = gunzip_child.wait().await.map_err(|e| format!("gunzip wait error: {e}"))?;
+        let out = client.wait_with_output().await.map_err(|e| format!("mariadb wait error: {e}"))?;
+        if !gz.success() {
+            return Err("MySQL restore failed: backup decompression error (truncated/corrupt archive)".to_string());
+        }
+        if !out.status.success() {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            let stderr = stderr.trim();
+            if stderr.is_empty() {
+                return Err(format!("MySQL restore failed: the mariadb client exited with {}", out.status));
+            }
+            return Err(format!("MySQL restore failed: {}", stderr.chars().take(500).collect::<String>()));
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|_| "Database restore timed out (60 minutes)".to_string())?;
+    result?;
+    tracing::info!("Local MariaDB database {db_name} restored from {filepath}");
     Ok(())
 }
 
@@ -960,6 +1092,19 @@ mod tests {
         let r = purge_dir("nosuchdatabase_forpurgetest").await.expect("no error");
         assert_eq!(r.removed, 0);
         assert!(!r.dir_removed);
+    }
+
+    #[test]
+    fn dump_dir_name_admits_local_names_but_never_a_traversal() {
+        assert!(is_dump_dir_name("adm-jim_shop.be"));
+        assert!(is_dump_dir_name("Adm-Jim_WP"));
+        assert!(is_dump_dir_name("_wp"), "the container rule still holds");
+        for bad in [".", "..", "a..b", "../etc", "a/b", ".hidden", ""] {
+            assert!(!is_dump_dir_name(bad), "{bad:?}");
+        }
+        // The container predicate is unchanged.
+        assert!(!is_db_dir_name("a.b"));
+        assert!(is_minted_dump_name("shop.be", "shop.be-20261115-140302.sql.gz"));
     }
 
     #[test]

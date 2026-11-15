@@ -33,6 +33,28 @@ pub struct RestoreRequest {
     pub encryption_key: Option<String>,
 }
 
+/// Who the dump/restore talks to. `container_name == "local"` is the shared local
+/// MariaDB server (05-import-hestia): root through the socket, the body's
+/// `user`/`password` are ignored (a local user may hold dots), MySQL engines only.
+fn check_target(container: &str, db_type: &str, user: &str, password: &str) -> Result<(), ApiErr> {
+    if container == database_backup::LOCAL_CONTAINER {
+        if !matches!(db_type, "mysql" | "mariadb") {
+            return Err(err(StatusCode::BAD_REQUEST, "The local server only holds MariaDB databases"));
+        }
+        return Ok(());
+    }
+    if !is_valid_name(container) {
+        return Err(err(StatusCode::BAD_REQUEST, "Invalid container name"));
+    }
+    if !is_valid_name(user) {
+        return Err(err(StatusCode::BAD_REQUEST, "Invalid user name"));
+    }
+    if password.contains('\0') || password.contains('\n') || password.contains('\r') || password.len() > 128 {
+        return Err(err(StatusCode::BAD_REQUEST, "Invalid password"));
+    }
+    Ok(())
+}
+
 /// POST /db-backups/dump - Dump a database.
 async fn dump(
     Json(req): Json<DumpRequest>,
@@ -42,18 +64,10 @@ async fn dump(
     // superset of the generic validator, so nothing this door used to accept is
     // refused now. The container and user names below keep the generic validator:
     // different populations, both derived by the panel, neither naming a directory.
-    if !database_backup::is_db_dir_name(&req.db_name) {
+    if !database_backup::is_dump_dir_name(&req.db_name) {
         return Err(err(StatusCode::BAD_REQUEST, "Invalid database name"));
     }
-    if !is_valid_name(&req.container_name) {
-        return Err(err(StatusCode::BAD_REQUEST, "Invalid container name"));
-    }
-    if !is_valid_name(&req.user) {
-        return Err(err(StatusCode::BAD_REQUEST, "Invalid user name"));
-    }
-    if req.password.contains('\0') || req.password.contains('\n') || req.password.contains('\r') || req.password.len() > 128 {
-        return Err(err(StatusCode::BAD_REQUEST, "Invalid password"));
-    }
+    check_target(&req.container_name, &req.db_type, &req.user, &req.password)?;
 
     let mut info = match req.db_type.as_str() {
         "mysql" | "mariadb" => {
@@ -96,7 +110,7 @@ async fn dump(
 async fn list(
     Path(db_name): Path<String>,
 ) -> Result<Json<Vec<BackupInfo>>, ApiErr> {
-    if !database_backup::is_db_dir_name(&db_name) {
+    if !database_backup::is_dump_dir_name(&db_name) {
         return Err(err(StatusCode::BAD_REQUEST, "Invalid database name"));
     }
 
@@ -109,7 +123,7 @@ async fn list(
 async fn remove(
     Path((db_name, filename)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
-    if !database_backup::is_db_dir_name(&db_name) {
+    if !database_backup::is_dump_dir_name(&db_name) {
         return Err(err(StatusCode::BAD_REQUEST, "Invalid database name"));
     }
 
@@ -123,18 +137,10 @@ async fn restore(
     Path((db_name, filename)): Path<(String, String)>,
     Json(req): Json<RestoreRequest>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
-    if !database_backup::is_db_dir_name(&db_name) {
+    if !database_backup::is_dump_dir_name(&db_name) {
         return Err(err(StatusCode::BAD_REQUEST, "Invalid database name"));
     }
-    if !is_valid_name(&req.container_name) {
-        return Err(err(StatusCode::BAD_REQUEST, "Invalid container name"));
-    }
-    if !is_valid_name(&req.user) {
-        return Err(err(StatusCode::BAD_REQUEST, "Invalid user name"));
-    }
-    if req.password.contains('\0') || req.password.contains('\n') || req.password.contains('\r') || req.password.len() > 128 {
-        return Err(err(StatusCode::BAD_REQUEST, "Invalid password"));
-    }
+    check_target(&req.container_name, &req.db_type, &req.user, &req.password)?;
 
     // Resolve and validate backup file path
     let filepath = database_backup::get_backup_path(&db_name, &filename)
@@ -200,7 +206,7 @@ async fn restore(
 async fn get_path(
     Path((db_name, filename)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
-    if !database_backup::is_db_dir_name(&db_name) {
+    if !database_backup::is_dump_dir_name(&db_name) {
         return Err(err(StatusCode::BAD_REQUEST, "Invalid database name"));
     }
 
@@ -215,7 +221,7 @@ async fn get_path(
 /// site, so the same directory can serve two live databases. This end answers
 /// only for what it did.
 async fn purge(Path(db_name): Path<String>) -> Result<Json<serde_json::Value>, ApiErr> {
-    if !database_backup::is_db_dir_name(&db_name) {
+    if !database_backup::is_dump_dir_name(&db_name) {
         return Err(err(StatusCode::BAD_REQUEST, "Invalid database name"));
     }
     let report = database_backup::purge_dir(&db_name)

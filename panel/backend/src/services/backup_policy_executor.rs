@@ -514,9 +514,9 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
         // stack-owned database (site_id IS NULL for those rows since v2.242.0's
         // standalone-DB-for-stacks ship), so they got zero backup coverage,
         // scheduled or manual, with no error anywhere in the chain.
-        let databases: Vec<(Uuid, String, String, String, String, Option<Uuid>)> = sqlx::query_as(
+        let databases: Vec<(Uuid, String, String, String, String, Option<Uuid>, String)> = sqlx::query_as(
             "SELECT d.id, d.name, d.engine, d.db_user, d.db_password_enc, \
-             COALESCE(s.server_id, st.server_id) \
+             COALESCE(s.server_id, st.server_id), d.kind \
              FROM databases d \
              LEFT JOIN sites s ON d.site_id = s.id \
              LEFT JOIN docker_stacks st ON d.stack_id = st.id \
@@ -525,7 +525,7 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
         .bind(policy.user_id)
         .fetch_all(db).await.unwrap_or_default();
 
-        for (db_id, db_name, engine, user, password_enc, db_server_id) in &databases {
+        for (db_id, db_name, engine, user, password_enc, db_server_id, kind) in &databases {
             let Some(db_server_id) = *db_server_id else {
                 failures += 1;
                 tracing::warn!(
@@ -549,7 +549,7 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
             };
             let agent = &agent;
             let password = crate::services::secrets_crypto::decrypt_credential_or_legacy(password_enc, jwt_secret);
-            let container_name = format!("dockpanel-db-{db_name}");
+            let container_name = crate::routes::databases::container_ref(kind, db_name);
             let body = serde_json::json!({
                 "container_name": container_name,
                 "db_name": db_name,
