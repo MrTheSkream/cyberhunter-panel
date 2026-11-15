@@ -24,6 +24,9 @@ fn err(status: StatusCode, msg: &str) -> ApiErr {
 struct EnableRequest {
     uid: i32,
     gid: i32,
+    /// Custom account name (05-import-hestia D6); absent = `sftp<uid>`.
+    #[serde(default)]
+    username: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -49,10 +52,21 @@ async fn enable(
     if !is_valid_domain(&domain) {
         return Err(err(StatusCode::BAD_REQUEST, "Invalid domain"));
     }
-    sftp_accounts::provision(&domain, body.uid, body.gid)
+    sftp_accounts::provision(&domain, body.uid, body.gid, body.username.as_deref())
         .await
-        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
-    Ok(Json(serde_json::json!({ "ok": true })))
+        .map_err(|e| match e {
+            sftp_accounts::ProvisionError::InvalidUsername(m) => {
+                coded(StatusCode::BAD_REQUEST, &m, "invalid_username")
+            }
+            sftp_accounts::ProvisionError::UsernameTaken(m) => {
+                coded(StatusCode::CONFLICT, &m, "username_taken")
+            }
+            sftp_accounts::ProvisionError::Failed(m) => err(StatusCode::INTERNAL_SERVER_ERROR, &m),
+        })?;
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "username": sftp_accounts::account_name(body.uid),
+    })))
 }
 
 /// POST /sftp/sites/{domain}/disable
@@ -97,10 +111,70 @@ pub fn router() -> Router<AppState> {
 }
 
 // --- import-hestia (05) ---
-// STUB(W4): step-0 skeleton (501); W4 replaces it (contract W4-S).
+fn coded(status: StatusCode, msg: &str, code: &str) -> ApiErr {
+    (status, Json(serde_json::json!({ "error": msg, "code": code })))
+}
 
-/// POST /sftp/sites/{domain}/password-hash
-async fn set_password_hash() -> ApiErr {
-    super::not_implemented()
+#[derive(Deserialize)]
+struct SetPasswordHashRequest {
+    uid: i32,
+    migration_id: String,
+}
+
+/// POST /sftp/sites/{domain}/password-hash (contract W4-S)
+///
+/// Applies the HestiaCP FTP hash of `domain` to the SFTP account of `uid`.
+/// The agent reads the hash itself from the migration staging (by reference):
+/// it never travels through the backend, a response or a log. Any failure
+/// leaves the account locked (`usermod -L`); the operator then uses the
+/// existing "Reset password".
+async fn set_password_hash(
+    Path(domain): Path<String>,
+    Json(body): Json<SetPasswordHashRequest>,
+) -> Result<Json<serde_json::Value>, ApiErr> {
+    if !is_valid_domain(&domain) {
+        return Err(err(StatusCode::BAD_REQUEST, "Invalid domain"));
+    }
+    // The uid must be proven to be this domain's account before its password
+    // is touched - the same fail-closed marker as teardown.
+    if !crate::services::ownership::sftp_user(body.uid, &domain).may_delete() {
+        return Err(coded(
+            StatusCode::CONFLICT,
+            &format!("uid {} is not the SFTP account of {domain}", body.uid),
+            "not_owner",
+        ));
+    }
+    let Some((_ftp_user, hash)) = crate::services::hestia::ftp_hash(&body.migration_id, &domain) else {
+        sftp_accounts::lock_account(body.uid).await;
+        return Err(coded(
+            StatusCode::NOT_FOUND,
+            "No FTP password hash for this domain in the backup",
+            "no_hash",
+        ));
+    };
+    let scheme = sftp_accounts::crypt_hash_scheme(&hash).unwrap_or("unknown");
+    match sftp_accounts::set_password_hash(body.uid, &hash).await {
+        Ok(()) => {
+            tracing::info!("SFTP password hash applied for {domain} (uid {}, scheme {scheme})", body.uid);
+            Ok(Json(serde_json::json!({ "ok": true, "scheme": scheme })))
+        }
+        Err(sftp_accounts::HashApplyError::Unsupported(why)) => {
+            sftp_accounts::lock_account(body.uid).await;
+            tracing::warn!("SFTP password hash for {domain} not applied (account locked): {why}");
+            Err((
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(serde_json::json!({
+                    "error": format!("password hash not usable on this server: {why}"),
+                    "code": "unsupported_scheme",
+                    "scheme": scheme,
+                })),
+            ))
+        }
+        Err(sftp_accounts::HashApplyError::Failed(why)) => {
+            sftp_accounts::lock_account(body.uid).await;
+            tracing::warn!("SFTP password hash for {domain} not applied (account locked): {why}");
+            Err(coded(StatusCode::INTERNAL_SERVER_ERROR, &why, "apply_failed"))
+        }
+    }
 }
 // --- end import-hestia (05) ---

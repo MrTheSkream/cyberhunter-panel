@@ -51,6 +51,8 @@ interface MailAccount {
   quota_mb: number;
   enabled: boolean;
   forward_to: string | null;
+  /** With forward_to: also deliver to this mailbox. */
+  keep_copy?: boolean;
   autoresponder_enabled: boolean;
   autoresponder_subject: string | null;
   autoresponder_body: string | null;
@@ -197,6 +199,7 @@ export default function Mail() {
   const [editPassword, setEditPassword] = useState("");
   const [editQuota, setEditQuota] = useState("");
   const [editForward, setEditForward] = useState("");
+  const [editKeepCopy, setEditKeepCopy] = useState(false);
   const [editAutoEnabled, setEditAutoEnabled] = useState(false);
   const [editAutoSubject, setEditAutoSubject] = useState("");
   const [editAutoBody, setEditAutoBody] = useState("");
@@ -440,7 +443,10 @@ export default function Mail() {
       const body: Record<string, unknown> = {};
       if (editPassword) body.password = editPassword;
       if (editQuota) body.quota_mb = parseInt(editQuota);
-      body.forward_to = editForward || null;
+      // "" clears the forward on the backend (null would leave it in place
+      // while keep_copy goes false, silently dropping local delivery).
+      body.forward_to = editForward.trim();
+      body.keep_copy = editForward ? editKeepCopy : false;
       body.autoresponder_enabled = editAutoEnabled;
       if (editAutoSubject) body.autoresponder_subject = editAutoSubject;
       if (editAutoBody) body.autoresponder_body = editAutoBody;
@@ -484,6 +490,7 @@ export default function Mail() {
     setEditPassword("");
     setEditQuota(String(acc.quota_mb));
     setEditForward(acc.forward_to || "");
+    setEditKeepCopy(acc.keep_copy ?? false);
     setEditAutoEnabled(acc.autoresponder_enabled);
     setEditAutoSubject(acc.autoresponder_subject || "");
     setEditAutoBody(acc.autoresponder_body || "");
@@ -1139,7 +1146,7 @@ export default function Mail() {
                               <div className="flex items-center gap-2">
                                 <span className="text-sm text-dark-50 font-mono truncate">{acc.email}</span>
                                 {!acc.enabled && <span className="px-1.5 py-0.5 text-[9px] bg-dark-600 text-dark-300 uppercase">Disabled</span>}
-                                {acc.forward_to && <span className="px-1.5 py-0.5 text-[9px] bg-accent-500/15 text-accent-400 uppercase">Fwd</span>}
+                                {acc.forward_to && <span className="px-1.5 py-0.5 text-[9px] bg-accent-500/15 text-accent-400 uppercase">{acc.keep_copy ? "Fwd + copy" : "Fwd"}</span>}
                                 {acc.autoresponder_enabled && <span className="px-1.5 py-0.5 text-[9px] bg-accent-600/15 text-accent-400 uppercase">Auto</span>}
                               </div>
                               <div className="flex items-center gap-2 flex-wrap">
@@ -1209,6 +1216,11 @@ export default function Mail() {
                             <div>
                               <label className="block text-xs text-dark-200 mb-1">Forward To (optional)</label>
                               <input type="email" value={editForward} onChange={(e) => setEditForward(e.target.value)} placeholder="other@example.com" className="w-full px-3 py-1.5 border border-dark-500 rounded-lg text-sm focus:ring-2 focus:ring-accent-500 outline-none" />
+                              <label className={`flex items-center gap-2 mt-2 ${editForward ? "cursor-pointer" : "opacity-50 cursor-not-allowed"}`}>
+                                <input type="checkbox" checked={editKeepCopy} disabled={!editForward} onChange={(e) => setEditKeepCopy(e.target.checked)} className="rounded border-dark-500" />
+                                <span className="text-sm text-dark-100">Keep a copy in this mailbox</span>
+                              </label>
+                              <p className="text-[10px] text-dark-300 mt-0.5">Off: mail is only forwarded. On: mail is delivered here and forwarded.</p>
                             </div>
                             <div className="border-t border-dark-600 pt-3">
                               <label className="flex items-center gap-2 cursor-pointer mb-2">
