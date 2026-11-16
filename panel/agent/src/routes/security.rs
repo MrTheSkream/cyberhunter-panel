@@ -240,10 +240,19 @@ async fn kill_terminals() -> Json<serde_json::Value> {
         "PANIC: killed {killed} of {} registered terminal sessions ({root_killed} server/root)",
         pids.len()
     );
+
+    // User terminals (09): stop their connection units AND their tmux
+    // sessions. Their shell runs in a transient unit started by PID 1, so the
+    // pid kill above only reaches the local `systemd-run` client; stopping the
+    // unit takes down the whole cgroup.
+    let user = crate::services::user_terminal::kill(true, None).await;
+
     Json(serde_json::json!({
         "killed": killed,
         "registered": pids.len(),
         "server_terminals_killed": root_killed,
+        "user_terminals_killed": user.connections_killed,
+        "user_terminal_sessions_stopped": user.sessions_stopped,
     }))
 }
 

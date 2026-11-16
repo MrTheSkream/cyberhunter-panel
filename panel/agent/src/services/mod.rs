@@ -67,3 +67,6 @@ pub mod site_owner;
 // --- web statistics (08) ---
 pub mod web_stats;
 // --- end web statistics (08) ---
+// --- user terminal (09) ---
+pub mod user_terminal;
+// --- end user terminal (09) ---

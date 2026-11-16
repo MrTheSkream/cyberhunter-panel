@@ -80,6 +80,16 @@ pub fn read_write_paths(unit: &str) -> Vec<&str> {
         .collect()
 }
 
+/// The `-`-prefixed (optional) entries of `ReadWritePaths=`, prefix stripped.
+pub fn optional_read_write_paths(unit: &str) -> Vec<&str> {
+    unit.lines()
+        .filter_map(|l| l.strip_prefix("ReadWritePaths="))
+        .flat_map(|v| v.split_whitespace())
+        .filter_map(|p| p.strip_prefix('-'))
+        .filter(|p| p.starts_with('/'))
+        .collect()
+}
+
 /// Bring the on-disk unit up to the compiled-in one.
 ///
 /// Runs at agent startup, so an ordinary binary update is all it takes - which
@@ -104,9 +114,18 @@ pub async fn heal_agent_unit() {
     // Guard 1 - the namespace mount. Must happen BEFORE the unit is swapped:
     // an unprefixed entry that is missing at start makes the agent unstartable,
     // and by then there is no agent left to fix it.
+    let optional = optional_read_write_paths(AGENT_UNIT);
     for dir in read_write_paths(AGENT_UNIT) {
         if !Path::new(dir).exists() {
             if let Err(e) = std::fs::create_dir_all(dir) {
+                // A `-`-prefixed entry that is missing does not stop the unit
+                // from starting (systemd skips it), and the agent's own sandbox
+                // usually cannot create it under a read-only /etc. Refusing the
+                // swap for it would block every future heal on that box.
+                if optional.contains(&dir) {
+                    tracing::warn!("agent unit heal: could not create optional {dir}: {e} - continuing");
+                    continue;
+                }
                 tracing::warn!("agent unit heal: could not create {dir}: {e} - not swapping the unit");
                 return;
             }
@@ -236,6 +255,32 @@ mod tests {
         }
         assert!(crate::services::quarantine::QUARANTINE_ROOT.starts_with("/var/lib/dockpanel/"));
         assert!(crate::services::clamav::SOCKET_DROPIN.starts_with("/etc/systemd/system/"));
+    }
+
+    #[test]
+    fn user_terminal_unit_dir_is_writable_and_the_sandbox_is_intact() {
+        // Feature 9: the tmux user unit lives in /etc/systemd/user. That one
+        // optional entry is added; the user's shell is started by PID 1
+        // (systemd-run --uid), so the sandbox itself does not move.
+        assert!(
+            AGENT_UNIT
+                .lines()
+                .any(|l| l.starts_with("ReadWritePaths=") && l.split_whitespace().any(|w| w == "-/etc/systemd/user")),
+            "-/etc/systemd/user must be in ReadWritePaths, with the `-` prefix"
+        );
+        assert!(optional_read_write_paths(AGENT_UNIT).contains(&"/etc/systemd/user"));
+        assert!(read_write_paths(AGENT_UNIT).contains(&"/opt"), "/opt holds /opt/dockpanel-uterm");
+        assert!(crate::services::user_terminal::UTERM_DIR.starts_with("/opt/"));
+        assert!(crate::services::user_terminal::TMUX_UNIT_PATH.starts_with("/etc/systemd/user/"));
+        for directive in ["ProtectHome=yes", "NoNewPrivileges=yes", "ProtectSystem=strict"] {
+            assert!(AGENT_UNIT.contains(directive), "{directive} must stay");
+        }
+        for widened in ["ProtectHome=no", "ProtectHome=read-only", "NoNewPrivileges=no", "/home", "/run/user"] {
+            assert!(
+                !AGENT_UNIT.lines().any(|l| !l.starts_with('#') && l.contains(widened)),
+                "the unit must not grant {widened}"
+            );
+        }
     }
 
     #[test]

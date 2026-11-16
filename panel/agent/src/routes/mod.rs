@@ -2,6 +2,7 @@ pub mod antivirus; // ClamAV (06)
 pub mod disk_usage; // disk usage (07)
 pub mod ftp; // FTP server (07)
 pub mod web_stats; // web statistics (08)
+pub mod user_terminal; // user terminal (09)
 pub mod backup_drill;
 pub mod backup_verify;
 pub mod backups;
