@@ -58,3 +58,9 @@ pub mod av_scan;
 pub mod clamav;
 pub mod quarantine;
 // --- end clamav (06) ---
+// --- ftp + disk quotas (07) ---
+pub mod disk_usage;
+pub mod ftp;
+pub mod panel_tls;
+pub mod site_owner;
+// --- end ftp + disk quotas (07) ---

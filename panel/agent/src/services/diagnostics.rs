@@ -787,6 +787,14 @@ pub async fn apply_fix(fix_id: &str) -> Result<String, String> {
             if !target.starts_with("/var/www/") && !target.starts_with("/etc/dockpanel/sites/") {
                 return Err("Path must be under /var/www/ or /etc/dockpanel/sites/".into());
             }
+            // A site tree goes to the site's owner (www-data, or its SFTP
+            // account), read before `create_dir_all` can create the site root.
+            let site_domain = target
+                .strip_prefix("/var/www/")
+                .and_then(|rest| rest.split('/').next())
+                .filter(|d| crate::routes::is_valid_domain(d))
+                .map(str::to_string);
+            let owner = site_domain.as_deref().map(crate::services::site_owner::site_owner);
             tokio::fs::create_dir_all(target)
                 .await
                 .map_err(|e| format!("Failed to create directory: {e}"))?;
@@ -799,11 +807,22 @@ pub async fn apply_fix(fix_id: &str) -> Result<String, String> {
                     .ok();
             }
 
-            // Set ownership to www-data
-            let _ = safe_command("chown")
-                .args(["-R", "www-data:www-data", target])
-                .output()
-                .await;
+            match (site_domain.as_deref(), owner) {
+                (Some(d), Some(o)) => {
+                    if let Err(e) =
+                        crate::services::site_owner::chown_site_tree_as(d, std::path::Path::new(target), o).await
+                    {
+                        tracing::warn!("create-root {target}: ownership not set: {e}");
+                    }
+                }
+                // Not a site tree (/etc/dockpanel/sites): www-data as before.
+                _ => {
+                    let _ = safe_command("chown")
+                        .args(["-R", "www-data:www-data", target])
+                        .output()
+                        .await;
+                }
+            }
 
             Ok(format!("Created document root: {target}"))
         }

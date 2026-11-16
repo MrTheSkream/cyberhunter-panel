@@ -101,6 +101,11 @@ async fn install_status() -> Result<Json<serde_json::Value>, ApiErr> {
     let clamav_installed = clamav_supported && crate::services::clamav::is_installed().await;
     let clamav_running = clamav_installed && is_active(crate::services::clamav::UNIT).await;
 
+    // FTP server (feature 6): same support rule (Debian/Ubuntu only).
+    let vsftpd_supported = crate::services::ftp::unsupported_reason().await.is_none();
+    let vsftpd_installed = vsftpd_supported && crate::services::ftp::is_installed().await;
+    let vsftpd_running = vsftpd_installed && crate::services::ftp::is_active().await;
+
     let nodejs_installed = which("node").await;
     let composer_installed = which("composer").await;
 
@@ -132,6 +137,11 @@ async fn install_status() -> Result<Json<serde_json::Value>, ApiErr> {
             "installed": clamav_installed,
             "running": clamav_running,
             "supported": clamav_supported,
+        },
+        "vsftpd": {
+            "installed": vsftpd_installed,
+            "running": vsftpd_running,
+            "supported": vsftpd_supported,
         },
         "nodejs": { "installed": nodejs_installed },
         "composer": { "installed": composer_installed },
@@ -348,9 +358,20 @@ async fn install_ufw() -> Result<Json<serde_json::Value>, ApiErr> {
     // Open essential ports. Routed through the firewall service rather than
     // `ufw` directly so the result is a fact we can report instead of assume -
     // `open_mail_ports()` used to discard every result and log success anyway.
-    let failed = crate::services::firewall::allow_tcp_ports(
+    let mut failed = crate::services::firewall::allow_tcp_ports(
         &["22", "80", "443", "587", "993"],
     ).await;
+    // FTP server already installed (feature 6): its control port and passive
+    // range too, or enabling UFW would cut every FTP client off.
+    if crate::services::ftp::is_installed().await {
+        use crate::services::ftp::{CONTROL_PORT, PASV_MAX, PASV_MIN};
+        if !crate::services::firewall::allow_tcp(&CONTROL_PORT.to_string()).await {
+            failed.push(CONTROL_PORT.to_string());
+        }
+        if !crate::services::firewall::allow_tcp_range(PASV_MIN, PASV_MAX).await {
+            failed.push(format!("{PASV_MIN}-{PASV_MAX}"));
+        }
+    }
 
     // Enable (--force to skip interactive prompt)
     let _ = tokio::time::timeout(Duration::from_secs(120), safe_command("ufw").args(["--force", "enable"]).output()).await;
@@ -404,6 +425,14 @@ enabled = true
 "#;
 
     let _ = tokio::fs::write("/etc/fail2ban/jail.local", jail_config).await;
+
+    // FTP server already installed (feature 6): its jail, loaded by the
+    // restart below.
+    if crate::services::ftp::is_installed().await {
+        if let Err(e) = crate::services::ftp::write_fail2ban_jail().await {
+            tracing::warn!("Fail2Ban: the vsftpd jail could not be written: {e}");
+        }
+    }
 
     let _ = tokio::time::timeout(Duration::from_secs(120), safe_command("systemctl").args(["enable", "fail2ban"]).output()).await;
     let _ = tokio::time::timeout(Duration::from_secs(120), safe_command("systemctl").args(["restart", "fail2ban"]).output()).await;

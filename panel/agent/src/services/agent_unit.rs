@@ -237,4 +237,37 @@ mod tests {
         assert!(crate::services::quarantine::QUARANTINE_ROOT.starts_with("/var/lib/dockpanel/"));
         assert!(crate::services::clamav::SOCKET_DROPIN.starts_with("/etc/systemd/system/"));
     }
+
+    #[test]
+    fn ftp_paths_are_writable_and_never_a_file() {
+        // Feature 6: the PAM service file, the whitelist, the certificate, the
+        // fail2ban jail and the vsftpd log.
+        let paths = read_write_paths(AGENT_UNIT);
+        for p in ["/etc/pam.d", "/etc/dockpanel", "/etc/fail2ban", "/var/log"] {
+            assert!(paths.contains(&p), "{p} must be in ReadWritePaths");
+        }
+        assert!(
+            AGENT_UNIT.lines().any(|l| l.starts_with("ReadWritePaths=") && l.split_whitespace().any(|w| w == "-/etc/pam.d")),
+            "-/etc/pam.d must carry the `-` prefix"
+        );
+        for f in [
+            crate::services::ftp::USERS_FILE,
+            crate::services::ftp::SELF_CERT,
+            crate::services::ftp::SELF_KEY,
+        ] {
+            assert!(f.starts_with("/etc/dockpanel/"), "{f} must stay under /etc/dockpanel");
+        }
+        assert!(crate::services::ftp::PAM_FILE.starts_with("/etc/pam.d/"));
+        // heal_agent_unit and setup.sh/update.sh `mkdir -p` every entry: a file
+        // path listed here would become a directory (vsftpd.conf would break the
+        // package). Every entry must be a directory.
+        assert!(!paths.contains(&crate::services::ftp::CONF), "/etc/vsftpd.conf must not be an RWP entry");
+        for p in &paths {
+            let last = p.rsplit('/').next().unwrap_or("");
+            assert!(
+                !last.ends_with(".conf") && !last.ends_with(".cnf") && !last.ends_with(".pem"),
+                "{p} looks like a file: every ReadWritePaths entry is mkdir -p'd"
+            );
+        }
+    }
 }

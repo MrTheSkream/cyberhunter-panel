@@ -1615,6 +1615,8 @@ async fn other_panel_source(migration_id: &str, source_dir: &str) -> Result<Path
 }
 
 async fn rsync_other_panel(src: &Path, dest: &Path, force: bool, domain: &str) -> Result<(), String> {
+    // Read before `create_dir_all` / `rsync -a` can create or re-own the root.
+    let owner = crate::services::site_owner::site_owner(domain);
     std::fs::create_dir_all(dest).map_err(|e| format!("Failed to create {}: {e}", dest.display()))?;
     // Only the panel's exact filler goes, and only when the copied tree has
     // no index.html of its own (it would outrank the site's index.php).
@@ -1642,32 +1644,24 @@ async fn rsync_other_panel(src: &Path, dest: &Path, force: bool, domain: &str) -
             return Err(format!("File copy failed: {}", String::from_utf8_lossy(&output2.stderr)));
         }
     }
-    chown_site_tree(dest).await;
+    chown_site_tree(domain, dest, owner).await;
     Ok(())
 }
 
-/// Ownership `www-data` for everything except `.git`, which stays root's. For
-/// node/proxy/python the target IS the site root - the same directory
-/// `deploy.rs::clone_or_pull` clones `.git` into, so handing it over would give
-/// the app `config`/`hooks/` that deploy runs as root next. `-h`: a symlink is
-/// re-owned itself, never its target.
-async fn chown_site_tree(dest: &Path) {
-    if let Ok(mut entries) = tokio::fs::read_dir(dest).await {
-        while let Ok(Some(entry)) = entries.next_entry().await {
-            if entry.file_name() == std::ffi::OsStr::new(".git") {
-                continue;
-            }
-            let _ = safe_command("chown")
-                .args(["-hR", "www-data:www-data", &entry.path().to_string_lossy()])
-                .output()
-                .await;
-        }
+/// Ownership to the site's owner (`www-data`, or its SFTP account) for
+/// everything except `.git`, which stays root's. For node/proxy/python the
+/// target IS the site root - the same directory `deploy.rs::clone_or_pull`
+/// clones `.git` into, so handing it over would give the app
+/// `config`/`hooks/` that deploy runs as root next. `-h`: a symlink is
+/// re-owned itself, never its target. `dest` itself is re-owned too (not
+/// recursively).
+async fn chown_site_tree(domain: &str, dest: &Path, owner: (u32, u32)) {
+    use crate::services::site_owner;
+    if let Err(e) = site_owner::hand_over_except_git(domain, dest, owner).await {
+        tracing::warn!("{domain}: ownership not fully set: {e}");
     }
-    let _ = safe_command("chown").args(["-h", "www-data:www-data", &dest.to_string_lossy()]).output().await;
-    let git_dir = dest.join(".git");
-    if git_dir.exists() {
-        let _ = safe_command("chown").args(["-hR", "root:root", &git_dir.to_string_lossy()]).output().await;
-        let _ = safe_command("chmod").args(["-R", "go-rwx", &git_dir.to_string_lossy()]).output().await;
+    if let Err(e) = site_owner::chown_self_as(domain, dest, owner).await {
+        tracing::warn!("{domain}: ownership of {} not set: {e}", dest.display());
     }
 }
 
@@ -1783,6 +1777,10 @@ async fn import_hestia_site_inner(
         ));
     }
 
+    // Owner of the site's files (www-data, or its SFTP account), read before
+    // anything below can create the site root or copy another owner onto it.
+    let owner = crate::services::site_owner::site_owner(domain);
+
     // extract
     std::fs::create_dir_all(site_dir).map_err(|e| format!("could not create {}: {e}", site_dir.display()))?;
     remove_import_dirs(site_dir, None);
@@ -1851,9 +1849,9 @@ async fn import_hestia_site_inner(
     } else {
         rewrite_root_files(&doc_root, &private, &user, domain, doc_used.unwrap_or("public_html"))?
     };
-    chown_site_tree(&doc_root).await;
+    chown_site_tree(domain, &doc_root, owner).await;
     if private.is_dir() {
-        chown_site_tree(&private).await;
+        chown_site_tree(domain, &private, owner).await;
     }
     // HestiaCP's web root is `public_html`, ours `public`: code that builds
     // `/var/www/<d>/public_html/...` itself still finds its files.
