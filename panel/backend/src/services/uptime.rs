@@ -527,6 +527,10 @@ fn redact_monitor_target(mut msg: String, url: &str) -> String {
 fn http_check_client_builder() -> reqwest::ClientBuilder {
     reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
+        // Feature 7: GoAccess files the panel's own checks with the robots
+        // (`--browsers-file` maps this User-Agent to "Crawlers"), so they never
+        // count as visitors in the web statistics.
+        .user_agent("DockPanel-Uptime")
         // Follow up to 5 redirects (http->https etc.) but NEVER to an internal address -
         // closes the redirect-to-internal SSRF/oracle bypass that a bare Policy::limited
         // would follow. The target host is fully resolved (literal IPs AND hostnames that
@@ -911,6 +915,38 @@ mod tests {
             out.contains("invalid peer certificate"),
             "the operator's half was destroyed: {out}"
         );
+    }
+
+    /// B-5: every HTTP check carries `User-Agent: DockPanel-Uptime`.
+    #[tokio::test]
+    async fn http_checks_send_the_uptime_user_agent() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let server = tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.expect("accept");
+            let mut buf = Vec::new();
+            let mut chunk = [0u8; 1024];
+            while !buf.windows(4).any(|w| w == b"\r\n\r\n") {
+                let n = sock.read(&mut chunk).await.expect("read");
+                if n == 0 {
+                    break;
+                }
+                buf.extend_from_slice(&chunk[..n]);
+            }
+            sock.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .await
+                .expect("write");
+            String::from_utf8_lossy(&buf).to_ascii_lowercase()
+        });
+        let check = async {
+            let client = http_check_client_builder().build().expect("client builds");
+            let resp = client.get(format!("http://{addr}/")).send().await.expect("request");
+            assert_eq!(resp.status().as_u16(), 200);
+            server.await.expect("server task")
+        };
+        let request = tokio::time::timeout(Duration::from_secs(20), check).await.expect("check finished in time");
+        assert!(request.contains("\r\nuser-agent: dockpanel-uptime\r\n"), "{request}");
     }
 
     #[test]

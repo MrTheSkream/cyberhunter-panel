@@ -426,6 +426,10 @@ async fn main() {
     let (s_db, s_agents) = (state.db.clone(), state.agents.clone());
     spawn_supervised("disk_usage", &shutdown_tx, move |rx| services::disk_usage::run(s_db.clone(), s_agents.clone(), rx));
 
+    // Per-site web statistics (feature 7): every hour, and right after an install.
+    let (s_db, s_agents) = (state.db.clone(), state.agents.clone());
+    spawn_supervised("web_stats", &shutdown_tx, move |rx| services::web_stats::run(s_db.clone(), s_agents.clone(), rx));
+
     // Its GPU, service-health and container checks each ask ONE machine what it
     // has, so each runs per online server against that server's own agent.
     // See `online_fleet`.

@@ -58,6 +58,7 @@ pub mod impersonation;
 pub mod php_settings;
 pub mod prometheus;
 pub mod webhook_gateway;
+pub mod web_stats;
 pub mod telemetry;
 pub mod update;
 pub mod whmcs;
@@ -1338,6 +1339,11 @@ pub fn router() -> Router<AppState> {
         .route("/api/ftp/status", get(ftp::status))
         .route("/api/ftp/install", post(ftp::install))
         .route("/api/ftp/uninstall", post(ftp::uninstall))
+        // Web statistics with GoAccess (feature 7, B-2)
+        .route("/api/web-stats/status", get(web_stats::status))
+        .route("/api/web-stats/install", post(web_stats::install))
+        .route("/api/web-stats/uninstall", post(web_stats::uninstall))
+        .route("/api/web-stats/purge", post(web_stats::purge))
         // Antivirus (ClamAV, feature 5)
         .route("/api/antivirus/status", get(antivirus::status))
         .route("/api/antivirus/install", post(antivirus::install))
@@ -1513,6 +1519,11 @@ pub fn router() -> Router<AppState> {
         // Access Logs, Traffic Stats, PHP Errors, Health Check
         .route("/api/sites/{id}/access-logs", get(sites::access_logs))
         .route("/api/sites/{id}/stats", get(sites::site_stats))
+        // Web statistics of the site (feature 7, B-3). The state lives under
+        // /stats/state: /stats above is the "Recent traffic" block.
+        .route("/api/sites/{id}/stats/state", get(web_stats::site_stats_state))
+        .route("/api/sites/{id}/stats/refresh", post(web_stats::refresh_site_stats))
+        .route("/api/sites/{id}/stats/report", get(web_stats::site_stats_report))
         .route("/api/sites/{id}/php-errors", get(sites::php_errors))
         .route("/api/sites/{id}/health", get(sites::health_check))
         .route("/api/sites/{id}/health-summary", get(sites::health_summary))
