@@ -108,10 +108,176 @@ const pad2 = (n: number) => String(n).padStart(2, "0");
 
 // ── Security -> Antivirus ────────────────────────────────────────────────────
 
-type PendingAction =
+export type DetectionAction = "quarantine" | "delete" | "ignore" | "restore";
+
+/** A detection action waiting for the operator's confirmation. */
+export type DetectionPending =
   | { kind: "delete"; detection: AvDetection }
-  | { kind: "ignore"; detection: AvDetection }
-  | { kind: "purge"; item: AvQuarantineItem };
+  | { kind: "ignore"; detection: AvDetection };
+
+type PendingAction = DetectionPending | { kind: "purge"; item: AvQuarantineItem };
+
+const DONE_LABEL: Record<DetectionAction, string> = {
+  quarantine: "quarantined",
+  delete: "deleted",
+  ignore: "ignored",
+  restore: "restored",
+};
+
+/** Owner route: `POST /antivirus/detections/{id}/{action}`. Resolves to the success text. */
+export async function runDetectionAction(
+  d: AvDetection,
+  action: DetectionAction,
+  body: Record<string, unknown> = {},
+  path: string = d.file_path,
+): Promise<string> {
+  await api.post(`/antivirus/detections/${encodeURIComponent(d.id)}/${action}`, body);
+  return `${path} ${DONE_LABEL[action]}`;
+}
+
+/** Path relative to the site directory (`/var/www/<domain>/`), or the full path. */
+export function detectionRelPath(d: AvDetection): string {
+  const root = `/var/www/${d.domain}/`;
+  return d.file_path.startsWith(root) ? d.file_path.slice(root.length) : d.file_path;
+}
+
+/**
+ * One detection with its actions: Quarantine / Delete / Ignore when open,
+ * Restore when quarantined. Delete and Ignore only request a confirmation
+ * (`onRequest`); the caller renders it with `DetectionDialogs`.
+ */
+export function DetectionRow({
+  d,
+  busy,
+  showDomain,
+  relativePath,
+  onAction,
+  onRequest,
+}: {
+  d: AvDetection;
+  busy: string | null;
+  showDomain: boolean;
+  relativePath?: boolean;
+  onAction: (d: AvDetection, action: DetectionAction) => void;
+  onRequest: (p: DetectionPending) => void;
+}) {
+  const quarantined = d.status === "quarantined";
+  return (
+    <div className="px-5 py-3 flex flex-col md:flex-row md:items-center gap-2 md:gap-4">
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span
+            className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase border ${
+              quarantined
+                ? "bg-warn-500/15 text-warn-400 border-warn-500/30"
+                : "bg-danger-500/15 text-danger-400 border-danger-500/30"
+            }`}
+          >
+            {d.signature}
+          </span>
+          {showDomain && <span className="text-xs text-dark-200">{d.domain}</span>}
+          {quarantined && <span className="text-[10px] text-warn-400 uppercase font-mono">Quarantined</span>}
+        </div>
+        <p className="text-[11px] text-dark-300 font-mono break-all mt-1" title={relativePath ? d.file_path : undefined}>
+          {relativePath ? detectionRelPath(d) : d.file_path}
+        </p>
+        <p className="text-[10px] text-dark-400 mt-0.5">
+          {formatSize(d.size)} · first seen {formatDate(d.created_at)} · last seen {formatDate(d.last_seen_at)}
+          {quarantined && d.handled_at && ` · quarantined ${formatDate(d.handled_at)}`}
+        </p>
+      </div>
+      <div className="flex gap-1 shrink-0">
+        {quarantined ? (
+          <button
+            onClick={() => onAction(d, "restore")}
+            disabled={busy !== null}
+            className="px-2 py-0.5 bg-rust-500/15 text-rust-400 rounded text-xs font-medium hover:bg-rust-500/25 disabled:opacity-50"
+          >
+            {busy === `restore:${d.id}` ? "Restoring..." : "Restore"}
+          </button>
+        ) : (
+          <>
+            <button
+              onClick={() => onAction(d, "quarantine")}
+              disabled={busy !== null}
+              className="px-2 py-0.5 bg-warn-500/15 text-warn-400 rounded text-xs font-medium hover:bg-warn-500/25 disabled:opacity-50"
+            >
+              {busy === `quarantine:${d.id}` ? "Moving..." : "Quarantine"}
+            </button>
+            <button
+              onClick={() => onRequest({ kind: "delete", detection: d })}
+              disabled={busy !== null}
+              className="px-2 py-0.5 bg-danger-500/15 text-danger-400 rounded text-xs font-medium hover:bg-danger-500/25 disabled:opacity-50"
+            >
+              {busy === `delete:${d.id}` ? "Deleting..." : "Delete"}
+            </button>
+            <button
+              onClick={() => onRequest({ kind: "ignore", detection: d })}
+              disabled={busy !== null}
+              className="px-2 py-0.5 bg-dark-700 text-dark-200 rounded text-xs font-medium hover:bg-dark-600 disabled:opacity-50"
+            >
+              {busy === `ignore:${d.id}` ? "Ignoring..." : "Ignore"}
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Confirmations for Delete ("This cannot be undone") and Ignore (optional
+ * note). `onCancel` must be stable: ConfirmDialog re-focuses Cancel whenever
+ * it changes, which would steal focus from the note field.
+ */
+export function DetectionDialogs({
+  pending,
+  note,
+  onNoteChange,
+  onConfirm,
+  onCancel,
+}: {
+  pending: DetectionPending | null;
+  note: string;
+  onNoteChange: (v: string) => void;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  if (pending?.kind === "delete") {
+    return (
+      <ConfirmDialog
+        label={`Delete ${pending.detection.file_path}?\nThe file is removed from the site. This cannot be undone.`}
+        confirmLabel="Delete"
+        tone="danger"
+        onConfirm={onConfirm}
+        onCancel={onCancel}
+      />
+    );
+  }
+  if (pending?.kind === "ignore") {
+    return (
+      <ConfirmDialog
+        label={`Ignore ${pending.detection.signature} in ${pending.detection.file_path}?\nThis exact file is no longer reported on this site. It is scanned again if it changes.`}
+        confirmLabel="Ignore"
+        tone="warn"
+        onConfirm={onConfirm}
+        onCancel={onCancel}
+      >
+        <label htmlFor="av-ignore-note" className="block text-xs text-dark-200 mb-1">Note (optional)</label>
+        <input
+          id="av-ignore-note"
+          type="text"
+          value={note}
+          onChange={(e) => onNoteChange(e.target.value)}
+          maxLength={500}
+          placeholder="Why this is a false positive"
+          className="w-full px-3 py-2 border border-dark-500 rounded-lg text-sm focus:ring-2 focus:ring-accent-500 outline-none"
+        />
+      </ConfirmDialog>
+    );
+  }
+  return null;
+}
 
 /**
  * Security -> Antivirus (admin): ClamAV state, schedule, "Scan all sites now",
@@ -261,17 +427,11 @@ export default function AntivirusTab() {
     }
   };
 
-  const detectionAction = async (
-    d: AvDetection,
-    action: "quarantine" | "delete" | "ignore" | "restore",
-    body: Record<string, unknown> = {},
-  ) => {
+  const detectionAction = async (d: AvDetection, action: DetectionAction, body: Record<string, unknown> = {}) => {
     setBusy(`${action}:${d.id}`);
     setMessage(null);
     try {
-      await api.post(`/antivirus/detections/${encodeURIComponent(d.id)}/${action}`, body);
-      const done = { quarantine: "quarantined", delete: "deleted", ignore: "ignored", restore: "restored" }[action];
-      setMessage({ text: `${d.file_path} ${done}`, type: "success" });
+      setMessage({ text: await runDetectionAction(d, action, body), type: "success" });
       await loadDetections().catch(() => {});
       if (action === "restore" || action === "quarantine") loadQuarantine();
     } catch (e) {
@@ -280,6 +440,11 @@ export default function AntivirusTab() {
       setBusy(null);
     }
   };
+
+  const requestDetection = useCallback((p: DetectionPending) => {
+    if (p.kind === "ignore") setIgnoreNote("");
+    setPending(p);
+  }, []);
 
   const purge = async (item: AvQuarantineItem) => {
     if (!serverId) return;
@@ -328,35 +493,13 @@ export default function AntivirusTab() {
 
   return (
     <div className="space-y-4">
-      {pending?.kind === "delete" && (
-        <ConfirmDialog
-          label={`Delete ${pending.detection.file_path}?\nThe file is removed from the site. This cannot be undone.`}
-          confirmLabel="Delete"
-          tone="danger"
-          onConfirm={confirmPending}
-          onCancel={cancelPending}
-        />
-      )}
-      {pending?.kind === "ignore" && (
-        <ConfirmDialog
-          label={`Ignore ${pending.detection.signature} in ${pending.detection.file_path}?\nThis exact file is no longer reported on this site. It is scanned again if it changes.`}
-          confirmLabel="Ignore"
-          tone="warn"
-          onConfirm={confirmPending}
-          onCancel={cancelPending}
-        >
-          <label htmlFor="av-ignore-note" className="block text-xs text-dark-200 mb-1">Note (optional)</label>
-          <input
-            id="av-ignore-note"
-            type="text"
-            value={ignoreNote}
-            onChange={(e) => setIgnoreNote(e.target.value)}
-            maxLength={500}
-            placeholder="Why this is a false positive"
-            className="w-full px-3 py-2 border border-dark-500 rounded-lg text-sm focus:ring-2 focus:ring-accent-500 outline-none"
-          />
-        </ConfirmDialog>
-      )}
+      <DetectionDialogs
+        pending={pending && pending.kind !== "purge" ? pending : null}
+        note={ignoreNote}
+        onNoteChange={setIgnoreNote}
+        onConfirm={confirmPending}
+        onCancel={cancelPending}
+      />
       {pending?.kind === "purge" && (
         <ConfirmDialog
           label={`Delete ${pending.item.original_path} permanently?\nThe quarantined copy is erased and can no longer be restored. This cannot be undone.`}
@@ -509,46 +652,14 @@ export default function AntivirusTab() {
             ) : (
               <div className="divide-y divide-dark-600">
                 {detections.map((d) => (
-                  <div key={d.id} className="px-5 py-3 flex flex-col md:flex-row md:items-center gap-2 md:gap-4">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="px-2 py-0.5 rounded text-[10px] font-semibold uppercase border bg-danger-500/15 text-danger-400 border-danger-500/30">
-                          {d.signature}
-                        </span>
-                        <span className="text-xs text-dark-200">{d.domain}</span>
-                      </div>
-                      <p className="text-[11px] text-dark-300 font-mono break-all mt-1">{d.file_path}</p>
-                      <p className="text-[10px] text-dark-400 mt-0.5">
-                        {formatSize(d.size)} · first seen {formatDate(d.created_at)} · last seen {formatDate(d.last_seen_at)}
-                      </p>
-                    </div>
-                    <div className="flex gap-1 shrink-0">
-                      <button
-                        onClick={() => detectionAction(d, "quarantine")}
-                        disabled={busy !== null}
-                        className="px-2 py-0.5 bg-warn-500/15 text-warn-400 rounded text-xs font-medium hover:bg-warn-500/25 disabled:opacity-50"
-                      >
-                        {busy === `quarantine:${d.id}` ? "Moving..." : "Quarantine"}
-                      </button>
-                      <button
-                        onClick={() => setPending({ kind: "delete", detection: d })}
-                        disabled={busy !== null}
-                        className="px-2 py-0.5 bg-danger-500/15 text-danger-400 rounded text-xs font-medium hover:bg-danger-500/25 disabled:opacity-50"
-                      >
-                        Delete
-                      </button>
-                      <button
-                        onClick={() => {
-                          setIgnoreNote("");
-                          setPending({ kind: "ignore", detection: d });
-                        }}
-                        disabled={busy !== null}
-                        className="px-2 py-0.5 bg-dark-700 text-dark-200 rounded text-xs font-medium hover:bg-dark-600 disabled:opacity-50"
-                      >
-                        Ignore
-                      </button>
-                    </div>
-                  </div>
+                  <DetectionRow
+                    key={d.id}
+                    d={d}
+                    busy={busy}
+                    showDomain
+                    onAction={detectionAction}
+                    onRequest={requestDetection}
+                  />
                 ))}
               </div>
             )}
@@ -697,10 +808,16 @@ export function SiteAntivirusStatus({
   siteId,
   serverId,
   showSecurityLink,
+  refreshKey = 0,
+  onStatus,
 }: {
   siteId: string;
   serverId: string | null | undefined;
   showSecurityLink: boolean;
+  /** Bump to re-read the status (e.g. after a detection action). */
+  refreshKey?: number;
+  /** Receives every status read (null while loading another site). */
+  onStatus?: (st: AvSiteStatus | null) => void;
 }) {
   const [st, setSt] = useState<AvSiteStatus | null>(null);
   const [starting, setStarting] = useState(false);
@@ -718,6 +835,19 @@ export function SiteAntivirusStatus({
     setSt(null);
     load();
   }, [load]);
+
+  const firstRefresh = useRef(true);
+  useEffect(() => {
+    if (firstRefresh.current) {
+      firstRefresh.current = false;
+      return;
+    }
+    load();
+  }, [refreshKey, load]);
+
+  useEffect(() => {
+    onStatus?.(st);
+  }, [st, onStatus]);
 
   const active = st?.last_scan ? isActive(st.last_scan) : false;
   useEffect(() => {
@@ -778,5 +908,141 @@ export function SiteAntivirusStatus({
       )}
       {error && <span className="text-xs text-danger-400">{error}</span>}
     </>
+  );
+}
+
+// ── SiteDetail: this site's detections ───────────────────────────────────────
+
+/**
+ * Open and quarantined detections of one site, with their actions. Uses only
+ * owner routes (`/antivirus/detections?site_id=`, `/antivirus/detections/{id}/...`),
+ * so a site owner can act without the admin Security page. Re-reads whenever
+ * the site status changes (scan finished, threat count changed). Renders
+ * nothing when ClamAV is not installed or there is nothing to show.
+ */
+export function SiteAntivirusDetections({
+  siteId,
+  status,
+  onChanged,
+}: {
+  siteId: string;
+  status: AvSiteStatus | null;
+  /** Called after a successful action so the badge can re-read its count. */
+  onChanged?: () => void;
+}) {
+  const [items, setItems] = useState<AvDetection[]>([]);
+  const [message, setMessage] = useState<{ text: string; type: "success" | "error" } | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [pending, setPending] = useState<DetectionPending | null>(null);
+  const [note, setNote] = useState("");
+  const cancelPending = useCallback(() => setPending(null), []);
+
+  const installed = status?.installed ?? false;
+  const scan = status?.last_scan;
+  // Changes when a scan starts, progresses to an end, or the open count moves.
+  const statusKey = `${scan?.id ?? ""}:${scan?.status ?? ""}:${status?.open_detections ?? 0}`;
+
+  const load = useCallback(async () => {
+    const q = `site_id=${encodeURIComponent(siteId)}`;
+    const [open, quarantined] = await Promise.all([
+      api.get<AvDetection[]>(`/antivirus/detections?${q}&status=open`),
+      api.get<AvDetection[]>(`/antivirus/detections?${q}&status=quarantined`),
+    ]);
+    setItems([...open, ...quarantined]);
+  }, [siteId]);
+
+  useEffect(() => {
+    setItems([]);
+    setMessage(null);
+  }, [siteId]);
+
+  useEffect(() => {
+    if (!installed) return;
+    load().catch(() => {});
+  }, [installed, statusKey, load]);
+
+  const act = async (d: AvDetection, action: DetectionAction, body: Record<string, unknown> = {}) => {
+    setBusy(`${action}:${d.id}`);
+    setMessage(null);
+    try {
+      setMessage({ text: await runDetectionAction(d, action, body, detectionRelPath(d)), type: "success" });
+      onChanged?.();
+    } catch (e) {
+      // 409 "The file changed since it was scanned" is shown as is.
+      setMessage({ text: errText(e, "Action failed"), type: "error" });
+    } finally {
+      setBusy(null);
+      await load().catch(() => {});
+    }
+  };
+
+  const request = useCallback((p: DetectionPending) => {
+    if (p.kind === "ignore") setNote("");
+    setPending(p);
+  }, []);
+
+  const confirm = () => {
+    const p = pending;
+    setPending(null);
+    if (!p) return;
+    if (p.kind === "delete") act(p.detection, "delete");
+    else {
+      const n = note.trim();
+      act(p.detection, "ignore", n ? { note: n } : {});
+    }
+  };
+
+  if (!installed || (items.length === 0 && !message)) return null;
+
+  const openCount = items.filter((d) => d.status === "open").length;
+  const quarantinedCount = items.length - openCount;
+
+  return (
+    <div className="bg-dark-800 rounded-lg border border-dark-500 overflow-hidden mt-6">
+      <DetectionDialogs
+        pending={pending}
+        note={note}
+        onNoteChange={setNote}
+        onConfirm={confirm}
+        onCancel={cancelPending}
+      />
+      <div className="px-5 py-3 border-b border-dark-600">
+        <h3 className="text-xs font-medium text-dark-300 uppercase font-mono tracking-widest">Antivirus</h3>
+        <p className="text-xs text-dark-300 mt-0.5">
+          {items.length === 0
+            ? "No open or quarantined detections"
+            : [
+                openCount > 0 ? `${threats(openCount)} found` : null,
+                quarantinedCount > 0 ? `${quarantinedCount} in quarantine` : null,
+              ].filter(Boolean).join(", ")}
+        </p>
+      </div>
+      {message && (
+        <div
+          className={`mx-5 my-3 px-4 py-2 rounded-lg text-sm border ${
+            message.type === "success"
+              ? "bg-rust-500/10 text-rust-400 border-rust-500/20"
+              : "bg-danger-500/10 text-danger-400 border-danger-500/20"
+          }`}
+        >
+          {message.text}
+        </div>
+      )}
+      {items.length > 0 && (
+        <div className="divide-y divide-dark-600">
+          {items.map((d) => (
+            <DetectionRow
+              key={d.id}
+              d={d}
+              busy={busy}
+              showDomain={false}
+              relativePath
+              onAction={act}
+              onRequest={request}
+            />
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

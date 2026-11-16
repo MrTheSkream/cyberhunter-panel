@@ -635,6 +635,8 @@ async fn run_install(h: JobHandle) -> Result<serde_json::Value, String> {
         tokio::time::sleep(Duration::from_secs(3)).await;
     }
     let v = version_at(Path::new(&sock)).await;
+    let total = PING_WAIT.as_secs();
+    h.progress("verify", total, total, "ClamAV is ready");
     Ok(serde_json::json!({
         "version": v.as_ref().map(|v| v.engine.clone()),
         "signatures_version": v.as_ref().and_then(|v| v.signatures),

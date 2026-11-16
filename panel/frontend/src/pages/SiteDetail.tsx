@@ -6,7 +6,7 @@ import { statusColors, runtimeLabelsDetailed as runtimeLabels } from "../constan
 import { PrereqCallout, useDnsPrereq, prereqBlocks } from "../components/Prerequisite";
 import PhpVersionPicker from "../components/PhpVersionPicker";
 import PhpSettingsCard from "../components/PhpSettingsCard";
-import { SiteAntivirusStatus } from "../components/AntivirusTab";
+import { SiteAntivirusStatus, SiteAntivirusDetections, type AvSiteStatus } from "../components/AntivirusTab";
 import { useAuth } from "../context/AuthContext";
 import { useServerIps, serverIpOptionLabel } from "../utils/serverIps";
 import {
@@ -162,6 +162,12 @@ export default function SiteDetail() {
   // IP address card. `/server-ips` and `PUT /sites/{id}/ip` are admin routes.
   const isAdmin = user?.role === "admin";
   const { ips: serverIps, loaded: serverIpsLoaded } = useServerIps(isAdmin);
+  // ClamAV (06-clamav): the header badge reports its status here so the
+  // detections card below can show itself and re-read after a scan; an action
+  // in the card bumps the key so the badge re-reads its threat count.
+  const [avStatus, setAvStatus] = useState<AvSiteStatus | null>(null);
+  const [avRefreshKey, setAvRefreshKey] = useState(0);
+  const bumpAvStatus = useCallback(() => setAvRefreshKey((k) => k + 1), []);
   const [siteIpId, setSiteIpId] = useState("");
   const [savingIp, setSavingIp] = useState(false);
   const [ipMessage, setIpMessage] = useState<{ text: string; error: boolean } | null>(null);
@@ -820,7 +826,13 @@ export default function SiteDetail() {
             )}
             {/* ClamAV (06-clamav): hidden when it is not installed on the site's
                 server. Security -> Antivirus is admin-only, hence the link gate. */}
-            <SiteAntivirusStatus siteId={site.id} serverId={site.server_id} showSecurityLink={isAdmin} />
+            <SiteAntivirusStatus
+              siteId={site.id}
+              serverId={site.server_id}
+              showSecurityLink={isAdmin}
+              refreshKey={avRefreshKey}
+              onStatus={setAvStatus}
+            />
           </div>
         </div>
         <div>
@@ -1561,6 +1573,9 @@ export default function SiteDetail() {
           </div>
         </dl>
       </div>
+
+      {/* Antivirus detections of this site (owner routes only). */}
+      <SiteAntivirusDetections siteId={site.id} status={avStatus} onChanged={bumpAvStatus} />
 
       {/* Quick actions */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 mt-6">
