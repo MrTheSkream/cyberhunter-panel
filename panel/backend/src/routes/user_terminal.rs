@@ -518,7 +518,7 @@ const ACCOUNTS_SELECT: &str = "SELECT u.id, u.email, u.role, m.linux_user, m.uid
      m.autostart_command, m.record, m.updated_at \
      FROM users u LEFT JOIN user_linux_accounts m ON m.user_id = u.id";
 
-/// GET /api/terminal/user/accounts - `{ "accounts": [ ... ] }`.
+/// GET /api/terminal/user/accounts - a bare JSON array of accounts.
 ///
 /// Every admin account, plus any non-admin that still has a mapping (one that
 /// lost the role): such a row opens nothing (B-3 point 5) but must stay
@@ -536,7 +536,7 @@ pub async fn list_accounts(
     .await
     .map_err(|e| internal_error("user terminal accounts", e))?;
     let accounts: Vec<serde_json::Value> = rows.iter().map(row_json).collect();
-    Ok(Json(serde_json::json!({ "accounts": accounts })))
+    Ok(Json(serde_json::Value::Array(accounts)))
 }
 
 fn default_autostart() -> Option<String> {
@@ -1355,6 +1355,22 @@ mod tests {
         assert_eq!(c.exp - c.iat, 7200);
         assert_eq!(c.jti.as_deref(), Some("jti-1"));
         assert!(c.key_id.is_none() && c.imp_by.is_none() && c.imp_email.is_none());
+    }
+
+    #[test]
+    fn ws_token_is_unchanged_byte_for_byte() {
+        // Design §9: the existing ticket route must not move. Fingerprint of
+        // `ws_token` (from its signature to the next item's doc comment),
+        // taken on `main` before feature 9.
+        use sha2::{Digest, Sha256};
+        let src = include_str!("terminal.rs").replace('\r', "");
+        let start = src.find("pub async fn ws_token(").expect("ws_token present");
+        let end = src.find("/// A share's stated lifetime").expect("marker present");
+        let digest = hex::encode(Sha256::digest(src[start..end].as_bytes()));
+        assert_eq!(
+            digest,
+            "2bb03d3b1a835ec927cd3154c1f863cc90f9545dca641899dc24b3625868872d"
+        );
     }
 
     #[test]

@@ -1104,20 +1104,6 @@ pub async fn panic_button(
         unreachable_names.push(name.clone());
     }
 
-    // Feature 9 (B-5): stop user-terminal connections AND their tmux sessions
-    // on the panel host. A recent agent's `kill-terminals` already did; this
-    // covers the others. Bounded, and it never fails the panic.
-    let user_killed_by_a4 =
-        match crate::routes::user_terminal::kill_user_terminals(&state, None, true).await {
-            Ok(v) => v.get("connections_killed").and_then(|n| n.as_u64()),
-            Err(e) => {
-                tracing::warn!("PANIC: user terminal kill on the panel host failed: {e}");
-                None
-            }
-        };
-    let user_terminals_killed =
-        crate::routes::user_terminal::combine_user_kills(user_killed_by_sweep, user_killed_by_a4);
-
     let servers_total = server_results.len();
     let servers_unreachable = unreachable.len();
     // Legacy field, now fleet-wide: true only if NOTHING was left unswept.
@@ -1166,6 +1152,22 @@ pub async fn panic_button(
         .await
         .map(|r| r.rows_affected())
         .unwrap_or(0);
+
+    // Feature 9 (B-5): stop user-terminal connections AND their tmux sessions
+    // on the panel host - after session revocation, so a wedged agent cannot
+    // delay it.
+    // A recent agent's `kill-terminals` already did; this
+    // covers the others. Bounded, and it never fails the panic.
+    let user_killed_by_a4 =
+        match crate::routes::user_terminal::kill_user_terminals(&state, None, true).await {
+            Ok(v) => v.get("connections_killed").and_then(|n| n.as_u64()),
+            Err(e) => {
+                tracing::warn!("PANIC: user terminal kill on the panel host failed: {e}");
+                None
+            }
+        };
+    let user_terminals_killed =
+        crate::routes::user_terminal::combine_user_kills(user_killed_by_sweep, user_killed_by_a4);
 
     // Audit + alert. Both carry the un-swept host list, not just the bare
     // reason. The response below is the most detailed account of this event that
