@@ -445,8 +445,9 @@ async fn write_whitelist(users: &[String]) -> Result<Vec<String>, String> {
 
 /// Disconnect `name`'s FTP sessions (its vsftpd processes only, not SFTP).
 async fn kick(name: &str) {
-    // Exit 1 just means no session was open.
-    let _ = safe_command_unsandboxed("pkill", &[]).args(["-u", name, "-x", "vsftpd"]).output().await;
+    // Exit 1 just means no session was open. SIGKILL: a logged-in vsftpd
+    // session process ignores SIGTERM (seen on vsftpd 3.0.5, Ubuntu 24.04).
+    let _ = safe_command_unsandboxed("pkill", &[]).args(["-KILL", "-u", name, "-x", "vsftpd"]).output().await;
 }
 
 /// vsftpd's log must exist before fail2ban accepts a jail reading it.
