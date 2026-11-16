@@ -575,6 +575,13 @@ install_dependencies() {
         warn "by PASSWORD will not work. Install it manually, or use an SSH key instead."
     fi
 
+    # tmux - the persistent session behind the user terminal (feature 9). Best-effort
+    # like sshpass: only that optional feature needs it, and the agent installs it
+    # itself when an account is linked.
+    if ! run "Installing tmux" pkg_install tmux; then
+        warn "tmux could not be installed - the agent will retry when a user terminal is linked."
+    fi
+
     # Build tools required for Rust compilation (cmake for aws-lc-sys, gcc for ring)
     if [ "$INSTALL_FROM_RELEASE" != "1" ]; then
         if [ "$PKG_MGR" = "apt" ]; then
@@ -741,6 +748,83 @@ create_directories() {
     touch /etc/opendkim.conf /run/nginx.pid 2>/dev/null || true
 
     log "Directories created"
+}
+
+# ── User terminal host files (feature 9) ─────────────────────────────────
+# The same bytes as the constants in panel/agent/src/services/user_terminal.rs
+# (A-6): a unit test there reads this file and compares every heredoc below.
+# They live under /opt/dockpanel-uterm, not /etc/dockpanel: that directory is
+# 0700 (it holds the secrets) and the Linux user must read and exec these.
+# Each file is rewritten only when its content differs. No account is linked
+# here: linger and the per-user enable happen when an admin links one.
+uterm_write() {  # uterm_write <path> <mode>, content on stdin
+    local path="$1" mode="$2" tmp
+    tmp=$(mktemp "${path}.XXXXXX") || return 1
+    cat > "$tmp"
+    if [ -f "$path" ] && cmp -s "$tmp" "$path"; then
+        rm -f "$tmp"
+    else
+        mv -f "$tmp" "$path"
+    fi
+    chmod "$mode" "$path"
+}
+
+install_user_terminal_files() {
+    mkdir -p /opt/dockpanel-uterm/bin /opt/dockpanel-uterm/autostart /etc/systemd/user
+    chmod 0755 /opt/dockpanel-uterm /opt/dockpanel-uterm/bin /opt/dockpanel-uterm/autostart
+
+    uterm_write /opt/dockpanel-uterm/tmux.conf 0644 <<'DP_UTERM_TMUX_CONF'
+# CyberHunter Panel user terminal. Managed file: the agent rewrites it.
+set -g default-terminal "tmux-256color"
+set -as terminal-features ",xterm-256color:RGB:clipboard:usstyle"
+set -g set-clipboard on
+set -g mouse on
+set -g window-size latest
+set -g history-limit 50000
+set -g escape-time 10
+set -g focus-events on
+source-file -q ~/.tmux.conf
+DP_UTERM_TMUX_CONF
+
+    uterm_write /etc/systemd/user/dockpanel-tmux.service 0644 <<'DP_UTERM_TMUX_UNIT'
+# CyberHunter Panel user terminal. Managed file: the agent rewrites it.
+[Unit]
+Description=CyberHunter Panel persistent tmux session
+
+[Service]
+Type=forking
+ExecStart=/usr/bin/tmux -f /opt/dockpanel-uterm/tmux.conf -S %t/dockpanel-tmux.sock new-session -d -s claude -c %h
+ExecStartPost=/opt/dockpanel-uterm/bin/uterm-autostart
+ExecStop=/usr/bin/tmux -S %t/dockpanel-tmux.sock kill-server
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+DP_UTERM_TMUX_UNIT
+
+    uterm_write /opt/dockpanel-uterm/bin/uterm-attach 0755 <<'DP_UTERM_ATTACH'
+#!/bin/sh
+# CyberHunter Panel user terminal: attach this connection to the persistent
+# tmux session. Managed file: the agent rewrites it.
+systemctl --user start dockpanel-tmux.service || echo "dockpanel: could not start the tmux session" >&2
+exec tmux -S "$XDG_RUNTIME_DIR/dockpanel-tmux.sock" attach -t claude
+DP_UTERM_ATTACH
+
+    uterm_write /opt/dockpanel-uterm/bin/uterm-autostart 0755 <<'DP_UTERM_AUTOSTART'
+#!/bin/sh
+# CyberHunter Panel user terminal: type the configured start command into the
+# new tmux session. Managed file: the agent rewrites it.
+f="/opt/dockpanel-uterm/autostart/${USER}.autostart"
+[ -r "$f" ] || exit 0
+line=$(head -n 1 "$f")
+[ -n "$line" ] || exit 0
+sock="$XDG_RUNTIME_DIR/dockpanel-tmux.sock"
+tmux -S "$sock" send-keys -t claude -l -- "$line" || exit 0
+tmux -S "$sock" send-keys -t claude Enter || true
+exit 0
+DP_UTERM_AUTOSTART
+
+    log "User terminal files installed (/opt/dockpanel-uterm, dockpanel-tmux.service)"
 }
 
 # ── Secrets ──────────────────────────────────────────────────────────────
@@ -1471,7 +1555,9 @@ ${PANEL_TLS_BLOCK}
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
-        proxy_set_header Host \$host;
+        # \$http_host keeps the port: the user terminal compares Origin with Host,
+        # port included, and a no-domain panel is served on a non-default port.
+        proxy_set_header Host \$http_host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
@@ -2327,6 +2413,7 @@ main() {
     install_nginx
     install_node
     create_directories
+    install_user_terminal_files || warn "User terminal files could not be installed - the agent writes them when an account is linked."
     generate_secrets
     setup_database
 

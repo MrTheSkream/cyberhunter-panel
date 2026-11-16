@@ -94,7 +94,12 @@ RestrictNamespaces=~user
 # entries, which would turn the file into a directory. It is written through the
 # same unsandboxed fallback (apache::write_file); the whitelist and the FTP
 # certificate live under /etc/dockpanel, already listed.
-ReadWritePaths=/etc/nginx /etc/dockpanel /var/run/dockpanel /var/backups/dockpanel /var/lib/dockpanel /var/www /var/log /etc/systemd/system /opt -/etc/letsencrypt -/etc/apt -/etc/fail2ban -/etc/powerdns -/etc/modsecurity -/etc/cloudflared -/etc/postfix -/etc/dovecot -/var/spool/postfix -/var/spool/cron -/var/vmail -/var/cache/nginx -/etc/ufw -/var/lib/ufw -/etc/php -/etc/ssh -/var/dockpanel-sftp -/etc/apache2 -/etc/mysql -/etc/clamav -/etc/rspamd -/etc/pam.d
+# /etc/systemd/user (feature 9, user terminal) holds dockpanel-tmux.service, the
+# user unit of the persistent tmux session. Only that one directory is added:
+# ProtectHome=yes stays, because the user's shell itself is started by PID 1
+# (systemd-run --uid), outside this namespace. The files the user must read
+# live under /opt/dockpanel-uterm, already covered by /opt.
+ReadWritePaths=/etc/nginx /etc/dockpanel /var/run/dockpanel /var/backups/dockpanel /var/lib/dockpanel /var/www /var/log /etc/systemd/system /opt -/etc/letsencrypt -/etc/apt -/etc/fail2ban -/etc/powerdns -/etc/modsecurity -/etc/cloudflared -/etc/postfix -/etc/dovecot -/var/spool/postfix -/var/spool/cron -/var/vmail -/var/cache/nginx -/etc/ufw -/var/lib/ufw -/etc/php -/etc/ssh -/var/dockpanel-sftp -/etc/apache2 -/etc/mysql -/etc/clamav -/etc/rspamd -/etc/pam.d -/etc/systemd/user
 
 MemoryMax=512M
 LimitNOFILE=65535

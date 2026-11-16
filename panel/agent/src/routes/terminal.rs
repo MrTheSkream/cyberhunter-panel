@@ -92,6 +92,7 @@ struct TerminalTicket {
 async fn ws_handler(
     State(state): State<AppState>,
     Query(q): Query<TermQuery>,
+    headers: axum::http::HeaderMap,
     ws: WebSocketUpgrade,
 ) -> Response {
     // Rate limit: max 1 connection per second (prevents rapid reconnect storms)
@@ -145,6 +146,18 @@ async fn ws_handler(
             .unwrap();
     }
     let user_email = user_email.unwrap();
+
+    // User terminal (09): a `@user:<login>` scope never reaches the code below.
+    // It re-reads its own claims (uid, single-use jti), checks the Origin and
+    // the Linux account, and releases the slot taken above on any refusal.
+    // Every other scope continues unchanged.
+    if ticket_scope
+        .as_deref()
+        .is_some_and(|s| s.starts_with(crate::services::user_terminal::USER_SCOPE_PREFIX))
+    {
+        let raw_ticket = q.token.clone().unwrap_or_default();
+        return crate::services::user_terminal::handle(raw_ticket, token_value, headers, q.cols, q.rows, ws).await;
+    }
 
     // The scope is the SIGNED decision, not the `?domain=` param. Trusting the
     // param let a site-scoped ticket open a root shell by omitting the domain.
@@ -916,6 +929,60 @@ mod observe_tests {
             ["plain"],
             "if this ever reports `suspicious`, the reconstructor became cursor-aware \
              and the bound documented on `observe_input` should be rewritten"
+        );
+    }
+}
+
+/// User terminal (09): the root `@server` shell and the site shells must stay
+/// byte-identical. These fingerprints were taken on `main` before the user
+/// terminal landed (text from `fn <name>(` to its first column-0 `}`, LF line
+/// endings). A change to either function must be deliberate, and must update
+/// the pin in the same commit.
+#[cfg(test)]
+mod pin_tests {
+    use sha2::{Digest, Sha256};
+
+    const SOURCE: &str = include_str!("terminal.rs");
+
+    fn body_of(name: &str) -> String {
+        let src = SOURCE.replace('\r', "");
+        let start = format!("fn {name}(");
+        let mut out = String::new();
+        let mut inside = false;
+        for line in src.lines() {
+            if !inside && line.starts_with(&start) {
+                inside = true;
+            }
+            if inside {
+                out.push_str(line);
+                out.push('\n');
+                if line == "}" {
+                    return out;
+                }
+            }
+        }
+        panic!("fn {name} not found in terminal.rs");
+    }
+
+    fn sha(name: &str) -> String {
+        hex::encode(Sha256::digest(body_of(name).as_bytes()))
+    }
+
+    #[test]
+    fn open_pty_shell_is_unchanged() {
+        assert_eq!(
+            sha("open_pty_shell"),
+            "fc405db1c961d60afa622f921874df6698fcc0c6058ad646ff3c0479ea10fc64",
+            "open_pty_shell changed: the @server and site shells must stay byte-identical"
+        );
+    }
+
+    #[test]
+    fn observe_input_is_unchanged() {
+        assert_eq!(
+            sha("observe_input"),
+            "d5421d8f05f73c7eaafaddf255f8ea94633476a1523325b86e8d3931fb6027b0",
+            "observe_input changed: the @server and site shells must stay byte-identical"
         );
     }
 }
