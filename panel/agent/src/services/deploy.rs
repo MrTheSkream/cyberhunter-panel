@@ -186,20 +186,19 @@ fn discard_repo_we_do_not_own(site_dir: &str, output_buf: &mut String) {
 /// The repository is never handed over even momentarily: chowning the whole tree
 /// and taking `.git` back would leave a window in which the application can
 /// write a file that root then owns and executes.
-async fn hand_tree_to_web_user(dir: &str) {
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            if entry.file_name() == std::ffi::OsStr::new(".git") {
-                continue;
-            }
-            let _ = safe_command("chown")
-                .args(["-R", "www-data:www-data", &entry.path().to_string_lossy()])
-                .output()
-                .await;
+///
+/// "The web user" is the site's owner (feature 6): `www-data`, or the site's
+/// SFTP account when SFTP is enabled, read by the caller before the deploy
+/// touched anything. The directory itself is `root:<owner's group>`.
+async fn hand_tree_to_web_user(domain: &str, dir: &str, owner: (u32, u32)) {
+    let children = crate::services::site_owner::children_except_git(Path::new(dir));
+    if !children.is_empty() {
+        if let Err(e) = crate::services::site_owner::chown_paths_as(domain, &children, owner).await {
+            tracing::warn!("deploy of {domain}: ownership not fully set: {e}");
         }
     }
 
-    let _ = safe_command("chown").args(["root:www-data", dir]).output().await;
+    let _ = safe_command("chown").args([&format!("0:{}", owner.1), dir]).output().await;
     let _ = safe_command("chmod").args(["3775", dir]).output().await;
 
     let git_dir = format!("{dir}/.git");
@@ -226,6 +225,8 @@ pub async fn clone_or_pull(
     let site_dir = format!("{WEBROOT}/{domain}");
     let git_dir = format!("{site_dir}/.git");
     let mut output_buf = String::new();
+    // Read before git can create (or the merge below replace) the site root.
+    let owner = crate::services::site_owner::site_owner(domain);
 
     // SSRF: this process is the one that actually dials `repo_url` (the panel's
     // own check at write time runs on a different host, at a different - often
@@ -414,7 +415,7 @@ pub async fn clone_or_pull(
     // PHP-FPM runs as www-data and must be able to write the application's own
     // directory; root runs git and must not be steerable by what the application
     // writes. Both, without handing over `.git`.
-    hand_tree_to_web_user(&site_dir).await;
+    hand_tree_to_web_user(domain, &site_dir, owner).await;
 
     // Get current commit hash
     let hash = safe_command("git")
@@ -526,6 +527,7 @@ pub async fn atomic_deploy(
 ) -> Result<DeployResult, String> {
     let start = Instant::now();
     let site_dir = format!("{WEBROOT}/{domain}");
+    let owner = crate::services::site_owner::site_owner(domain);
     let releases_dir = format!("{site_dir}/releases");
     let shared_dir = format!("{site_dir}/shared");
     let current_link = format!("{site_dir}/current");
@@ -769,7 +771,7 @@ pub async fn atomic_deploy(
     // has always been handed to www-data wholesale, which is why `list_releases`
     // could never read its commit hash back without an ownership exception - and
     // why an exception was there to be lifted at all.
-    hand_tree_to_web_user(&release_dir).await;
+    hand_tree_to_web_user(domain, &release_dir, owner).await;
 
     // Clean up old releases (keep N most recent)
     if let Ok(entries) = std::fs::read_dir(&releases_dir) {
@@ -1292,7 +1294,10 @@ mod ownership_tests {
             eprintln!("skipped: needs root to chown");
             return;
         }
-        let dir = std::env::temp_dir().join("dockpanel-tree-split");
+        // Under the site-owner module's test webroot: its chown is refused
+        // outside the site's own root.
+        let domain = "dp-tree-split.invalid";
+        let dir = crate::services::site_owner::site_root(domain);
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join(".git")).unwrap();
         std::fs::create_dir_all(dir.join("public")).unwrap();
@@ -1302,7 +1307,14 @@ mod ownership_tests {
         let path = dir.to_str().unwrap().to_string();
         tokio::runtime::Runtime::new()
             .unwrap()
-            .block_on(hand_tree_to_web_user(&path));
+            .block_on(hand_tree_to_web_user(domain, &path, crate::services::site_owner::WWW_DATA));
+
+        {
+            use std::os::unix::fs::MetadataExt;
+            let public = std::fs::metadata(dir.join("public/index.php")).unwrap();
+            assert_eq!((public.uid(), public.gid()), (33, 33), "the application's files go to the site owner");
+            assert_eq!(std::fs::metadata(&dir).unwrap().gid(), 33, "the site directory carries the owner's group");
+        }
 
         assert!(
             owned_by_root(&format!("{path}/.git")),

@@ -2559,8 +2559,12 @@ async fn set_env(Path(domain): Path<String>, Json(body): Json<serde_json::Value>
     std::fs::write(&env_path, &content)
         .map_err(|e| api_err(StatusCode::INTERNAL_SERVER_ERROR, &format!("{e}")))?;
 
-    // Fix ownership
-    let _ = safe_command("chown").args(["www-data:www-data", &env_path]).output().await;
+    // Fix ownership: the site's owner (www-data, or its SFTP account).
+    if let Err(e) =
+        crate::services::site_owner::chown_site_tree(&domain, std::path::Path::new(&env_path)).await
+    {
+        tracing::warn!("{env_path}: ownership not set: {e}");
+    }
 
     // Restart the app service if it's a Node/Python site - if the unit at that
     // name is in fact this site's. The name is not injective.

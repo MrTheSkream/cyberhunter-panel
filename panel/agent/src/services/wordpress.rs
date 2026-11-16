@@ -12,6 +12,17 @@ fn site_path(domain: &str) -> Result<String, String> {
     Ok(format!("{WP_ROOT}/{domain}/public"))
 }
 
+/// Hand the WordPress tree (`/var/www/<domain>/public`) back to the site's
+/// owner: `www-data`, or the site's SFTP account (feature 6). `owner` is the
+/// one read before a step that could create the site root, else read now.
+async fn fix_ownership(domain: &str, owner: Option<(u32, u32)>) {
+    let Ok(path) = site_path(domain) else { return };
+    let owner = owner.unwrap_or_else(|| crate::services::site_owner::site_owner(domain));
+    if let Err(e) = crate::services::site_owner::chown_site_tree_as(domain, std::path::Path::new(&path), owner).await {
+        tracing::warn!("{domain}: ownership not set: {e}");
+    }
+}
+
 /// Ensure wp-cli is installed at /usr/local/bin/wp.
 pub async fn ensure_cli() -> Result<(), String> {
     if std::path::Path::new(WP_CLI).exists() {
@@ -163,33 +174,21 @@ pub async fn themes(domain: &str) -> Result<serde_json::Value, String> {
 pub async fn update_core(domain: &str) -> Result<String, String> {
     let result = wp(domain, &["core", "update"]).await?;
     // Fix ownership after update
-    safe_command("chown")
-        .args(["-R", "www-data:www-data", &site_path(domain)?])
-        .output()
-        .await
-        .ok();
+    fix_ownership(domain, None).await;
     Ok(result)
 }
 
 /// Update all plugins.
 pub async fn update_all_plugins(domain: &str) -> Result<String, String> {
     let result = wp(domain, &["plugin", "update", "--all"]).await?;
-    safe_command("chown")
-        .args(["-R", "www-data:www-data", &site_path(domain)?])
-        .output()
-        .await
-        .ok();
+    fix_ownership(domain, None).await;
     Ok(result)
 }
 
 /// Update all themes.
 pub async fn update_all_themes(domain: &str) -> Result<String, String> {
     let result = wp(domain, &["theme", "update", "--all"]).await?;
-    safe_command("chown")
-        .args(["-R", "www-data:www-data", &site_path(domain)?])
-        .output()
-        .await
-        .ok();
+    fix_ownership(domain, None).await;
     Ok(result)
 }
 
@@ -216,11 +215,7 @@ pub async fn plugin_action(domain: &str, name: &str, action: &str) -> Result<Str
         _ => return Err(format!("Unknown action: {action}")),
     };
     if matches!(action, "install" | "update") {
-        safe_command("chown")
-            .args(["-R", "www-data:www-data", &site_path(domain)?])
-            .output()
-            .await
-            .ok();
+        fix_ownership(domain, None).await;
     }
     Ok(result)
 }
@@ -236,11 +231,7 @@ pub async fn theme_action(domain: &str, name: &str, action: &str) -> Result<Stri
         _ => return Err(format!("Unknown action: {action}")),
     };
     if matches!(action, "install" | "update") {
-        safe_command("chown")
-            .args(["-R", "www-data:www-data", &site_path(domain)?])
-            .output()
-            .await
-            .ok();
+        fix_ownership(domain, None).await;
     }
     Ok(result)
 }
@@ -260,6 +251,8 @@ pub async fn install(
 ) -> Result<String, String> {
     ensure_cli().await?;
     let path = site_path(domain)?;
+    // Read before `create_dir_all` can create the site root.
+    let owner = crate::services::site_owner::site_owner(domain);
 
     // Ensure document root exists before wp-cli tries to write
     tokio::fs::create_dir_all(&path)
@@ -345,11 +338,7 @@ pub async fn install(
     }
 
     // Fix ownership
-    safe_command("chown")
-        .args(["-R", "www-data:www-data", &path])
-        .output()
-        .await
-        .ok();
+    fix_ownership(domain, Some(owner)).await;
 
     // wp-cli's `config create` leaves wp-config.php at the process umask's default
     // (644 here) - tighten to 640, same fix wp_vulnerability.rs's "wp-config-perms"
@@ -599,10 +588,7 @@ pub async fn rollback_from_snapshot(domain: &str, snapshot_path: &str) -> Result
     }
 
     // Fix ownership
-    let _ = safe_command("chown")
-        .args(["-R", "www-data:www-data", &format!("/var/www/{domain}/public")])
-        .output()
-        .await;
+    fix_ownership(domain, None).await;
 
     tracing::info!("WP rollback completed for {domain} from {snapshot_path}");
     Ok(())
@@ -665,10 +651,7 @@ pub async fn update_with_rollback(domain: &str) -> Result<serde_json::Value, Str
         if themes_ok { "ok" } else { "failed" }));
 
     // 5. Fix ownership
-    let _ = safe_command("chown")
-        .args(["-R", "www-data:www-data", &format!("/var/www/{domain}/public")])
-        .output()
-        .await;
+    fix_ownership(domain, None).await;
 
     // 6. Post-update health check
     let healthy = health_check(domain).await;

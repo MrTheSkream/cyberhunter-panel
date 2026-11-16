@@ -1228,17 +1228,9 @@ async fn open_mail_ports() {
     }
 }
 
-/// The panel's own Let's Encrypt certificate, when this box has one for the
-/// host the panel is served on. Dovecot and Postfix otherwise fall back to the
-/// distro's self-signed snakeoil, which any IMAP client that verifies its peer
-/// refuses - Roundcube among them.
-fn panel_tls_paths() -> Option<(String, String)> {
-    let host = panel_server_name()?;
-    let dir = format!("/etc/letsencrypt/live/{host}");
-    let cert = format!("{dir}/fullchain.pem");
-    let key = format!("{dir}/privkey.pem");
-    (Path::new(&cert).exists() && Path::new(&key).exists()).then_some((cert, key))
-}
+// The panel's own Let's Encrypt certificate: shared with the FTP server
+// (feature 6), see `services::panel_tls`.
+use crate::services::panel_tls::{panel_server_name, panel_tls_paths};
 
 // ── DKIM key generation ─────────────────────────────────────────────────
 
@@ -2160,29 +2152,6 @@ async fn rspamd_toggle(Json(body): Json<serde_json::Value>) -> Result<Json<serde
 const WEBMAIL_NGINX_CONF: &str = "/etc/nginx/conf.d/dockpanel-panel.locations/webmail.conf";
 const WEBMAIL_NGINX_DIR: &str = "/etc/nginx/conf.d/dockpanel-panel.locations";
 
-/// Read the panel vhost's `server_name` directive. Returns `None` for
-/// `_` (IP-based installs) or if no panel vhost exists yet.
-fn panel_server_name() -> Option<String> {
-    for conf in &[
-        "/etc/nginx/sites-enabled/dockpanel-panel.conf",
-        "/etc/nginx/conf.d/dockpanel-panel.conf",
-    ] {
-        if let Ok(content) = std::fs::read_to_string(conf) {
-            for line in content.lines() {
-                let trimmed = line.trim();
-                if let Some(rest) = trimmed.strip_prefix("server_name ") {
-                    let name = rest.trim_end_matches(';').trim();
-                    if !name.is_empty() && name != "_" {
-                        if let Some(first) = name.split_whitespace().next() {
-                            return Some(first.to_string());
-                        }
-                    }
-                }
-            }
-        }
-    }
-    None
-}
 
 /// The `/webmail/` reverse-proxy fragment, for a given Roundcube host port.
 ///

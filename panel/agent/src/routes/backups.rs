@@ -75,14 +75,17 @@ async fn restore(
 
     let databases = body.map(|Json(b)| b.databases).unwrap_or_default();
 
+    // The owner is read BEFORE the restore, which may recreate the site root.
+    let owner = crate::services::site_owner::site_owner(&domain);
+
     let report = backups::restore_backup(&domain, &filename, &databases)
         .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
 
     // `restore_backup`'s tar extraction runs `--no-same-owner`, which leaves the
-    // whole site root:root - unwritable by the www-data-running app until this
-    // runs.
-    chown_restored_tree(&format!("/var/www/{domain}")).await;
+    // whole site root:root - unwritable by the site's PHP pool (www-data, or
+    // the site's own SFTP account) until this runs.
+    chown_restored_tree(&domain, owner).await;
 
     let mut payload = serde_json::to_value(&report)
         .unwrap_or_else(|_| serde_json::json!({}));
@@ -147,12 +150,14 @@ async fn restore_file(
     // route until now.
     let _guard = crate::site_lock::lock_site(&domain).await;
 
+    let owner = crate::services::site_owner::site_owner(&domain);
+
     backups::restore_single_file(&domain, &filename, &body.path)
         .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
 
     // Same gap as `restore` above - the extracted member comes back root-owned.
-    chown_restored_tree(&format!("/var/www/{domain}")).await;
+    chown_restored_tree(&domain, owner).await;
 
     Ok(Json(serde_json::json!({ "success": true, "restored_path": body.path })))
 }
@@ -170,37 +175,22 @@ async fn remove(
     Ok(Json(serde_json::json!({ "success": true })))
 }
 
-use crate::safe_cmd::safe_command;
-
-/// Hand a restored site tree back to the web server without exposing `.git`.
+/// Hand a restored site tree back to its owner without exposing `.git`.
 ///
 /// `restore_backup`'s tar extraction runs `--no-same-owner`, so the whole
-/// site comes back root-owned - unwritable to the web-server-running app
-/// until this runs. A blanket `chown -R www-data:www-data` over the whole
-/// tree would also hand the application `.git/config` and `.git/hooks/` if
-/// this site uses Git Deploy, which the next `git_build.rs` deploy then reads
-/// and executes as root - the same defect `deploy.rs` was fixed to avoid (see
-/// its own `hand_tree_to_web_user` doc comment). Mirror that split here:
-/// chown everything except `.git` to www-data, then explicitly re-secure
-/// `.git` to root, rather than trust whatever ownership the extraction
-/// happened to leave it at.
-async fn chown_restored_tree(target: &str) {
-    if let Ok(entries) = std::fs::read_dir(target) {
-        for entry in entries.flatten() {
-            if entry.file_name() == std::ffi::OsStr::new(".git") {
-                continue;
-            }
-            let _ = safe_command("chown")
-                .args(["-R", "www-data:www-data", &entry.path().to_string_lossy()])
-                .output()
-                .await;
-        }
-    }
-
-    let git_dir = format!("{target}/.git");
-    if std::path::Path::new(&git_dir).exists() {
-        let _ = safe_command("chown").args(["-R", "root:root", &git_dir]).output().await;
-        let _ = safe_command("chmod").args(["-R", "go-rwx", &git_dir]).output().await;
+/// site comes back root-owned - unwritable to the app until this runs. A
+/// blanket recursive chown over the whole tree would also hand the
+/// application `.git/config` and `.git/hooks/` if this site uses Git Deploy,
+/// which the next `git_build.rs` deploy then reads and executes as root - the
+/// same defect `deploy.rs` was fixed to avoid (see its own
+/// `hand_tree_to_web_user` doc comment). Mirror that split here: chown
+/// everything except `.git` to the site's owner (`www-data`, or its SFTP
+/// account, read before the restore), then explicitly re-secure `.git` to
+/// root, rather than trust whatever ownership the extraction left it at.
+async fn chown_restored_tree(domain: &str, owner: (u32, u32)) {
+    let root = crate::services::site_owner::site_root(domain);
+    if let Err(e) = crate::services::site_owner::hand_over_except_git(domain, &root, owner).await {
+        tracing::warn!("restore of {domain}: ownership not fully restored: {e}");
     }
 }
 

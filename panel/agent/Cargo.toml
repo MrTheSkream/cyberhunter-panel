@@ -43,4 +43,5 @@ rustix = { version = "1", features = ["termios", "pty", "fs", "process"] }
 libc = "0.2"
 url = "2"
 tikv-jemallocator = { version = "0.6", features = ["background_threads"] }
-sha-crypt = { version = "0.6.0", features = ["getrandom"] }
+walkdir = "2"
+sha-crypt ={ version = "0.6.0", features = ["getrandom"] }

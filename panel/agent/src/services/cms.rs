@@ -87,31 +87,19 @@ fn validate_domain(domain: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Fix ownership to www-data for a site directory, without handing over `.git`.
+/// Fix ownership of a site directory to the site's owner (`www-data`, or its
+/// SFTP account: `owner`, read by the caller before the installer could
+/// create the site root), without handing over `.git`.
 ///
 /// No caller today has a `.git` present the moment this runs - Composer refuses
 /// a non-empty target and Joomla's release zip ships none - so this is
-/// prospective: once the CMS is live and running as www-data, a future
-/// compromise of the app itself could create one, and this keeps that from
-/// becoming a route to root (see `deploy.rs::hand_tree_to_web_user`, and
-/// `deploy.rs::clone_or_pull`, which is what would run `.git`'s hooks as root).
-async fn chown_site(path: &str) {
-    if let Ok(mut entries) = tokio::fs::read_dir(path).await {
-        while let Ok(Some(entry)) = entries.next_entry().await {
-            if entry.file_name() == std::ffi::OsStr::new(".git") {
-                continue;
-            }
-            safe_command("chown")
-                .args(["-R", "www-data:www-data", &entry.path().to_string_lossy()])
-                .output()
-                .await
-                .ok();
-        }
-    }
-    let git_dir = format!("{path}/.git");
-    if std::path::Path::new(&git_dir).exists() {
-        safe_command("chown").args(["-R", "root:root", &git_dir]).output().await.ok();
-        safe_command("chmod").args(["-R", "go-rwx", &git_dir]).output().await.ok();
+/// prospective: once the CMS is live, a future compromise of the app itself
+/// could create one, and this keeps that from becoming a route to root (see
+/// `deploy.rs::hand_tree_to_web_user`, and `deploy.rs::clone_or_pull`, which
+/// is what would run `.git`'s hooks as root).
+async fn chown_site(domain: &str, path: &str, owner: (u32, u32)) {
+    if let Err(e) = crate::services::site_owner::hand_over_except_git(domain, std::path::Path::new(path), owner).await {
+        tracing::warn!("{domain}: ownership not fully set: {e}");
     }
 }
 
@@ -230,6 +218,8 @@ pub async fn install_laravel(
     ensure_composer().await?;
 
     let site_dir = format!("{SITE_ROOT}/{domain}");
+    // Read before the installer can create the site root.
+    let owner = crate::services::site_owner::site_owner(domain);
 
     // Create project
     run_cmd(
@@ -280,7 +270,7 @@ pub async fn install_laravel(
     // Create public symlink for nginx (Laravel's web root is public/ by default)
     // No symlink needed - Laravel already uses public/ as document root.
 
-    chown_site(&site_dir).await;
+    chown_site(domain, &site_dir, owner).await;
     secure_credential_file(&env_file).await;
 
     Ok("Laravel installed successfully".into())
@@ -302,6 +292,8 @@ pub async fn install_drupal(
     ensure_composer().await?;
 
     let site_dir = format!("{SITE_ROOT}/{domain}");
+    // Read before the installer can create the site root.
+    let owner = crate::services::site_owner::site_owner(domain);
 
     // Create project
     run_cmd(
@@ -368,7 +360,7 @@ pub async fn install_drupal(
     )
     .await?;
 
-    chown_site(&site_dir).await;
+    chown_site(domain, &site_dir, owner).await;
     // drush writes settings.php under the recommended-project's web/ docroot.
     secure_credential_file(&format!("{site_dir}/web/sites/default/settings.php")).await;
 
@@ -389,6 +381,8 @@ pub async fn install_joomla(
 ) -> Result<String, String> {
     validate_domain(domain)?;
     let public_dir = format!("{SITE_ROOT}/{domain}/public");
+    // Read before `create_dir_all` can create the site root.
+    let owner = crate::services::site_owner::site_owner(domain);
 
     // Create document root
     tokio::fs::create_dir_all(&public_dir)
@@ -482,7 +476,7 @@ pub async fn install_joomla(
     )
     .await?;
 
-    chown_site(&public_dir).await;
+    chown_site(domain, &public_dir, owner).await;
     secure_credential_file(&format!("{public_dir}/configuration.php")).await;
 
     Ok("Joomla installed successfully".into())
@@ -494,6 +488,8 @@ pub async fn install_symfony(domain: &str, title: &str) -> Result<String, String
     ensure_composer().await?;
 
     let site_dir = format!("{SITE_ROOT}/{domain}");
+    // Read before the installer can create the site root.
+    let owner = crate::services::site_owner::site_owner(domain);
 
     // Create project
     run_cmd(
@@ -523,7 +519,7 @@ pub async fn install_symfony(domain: &str, title: &str) -> Result<String, String
 
     let _ = title; // title noted for future use; Symfony skeleton has no site-name concept
 
-    chown_site(&site_dir).await;
+    chown_site(domain, &site_dir, owner).await;
 
     Ok("Symfony installed successfully".into())
 }
@@ -541,6 +537,8 @@ pub async fn install_codeigniter(
     ensure_composer().await?;
 
     let site_dir = format!("{SITE_ROOT}/{domain}");
+    // Read before the installer can create the site root.
+    let owner = crate::services::site_owner::site_owner(domain);
 
     // Create project
     run_cmd(
@@ -586,7 +584,7 @@ pub async fn install_codeigniter(
         .await
         .map_err(|e| format!("Failed to write .env: {e}"))?;
 
-    chown_site(&site_dir).await;
+    chown_site(domain, &site_dir, owner).await;
     secure_credential_file(&env_file).await;
 
     Ok("CodeIgniter installed successfully".into())

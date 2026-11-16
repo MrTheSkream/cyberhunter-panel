@@ -29,6 +29,14 @@ pub async fn clone_files(source_domain: &str, target_domain: &str) -> Result<Str
         return Err(format!("Source directory not found: {source}"));
     }
 
+    // The target's owner, read before `create_dir_all` and `rsync -a` (which
+    // copies the source root's owner onto the target root).
+    let owner = crate::services::site_owner::site_owner(target_domain);
+    let root_ids = {
+        use std::os::unix::fs::MetadataExt;
+        std::fs::metadata(&target).ok().map(|m| (m.uid(), m.gid()))
+    };
+
     // Create target directory
     tokio::fs::create_dir_all(&target)
         .await
@@ -47,26 +55,18 @@ pub async fn clone_files(source_domain: &str, target_domain: &str) -> Result<Str
         return Err(format!("rsync failed: {stderr}"));
     }
 
-    // Fix ownership to www-data - everything except `.git`, which stays root's.
-    // rsync just copied the source tree verbatim, `.git` included if the source
-    // is git-deployed; handing it to www-data gives the app `config`/`hooks/`
-    // that `deploy.rs::clone_or_pull` runs as root on the next deploy. Mirrors
-    // `deploy.rs::hand_tree_to_web_user`.
-    if let Ok(mut entries) = tokio::fs::read_dir(&target).await {
-        while let Ok(Some(entry)) = entries.next_entry().await {
-            if entry.file_name() == std::ffi::OsStr::new(".git") {
-                continue;
-            }
-            let _ = safe_command("chown")
-                .args(["-R", "www-data:www-data", &entry.path().to_string_lossy()])
-                .output()
-                .await;
-        }
-    }
-    let git_dir = format!("{target}.git");
-    if Path::new(&git_dir).exists() {
-        let _ = safe_command("chown").args(["-R", "root:root", &git_dir]).output().await;
-        let _ = safe_command("chmod").args(["-R", "go-rwx", &git_dir]).output().await;
+    // Fix ownership to the target's owner - everything except `.git`, which
+    // stays root's. rsync just copied the source tree verbatim, `.git`
+    // included if the source is git-deployed; handing it to the app gives it
+    // `config`/`hooks/` that `deploy.rs::clone_or_pull` runs as root on the
+    // next deploy. Mirrors `deploy.rs::hand_tree_to_web_user`.
+    hand_over(target_domain, owner).await;
+    // The target root got the SOURCE root's owner from rsync: put back what it
+    // had, or give a new one to the target's owner (otherwise `site_owner`
+    // would later hand the staging files to the production account).
+    let root = crate::services::site_owner::site_root(target_domain);
+    if let Err(e) = crate::services::site_owner::chown_self_as(target_domain, &root, root_ids.unwrap_or(owner)).await {
+        tracing::warn!("staging clone: owner of {target} not set: {e}");
     }
 
     Ok(format!("Cloned {source} → {target}"))
@@ -91,6 +91,14 @@ pub async fn sync_files(source_domain: &str, target_domain: &str) -> Result<Stri
         return Err(format!("Target directory not found: {target}"));
     }
 
+    // The target's owner, and its root's own uid/gid: `rsync -a` copies the
+    // source root's onto it, so both are read first and put back after.
+    let owner = crate::services::site_owner::site_owner(target_domain);
+    let root_ids = {
+        use std::os::unix::fs::MetadataExt;
+        std::fs::metadata(&target).ok().map(|m| (m.uid(), m.gid()))
+    };
+
     let output = safe_command("rsync")
         .args(["-a", "--delete", &source, &target])
         .output()
@@ -103,24 +111,23 @@ pub async fn sync_files(source_domain: &str, target_domain: &str) -> Result<Stri
     }
 
     // Fix ownership - everything except `.git`. See `clone_files` above for why.
-    if let Ok(mut entries) = tokio::fs::read_dir(&target).await {
-        while let Ok(Some(entry)) = entries.next_entry().await {
-            if entry.file_name() == std::ffi::OsStr::new(".git") {
-                continue;
-            }
-            let _ = safe_command("chown")
-                .args(["-R", "www-data:www-data", &entry.path().to_string_lossy()])
-                .output()
-                .await;
+    hand_over(target_domain, owner).await;
+    if let Some(ids) = root_ids {
+        let root = crate::services::site_owner::site_root(target_domain);
+        if let Err(e) = crate::services::site_owner::chown_self_as(target_domain, &root, ids).await {
+            tracing::warn!("staging sync: owner of {target} not restored: {e}");
         }
-    }
-    let git_dir = format!("{target}.git");
-    if Path::new(&git_dir).exists() {
-        let _ = safe_command("chown").args(["-R", "root:root", &git_dir]).output().await;
-        let _ = safe_command("chmod").args(["-R", "go-rwx", &git_dir]).output().await;
     }
 
     Ok(format!("Synced {source} → {target}"))
+}
+
+/// Everything in the target site except `.git` to `owner`; `.git` root's.
+async fn hand_over(target_domain: &str, owner: (u32, u32)) {
+    let root = crate::services::site_owner::site_root(target_domain);
+    if let Err(e) = crate::services::site_owner::hand_over_except_git(target_domain, &root, owner).await {
+        tracing::warn!("staging: ownership of {target_domain} not fully set: {e}");
+    }
 }
 
 /// Get disk usage of a site directory in bytes.
