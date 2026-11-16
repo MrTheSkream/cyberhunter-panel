@@ -740,6 +740,15 @@ pub async fn run(domain: &str) -> Result<RunOutcome, StatsErr> {
     if normal_inputs(Path::new(LOG_DIR), domain, Path::exists).is_empty() {
         return Err(StatsErr::not_found(NO_LOG_MSG));
     }
+    // Detached from the request: a caller that gives up (client timeout)
+    // must not kill GoAccess half-way, or a long first run never finishes.
+    let domain = domain.to_string();
+    tokio::spawn(async move { run_queued(&domain).await })
+        .await
+        .map_err(|_| StatsErr::internal("internal error"))?
+}
+
+async fn run_queued(domain: &str) -> Result<RunOutcome, StatsErr> {
     let Ok(_run) = tokio::time::timeout(QUEUE_TIMEOUT, RUN_LOCK.lock()).await else {
         return Err(StatsErr::conflict(RUN_BUSY_MSG));
     };
@@ -808,7 +817,7 @@ async fn compute(domain: &str, dir: &Path, deadline: Instant) -> Result<bool, (b
                     output: &out_s,
                 },
             );
-            let res = run_init(&gz, args, deadline).await;
+            let res = run_init(&gz, "goaccess", args, deadline).await;
             let _ = std::fs::remove_file(&out);
             if let Err(e) = res {
                 // An empty db makes the next call try the old logs again.
@@ -831,7 +840,7 @@ async fn compute(domain: &str, dir: &Path, deadline: Instant) -> Result<bool, (b
         &PassOptions { db_path: &db_s, restore, geoip, browsers_file: BROWSERS_FILE, title: domain, output: &tmp_s },
     );
     let _ = std::fs::remove_file(&tmp);
-    if let Err(e) = run_goaccess(args, Stdio::null(), deadline).await {
+    if let Err(e) = run_goaccess("goaccess", args, Stdio::null(), deadline).await {
         let _ = std::fs::remove_file(&tmp);
         return Err((initialized, e));
     }
@@ -844,10 +853,11 @@ async fn compute(domain: &str, dir: &Path, deadline: Instant) -> Result<bool, (b
     Ok(initialized)
 }
 
-/// `nice -n 19 ionice -c 3 <program> <args>`: lowest CPU and idle I/O priority.
+/// `nice -n 19 ionice -c 3 -t <program> <args>`: lowest CPU and idle I/O
+/// priority (`-t`: still run when the I/O class cannot be set).
 fn low_priority(program: &str) -> tokio::process::Command {
     let mut c = safe_command("nice");
-    c.args(["-n", "19", "ionice", "-c", "3", program]);
+    c.args(["-n", "19", "ionice", "-c", "3", "-t", program]);
     c.kill_on_drop(true);
     c
 }
@@ -860,9 +870,10 @@ fn timed_out() -> String {
     format!("GoAccess was stopped after {} minutes", RUN_TIMEOUT.as_secs() / 60)
 }
 
-/// One GoAccess run; `Err` carries its exit status and (truncated) stderr.
-async fn run_goaccess(args: Vec<String>, stdin: Stdio, deadline: Instant) -> Result<(), String> {
-    let child = low_priority("goaccess")
+/// One GoAccess run (`program` is `goaccess`, or a stand-in in tests); `Err`
+/// carries its exit status and (truncated) stderr.
+async fn run_goaccess(program: &str, args: Vec<String>, stdin: Stdio, deadline: Instant) -> Result<(), String> {
+    let child = low_priority(program)
         .args(&args)
         .stdin(stdin)
         .stdout(Stdio::null())
@@ -884,7 +895,7 @@ async fn run_goaccess(args: Vec<String>, stdin: Stdio, deadline: Instant) -> Res
 }
 
 /// `zcat <gz...> | goaccess - ...` (oldest file first).
-async fn run_init(gz: &[String], args: Vec<String>, deadline: Instant) -> Result<(), String> {
+async fn run_init(gz: &[String], program: &str, args: Vec<String>, deadline: Instant) -> Result<(), String> {
     let mut zcat = low_priority("zcat")
         .arg("--")
         .args(gz)
@@ -899,7 +910,7 @@ async fn run_init(gz: &[String], args: Vec<String>, deadline: Instant) -> Result
         .ok_or("zcat has no output")?
         .try_into()
         .map_err(|e| format!("zcat output: {e}"))?;
-    run_goaccess(args, pipe, deadline).await?;
+    run_goaccess(program, args, pipe, deadline).await?;
     match tokio::time::timeout(remaining(deadline).max(Duration::from_secs(5)), zcat.wait()).await {
         Ok(Ok(s)) if s.success() => {}
         // A damaged archive is skipped by zcat; what could be read is counted.
@@ -1115,6 +1126,35 @@ mod tests {
         assert!(check_mmdb(1000, &tail).unwrap_err().contains("too small"));
         assert!(check_mmdb(300 * 1024 * 1024, &tail).unwrap_err().contains("too large"));
         assert!(check_mmdb(5 * 1024 * 1024, &[0u8; 4096]).unwrap_err().contains("not an mmdb"));
+    }
+
+    /// The `nice`/`ionice` chain, the zcat pipe in the given order, exit
+    /// statuses and the timeout, with `tee` and `sh` standing in for GoAccess.
+    #[tokio::test]
+    async fn process_plumbing() {
+        let d = tmp();
+        let mut gz = Vec::new();
+        for (name, body) in [("old.log", "line from .3\n"), ("new.log", "line from .2\n")] {
+            let p = d.join(name);
+            std::fs::write(&p, body).unwrap();
+            let st = safe_command("gzip").arg(&p).status().await.unwrap();
+            assert!(st.success());
+            gz.push(format!("{}.gz", p.display()));
+        }
+        let far = Instant::now() + Duration::from_secs(60);
+        let out = d.join("seen.txt");
+        run_init(&gz, "tee", vec![out.to_string_lossy().into_owned()], far).await.unwrap();
+        assert_eq!(std::fs::read_to_string(&out).unwrap(), "line from .3\nline from .2\n");
+
+        let e = run_goaccess("sh", vec!["-c".into(), "echo boom >&2; exit 3".into()], Stdio::null(), far)
+            .await
+            .unwrap_err();
+        assert_eq!(e, "GoAccess failed (exit 3): boom");
+        let e = run_goaccess("sleep", vec!["5".into()], Stdio::null(), Instant::now() + Duration::from_millis(200))
+            .await
+            .unwrap_err();
+        assert!(e.contains("stopped after"), "{e}");
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]
