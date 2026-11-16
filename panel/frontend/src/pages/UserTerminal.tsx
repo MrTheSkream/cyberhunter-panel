@@ -281,6 +281,7 @@ interface MeResponse {
   login: string | null;
   available: boolean;
   reason: string | null;
+  code?: string | null;
 }
 
 export default function UserTerminal() {
@@ -307,7 +308,7 @@ export default function UserTerminal() {
         setGate({ kind: "unavailable", reason: me.reason || "No Linux account is linked to your panel account" });
       } else if (!me.available) {
         setGate(
-          isMfaRequired(me.reason, me.reason)
+          isMfaRequired(me.code, me.reason)
             ? { kind: "mfa" }
             : { kind: "unavailable", reason: me.reason || "The user terminal is not available" },
         );
@@ -876,7 +877,12 @@ function TerminalView({ login, onMfaRequired }: { login: string; onMfaRequired: 
         >
           A+
         </button>
-        <button onClick={() => reconnectRef.current()} className={barButton} title="Reattach now">
+        <button
+          onPointerDown={keepFocus}
+          onClick={() => { reconnectRef.current(); focusTerm(); }}
+          className={barButton}
+          title="Reattach now"
+        >
           Reconnect
         </button>
         <button onClick={() => navigate("/")} className={barButton} title="Back to the panel. The session keeps running.">
@@ -907,7 +913,10 @@ function TerminalView({ login, onMfaRequired }: { login: string; onMfaRequired: 
             )}
           </div>
         )}
-        <div ref={hostRef} className="absolute inset-0 px-1 pt-1" />
+        {/* Padding on a wrapper: FitAddon measures the host's own box. */}
+        <div className="absolute inset-0 px-1 pt-1">
+          <div ref={hostRef} className="w-full h-full" />
+        </div>
       </div>
 
       {/* Mobile key bar */}

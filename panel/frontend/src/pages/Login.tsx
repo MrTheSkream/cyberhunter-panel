@@ -28,7 +28,9 @@ function PostLoginRedirect({ to }: { to: string }) {
   const navigate = useNavigate();
   useEffect(() => {
     let cancelled = false;
-    void refreshUserTerminalLink().finally(() => {
+    // Bounded: a slow answer must never hold anyone on the sign-in page.
+    const timeout = new Promise<void>((resolve) => window.setTimeout(resolve, 1500));
+    void Promise.race([refreshUserTerminalLink(), timeout]).finally(() => {
       if (!cancelled) navigate(to, { replace: true });
     });
     return () => {

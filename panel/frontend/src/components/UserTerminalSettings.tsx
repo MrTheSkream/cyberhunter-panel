@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { api, ApiError } from "../api";
+import { refreshUserTerminalLink } from "../data/navItems";
 
 // Settings card for the user terminal: which Linux user each admin account
 // opens at /terminal/me. One row per admin account.
@@ -206,6 +208,8 @@ function AccountRow({ account, onChanged }: { account: AdminAccount; onChanged: 
     }
     setProofFor(null);
     setCheck(null);
+    // The "My session" menu row follows the link of the signed-in account.
+    void refreshUserTerminalLink();
     await onChanged();
   };
 
@@ -387,7 +391,7 @@ function ProofDialog({
     }
   };
 
-  return (
+  return createPortal(
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4"
       role="dialog"
@@ -399,7 +403,9 @@ function ProofDialog({
         onSubmit={(e) => { e.preventDefault(); void go(); }}
       >
         <h4 className="text-sm font-medium text-dark-100 break-all">{title}</h4>
-        <p className="text-xs text-dark-300">Confirm with your password or a TOTP code.</p>
+        <p className="text-xs text-dark-300">
+          Confirm with your password or a TOTP code. An account with neither can submit empty if it signed in recently.
+        </p>
         <input
           type="password"
           autoComplete="current-password"
@@ -442,13 +448,14 @@ function ProofDialog({
           </button>
           <button
             type="submit"
-            disabled={busy || (password === "" && code === "")}
+            disabled={busy}
             className="px-4 py-2 bg-rust-500 text-white rounded-lg text-sm font-medium hover:bg-rust-600 disabled:opacity-50"
           >
             {busy ? "Working..." : confirmLabel}
           </button>
         </div>
       </form>
-    </div>
+    </div>,
+    document.body,
   );
 }

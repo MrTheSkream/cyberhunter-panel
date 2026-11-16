@@ -165,7 +165,7 @@ export default function PanicReport({
 /** The user terminal line of the report: how many were stopped, or that it is unknown. */
 function UserTerminalsLine({ killed }: { killed: number | null | undefined }) {
   if (killed === undefined) return null;
-  if (killed === null) {
+  if (typeof killed !== "number") {
     return (
       <p className="text-xs text-warn-400 font-mono">
         User terminals: the agent did not confirm they were stopped. Check the server by hand.
