@@ -166,7 +166,7 @@ CREATE TABLE IF NOT EXISTS site_web_stats (
 ### B-3 Routes par site
 Droits : ceux de la fiche du site (admin, revendeur du propriétaire, propriétaire). Sans droit : **404**,
 comme un site inexistant.
-- **`GET /api/sites/{id}/stats`** →
+- **`GET /api/sites/{id}/stats/state`** (la route `GET /api/sites/{id}/stats` existe déjà pour « Recent traffic ») →
   `{ "installed": bool, "updated_at": ts|null, "error": str|null, "running": bool }`. `installed` vient de
   A-1 (mis en cache 60 s par serveur) ; `updated_at` et `error` de `site_web_stats`.
 - **`POST /api/sites/{id}/stats/refresh`** : A-5 synchrone pour ce site, met à jour `site_web_stats`,
