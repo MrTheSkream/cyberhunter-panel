@@ -628,6 +628,117 @@ pub async fn reconcile_site_access() {
     }
 }
 
+/// The line every panel site vhost writes its access log with (feature 7, A-8).
+/// Never changed: other code searches for it as an anchor.
+pub fn site_access_log_line(domain: &str) -> String {
+    format!("access_log /var/log/nginx/{domain}.access.log;")
+}
+
+/// Feature 7 (A-8): drop the `access_log off;` lines of a site vhost so static
+/// files land in the site's log too. Pure, tested.
+///
+/// A vhost qualifies only when it carries `domain`'s own access line; the
+/// lines removed are exactly those whose content, whitespace excluded, is
+/// `access_log off;`. Candidacy and removal use that same test, and `None`
+/// means nothing was dropped (idempotent). Every other byte is kept,
+/// line endings and the final newline included.
+pub fn strip_access_log_off(body: &str, domain: &str) -> Option<String> {
+    let anchor = site_access_log_line(domain);
+    if !body.lines().any(|l| l.trim() == anchor) {
+        return None;
+    }
+    let mut dropped = false;
+    let mut out = String::with_capacity(body.len());
+    for line in body.split_inclusive('\n') {
+        if line.trim() == "access_log off;" {
+            dropped = true;
+        } else {
+            out.push_str(line);
+        }
+    }
+    dropped.then_some(out)
+}
+
+/// Feature 7 (A-8): retrofit [`strip_access_log_off`] onto the site vhosts
+/// already on disk, so static files are logged (and counted in the web
+/// statistics) without waiting for a re-render.
+///
+/// Same candidate filter as [`retrofit_static_denies`] (`*.conf` of the live
+/// sites directory, never `dockpanel-panel.conf`), plus: a regular file (a
+/// symlink is not a vhost the panel wrote), named after a valid domain, that
+/// carries that domain's access line. Declines to run when `nginx -t` already
+/// fails; after the edit, `nginx -t` passes and nginx is reloaded once, or
+/// every file is put back as it was. Idempotent.
+pub async fn reconcile_static_access_logs() {
+    let dir = std::path::Path::new(sites_dir());
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+
+    let mut candidates: Vec<(std::path::PathBuf, String, String)> = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("conf") {
+            continue;
+        }
+        if path.file_name().and_then(|n| n.to_str()) == Some("dockpanel-panel.conf") {
+            continue;
+        }
+        if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
+            continue;
+        }
+        let Some(domain) = path.file_stem().and_then(|s| s.to_str()) else { continue };
+        if !crate::routes::is_valid_domain(domain) {
+            continue;
+        }
+        let Ok(body) = std::fs::read_to_string(&path) else { continue };
+        let Some(patched) = strip_access_log_off(&body, domain) else { continue };
+        candidates.push((path, body, patched));
+    }
+    if candidates.is_empty() {
+        return;
+    }
+
+    match test_config().await {
+        Ok(out) if out.success => {}
+        _ => {
+            tracing::warn!(
+                "Skipping the static-file access log update on {} vhost(s): nginx -t already fails",
+                candidates.len()
+            );
+            return;
+        }
+    }
+
+    let mut written: Vec<(std::path::PathBuf, String)> = Vec::new();
+    for (path, previous, patched) in &candidates {
+        let tmp = path.with_extension("conf.accesslog");
+        if std::fs::write(&tmp, patched).and_then(|_| std::fs::rename(&tmp, path)).is_ok() {
+            written.push((path.clone(), previous.clone()));
+        } else {
+            std::fs::remove_file(&tmp).ok();
+            tracing::warn!("Could not update the access log lines of {}", path.display());
+        }
+    }
+    if written.is_empty() {
+        return;
+    }
+
+    match test_config().await {
+        Ok(out) if out.success => {
+            tracing::info!("Static files are now logged on {} vhost(s)", written.len());
+            reload().await.ok();
+        }
+        _ => {
+            for (path, previous) in &written {
+                restore_or_remove(&path.to_string_lossy(), Some(previous));
+            }
+            tracing::error!(
+                "nginx -t rejected the static-file access log update: all {} file(s) reverted",
+                written.len()
+            );
+        }
+    }
+}
+
 /// Detect the server's primary (non-loopback, non-docker) interface IP for nginx listen directives.
 /// Returns empty string if detection fails (templates fall back to wildcard listen).
 pub fn detect_bind_ip() -> String {
@@ -2057,6 +2168,47 @@ php_admin_value[open_basedir] = /var/www/example.com/:/tmp/:/usr/share/php/
             })));
         }
         out
+    }
+
+    // ── feature 7 (A-8): static files are logged ────────────────────────
+
+    #[test]
+    fn templates_render_without_access_log_off() {
+        for raw in [include_str!("../templates/nginx/http.conf"), include_str!("../templates/nginx/https.conf")] {
+            assert!(!raw.contains("access_log off"));
+        }
+        let t = init_templates();
+        for ssl in [false, true] {
+            let mut configs = every_branch(ssl);
+            for preset in ["drupal", "joomla", "symfony", "codeigniter"] {
+                configs.push((preset.into(), with(php_site(ssl, None), |c| c.php_preset = Some(preset.into()))));
+            }
+            for (name, c) in configs {
+                let out = render_site_config(&t, "example.com", &c).unwrap();
+                assert!(!out.contains("access_log off"), "ssl={ssl} {name}");
+                assert!(out.contains(&site_access_log_line("example.com")), "ssl={ssl} {name}");
+            }
+        }
+    }
+
+    #[test]
+    fn strip_access_log_off_drops_only_those_lines() {
+        let vhost = "server {\n    listen 80;\n    location ~* \\.(js|css)$ {\n        expires 30d;\n        access_log off;\n    }\n    location = /xmlrpc.php {\n        deny all;\n\taccess_log   off;  \n        log_not_found off;\n    }\n    location /x {\n        access_log off; # keep: has a comment\n    }\n    access_log /var/log/nginx/a.tld.access.log;\n    error_log /var/log/nginx/a.tld.error.log;\n}\n";
+        let out = strip_access_log_off(vhost, "a.tld").unwrap();
+        assert_eq!(
+            out,
+            "server {\n    listen 80;\n    location ~* \\.(js|css)$ {\n        expires 30d;\n    }\n    location = /xmlrpc.php {\n        deny all;\n\taccess_log   off;  \n        log_not_found off;\n    }\n    location /x {\n        access_log off; # keep: has a comment\n    }\n    access_log /var/log/nginx/a.tld.access.log;\n    error_log /var/log/nginx/a.tld.error.log;\n}\n"
+        );
+        // Idempotent.
+        assert_eq!(strip_access_log_off(&out, "a.tld"), None);
+        // CRLF and a missing final newline survive.
+        let crlf = "access_log /var/log/nginx/a.tld.access.log;\r\n    access_log off;\r\nlisten 80;";
+        assert_eq!(strip_access_log_off(crlf, "a.tld").unwrap(), "access_log /var/log/nginx/a.tld.access.log;\r\nlisten 80;");
+        // Not this site's vhost (or no access line): untouched.
+        assert_eq!(strip_access_log_off(vhost, "b.tld"), None);
+        assert_eq!(strip_access_log_off("location /ws {\n    access_log off;\n}\n", "a.tld"), None);
+        // A vhost without `access_log off;` is left alone.
+        assert_eq!(strip_access_log_off("access_log /var/log/nginx/a.tld.access.log;\n", "a.tld"), None);
     }
 
     use crate::services::site_access::SiteIncludes;

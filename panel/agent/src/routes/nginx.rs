@@ -881,6 +881,9 @@ async fn delete_site(
         std::fs::remove_file(&log_path).ok();
     }
 
+    // Web statistics (feature 7, A-9), best effort.
+    services::web_stats::remove_site_stats(&domain);
+
     // Redirects and password protection. The templates include these files
     // whenever they exist, so leaving them would hand the old site's redirects
     // and passwords to the next site created on this domain. The vhost that
@@ -1303,6 +1306,9 @@ async fn rename_site(
             std::fs::rename(&old_log, &new_log).ok();
         }
     }
+
+    // Web statistics directory (feature 7, A-9), when the new name has none.
+    services::web_stats::rename_site_stats(&old_domain, new_domain);
 
     // 7. Rename PHP-FPM pool configs
     let old_pool = old_domain.replace('.', "_");

@@ -102,6 +102,10 @@ async fn main() {
     // that pool inside its own site tree). Idempotent, managed pools only.
     services::php_pool::reconcile_open_basedir().await;
 
+    // Web statistics (08, A-8): vhosts written before the templates dropped
+    // `access_log off;` get static files logged too. Idempotent, one reload.
+    services::nginx::reconcile_static_access_logs().await;
+
     // Load auth token: prefer AGENT_TOKEN env var, then file, then generate new
     let token_path = format!("{CONFIG_DIR}/agent.token");
     let token = if let Ok(env_token) = std::env::var("AGENT_TOKEN") {
@@ -239,6 +243,7 @@ async fn main() {
         .merge(routes::antivirus::router()) // ClamAV (06)
         .merge(routes::ftp::router()) // FTP server (07)
         .merge(routes::disk_usage::router()) // disk usage (07)
+        .merge(routes::web_stats::router()) // web statistics (08)
         .route("/auth/rotate-token", axum::routing::post(routes::rotate_token))
         .layer(middleware::from_fn_with_state(state.clone(), routes::auth_middleware))
         .layer(middleware::from_fn(routes::audit_middleware))
