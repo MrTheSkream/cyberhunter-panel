@@ -15,7 +15,7 @@ use argon2::{
 };
 use totp_rs::{Algorithm, TOTP, Secret};
 
-use crate::auth::{AuthUser, Claims};
+use crate::auth::{AuthMethod, AuthUser, Claims};
 use crate::error::{internal_error, err, ApiError};
 
 /// A real Argon2 PHC string verified against on the paths where there is no
@@ -345,7 +345,9 @@ pub async fn login(
         ));
     }
 
-    let (_token, cookie, jti) = issue_session(&state, &user, &headers)?;
+    // No TOTP on this account (the branch above returned otherwise): the
+    // password is the only factor this session proves.
+    let (_token, cookie, jti) = issue_session(&state, &user, &headers, AuthMethod::Password)?;
 
     // Record session
     let user_agent = headers
@@ -496,8 +498,9 @@ fn issue_session(
     state: &AppState,
     user: &User,
     headers: &HeaderMap,
+    method: AuthMethod,
 ) -> Result<(String, String, String), ApiError> {
-    issue_session_pub(state, user, headers)
+    issue_session_pub(state, user, headers, method)
 }
 
 /// Enforce `allowed_panel_ips` for a request that is about to establish a session.
@@ -537,20 +540,11 @@ pub fn issue_session_pub(
     state: &AppState,
     user: &User,
     headers: &HeaderMap,
+    method: AuthMethod,
 ) -> Result<(String, String, String), ApiError> {
     let now = chrono::Utc::now();
     let jti = uuid::Uuid::new_v4().to_string();
-    let claims = Claims {
-        sub: user.id,
-        email: user.email.clone(),
-        role: user.role.clone(),
-        iat: now.timestamp() as usize,
-        exp: (now + chrono::Duration::hours(2)).timestamp() as usize,
-        jti: Some(jti.clone()),
-        key_id: None,
-        imp_by: None,
-        imp_email: None,
-    };
+    let claims = session_claims(user, method, now.timestamp(), jti.clone());
 
     let token = encode(
         &Header::default(),
@@ -564,6 +558,27 @@ pub fn issue_session_pub(
         "token={token}; Path=/; HttpOnly{secure_flag}; SameSite=Lax; Max-Age=7200"
     );
     Ok((token, cookie, jti))
+}
+
+/// The claims of an ordinary (non-impersonation) browser session, 2 hours
+/// long, stamped with how it was authenticated (`amr`, feature 9).
+///
+/// One builder for every door that mints a session (`issue_session_pub` for
+/// password, 2FA and passkey; `oauth.rs` for an identity provider), so the
+/// `amr` each door stamps is decided in one visible place and unit-tested.
+pub fn session_claims(user: &User, method: AuthMethod, now: i64, jti: String) -> Claims {
+    Claims {
+        sub: user.id,
+        email: user.email.clone(),
+        role: user.role.clone(),
+        iat: now as usize,
+        exp: (now + 7200) as usize,
+        jti: Some(jti),
+        key_id: None,
+        imp_by: None,
+        imp_email: None,
+        amr: Some(method.as_str().to_string()),
+    }
 }
 
 fn record_login_attempt(
@@ -1608,7 +1623,8 @@ pub async fn twofa_verify(
     // Successful verification - clear rate limit
     twofa_rate_limit_clear(&state, user_id);
 
-    let (_token, cookie, jti) = issue_session(&state, &user, &headers)?;
+    // The second factor was just proven (TOTP or a recovery code).
+    let (_token, cookie, jti) = issue_session(&state, &user, &headers, AuthMethod::Mfa)?;
 
     // Record session
     let ip = headers

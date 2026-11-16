@@ -199,6 +199,8 @@ pub async fn start(
         key_id: None,
         imp_by: Some(claims.sub),
         imp_email: Some(claims.email.clone()),
+        // An impersonation session never proves the target's own factors.
+        amr: None,
     };
     let token = encode(
         &Header::default(),
@@ -381,6 +383,7 @@ mod tests {
             key_id: None,
             imp_by: None,
             imp_email: None,
+            amr: None,
         }
     }
 
