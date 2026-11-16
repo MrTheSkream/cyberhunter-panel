@@ -285,6 +285,12 @@ fn legacy_short_open_tag_line(php_version: &str, pool: &PhpPool) -> Option<&'sta
     (is_legacy(php_version) && !explicit).then_some(LEGACY_SHORT_OPEN_TAG_LINE)
 }
 
+/// Group of the pool socket. nginx and Apache both run as `www-data` and must be
+/// able to connect; the pool's own `group` (an SFTP site's `sftpg<gid>`) has no
+/// web server in it, so a socket owned by that group answers EACCES as soon as
+/// php-fpm recreates it (first restart after the pool was written: 503).
+pub const WEB_SERVER_GROUP: &str = "www-data";
+
 /// Render the pool file. Pure: the caller validates first.
 ///
 /// EVERY pool gets `open_basedir`, whatever its user and the `isolation` flag:
@@ -306,7 +312,7 @@ pub fn render_php_pool(
          group = {group}\n\
          listen = /run/php/php{php_version}-fpm-{name}.sock\n\
          listen.owner = {user}\n\
-         listen.group = {group}\n\
+         listen.group = {WEB_SERVER_GROUP}\n\
          listen.mode = 0660\n\
          \n\
          pm = {pm}\n\
@@ -385,21 +391,10 @@ pub fn render_php_pool(
 /// `php<ver>-fpm-<stem>.sock`, the stem must turn back into a valid domain), or
 /// it is the distro `www.conf`.
 pub fn pool_text_with_open_basedir(stem: &str, php_version: &str, text: &str) -> Option<String> {
-    if stem == "www" || stem.is_empty() {
+    if !is_managed_pool(stem, php_version, text) {
         return None;
     }
     let domain = stem.replace('_', ".");
-    if !crate::routes::is_valid_domain(&domain) || pool_name(&domain) != stem {
-        return None;
-    }
-    let first = text.lines().map(str::trim).find(|l| !l.is_empty() && !l.starts_with(';'))?;
-    if first != format!("[{stem}]") {
-        return None;
-    }
-    let socket = format!("listen = /run/php/php{php_version}-fpm-{stem}.sock");
-    if !text.lines().any(|l| l.trim() == socket) {
-        return None;
-    }
     let has_ob = text.lines().any(|l| {
         let t = l.trim();
         !t.starts_with(';') && t.contains("open_basedir")
@@ -418,6 +413,49 @@ pub fn pool_text_with_open_basedir(stem: &str, php_version: &str, text: &str) ->
     Some(out)
 }
 
+/// Pure: is this a pool file the panel wrote? The section name equals the file
+/// stem, the socket is this version's `php<ver>-fpm-<stem>.sock`, the stem turns
+/// back into a valid domain, and it is not the distro `www.conf`.
+pub fn is_managed_pool(stem: &str, php_version: &str, text: &str) -> bool {
+    if stem == "www" || stem.is_empty() {
+        return false;
+    }
+    let domain = stem.replace('_', ".");
+    if !crate::routes::is_valid_domain(&domain) || pool_name(&domain) != stem {
+        return false;
+    }
+    let Some(first) = text.lines().map(str::trim).find(|l| !l.is_empty() && !l.starts_with(';')) else {
+        return false;
+    };
+    if first != format!("[{stem}]") {
+        return false;
+    }
+    let socket = format!("listen = /run/php/php{php_version}-fpm-{stem}.sock");
+    text.lines().any(|l| l.trim() == socket)
+}
+
+/// Pure: `text` with its `listen.group` set to [`WEB_SERVER_GROUP`], or `None`
+/// when it already is. Pools written for SFTP sites before this fix carried the
+/// site's own group, which locks nginx/Apache out of the socket.
+pub fn pool_text_with_web_group(text: &str) -> Option<String> {
+    let want = format!("listen.group = {WEB_SERVER_GROUP}");
+    let mut changed = false;
+    let mut out = String::with_capacity(text.len());
+    for line in text.split_inclusive('\n') {
+        let t = line.trim();
+        let is_group = !t.starts_with(';')
+            && t.split('=').next().map(str::trim) == Some("listen.group");
+        if is_group && t != want {
+            out.push_str(&want);
+            out.push('\n');
+            changed = true;
+        } else {
+            out.push_str(line);
+        }
+    }
+    changed.then_some(out)
+}
+
 /// Startup reconciliation: pools written before every pool carried
 /// `open_basedir` get the default line added, then each affected php-fpm
 /// version is tested and reloaded once. Idempotent; unmanaged files and the
@@ -432,9 +470,14 @@ pub async fn reconcile_open_basedir() {
         .map(|e| e.file_name().to_string_lossy().to_string())
         .filter(|v| !v.is_empty() && v.chars().all(|c| c.is_ascii_digit() || c == '.'))
         .collect();
+    let web_gid = web_server_gid();
     for ver in versions {
         let dir = format!("/etc/php/{ver}/fpm/pool.d");
         let mut changed: Vec<(String, String)> = Vec::new(); // (path, previous text)
+        // A graceful reload keeps the sockets php-fpm already holds, so a
+        // socket still owned by an SFTP group needs a full restart to come
+        // back as www-data (also catches pools fixed by an earlier start).
+        let mut restart = false;
         for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
             let Some(stem) = name.strip_suffix(".conf") else { continue };
@@ -444,7 +487,19 @@ pub async fn reconcile_open_basedir() {
                 continue;
             }
             let Ok(text) = std::fs::read_to_string(&path) else { continue };
-            let Some(new_text) = pool_text_with_open_basedir(stem, &ver, &text) else { continue };
+            if !is_managed_pool(stem, &ver, &text) {
+                continue;
+            }
+            if let Some(gid) = web_gid {
+                use std::os::unix::fs::MetadataExt;
+                let sock = format!("/run/php/php{ver}-fpm-{stem}.sock");
+                if std::fs::symlink_metadata(&sock).is_ok_and(|m| m.gid() != gid) {
+                    restart = true;
+                }
+            }
+            let with_ob = pool_text_with_open_basedir(stem, &ver, &text);
+            let with_group = pool_text_with_web_group(with_ob.as_deref().unwrap_or(&text));
+            let Some(new_text) = with_group.or(with_ob) else { continue };
             let domain = stem.replace('_', ".");
             if !std::path::Path::new(&format!("/var/www/{domain}")).is_dir() {
                 tracing::warn!("open_basedir reconciliation: skipping {path}, /var/www/{domain} not found");
@@ -460,19 +515,37 @@ pub async fn reconcile_open_basedir() {
                 }
             }
         }
-        if changed.is_empty() {
+        if changed.is_empty() && !restart {
             continue;
         }
         if let Err(e) = test_fpm_config(&ver).await {
-            tracing::warn!("open_basedir reconciliation: php-fpm{ver} -t failed, reverting {} pool(s): {e}", changed.len());
+            tracing::warn!("pool reconciliation: php-fpm{ver} -t failed, reverting {} pool(s): {e}", changed.len());
             for (path, prev) in &changed {
                 let _ = std::fs::write(path, prev);
             }
             continue;
         }
-        tracing::info!("open_basedir added to {} PHP-FPM pool(s) of PHP {ver}", changed.len());
-        let _ = crate::services::nginx::reload_php_fpm(&ver).await;
+        if !changed.is_empty() {
+            tracing::info!("pool reconciliation: {} PHP-FPM pool(s) of PHP {ver} updated", changed.len());
+        }
+        if restart {
+            // Sockets are recreated with listen.group = www-data.
+            match fpm_systemctl(&ver, "restart").await {
+                Ok(()) => tracing::info!("pool reconciliation: php{ver}-fpm restarted to fix socket groups"),
+                Err(e) => tracing::warn!("pool reconciliation: {e}"),
+            }
+        } else {
+            let _ = crate::services::nginx::reload_php_fpm(&ver).await;
+        }
     }
+}
+
+/// gid of the web server group (`www-data`), `None` if it does not exist.
+fn web_server_gid() -> Option<u32> {
+    let cname = std::ffi::CString::new(WEB_SERVER_GROUP).ok()?;
+    // SAFETY: getgrnam returns NULL or a pointer to static storage, read at once.
+    let grp = unsafe { libc::getgrnam(cname.as_ptr()) };
+    if grp.is_null() { None } else { Some(unsafe { (*grp).gr_gid }) }
 }
 
 /// Serialises pool AND php.ini writes box-wide: `php-fpm -t` reads every
@@ -923,6 +996,26 @@ php_admin_flag[log_errors] = on
         assert_eq!(pool_text_with_open_basedir("other_com", "8.3", OLD_POOL), None, "section name differs from the file");
         assert_eq!(pool_text_with_open_basedir("bad name", "8.3", OLD_POOL), None);
         assert_eq!(pool_text_with_open_basedir("example_com", "8.3", ""), None);
+    }
+
+    #[test]
+    fn sftp_pool_sockets_belong_to_the_web_server_group() {
+        // An SFTP site's pool runs as the site user, but its socket must stay
+        // reachable by nginx/Apache (www-data).
+        let out = render_php_pool("example.com", "8.3", &a1(), "sftp30001", "sftpg30001");
+        assert!(out.contains("\nuser = sftp30001\ngroup = sftpg30001\n"));
+        assert!(out.contains("\nlisten.owner = sftp30001\nlisten.group = www-data\nlisten.mode = 0660\n"));
+
+        let old = OLD_POOL.replace("listen.group = www-data", "listen.group = sftpg30001");
+        let fixed = pool_text_with_web_group(&old).unwrap();
+        assert_eq!(fixed, OLD_POOL, "only the listen.group line changes");
+        assert_eq!(pool_text_with_web_group(OLD_POOL), None, "idempotent");
+        assert!(is_managed_pool("example_com", "8.3", &old));
+        assert!(!is_managed_pool("www", "8.3", "[www]\nlisten = /run/php/php8.3-fpm.sock\n"));
+        // The pool's own `group =` line is never rewritten.
+        assert!(fixed.contains("\ngroup = www-data\n") && old.contains("\ngroup = www-data\n"));
+        let commented = format!("{OLD_POOL};listen.group = sftpg1\n");
+        assert_eq!(pool_text_with_web_group(&commented), None, "comments are left alone");
     }
 
     #[test]

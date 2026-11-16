@@ -1255,7 +1255,7 @@ user = {user}
 group = {group}
 listen = /run/php/php{php_version}-fpm-{pool_name}.sock
 listen.owner = {user}
-listen.group = {group}
+listen.group = {web_group}
 listen.mode = 0660
 
 pm = dynamic
@@ -1272,6 +1272,7 @@ php_admin_value[max_execution_time] = 300
 {open_basedir}{short_tags}"#,
         start = std::cmp::min(2, max_workers),
         spare = std::cmp::min(3, max_workers),
+        web_group = crate::services::php_pool::WEB_SERVER_GROUP,
     )
 }
 
