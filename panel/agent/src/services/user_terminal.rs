@@ -950,22 +950,26 @@ async fn list_connection_units() -> Option<Vec<String>> {
     )
 }
 
+/// Mark the live connections (all, or those of `login`) as killed and return
+/// their `systemd-run` pids. Called before anything is signalled, so a handler
+/// that sees its pty die reports `cause=killed`.
+pub fn mark_killed(login: Option<&str>) -> Vec<i32> {
+    connections()
+        .iter_mut()
+        .filter(|c| login.is_none_or(|l| c.login == l))
+        .map(|c| {
+            c.killed = true;
+            c.pid
+        })
+        .collect()
+}
+
 /// Stop the connection units (all, or those of `login`) and, with
 /// `stop_sessions`, the tmux session of each prepared login (or of `login`).
 pub async fn kill(stop_sessions: bool, login: Option<&str>) -> KillResult {
     let login = login.filter(|l| is_valid_login(l));
     // Mark first, so each handler reports `killed` rather than `closed`.
-    let pids: Vec<i32> = {
-        let mut conns = connections();
-        conns
-            .iter_mut()
-            .filter(|c| login.is_none_or(|l| c.login == l))
-            .map(|c| {
-                c.killed = true;
-                c.pid
-            })
-            .collect()
-    };
+    let pids = mark_killed(login);
 
     let units: Vec<String> = list_connection_units()
         .await
@@ -1008,7 +1012,7 @@ pub async fn kill(stop_sessions: bool, login: Option<&str>) -> KillResult {
             .into_iter()
             .map(|l| {
                 tokio::spawn(async move {
-                    let r = user_systemctl(&l, &["stop", TMUX_UNIT_NAME], Duration::from_secs(8)).await;
+                    let r = user_systemctl(&l, &["stop", TMUX_UNIT_NAME], Duration::from_secs(6)).await;
                     (l, r)
                 })
             })
@@ -1177,7 +1181,12 @@ pub async fn prepare(login: &str, uid: u32, autostart: Option<&str>) -> Result<V
     let manager = format!("user@{uid}.service");
     let mut up = false;
     for _ in 0..20 {
-        if unit_active(&manager).await {
+        // Exactly `active`: while `activating`, the user bus may not exist yet.
+        let state = system_systemctl(&["is-active", &manager], Duration::from_secs(5))
+            .await
+            .map(|o| stdout_trim(&o))
+            .unwrap_or_default();
+        if state == "active" {
             up = true;
             break;
         }

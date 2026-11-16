@@ -210,6 +210,10 @@ async fn kill_terminals() -> Json<serde_json::Value> {
         reg.drain(..).collect()
     };
 
+    // User terminals (09) are in that registry too, as their `systemd-run`
+    // client. Mark them first, so their handlers report `cause=killed`.
+    let user_marked = crate::services::user_terminal::mark_killed(None).len() as u32;
+
     let mut killed = 0u32;
     let mut root_killed = 0u32;
     for (pid, is_root) in &pids {
@@ -251,7 +255,7 @@ async fn kill_terminals() -> Json<serde_json::Value> {
         "killed": killed,
         "registered": pids.len(),
         "server_terminals_killed": root_killed,
-        "user_terminals_killed": user.connections_killed,
+        "user_terminals_killed": user.connections_killed.max(user_marked),
         "user_terminal_sessions_stopped": user.sessions_stopped,
     }))
 }

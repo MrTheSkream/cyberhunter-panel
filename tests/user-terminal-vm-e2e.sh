@@ -132,7 +132,14 @@ def ssh(cmd, timeout=60):
 def user_ticket(cookie):
     return http("GET", "/api/terminal/user/token", cookie=cookie)
 
+LAST_DIAL = [0.0]
+
 async def dial(token, origin=PANEL, cols=120, rows=40):
+    # The agent allows one terminal connection per clock second (429 otherwise).
+    wait = LAST_DIAL[0] + 1.1 - time.monotonic()
+    if wait > 0:
+        await asyncio.sleep(wait)
+    LAST_DIAL[0] = time.monotonic()
     url = f"{WS_BASE}/agent/terminal/ws?token={urllib.parse.quote(token)}&cols={cols}&rows={rows}"
     hdrs = {"Origin": origin} if origin else {}
     try:
