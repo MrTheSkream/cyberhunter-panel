@@ -754,6 +754,8 @@ function TerminalView({ login, onMfaRequired }: { login: string; onMfaRequired: 
     reconnectRef.current = () => {
       attempt = 0;
       handshakeFailures = 0;
+      // The old socket's onclose is ignored: forget its open time here.
+      openedAt = 0;
       clearRetry();
       const old = ws;
       ws = null;
