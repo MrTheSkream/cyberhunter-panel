@@ -87,7 +87,14 @@ async fn set_users(body: Bytes) -> Reply {
         Err(r) => return r,
     };
     match ftp::set_users(&b.users).await {
-        Ok((written, kicked)) => ok(serde_json::json!({ "ok": true, "written": written, "kicked": kicked })),
+        Ok(o) => {
+            let skipped: Vec<serde_json::Value> = o
+                .skipped
+                .iter()
+                .map(|(user, reason)| serde_json::json!({ "user": user, "reason": reason }))
+                .collect();
+            ok(serde_json::json!({ "ok": true, "written": o.written, "kicked": o.kicked, "skipped": skipped }))
+        }
         Err(e) => fail(e),
     }
 }

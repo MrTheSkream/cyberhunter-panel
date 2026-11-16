@@ -26,8 +26,9 @@ const STARTUP_DELAY: Duration = Duration::from_secs(90);
 const EVERY: Duration = Duration::from_secs(6 * 60 * 60);
 /// A-5 accepts at most this many domains per call.
 pub const MAX_DOMAINS_PER_CALL: usize = 500;
-/// A-5 gives itself 10 minutes for a whole call and serializes calls per agent.
-pub const MEASURE_TIMEOUT_SECS: u64 = 11 * 60;
+/// A-5 gives itself 10 minutes for a whole call and serializes calls per agent,
+/// so a call queued behind a running one may need up to 20 minutes.
+pub const MEASURE_TIMEOUT_SECS: u64 = 21 * 60;
 
 const BYTES_PER_MB: i64 = 1_048_576;
 
@@ -433,7 +434,9 @@ pub async fn run(pool: PgPool, agents: AgentRegistry, mut shutdown_rx: tokio::sy
 async fn cycle(pool: &PgPool, agents: &AgentRegistry) {
     let sites: Vec<(Uuid, Option<Uuid>, String)> = match sqlx::query_as(
         "SELECT s.id, s.server_id, s.domain FROM sites s JOIN servers sv ON sv.id = s.server_id \
-         WHERE sv.status = 'online' ORDER BY s.domain",
+         LEFT JOIN site_disk_usage d ON d.site_id = s.id \
+         WHERE sv.status = 'online' \
+         ORDER BY d.measured_at ASC NULLS FIRST, s.domain",
     )
     .fetch_all(pool)
     .await

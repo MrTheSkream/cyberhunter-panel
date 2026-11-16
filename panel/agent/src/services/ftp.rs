@@ -377,10 +377,15 @@ async fn sftp_group_members() -> Vec<String> {
     }
 }
 
-/// Contract A-4 checks on every name; the first failure is a 400 naming it.
-pub async fn validate_users(users: &[String]) -> Result<(), FtpErr> {
+/// Contract A-4 checks on every name. A name that fails is left out of the
+/// whitelist and reported (`<name> cannot use FTP: <reason>`) instead of
+/// failing the whole call: one stale account must not block FTP for every
+/// other site of the server.
+pub async fn partition_users(users: &[String]) -> (Vec<String>, Vec<(String, String)>) {
+    let mut valid = Vec::new();
+    let mut rejected = Vec::new();
     if users.is_empty() {
-        return Ok(());
+        return (valid, rejected);
     }
     let members = sftp_group_members().await;
     for name in users {
@@ -388,11 +393,15 @@ pub async fn validate_users(users: &[String]) -> Result<(), FtpErr> {
         let marker = entry
             .as_ref()
             .and_then(|e| std::fs::read_to_string(sftp_accounts::owner_marker_path(e.uid)).ok());
-        if let Err(why) = check_user(name, entry.as_ref(), &members, marker.as_deref()) {
-            return Err(FtpErr::bad(format!("{name} cannot use FTP: {why}")));
+        match check_user(name, entry.as_ref(), &members, marker.as_deref()) {
+            Ok(()) => valid.push(name.clone()),
+            Err(why) => {
+                tracing::warn!("FTP whitelist: {name} left out ({why})");
+                rejected.push((name.clone(), format!("{name} cannot use FTP: {why}")));
+            }
         }
     }
-    Ok(())
+    (valid, rejected)
 }
 
 // ── File writes ─────────────────────────────────────────────────────────────
@@ -574,9 +583,14 @@ pub async fn install(users: &[String], pasv_address: Option<&str>) -> Result<Vec
     };
     let pasv = parse_pasv_address(pasv_address).map_err(FtpErr::bad)?;
     let users = normalize_users(users);
-    // Every name is checked before anything is installed.
-    validate_users(&users).await?;
+    // Every name is checked before anything is installed; invalid ones are
+    // left out of the whitelist and reported as warnings.
+    let (users, rejected) = partition_users(&users).await;
     match tokio::time::timeout(INSTALL_TIMEOUT, run_install(&users, pasv)).await {
+        Ok(Ok(mut warnings)) => {
+            warnings.extend(rejected.into_iter().map(|(_, why)| why));
+            Ok(warnings)
+        }
         Ok(r) => r,
         Err(_) => Err(FtpErr::internal("The FTP server installation timed out (5 minutes)")),
     }
@@ -712,19 +726,26 @@ pub async fn uninstall() -> Result<(), FtpErr> {
 
 // ── A-4 whitelist ───────────────────────────────────────────────────────────
 
-/// A-4. Returns how many names were written and who was disconnected.
-pub async fn set_users(users: &[String]) -> Result<(usize, Vec<String>), FtpErr> {
+/// A-4 result: names written, names disconnected, names left out with why.
+pub struct UsersOutcome {
+    pub written: usize,
+    pub kicked: Vec<String>,
+    pub skipped: Vec<(String, String)>,
+}
+
+/// A-4. Writes the valid names; invalid ones are left out and reported.
+pub async fn set_users(users: &[String]) -> Result<UsersOutcome, FtpErr> {
     if !is_installed().await {
         return Err(FtpErr::precondition(NOT_INSTALLED_MSG));
     }
     let users = normalize_users(users);
-    validate_users(&users).await?;
+    let (users, skipped) = partition_users(&users).await;
     let old = write_whitelist(&users).await.map_err(FtpErr::internal)?;
     let kicked = removed_users(&old, &users);
     for name in &kicked {
         kick(name).await;
     }
-    Ok((users.len(), kicked))
+    Ok(UsersOutcome { written: users.len(), kicked, skipped })
 }
 
 #[cfg(test)]

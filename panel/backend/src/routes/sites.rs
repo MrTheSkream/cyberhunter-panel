@@ -4642,8 +4642,25 @@ pub async fn set_ftp(
         .await
         .map_err(|e| internal_error("set ftp", e))?;
 
+    let username = sftp_account_name(&site);
     match sync_ftp_users(&state.db, &agent, server_id).await {
-        Ok(_) => {}
+        Ok(v) => {
+            // The agent leaves out names it cannot validate instead of failing
+            // the whole list; if the one just ticked is among them, say why.
+            let rejected = v["skipped"].as_array().and_then(|a| {
+                a.iter()
+                    .find(|s| s["user"].as_str() == Some(username.as_str()))
+                    .map(|s| s["reason"].as_str().unwrap_or("This account cannot use FTP").to_string())
+            });
+            if let (true, Some(reason)) = (body.enabled, rejected) {
+                let _ = sqlx::query("UPDATE sites SET ftp_enabled = $1 WHERE id = $2")
+                    .bind(site.ftp_enabled)
+                    .bind(id)
+                    .execute(&state.db)
+                    .await;
+                return Err(err(StatusCode::BAD_REQUEST, &reason));
+            }
+        }
         // Unticking with no FTP server: there is nothing to cut, the box just goes.
         Err(FtpSyncError::NotInstalled) if !body.enabled => {}
         Err(e) => {
@@ -4657,7 +4674,6 @@ pub async fn set_ftp(
     }
 
     let action = if body.enabled { "site.ftp.enabled" } else { "site.ftp.disabled" };
-    let username = sftp_account_name(&site);
     let ip = crate::routes::client_ip(&headers);
     tracing::info!("FTP {} for {}", if body.enabled { "enabled" } else { "disabled" }, site.domain);
     activity::log_activity(
