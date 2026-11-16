@@ -106,6 +106,10 @@ async fn install_status() -> Result<Json<serde_json::Value>, ApiErr> {
     let vsftpd_installed = vsftpd_supported && crate::services::ftp::is_installed().await;
     let vsftpd_running = vsftpd_installed && crate::services::ftp::is_active().await;
 
+    // Web statistics (feature 7): same support rule (Debian/Ubuntu only).
+    let goaccess_supported = crate::services::web_stats::unsupported_reason().await.is_none();
+    let goaccess_installed = goaccess_supported && crate::services::web_stats::is_installed().await;
+
     let nodejs_installed = which("node").await;
     let composer_installed = which("composer").await;
 
@@ -142,6 +146,10 @@ async fn install_status() -> Result<Json<serde_json::Value>, ApiErr> {
             "installed": vsftpd_installed,
             "running": vsftpd_running,
             "supported": vsftpd_supported,
+        },
+        "goaccess": {
+            "installed": goaccess_installed,
+            "supported": goaccess_supported,
         },
         "nodejs": { "installed": nodejs_installed },
         "composer": { "installed": composer_installed },

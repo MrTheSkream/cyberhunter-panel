@@ -64,3 +64,6 @@ pub mod ftp;
 pub mod panel_tls;
 pub mod site_owner;
 // --- end ftp + disk quotas (07) ---
+// --- web statistics (08) ---
+pub mod web_stats;
+// --- end web statistics (08) ---
