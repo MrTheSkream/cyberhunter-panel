@@ -77,6 +77,34 @@ fn name_refused(e: &AgentError) -> bool {
     }
 }
 
+/// `details.ftp` of an sftp item when vsftpd is missing on the target server: the
+/// box is ticked and a manual action asks for the FTP server (B-5).
+pub const FTP_SERVER_MISSING: &str = "ftp_server_missing";
+
+/// Tick FTP for the imported account and resync the server's whitelist. Returns
+/// the `details.ftp` value: `enabled`, [`FTP_SERVER_MISSING`] or `not_synced`.
+/// The box stays ticked in every case: a later install or switch writes it.
+async fn enable_ftp(ctx: &ImportCtx, site_id: Uuid, warnings: &mut Vec<String>) -> &'static str {
+    use crate::routes::ftp::{FtpSyncError, sync_ftp_users};
+    if let Err(e) = sqlx::query("UPDATE sites SET ftp_enabled = true, updated_at = NOW() WHERE id = $1")
+        .bind(site_id)
+        .execute(&ctx.db)
+        .await
+    {
+        warnings.push(format!("FTP not enabled: database error: {e}"));
+        return "not_synced";
+    }
+    match sync_ftp_users(&ctx.db, &ctx.agent, ctx.server_id).await {
+        Ok(_) => "enabled",
+        // 404: an agent without the FTP routes has no FTP server either.
+        Err(FtpSyncError::NotInstalled) | Err(FtpSyncError::Agent(AgentError::Status(404, _))) => FTP_SERVER_MISSING,
+        Err(e) => {
+            warnings.push(format!("FTP enabled but the server's FTP account list was not updated: {e}"));
+            "not_synced"
+        }
+    }
+}
+
 pub async fn import_sftp(ctx: &ImportCtx, site_id: Uuid, domain: &str) -> ItemOutcome {
     let site: crate::models::Site = match sqlx::query_as("SELECT * FROM sites WHERE id = $1")
         .bind(site_id)
@@ -87,9 +115,6 @@ pub async fn import_sftp(ctx: &ImportCtx, site_id: Uuid, domain: &str) -> ItemOu
         Ok(None) => return ItemOutcome::failed("site not found"),
         Err(e) => return ItemOutcome::failed(format!("database error: {e}")),
     };
-    if site.sftp_enabled {
-        return ItemOutcome::new(ItemStatus::Skipped, "SFTP already enabled for this site");
-    }
     if site.domain != domain {
         return ItemOutcome::failed("site and domain do not match");
     }
@@ -106,6 +131,25 @@ pub async fn import_sftp(ctx: &ImportCtx, site_id: Uuid, domain: &str) -> ItemOu
         .as_ref()
         .map(|i| ftp_user_from_inventory(i, domain))
         .unwrap_or((None, 0));
+    if site.sftp_enabled {
+        // A re-import of a site whose account already exists: the account is
+        // left alone, but FTP is still ticked when HestiaCP had an FTP user.
+        if hestia_user.is_some() && !site.ftp_enabled {
+            let mut warnings = Vec::new();
+            let ftp = enable_ftp(ctx, site_id, &mut warnings).await;
+            // Finished (done / warning), not skipped: a skipped row runs again at
+            // every resume, which would re-tick a box the admin unticked and drop
+            // the `ftp` detail the manual action reads.
+            let message = "SFTP already enabled for this site, FTP enabled".to_string();
+            let details = json!({ "sftp_username": crate::routes::sites::sftp_account_name(&site), "ftp": ftp });
+            return if warnings.is_empty() {
+                outcome(ItemStatus::Done, message, details)
+            } else {
+                outcome(ItemStatus::Warning, format!("{message}; {}", warnings.join("; ")), details)
+            };
+        }
+        return ItemOutcome::new(ItemStatus::Skipped, "SFTP already enabled for this site");
+    }
     let Some(hestia_user) = hestia_user else {
         return ItemOutcome::new(ItemStatus::Skipped, "no FTP account for this domain in the backup");
     };
@@ -226,7 +270,11 @@ pub async fn import_sftp(ctx: &ImportCtx, site_id: Uuid, domain: &str) -> ItemOu
         }
     };
 
-    let details = json!({ "sftp_username": username, "hestia_user": hestia_user, "password": password });
+    // FTP (feature 6, B-5): HestiaCP served this account over FTP, so it keeps it,
+    // once the password is in place.
+    let ftp = enable_ftp(ctx, site_id, &mut warnings).await;
+
+    let details = json!({ "sftp_username": username, "hestia_user": hestia_user, "password": password, "ftp": ftp });
     if warnings.is_empty() {
         outcome(ItemStatus::Done, "SFTP account imported", details)
     } else {

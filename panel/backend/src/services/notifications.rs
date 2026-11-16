@@ -864,6 +864,7 @@ pub const SUPPRESSIBLE_ALERT_TYPES: &[&str] = &[
     "malware",
     "av_signatures",
     "av_down",
+    "disk_quota",
     "slow_response",
 ];
 

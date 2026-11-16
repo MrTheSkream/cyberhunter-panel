@@ -370,6 +370,10 @@ fn inventory_site<'a>(inventory: Option<&'a Value>, domain: &str) -> Option<&'a 
     })
 }
 
+/// The manual action of an import whose accounts had FTP in HestiaCP while this
+/// server has no FTP server yet (feature 6, code `ftp_server_missing`).
+pub const FTP_SERVER_MISSING_ACTION: &str = "Install the FTP server (Settings → Services) to restore FTP access";
+
 /// The "what is left for a human" list of the report (W5-R).
 pub fn manual_actions(rows: &[LedgerRow], inventory: Option<&Value>) -> Vec<String> {
     let finished = |r: &&LedgerRow| COMPLETED.contains(&r.status.as_str());
@@ -465,6 +469,13 @@ pub fn manual_actions(rows: &[LedgerRow], inventory: Option<&Value>) -> Vec<Stri
     }
     // Feature 5 (A-H): owned by `import_mail`, one line whatever the number of domains.
     out.extend(crate::services::import_mail::antivirus_manual_action(rows, inventory));
+    // Feature 6 (B-5): FTP was ticked on imported accounts, but vsftpd is missing.
+    if rows.iter().any(|r| {
+        r.kind == "sftp"
+            && r.details.get("ftp").and_then(|v| v.as_str()) == Some(crate::services::import_sftp::FTP_SERVER_MISSING)
+    }) {
+        out.push(FTP_SERVER_MISSING_ACTION.to_string());
+    }
     out
 }
 
@@ -586,5 +597,19 @@ mod tests {
         assert!(all.contains("custom-nginx/custom.stpl"));
         assert!(all.contains("SFTP account is locked"));
         assert!(all.contains("a@d.be: mailbox disabled"));
+        assert!(!all.contains("Install the FTP server"));
+    }
+
+    #[test]
+    fn a_missing_ftp_server_is_one_manual_action() {
+        let rows = vec![
+            row("sftp", "x.tld", "done", json!({ "ftp": "ftp_server_missing" })),
+            row("sftp", "y.tld", "skipped", json!({ "ftp": "ftp_server_missing" })),
+            row("sftp", "z.tld", "done", json!({ "ftp": "enabled" })),
+        ];
+        let a = manual_actions(&rows, None);
+        let n = a.iter().filter(|l| l.as_str() == FTP_SERVER_MISSING_ACTION).count();
+        assert_eq!(n, 1, "{a:?}");
+        assert!(manual_actions(&rows[2..], None).iter().all(|l| l != FTP_SERVER_MISSING_ACTION));
     }
 }
