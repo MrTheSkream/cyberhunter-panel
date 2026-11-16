@@ -9,6 +9,7 @@ import { applyTheme, readStoredTheme } from "../hooks/useLayoutState";
 import ConfirmDialog from "../components/ConfirmDialog";
 import ClamavCard from "../components/ClamavCard";
 import FtpServerCard from "../components/FtpServerCard";
+import WebStatsServerCard from "../components/WebStatsServerCard";
 import {
   TwoFactorCard,
   PasskeysCard,
@@ -2677,6 +2678,7 @@ function ServiceInstallers({ pdnsApiUrl, setPdnsApiUrl, pdnsApiKey, setPdnsApiKe
             <p><span className="text-dark-100 font-medium">Apache</span> - Installs Apache (MPM event, proxy_fcgi, rewrite, remoteip) listening only on 127.0.0.1:8091, never on port 80. nginx stays in front and passes PHP requests of sites in "nginx + Apache" mode to it, so their .htaccess files are read. PHP still runs in each site's own PHP-FPM pool. Cannot be uninstalled while a site uses it.</p>
             <p><span className="text-dark-100 font-medium">Node.js</span> - Installs Node.js 22 LTS and npm via NodeSource. Used for build tools, SSR frameworks (Next.js, Nuxt), and running JavaScript/TypeScript applications.</p>
             <p><span className="text-dark-100 font-medium">Composer</span> - Installs Composer globally at /usr/local/bin. The standard PHP dependency manager used by Laravel, Symfony, Drupal, and most PHP frameworks.</p>
+            <p><span className="text-dark-100 font-medium">Web statistics (GoAccess)</span> - Installs GoAccess and the free DB-IP country database. Every site gets a statistics report built from its nginx access log, updated every hour and kept for 12 months. Reports are only shown inside the panel. Uninstalling keeps the statistics data.</p>
           </div>
         )}
 
@@ -2744,14 +2746,19 @@ function ServiceInstallers({ pdnsApiUrl, setPdnsApiUrl, pdnsApiKey, setPdnsApiKe
           })}
           {/* ClamAV installs through its own job (/antivirus/install), not
               /services/install/*, so it is its own card. */}
-          <div className="sm:col-span-2">
+          {/* ClamAV, FTP and GoAccess take one column each (08-stats-web C-3).
+              Their status grids are written for a full row (4 columns from
+              sm), so inside a half-width column they are held at 2. */}
+          <div className="sm:[&_dl]:grid-cols-2">
             <ClamavCard />
           </div>
           {/* vsftpd has its own routes (/ftp/install, /ftp/status) and a
               richer status than the generic rows above. */}
-          <div className="sm:col-span-2">
+          <div className="sm:[&_dl]:grid-cols-2">
             <FtpServerCard />
           </div>
+          {/* GoAccess has its own routes (/web-stats/*). */}
+          <WebStatsServerCard />
         </div>
 
         {/* PowerDNS API Configuration */}

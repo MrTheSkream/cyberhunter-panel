@@ -10,6 +10,7 @@ import { SiteAntivirusStatus, SiteAntivirusDetections, type AvSiteStatus } from 
 import { useAuth } from "../context/AuthContext";
 import { useFtpStatus } from "../components/FtpServerCard";
 import DiskUsageCard, { type DiskUsage } from "../components/DiskUsageCard";
+import WebStatsSection from "../components/WebStatsSection";
 import { useServerIps, serverIpOptionLabel } from "../utils/serverIps";
 import {
   ApacheInstallCallout,
@@ -3586,12 +3587,12 @@ export default function SiteDetail() {
         </div>
       )}
 
-      {/* Traffic Stats */}
+      {/* Recent traffic (last lines of the access log, live) */}
       {site.status === "active" && (
         <div className="bg-dark-800 rounded-lg border border-dark-500 overflow-hidden mt-6">
           <button onClick={() => { setShowStats(!showStats); if (!showStats) loadStats(); }}
             className="w-full px-5 py-4 flex items-center justify-between hover:bg-dark-700/30 transition-colors">
-            <h2 className="text-xs font-medium text-dark-300 uppercase font-mono tracking-widest">Traffic Stats</h2>
+            <h2 className="text-xs font-medium text-dark-300 uppercase font-mono tracking-widest">Recent traffic</h2>
             <svg className={`w-4 h-4 text-dark-300 transition-transform ${showStats ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
             </svg>
@@ -3651,6 +3652,11 @@ export default function SiteDetail() {
             </div>
           )}
         </div>
+      )}
+
+      {/* Web statistics (08-stats-web, GoAccess) */}
+      {site.status === "active" && (
+        <WebStatsSection siteId={site.id} domain={site.domain} isAdmin={isAdmin} />
       )}
 
       {/* PHP Extensions */}
