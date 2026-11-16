@@ -42,6 +42,10 @@ export interface PanicResult {
   server_terminals_killed: number | null;
   sessions_revoked: boolean;
   shares_revoked: number;
+  // User terminal connections and tmux sessions stopped on the local server.
+  // Optional: absent from a backend that predates the user terminal, and null
+  // when the agent did not answer that step.
+  user_terminals_killed?: number | null;
   // Fleet detail. Optional so a panel whose backend predates the fan-out still
   // type-checks and still renders its legacy warning instead of crashing.
   servers_total?: number;
@@ -78,7 +82,12 @@ export default function PanicReport({
   onDismiss?: () => void;
 }) {
   const unreachable = result.unreachable_servers ?? [];
-  if (unreachable.length === 0) return null;
+  const userTerminals = <UserTerminalsLine killed={result.user_terminals_killed} />;
+  if (unreachable.length === 0) {
+    return result.user_terminals_killed === undefined ? null : (
+      <div className="mb-4 rounded-lg border border-dark-500 bg-dark-800 px-5 py-3">{userTerminals}</div>
+    );
+  }
 
   const total = result.servers_total ?? unreachable.length;
   const reached = result.servers_reached ?? Math.max(total - unreachable.length, 0);
@@ -131,6 +140,10 @@ export default function PanicReport({
         ))}
       </ul>
 
+      {result.user_terminals_killed !== undefined && (
+        <div className="px-5 py-3 border-t border-danger-500/30">{userTerminals}</div>
+      )}
+
       <div className="px-5 py-3 border-t border-danger-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <p className="text-xs text-dark-200 font-mono">
           Lockdown and session revocation are panel-wide and did apply. Terminals were not:
@@ -146,5 +159,22 @@ export default function PanicReport({
         )}
       </div>
     </div>
+  );
+}
+
+/** The user terminal line of the report: how many were stopped, or that it is unknown. */
+function UserTerminalsLine({ killed }: { killed: number | null | undefined }) {
+  if (killed === undefined) return null;
+  if (killed === null) {
+    return (
+      <p className="text-xs text-warn-400 font-mono">
+        User terminals: the agent did not confirm they were stopped. Check the server by hand.
+      </p>
+    );
+  }
+  return (
+    <p className="text-xs text-dark-200 font-mono">
+      User terminals stopped: {killed}.
+    </p>
   );
 }

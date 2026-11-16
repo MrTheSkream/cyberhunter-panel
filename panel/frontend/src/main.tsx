@@ -8,6 +8,7 @@ import LayoutShell from "./components/LayoutShell";
 import Login from "./pages/Login";
 import Setup from "./pages/Setup";
 import Dashboard from "./pages/Dashboard";
+import { refreshUserTerminalLink } from "./data/navItems";
 import "./index.css";
 
 // Theme + layout attributes. This is a `<script type="module">` (index.html), so
@@ -119,7 +120,34 @@ const ServerIps = lazyRetry(() => import("./pages/ServerIps"));
 const Php = lazyRetry(() => import("./pages/Php"));
 const System = lazyRetry(() => import("./pages/System"));
 const Telemetry = lazyRetry(() => import("./pages/Telemetry"));
+const UserTerminal = lazyRetry(() => import("./pages/UserTerminal"));
 
+// The "My session" menu row depends on this answer. Started before the first
+// render so it is usually back before the layout draws its menu.
+void refreshUserTerminalLink();
+
+// /terminal/me is a bookmarkable full-screen page. Without a session, the
+// providers below fire background requests whose 401 sends the browser to a
+// bare /login (api.ts), which would lose the way back. Checking first keeps
+// `?next=` so the sign-in returns to the terminal.
+const USER_TERMINAL_PATH = "/terminal/me";
+
+async function boot() {
+  if (window.location.pathname === USER_TERMINAL_PATH) {
+    try {
+      const res = await fetch("/api/auth/me", { credentials: "same-origin" });
+      if (res.status === 401) {
+        window.location.replace(`/login?next=${encodeURIComponent(USER_TERMINAL_PATH)}`);
+        return;
+      }
+    } catch {
+      /* network failure: render anyway, the page reports it */
+    }
+  }
+  render();
+}
+
+function render() {
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <BrandingProvider>
@@ -135,6 +163,8 @@ createRoot(document.getElementById("root")!).render(
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/reset-password" element={<ResetPassword />} />
             <Route path="/verify-email" element={<VerifyEmail />} />
+            {/* Full screen, outside the layout: the user terminal. */}
+            <Route path="/terminal/me" element={<UserTerminal />} />
             <Route element={<LayoutShell />}>
               <Route path="/" element={<Dashboard />} />
               <Route path="/sites" element={<Sites />} />
@@ -197,3 +227,6 @@ createRoot(document.getElementById("root")!).render(
     </BrandingProvider>
   </StrictMode>
 );
+}
+
+void boot();
