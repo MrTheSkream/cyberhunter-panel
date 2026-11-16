@@ -917,6 +917,10 @@ pub async fn lockdown_activate(
     let reason = body.get("reason").and_then(|r| r.as_str()).unwrap_or("Manual admin lockdown");
 
     security_hardening::activate_lockdown(&state.db, "admin", reason).await;
+    // Feature 9 (B-5): a lockdown also cuts open user-terminal connections
+    // (their tmux sessions survive; nobody can reattach while it lasts).
+    // Fire-and-forget so an agent that does not answer cannot hold the lockdown.
+    crate::routes::user_terminal::spawn_kill_user_terminals(&state, None, false, "lockdown");
     security_hardening::audit_log(
         &state.db, "lockdown.manual", Some(&claims.email), None,
         Some("system"), None, Some(reason), None, "critical",
@@ -1026,10 +1030,15 @@ pub async fn panic_button(
     let mut server_results: Vec<serde_json::Value> = Vec::with_capacity(census.len().max(targets.len()));
     let mut unreachable: Vec<serde_json::Value> = Vec::new();
     let mut unreachable_names: Vec<String> = Vec::new();
+    // Feature 9: user terminals the local `kill-terminals` reports (recent agent).
+    let mut user_killed_by_sweep: Option<u64> = None;
 
     for ((id, name, is_local, _), res) in targets.iter().zip(results.into_iter()) {
         match res {
             Ok(v) => {
+                if *is_local {
+                    user_killed_by_sweep = crate::routes::user_terminal::user_terminals_in(&v);
+                }
                 let killed = v.get("killed").and_then(|k| k.as_u64());
                 let root = v.get("server_terminals_killed").and_then(|k| k.as_u64());
                 terminals_total += killed.unwrap_or(0);
@@ -1144,6 +1153,22 @@ pub async fn panic_button(
         .map(|r| r.rows_affected())
         .unwrap_or(0);
 
+    // Feature 9 (B-5): stop user-terminal connections AND their tmux sessions
+    // on the panel host - after session revocation, so a wedged agent cannot
+    // delay it.
+    // A recent agent's `kill-terminals` already did; this
+    // covers the others. Bounded, and it never fails the panic.
+    let user_killed_by_a4 =
+        match crate::routes::user_terminal::kill_user_terminals(&state, None, true).await {
+            Ok(v) => v.get("connections_killed").and_then(|n| n.as_u64()),
+            Err(e) => {
+                tracing::warn!("PANIC: user terminal kill on the panel host failed: {e}");
+                None
+            }
+        };
+    let user_terminals_killed =
+        crate::routes::user_terminal::combine_user_kills(user_killed_by_sweep, user_killed_by_a4);
+
     // Audit + alert. Both carry the un-swept host list, not just the bare
     // reason. The response below is the most detailed account of this event that
     // will ever exist and it is also the shortest-lived - the session revocation
@@ -1175,6 +1200,9 @@ pub async fn panic_button(
         "agent_reached": agent_reached,
         "terminals_killed": terminals_killed,
         "server_terminals_killed": server_terminals_killed,
+        // Feature 9: user-terminal connections closed on the panel host; null
+        // when neither call answered.
+        "user_terminals_killed": user_terminals_killed,
         // Fleet detail. `unreachable_servers` is the operational payload: each
         // entry is a machine on which root terminals may still be running.
         "servers_total": servers_total,

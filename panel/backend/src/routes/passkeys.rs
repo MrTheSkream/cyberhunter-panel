@@ -969,7 +969,8 @@ pub async fn auth_complete(
     // must present it again on every login (the check above), and only a
     // possession-only credential (never proven UV-capable) still logs in on
     // presence alone, same as before this fix.
-    let (_token, cookie, jti) = super::auth::issue_session_pub(&state, &user, &headers)?;
+    let (_token, cookie, jti) =
+        super::auth::issue_session_pub(&state, &user, &headers, crate::auth::AuthMethod::Mfa)?;
 
     // Record session
     let user_agent = headers.get(axum::http::header::USER_AGENT)

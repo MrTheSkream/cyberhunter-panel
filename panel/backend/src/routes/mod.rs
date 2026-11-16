@@ -46,6 +46,7 @@ pub mod ssl;
 pub mod system;
 pub mod terminal;
 pub mod users;
+pub mod user_terminal;
 pub mod reseller_dashboard;
 pub mod migration;
 pub mod resellers;
@@ -1207,6 +1208,12 @@ pub fn router() -> Router<AppState> {
         .route("/api/terminal/share", post(terminal::share_output))
         .route("/api/terminal/shares", get(terminal::list_shares))
         .route("/api/terminal/share/{id}", delete(terminal::revoke_share))
+        // User terminal (feature 9): non-root shell in a persistent tmux session
+        .route("/api/terminal/user/token", get(user_terminal::user_token))
+        .route("/api/terminal/user/me", get(user_terminal::me))
+        .route("/api/terminal/user/accounts", get(user_terminal::list_accounts))
+        .route("/api/terminal/user/accounts/{user_id}", put(user_terminal::put_account).delete(user_terminal::delete_account))
+        .route("/api/terminal/user/accounts/{user_id}/check", get(user_terminal::check_account))
         // Databases
         .route("/api/databases", get(databases::list).post(databases::create))
         .route("/api/databases/{id}", delete(databases::remove))
@@ -1328,6 +1335,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/security/panic", post(security::panic_button))
         .route("/api/security/forensic-snapshot", post(security::forensic_snapshot))
         .route("/api/security/audit-log", get(security::audit_log_list))
+        .route("/api/security/user-terminal-events", get(user_terminal::events))
         .route("/api/security/suspicious-events", get(security::suspicious_events_list))
         .route("/api/security/recordings", get(security::recordings_list))
         .route("/api/security/pending-users", get(security::pending_users))

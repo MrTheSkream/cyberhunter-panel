@@ -54,7 +54,39 @@ pub struct Claims {
     /// The acting administrator's email, for display and the audit trail.
     #[serde(default)]
     pub imp_email: Option<String>,
+    /// How this session was authenticated (feature 9, user terminal): `"mfa"`
+    /// after `/auth/2fa/verify` or a passkey sign-in, `"pwd"` after a password
+    /// sign-in without TOTP, `"oauth"` after an identity provider. `None` for a
+    /// `dp_` API key, an impersonation session, and every session minted
+    /// before this field existed (`#[serde(default)]`, so they still decode).
+    /// See [`AuthMethod`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub amr: Option<String>,
 }
+
+/// The `amr` value a session-minting door stamps into [`Claims`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthMethod {
+    /// Password alone (the account has no TOTP).
+    Password,
+    /// A second factor was proven: TOTP / recovery code, or a passkey.
+    Mfa,
+    /// An external identity provider, without the panel's own TOTP step.
+    OAuth,
+}
+
+impl AuthMethod {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AuthMethod::Password => "pwd",
+            AuthMethod::Mfa => "mfa",
+            AuthMethod::OAuth => "oauth",
+        }
+    }
+}
+
+/// The value of [`Claims::amr`] that proves a second factor in this session.
+pub const AMR_MFA: &str = "mfa";
 
 /// Refuse an action that would give an administrator acting as another user
 /// lasting access to, or control over the security of, that account (feature 3,
@@ -296,6 +328,8 @@ async fn authenticate_api_key(state: &AppState, key: &str) -> Result<Claims, Api
         // An API key is never an impersonation session.
         imp_by: None,
         imp_email: None,
+        // An API key proves no interactive authentication at all.
+        amr: None,
     })
 }
 
@@ -566,6 +600,7 @@ mod impersonation_helper_tests {
             key_id: None,
             imp_by,
             imp_email: imp_by.map(|_| "admin@example.com".to_string()),
+            amr: None,
         }
     }
 
@@ -587,6 +622,30 @@ mod impersonation_helper_tests {
         let json = r#"{"sub":"00000000-0000-0000-0000-000000000001","email":"a@b","role":"admin","exp":1,"iat":1}"#;
         let c: Claims = serde_json::from_str(json).unwrap();
         assert!(c.imp_by.is_none() && c.imp_email.is_none());
+        assert!(c.amr.is_none(), "a pre-amr session decodes with amr = None");
+    }
+
+    #[test]
+    fn amr_is_omitted_when_absent_and_round_trips_when_set() {
+        let mut c = claims(None);
+        let v = serde_json::to_value(&c).unwrap();
+        assert!(v.get("amr").is_none(), "None must not be serialised");
+        c.amr = Some(AuthMethod::Mfa.as_str().to_string());
+        let tok = jsonwebtoken::encode(
+            &jsonwebtoken::Header::default(),
+            &c,
+            &jsonwebtoken::EncodingKey::from_secret(b"s"),
+        )
+        .unwrap();
+        assert_eq!(decode_session_jwt("s", &tok).unwrap().amr.as_deref(), Some("mfa"));
+    }
+
+    #[test]
+    fn auth_method_values_are_the_contract_strings() {
+        assert_eq!(AuthMethod::Password.as_str(), "pwd");
+        assert_eq!(AuthMethod::Mfa.as_str(), "mfa");
+        assert_eq!(AuthMethod::OAuth.as_str(), "oauth");
+        assert_eq!(AMR_MFA, AuthMethod::Mfa.as_str());
     }
 
     #[test]

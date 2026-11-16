@@ -60,6 +60,9 @@ pub const ALLOWED_KEYS: &[&str] = &[
     // (routes/terminal.rs). Both were documented or relied upon while no API
     // accepted them and no control existed.
     "allowed_panel_ips", "server_terminal_disabled",
+    // Feature 9: the user terminal's own switch, inverted like the one above
+    // (routes/user_terminal.rs). Turning it on also cuts open connections.
+    "user_terminal_disabled",
     // The same class again, found in the v2.110.0 door census: the panel's own
     // public URL, read by services/notifications.rs to build the "Open runbook"
     // link every alert carries. It was read from this table, absent from this
@@ -270,6 +273,13 @@ pub async fn update(
         .map_err(|e| internal_error("update settings", e))?;
 
     tracing::info!("Settings updated by {}: {} keys", claims.email, body.len());
+
+    // Feature 9 (B-5): disabling the user terminal also closes its open
+    // connections (the tmux sessions survive). Fire-and-forget: a down agent
+    // must not fail or delay the save, and new tickets are already refused.
+    if body.get("user_terminal_disabled").map(String::as_str) == Some("true") {
+        crate::routes::user_terminal::spawn_kill_user_terminals(&state, None, false, "switch disabled");
+    }
 
     let mut resp = serde_json::json!({ "ok": true });
 

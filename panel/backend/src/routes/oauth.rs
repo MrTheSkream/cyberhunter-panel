@@ -576,17 +576,14 @@ pub async fn callback(
     // Issue JWT session (no 2FA required)
     let now = chrono::Utc::now().timestamp() as usize;
     let jti = Uuid::new_v4().to_string();
-    let claims = crate::auth::Claims {
-        sub: user.id,
-        email: user.email.clone(),
-        role: user.role.clone(),
-        iat: now,
-        exp: now + 7200, // 2 hours
-        jti: Some(jti.clone()),
-        key_id: None,
-        imp_by: None,
-        imp_email: None,
-    };
+    // Same builder as the password/2FA/passkey doors; this door proves the
+    // identity provider only, so `amr` is "oauth" (feature 9).
+    let claims = super::auth::session_claims(
+        &user,
+        crate::auth::AuthMethod::OAuth,
+        now as i64,
+        jti.clone(),
+    );
 
     let token = jsonwebtoken::encode(
         &jsonwebtoken::Header::new(jsonwebtoken::Algorithm::HS256),
