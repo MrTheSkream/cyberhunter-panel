@@ -19,6 +19,7 @@ pub mod image_scanner;
 pub mod wp_vuln_scanner;
 pub mod av_scanner;
 pub mod disk_usage;
+pub mod web_stats;
 pub mod expected_stops;
 pub mod extensions;
 pub mod prerequisites;
