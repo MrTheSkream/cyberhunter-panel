@@ -3,8 +3,8 @@
 //! Space actually allocated (`st_blocks * 512`, as `du`), not the apparent
 //! size; symlinks are not followed, the walk stays on the site's filesystem,
 //! and a file with several hard links inside the tree counts once. The walk
-//! runs on one blocking thread at nice 19 and idle I/O priority, restored when
-//! it ends (the blocking pool reuses its threads). One measurement at a time
+//! runs on one dedicated thread at nice 19 and idle I/O priority (not on the
+//! blocking pool, whose threads are reused). One measurement at a time
 //! per agent: a second call waits for the first.
 
 use std::collections::HashSet;
@@ -93,6 +93,13 @@ const IOPRIO_WHO_PROCESS: libc::c_long = 1;
 const IOPRIO_CLASS_IDLE: libc::c_long = 3;
 const IOPRIO_CLASS_SHIFT: libc::c_long = 13;
 
+/// What to hand back to `ioprio_set`: older kernels report class NONE with a
+/// level (`ioprio_get` = 4) that `ioprio_set` rejects; class NONE is "follow
+/// the nice value", spelled 0. Pure, tested.
+fn restorable_ioprio(p: libc::c_long) -> libc::c_long {
+    if p >> IOPRIO_CLASS_SHIFT == 0 { 0 } else { p }
+}
+
 impl LowPriority {
     fn enter() -> Self {
         // SAFETY: plain syscalls on the calling thread's own id; no memory is shared.
@@ -102,7 +109,7 @@ impl LowPriority {
             let n = libc::getpriority(libc::PRIO_PROCESS, tid);
             let nice = (*libc::__errno_location() == 0).then_some(n);
             let p = libc::syscall(libc::SYS_ioprio_get, IOPRIO_WHO_PROCESS, tid as libc::c_long);
-            let ioprio = (p >= 0).then_some(p);
+            let ioprio = (p >= 0).then(|| restorable_ioprio(p));
             libc::setpriority(libc::PRIO_PROCESS, tid, 19);
             libc::syscall(
                 libc::SYS_ioprio_set,
@@ -135,13 +142,20 @@ pub async fn measure(domains: Vec<String>) -> Result<Vec<Usage>, String> {
     // The deadline starts once it is our turn; the guard lives (and the next
     // measurement waits) until the walk has really finished.
     let deadline = Instant::now() + TIMEOUT;
-    tokio::task::spawn_blocking(move || {
-        let _guard = guard;
-        let _prio = LowPriority::enter();
-        measure_under(Path::new(WEBROOT), &domains, deadline)
-    })
-    .await
-    .map_err(|_| "internal error".to_string())
+    // A dedicated thread rather than the blocking pool: lowering a pooled
+    // thread's priority would outlive the walk wherever it cannot be raised
+    // back (that needs CAP_SYS_NICE). It is still one blocking thread, as A-5
+    // asks, and the priority is restored on exit anyway.
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    std::thread::Builder::new()
+        .name("disk-usage".into())
+        .spawn(move || {
+            let _guard = guard;
+            let _prio = LowPriority::enter();
+            let _ = tx.send(measure_under(Path::new(WEBROOT), &domains, deadline));
+        })
+        .map_err(|e| format!("Cannot start the measurement: {e}"))?;
+    rx.await.map_err(|_| "internal error".to_string())
 }
 
 #[cfg(test)]
@@ -208,19 +222,32 @@ mod tests {
 
     #[tokio::test]
     async fn priority_is_restored_on_the_pooled_thread() {
-        let (before, after) = tokio::task::spawn_blocking(|| unsafe {
+        assert_eq!(restorable_ioprio(4), 0, "class NONE with a level");
+        assert_eq!(restorable_ioprio(0), 0);
+        let be4 = (2 << IOPRIO_CLASS_SHIFT) | 4;
+        assert_eq!(restorable_ioprio(be4), be4);
+        let io = |tid: libc::id_t| unsafe {
+            restorable_ioprio(libc::syscall(libc::SYS_ioprio_get, IOPRIO_WHO_PROCESS, tid as libc::c_long))
+        };
+        let (before, after, io_before, io_during, io_after) = tokio::task::spawn_blocking(move || unsafe {
             let tid = libc::syscall(libc::SYS_gettid) as libc::id_t;
             let before = libc::getpriority(libc::PRIO_PROCESS, tid);
+            let io_before = io(tid);
+            let io_during;
             {
                 let _p = LowPriority::enter();
                 assert_eq!(libc::getpriority(libc::PRIO_PROCESS, tid), 19);
+                io_during = io(tid);
             }
-            (before, libc::getpriority(libc::PRIO_PROCESS, tid))
+            (before, libc::getpriority(libc::PRIO_PROCESS, tid), io_before, io_during, io(tid))
         })
         .await
         .unwrap();
-        // Raising the priority back needs CAP_SYS_NICE (root in the container
-        // and on the box); without it, the value simply stays at 19.
+        assert_eq!(io_during >> IOPRIO_CLASS_SHIFT, IOPRIO_CLASS_IDLE);
+        // Raising the priority back needs CAP_SYS_NICE (the agent's unit has
+        // it; a Docker test container does not): restored, or left lowered on
+        // this throwaway thread.
         assert!(after == before || after == 19, "{before} -> {after}");
+        assert!(io_after == io_before || io_after >> IOPRIO_CLASS_SHIFT == IOPRIO_CLASS_IDLE);
     }
 }

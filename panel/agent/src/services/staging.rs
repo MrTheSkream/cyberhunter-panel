@@ -32,6 +32,10 @@ pub async fn clone_files(source_domain: &str, target_domain: &str) -> Result<Str
     // The target's owner, read before `create_dir_all` and `rsync -a` (which
     // copies the source root's owner onto the target root).
     let owner = crate::services::site_owner::site_owner(target_domain);
+    let root_ids = {
+        use std::os::unix::fs::MetadataExt;
+        std::fs::metadata(&target).ok().map(|m| (m.uid(), m.gid()))
+    };
 
     // Create target directory
     tokio::fs::create_dir_all(&target)
@@ -57,6 +61,13 @@ pub async fn clone_files(source_domain: &str, target_domain: &str) -> Result<Str
     // `config`/`hooks/` that `deploy.rs::clone_or_pull` runs as root on the
     // next deploy. Mirrors `deploy.rs::hand_tree_to_web_user`.
     hand_over(target_domain, owner).await;
+    // The target root got the SOURCE root's owner from rsync: put back what it
+    // had, or give a new one to the target's owner (otherwise `site_owner`
+    // would later hand the staging files to the production account).
+    let root = crate::services::site_owner::site_root(target_domain);
+    if let Err(e) = crate::services::site_owner::chown_self_as(target_domain, &root, root_ids.unwrap_or(owner)).await {
+        tracing::warn!("staging clone: owner of {target} not set: {e}");
+    }
 
     Ok(format!("Cloned {source} → {target}"))
 }

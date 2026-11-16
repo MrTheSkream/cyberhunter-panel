@@ -57,9 +57,12 @@ auth    required pam_listfile.so item=user sense=deny file=/etc/ftpusers onerr=s
 session required pam_loginuid.so\n";
 
 /// Contract A-2, step 8.
+/// `backend = auto` is added to the contract's body: vsftpd logs to a file,
+/// and a distro default of `backend = systemd` would ignore `logpath`.
 pub const JAIL_BODY: &str = "# Managed by CyberHunter - Panel (FTP server).\n\
 [vsftpd]\n\
 enabled = true\n\
+backend = auto\n\
 port = 21,12000:12100\n\
 filter = vsftpd\n\
 logpath = /var/log/vsftpd.log\n\
@@ -624,6 +627,9 @@ async fn run_install(users: &[String], pasv: Option<IpAddr>) -> Result<Vec<Strin
     if let Err(e) = started {
         let tail = journal_tail().await;
         let _ = systemctl(&["stop", UNIT]).await;
+        // Not enabled either: the restored stock configuration must not start
+        // a plaintext FTP server at the next boot.
+        let _ = systemctl(&["disable", UNIT]).await;
         let restored = match &previous {
             Some(p) => crate::services::apache::write_file(CONF, p).await,
             None => crate::services::apache::remove_file(CONF).await,
@@ -830,7 +836,7 @@ mod tests {
         assert_eq!(cert_kind(SELF_CERT), "self_signed");
         assert!(PAM_BODY.contains("pam_listfile.so item=user sense=deny file=/etc/ftpusers onerr=succeed"));
         assert!(!PAM_BODY.contains("pam_shells"));
-        assert!(JAIL_BODY.contains("[vsftpd]\nenabled = true\nport = 21,12000:12100\nfilter = vsftpd\n"));
+        assert!(JAIL_BODY.contains("[vsftpd]\nenabled = true\nbackend = auto\nport = 21,12000:12100\nfilter = vsftpd\n"));
         assert!(JAIL_BODY.contains("logpath = /var/log/vsftpd.log\nmaxretry = 5\nfindtime = 600\nbantime = 3600\n"));
     }
 
