@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, type SetStateAction } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { api, ApiError } from "../api";
 import { formatDate } from "../utils/format";
@@ -119,7 +119,19 @@ export default function SiteDetail() {
   const { user } = useAuth();
   /** Holds sites, cannot claim a new domain - see `domain_claim::ensure_claimable`. */
   const isClient = user?.role === "client";
-  const [site, setSite] = useState<Site | null>(null);
+  const [site, setSiteState] = useState<Site | null>(null);
+  // Several update routes answer with the bare `sites` row, which does not
+  // carry `disk_usage` (its own table, 07-ftp-quotas B-3). Keep the last known
+  // measure instead of letting an unrelated save blank the Disk usage card.
+  const setSite = useCallback((next: SetStateAction<Site | null>) => {
+    setSiteState((prev) => {
+      const n = typeof next === "function" ? next(prev) : next;
+      if (n && prev && n.id === prev.id && !("disk_usage" in n) && "disk_usage" in prev) {
+        return { ...n, disk_usage: prev.disk_usage };
+      }
+      return n;
+    });
+  }, []);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [deleting, setDeleting] = useState(false);
