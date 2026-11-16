@@ -106,6 +106,7 @@ const TYPE_LABELS: Record<string, string> = {
   malware: "Malware detected",
   av_signatures: "Antivirus signatures outdated",
   av_down: "Antivirus not responding",
+  disk_quota: "Disk quota",
   slow_response: "Slow response",
 };
 

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, type SetStateAction } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { api, ApiError } from "../api";
 import { formatDate } from "../utils/format";
@@ -8,6 +8,8 @@ import PhpVersionPicker from "../components/PhpVersionPicker";
 import PhpSettingsCard from "../components/PhpSettingsCard";
 import { SiteAntivirusStatus, SiteAntivirusDetections, type AvSiteStatus } from "../components/AntivirusTab";
 import { useAuth } from "../context/AuthContext";
+import { useFtpStatus } from "../components/FtpServerCard";
+import DiskUsageCard, { type DiskUsage } from "../components/DiskUsageCard";
 import { useServerIps, serverIpOptionLabel } from "../utils/serverIps";
 import {
   ApacheInstallCallout,
@@ -71,6 +73,13 @@ interface Site {
   hsts?: boolean;
   /** Custom SFTP account name; null = the default `sftp<uid>`. */
   sftp_username?: string | null;
+  // 07-ftp-quotas (B-3). Optional: an older backend omits them.
+  /** FTPS login allowed for the SFTP account (vsftpd whitelist). */
+  ftp_enabled?: boolean;
+  /** Alert threshold in MB; null = unlimited. */
+  disk_quota_mb?: number | null;
+  /** Last measure of /var/www/<domain>; null = never measured. */
+  disk_usage?: DiskUsage | null;
 }
 
 /** PHP branches past end of life (kept for imported sites). */
@@ -110,7 +119,19 @@ export default function SiteDetail() {
   const { user } = useAuth();
   /** Holds sites, cannot claim a new domain - see `domain_claim::ensure_claimable`. */
   const isClient = user?.role === "client";
-  const [site, setSite] = useState<Site | null>(null);
+  const [site, setSiteState] = useState<Site | null>(null);
+  // Several update routes answer with the bare `sites` row, which does not
+  // carry `disk_usage` (its own table, 07-ftp-quotas B-3). Keep the last known
+  // measure instead of letting an unrelated save blank the Disk usage card.
+  const setSite = useCallback((next: SetStateAction<Site | null>) => {
+    setSiteState((prev) => {
+      const n = typeof next === "function" ? next(prev) : next;
+      if (n && prev && n.id === prev.id && !("disk_usage" in n) && "disk_usage" in prev) {
+        return { ...n, disk_usage: prev.disk_usage };
+      }
+      return n;
+    });
+  }, []);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [deleting, setDeleting] = useState(false);
@@ -332,6 +353,11 @@ export default function SiteDetail() {
   const [sftpPassword, setSftpPassword] = useState<string | null>(null);
   const [sftpUsername, setSftpUsername] = useState("");
   const [sftpWarning, setSftpWarning] = useState("");
+  // FTP (07-ftp-quotas). `/ftp/status` is admin only: other roles learn that
+  // vsftpd is missing from the toggle's own 412.
+  const [ftpToggling, setFtpToggling] = useState(false);
+  const [ftpMsg, setFtpMsg] = useState<{ text: string; error: boolean } | null>(null);
+  const { status: ftpStatus } = useFtpStatus(isAdmin && site?.status === "active", site?.server_id ?? null);
   const [copied, setCopied] = useState("");
 
   const copyToClipboard = (text: string, label: string) => {
@@ -2214,7 +2240,7 @@ export default function SiteDetail() {
       {site.status === "active" && (
         <div className="bg-dark-800 rounded-lg border border-dark-500 overflow-hidden mt-6">
           <div className="px-5 py-4 border-b border-dark-600 flex items-center justify-between">
-            <h2 className="text-xs font-medium text-dark-300 uppercase font-mono tracking-widest">SFTP Access</h2>
+            <h2 className="text-xs font-medium text-dark-300 uppercase font-mono tracking-widest">SFTP / FTP Access</h2>
             <span className={`inline-flex px-2.5 py-0.5 rounded-full text-xs font-medium ${
               site.sftp_enabled ? "bg-rust-500/10 text-rust-400" : "bg-dark-700 text-dark-300"
             }`}>
@@ -2287,7 +2313,12 @@ export default function SiteDetail() {
                     // sftp_uid isn't in this response - the toggle endpoints only
                     // confirm the new state; re-fetching the site is what picks up
                     // the allocated uid after an enable.
-                    setSite(s => s ? { ...s, sftp_enabled: result.sftp_enabled } : s);
+                    // Disabling SFTP also turns FTP off on the backend (B-2).
+                    setSite(s => s ? {
+                      ...s,
+                      sftp_enabled: result.sftp_enabled,
+                      ftp_enabled: result.sftp_enabled ? s.ftp_enabled : false,
+                    } : s);
                     if (result.sftp_enabled) {
                       const fresh = await api.get<Site>(`/sites/${id}`);
                       setSite(fresh);
@@ -2370,8 +2401,119 @@ export default function SiteDetail() {
                 </div>
               </div>
             )}
+
+            {/* FTP (FTPS): same account and password as SFTP (07-ftp-quotas). */}
+            {(() => {
+              const ftpOn = site.ftp_enabled === true;
+              const serverMissing = ftpStatus != null && (!ftpStatus.supported || !ftpStatus.installed);
+              const ftpBlockReason = !site.sftp_enabled
+                ? "Enable SFTP first"
+                : ftpStatus && !ftpStatus.supported
+                  ? "The FTP server is not supported on this server"
+                  : ftpStatus && !ftpStatus.installed
+                    ? "Install the FTP server in Settings > Services"
+                    : "";
+              const ftpUser = site.sftp_username || (site.sftp_uid != null ? `sftp${site.sftp_uid}` : "-");
+              const ftpHost = window.location.hostname;
+              return (
+                <div className="border-t border-dark-600 pt-4 space-y-3">
+                  <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <label
+                      className={`flex items-center gap-2 text-sm ${ftpBlockReason && !ftpOn ? "text-dark-400" : "text-dark-100"}`}
+                      title={ftpBlockReason || undefined}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={ftpOn}
+                        // Unchecking stays possible even when blocked, so a stale
+                        // FTP setting can always be cleared.
+                        disabled={ftpToggling || (!ftpOn && ftpBlockReason !== "")}
+                        onChange={async (e) => {
+                          const enabled = e.target.checked;
+                          setFtpToggling(true);
+                          setFtpMsg(null);
+                          try {
+                            const r = await api.post<{ ftp_enabled: boolean }>(`/sites/${id}/ftp`, { enabled });
+                            setSite(s => s ? { ...s, ftp_enabled: r.ftp_enabled } : s);
+                            setFtpMsg({ text: r.ftp_enabled ? "FTP enabled" : "FTP disabled", error: false });
+                          } catch (err) {
+                            if (err instanceof ApiError && err.status === 412 && /not installed/i.test(err.message)) {
+                              setFtpMsg({ text: "FTP server not installed. An administrator can install it in Settings > Services.", error: true });
+                            } else {
+                              setFtpMsg({ text: err instanceof Error && err.message ? err.message : "FTP toggle failed", error: true });
+                            }
+                          } finally {
+                            setFtpToggling(false);
+                          }
+                        }}
+                        className="rounded border-dark-500 bg-dark-900 text-rust-500 focus:ring-rust-500"
+                      />
+                      Enable FTP (FTPS)
+                      {ftpToggling && <span className="text-xs text-dark-400">...</span>}
+                    </label>
+                    {ftpMsg && (
+                      <span className={`text-xs ${ftpMsg.error ? "text-danger-400" : "text-rust-400"}`}>{ftpMsg.text}</span>
+                    )}
+                  </div>
+                  {ftpBlockReason && !ftpOn && (
+                    <p className="text-xs text-dark-400">{ftpBlockReason}.</p>
+                  )}
+                  {ftpOn && serverMissing && (
+                    <p className="text-xs px-3 py-2 rounded-lg bg-warn-500/10 text-warn-400 border border-warn-500/30">
+                      FTP server not installed. FTP access comes back once it is installed in Settings &gt; Services.
+                    </p>
+                  )}
+                  {ftpOn && site.sftp_enabled && (
+                    <div className="bg-dark-900 rounded-lg border border-dark-600 p-4 space-y-3">
+                      <h3 className="text-xs font-medium text-dark-300 uppercase font-mono tracking-widest">Connection details</h3>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs">
+                        <div>
+                          <div className="text-dark-400 uppercase tracking-wide mb-1">Host</div>
+                          <div className="text-dark-100 font-mono break-all">{ftpHost}</div>
+                        </div>
+                        <div>
+                          <div className="text-dark-400 uppercase tracking-wide mb-1">Port</div>
+                          <div className="text-dark-100 font-mono">{ftpStatus?.ports?.control ?? 21}</div>
+                        </div>
+                        <div>
+                          <div className="text-dark-400 uppercase tracking-wide mb-1">Username</div>
+                          <div className="text-dark-100 font-mono break-all">{ftpUser}</div>
+                        </div>
+                        <div>
+                          <div className="text-dark-400 uppercase tracking-wide mb-1">Encryption</div>
+                          <div className="text-dark-100">Require explicit FTP over TLS</div>
+                        </div>
+                        <div>
+                          <div className="text-dark-400 uppercase tracking-wide mb-1">Mode</div>
+                          <div className="text-dark-100">Passive</div>
+                        </div>
+                        <div>
+                          <div className="text-dark-400 uppercase tracking-wide mb-1">Password</div>
+                          <div className="text-dark-100">Same password as SFTP</div>
+                        </div>
+                      </div>
+                      <p className="text-xs text-dark-400">
+                        You land in the account's root folder: the site files are in <span className="font-mono">content/</span>.
+                        {ftpStatus?.cert?.kind === "self_signed" && " The server uses a self-signed certificate: your FTP client will ask you to trust it."}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         </div>
+      )}
+
+      {/* Disk usage and quota (07-ftp-quotas) */}
+      {site.status === "active" && (
+        <DiskUsageCard
+          siteId={site.id}
+          usage={site.disk_usage}
+          quotaMb={site.disk_quota_mb}
+          canEditQuota={user?.role === "admin" || user?.role === "reseller"}
+          onChange={(patch) => setSite(s => s ? { ...s, ...patch } : s)}
+        />
       )}
 
       {/* WAF (ModSecurity) */}

@@ -8,6 +8,7 @@ import { timeAgo } from "../utils/format";
 import { applyTheme, readStoredTheme } from "../hooks/useLayoutState";
 import ConfirmDialog from "../components/ConfirmDialog";
 import ClamavCard from "../components/ClamavCard";
+import FtpServerCard from "../components/FtpServerCard";
 import {
   TwoFactorCard,
   PasskeysCard,
@@ -53,6 +54,7 @@ const SUPPRESSIBLE_ALERT_TYPES: { key: string; label: string }[] = [
   { key: "malware", label: "Malware detected" },
   { key: "av_signatures", label: "Antivirus signatures outdated" },
   { key: "av_down", label: "Antivirus not responding" },
+  { key: "disk_quota", label: "Disk quota" },
   { key: "slow_response", label: "Slow response" },
 ];
 
@@ -2744,6 +2746,11 @@ function ServiceInstallers({ pdnsApiUrl, setPdnsApiUrl, pdnsApiKey, setPdnsApiKe
               /services/install/*, so it is its own card. */}
           <div className="sm:col-span-2">
             <ClamavCard />
+          </div>
+          {/* vsftpd has its own routes (/ftp/install, /ftp/status) and a
+              richer status than the generic rows above. */}
+          <div className="sm:col-span-2">
+            <FtpServerCard />
           </div>
         </div>
 

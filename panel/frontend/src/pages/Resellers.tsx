@@ -3,6 +3,7 @@ import { Navigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { api } from "../api";
 import ConfirmDialog from "../components/ConfirmDialog";
+import { formatSize } from "../utils/format";
 
 /**
  * The admin's door onto /api/resellers.
@@ -45,6 +46,10 @@ interface ResellerListItem {
   used_sites: number;
   used_databases: number;
   created_at: string;
+  /** 07-ftp-quotas B-3: measured size of the clients' sites. Absent on an older backend. */
+  disk_used_bytes?: number | null;
+  /** Not in the list contract; used when the backend sends it. */
+  max_disk_mb?: number | null;
 }
 
 interface ResellerProfile {
@@ -64,6 +69,8 @@ interface ResellerProfile {
   hide_branding: boolean;
   created_at: string;
   updated_at: string;
+  /** 07-ftp-quotas B-3: measured size of the clients' sites. Absent on an older backend. */
+  disk_used_bytes?: number | null;
 }
 
 interface ResellerServer {
@@ -101,6 +108,14 @@ const numStr = (n: number | null | undefined): string =>
 const quota = (used: number, max: number | null): string =>
   max === null ? `${used} / ∞` : `${used} / ${max}`;
 
+/** "3.4 GB used of 10 GB" / "of unlimited"; `maxMb` undefined = limit unknown here. */
+const diskUsed = (usedBytes: number, maxMb: number | null | undefined): string => {
+  const used = `${formatSize(usedBytes)} used`;
+  if (maxMb === undefined) return used;
+  const limit = maxMb ? formatSize(maxMb * 1024 * 1024).replace(/\.0 /, " ") : "unlimited";
+  return `${used} of ${limit}`;
+};
+
 export default function Resellers() {
   const { user } = useAuth();
   // Ahead of the loader effect: a redirect is an effect too, so a guard below it
@@ -123,6 +138,8 @@ export default function Resellers() {
   const [maxSites, setMaxSites] = useState("");
   const [maxDatabases, setMaxDatabases] = useState("");
   const [maxDiskMb, setMaxDiskMb] = useState("");
+  /** Measured disk of the reseller being edited, with the stored limit. */
+  const [editDisk, setEditDisk] = useState<{ used: number; maxMb: number | null } | null>(null);
   const [maxEmailAccounts, setMaxEmailAccounts] = useState("");
   const [logoUrl, setLogoUrl] = useState("");
   const [accentColor, setAccentColor] = useState("");
@@ -168,6 +185,7 @@ export default function Resellers() {
     setMaxSites("");
     setMaxDatabases("");
     setMaxDiskMb("");
+    setEditDisk(null);
     setMaxEmailAccounts("");
     setLogoUrl("");
     setAccentColor("");
@@ -189,6 +207,7 @@ export default function Resellers() {
       setMaxSites(numStr(p.max_sites));
       setMaxDatabases(numStr(p.max_databases));
       setMaxDiskMb(numStr(p.max_disk_mb));
+      setEditDisk(p.disk_used_bytes != null ? { used: p.disk_used_bytes, maxMb: p.max_disk_mb } : null);
       setMaxEmailAccounts(numStr(p.max_email_accounts));
       setLogoUrl(p.logo_url || "");
       setAccentColor(p.accent_color || "");
@@ -388,6 +407,7 @@ export default function Resellers() {
                   <th className="px-5 py-3">Users</th>
                   <th className="px-5 py-3">Sites</th>
                   <th className="px-5 py-3">Databases</th>
+                  <th className="px-5 py-3">Disk</th>
                   <th className="px-5 py-3">Created</th>
                   <th className="px-5 py-3 text-right">Actions</th>
                 </tr>
@@ -401,6 +421,9 @@ export default function Resellers() {
                       <td className="px-5 py-3 text-sm text-dark-200 font-mono">{quota(r.used_users, r.max_users)}</td>
                       <td className="px-5 py-3 text-sm text-dark-200 font-mono">{quota(r.used_sites, r.max_sites)}</td>
                       <td className="px-5 py-3 text-sm text-dark-200 font-mono">{quota(r.used_databases, r.max_databases)}</td>
+                      <td className="px-5 py-3 text-sm text-dark-200 font-mono whitespace-nowrap">
+                        {r.disk_used_bytes != null ? diskUsed(r.disk_used_bytes, r.max_disk_mb) : <span className="text-dark-400">-</span>}
+                      </td>
                       <td className="px-5 py-3 text-sm text-dark-400 text-xs whitespace-nowrap">{new Date(r.created_at).toLocaleDateString()}</td>
                       <td className="px-5 py-3">
                         <div className="flex items-center justify-end gap-2">
@@ -418,7 +441,7 @@ export default function Resellers() {
                     </tr>
                     {expanded === r.id && (
                       <tr key={`${r.id}-servers`} className="border-b border-dark-700 bg-dark-900/40">
-                        <td colSpan={7} className="px-5 py-4">
+                        <td colSpan={8} className="px-5 py-4">
                           <h4 className="text-xs font-medium text-dark-300 uppercase font-mono tracking-widest mb-3">
                             Servers allocated to {r.email}
                           </h4>
@@ -554,6 +577,9 @@ export default function Resellers() {
                     <label htmlFor="reseller-max-disk" className="block text-sm font-medium text-dark-100 mb-1">Max disk (MB)</label>
                     <input id="reseller-max-disk" type="number" min={0} value={maxDiskMb} onChange={(e) => setMaxDiskMb(e.target.value)}
                       className="w-full px-3 py-2 border border-dark-500 rounded-lg text-sm" placeholder="∞" />
+                    {editDisk && (
+                      <p className="text-xs text-dark-300 mt-1 font-mono">Disk: {diskUsed(editDisk.used, editDisk.maxMb)}</p>
+                    )}
                   </div>
                   <div>
                     <label htmlFor="reseller-max-email" className="block text-sm font-medium text-dark-100 mb-1">Max email accounts</label>
