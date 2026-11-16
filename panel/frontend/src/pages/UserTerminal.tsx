@@ -420,6 +420,7 @@ type ConnState =
   | { kind: "connecting" }
   | { kind: "connected" }
   | { kind: "reconnecting"; reason?: string; retryAt: number }
+  | { kind: "detached" }
   | { kind: "stopped"; reason: string };
 
 type CtrlMode = "off" | "once" | "locked";
@@ -428,6 +429,17 @@ const RECONNECT_FIRST_MS = 1000;
 const RECONNECT_MAX_MS = 30000;
 // A connection that stayed up this long resets the backoff when it drops.
 const STABLE_MS = 10000;
+// Close code the agent sends when tmux detached or the shell exited: the
+// session ended on purpose, so the page stops instead of reattaching.
+const CLOSE_DETACHED = 4000;
+// Handshakes refused in a row (the socket never opened) before the page stops
+// retrying. Five survives an agent restart with the backoff above (~30 s).
+const MAX_HANDSHAKE_FAILURES = 5;
+const HANDSHAKE_REFUSED =
+  "The server refused the terminal connection several times. Likely causes: the Linux account is not " +
+  "prepared (save the link again in Settings), the Origin check (the panel vhost must send " +
+  "\"Host $http_host\" on /agent/terminal/ws), the Linux account is no longer valid, or too many " +
+  "connections are open for this account.";
 
 function TerminalView({ login, onMfaRequired }: { login: string; onMfaRequired: () => void }) {
   const navigate = useNavigate();
@@ -471,6 +483,8 @@ function TerminalView({ login, onMfaRequired }: { login: string; onMfaRequired: 
     let attempt = 0;
     let everConnected = false;
     let openedAt = 0;
+    // Consecutive sockets that closed without ever opening (refused handshake).
+    let handshakeFailures = 0;
     let lastSent = { cols: 0, rows: 0 };
     let fitFrame = 0;
     // Bumped by every connect(): an older attempt still awaiting its ticket
@@ -608,6 +622,41 @@ function TerminalView({ login, onMfaRequired }: { login: string; onMfaRequired: 
       retryTimer = window.setTimeout(() => void connect(), delay);
     };
 
+    // The browser hides the handshake status (412, 403, 409...): ask the panel
+    // for a reason, and stop after several refusals in a row.
+    const onHandshakeRefused = async (mine: number) => {
+      handshakeFailures += 1;
+      const r = await getJson<MeResponse>("/terminal/user/me");
+      if (disposed || mine !== generation) return;
+      let reason: string | undefined;
+      if (!r.ok) {
+        if (r.status === 401) {
+          window.location.replace(LOGIN_URL);
+          return;
+        }
+        if (isMfaRequired(r.code, r.error)) {
+          onMfaRef.current();
+          return;
+        }
+        reason = r.error;
+      } else if (!r.data.linked || !r.data.login) {
+        setConn({ kind: "stopped", reason: r.data.reason || "No Linux account is linked to your panel account" });
+        return;
+      } else if (!r.data.available) {
+        if (isMfaRequired(r.data.code, r.data.reason)) {
+          onMfaRef.current();
+          return;
+        }
+        setConn({ kind: "stopped", reason: r.data.reason || "The user terminal is not available" });
+        return;
+      }
+      if (handshakeFailures >= MAX_HANDSHAKE_FAILURES) {
+        setConn({ kind: "stopped", reason: HANDSHAKE_REFUSED });
+        return;
+      }
+      scheduleRetry(reason ?? "(the server refused the connection)");
+    };
+
     const connect = async () => {
       if (disposed) return;
       clearRetry();
@@ -677,18 +726,34 @@ function TerminalView({ login, onMfaRequired }: { login: string; onMfaRequired: 
         if (typeof ev.data === "string") term.write(ev.data);
         else if (ev.data instanceof ArrayBuffer) term.write(decoder.decode(new Uint8Array(ev.data), { stream: true }));
       };
-      sock.onclose = () => {
+      sock.onclose = (ev: CloseEvent) => {
         if (ws !== sock) return;
         ws = null;
         if (disposed) return;
-        if (openedAt && Date.now() - openedAt >= STABLE_MS) attempt = 0;
+        const opened = openedAt !== 0;
+        if (opened && Date.now() - openedAt >= STABLE_MS) attempt = 0;
         openedAt = 0;
-        scheduleRetry();
+        if (ev.code === CLOSE_DETACHED) {
+          // tmux detach or shell exit: no automatic reattach.
+          clearRetry();
+          attempt = 0;
+          handshakeFailures = 0;
+          setConn({ kind: "detached" });
+          return;
+        }
+        if (opened) {
+          // A lost connection: reconnect without end.
+          handshakeFailures = 0;
+          scheduleRetry();
+          return;
+        }
+        void onHandshakeRefused(mine);
       };
     };
 
     reconnectRef.current = () => {
       attempt = 0;
+      handshakeFailures = 0;
       clearRetry();
       const old = ws;
       ws = null;
@@ -827,6 +892,8 @@ function TerminalView({ login, onMfaRequired }: { login: string; onMfaRequired: 
         const s = Math.max(0, Math.ceil((conn.retryAt - now) / 1000));
         return s > 0 ? `Reconnecting in ${s}s…` : "Reconnecting…";
       }
+      case "detached":
+        return "Session detached";
       default:
         return "Disconnected";
     }
@@ -836,7 +903,9 @@ function TerminalView({ login, onMfaRequired }: { login: string; onMfaRequired: 
       ? "bg-rust-500"
       : conn.kind === "stopped"
         ? "bg-danger-500"
-        : "bg-warn-500 animate-pulse";
+        : conn.kind === "detached"
+          ? "bg-dark-400"
+          : "bg-warn-500 animate-pulse";
 
   const barButton =
     "px-2 py-1 text-xs font-mono text-dark-200 hover:text-dark-100 hover:bg-dark-700 rounded touch-manipulation";
@@ -892,11 +961,27 @@ function TerminalView({ login, onMfaRequired }: { login: string; onMfaRequired: 
 
       {/* Terminal */}
       <div className="relative flex-1 min-h-0" style={{ backgroundColor: theme.background }}>
-        {(conn.kind === "reconnecting" || reattached || conn.kind === "stopped" || notice) && (
+        {(conn.kind === "reconnecting" || reattached || conn.kind === "stopped" || conn.kind === "detached" || notice) && (
           <div className="absolute top-2 left-1/2 -translate-x-1/2 z-10 max-w-[90%] pointer-events-none">
             {conn.kind === "stopped" ? (
-              <div className="pointer-events-auto rounded-lg border border-danger-500/40 bg-dark-800/95 px-3 py-2 text-xs font-mono text-danger-400">
-                {conn.reason}
+              <div className="pointer-events-auto rounded-lg border border-danger-500/40 bg-dark-800/95 px-3 py-2 text-xs font-mono text-danger-400 flex flex-wrap items-center gap-2">
+                <span className="min-w-0">{conn.reason}</span>
+                <button
+                  onClick={() => { reconnectRef.current(); focusTerm(); }}
+                  className="shrink-0 px-2 py-0.5 rounded border border-danger-500/40 text-dark-100 hover:bg-dark-700"
+                >
+                  Retry
+                </button>
+              </div>
+            ) : conn.kind === "detached" ? (
+              <div className="pointer-events-auto rounded-lg border border-dark-500 bg-dark-800/95 px-3 py-2 text-xs font-mono text-dark-100 flex flex-wrap items-center gap-2">
+                <span>Session detached</span>
+                <button
+                  onClick={() => { reconnectRef.current(); focusTerm(); }}
+                  className="shrink-0 px-2 py-0.5 rounded border border-dark-500 text-dark-100 hover:bg-dark-700"
+                >
+                  Reconnect
+                </button>
               </div>
             ) : conn.kind === "reconnecting" ? (
               <div className="rounded-lg border border-warn-500/40 bg-dark-800/95 px-3 py-2 text-xs font-mono text-warn-400">

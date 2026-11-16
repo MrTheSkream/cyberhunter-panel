@@ -44,8 +44,23 @@ function readUserTerminalLink(): boolean {
 
 let userTerminalLinked = readUserTerminalLink();
 
+/** Fired on `window` whenever the cached answer changes, so the menu can redraw. */
+export const USER_TERMINAL_LINK_EVENT = "dp-user-terminal-link";
+
+export function isUserTerminalLinked(): boolean {
+  return userTerminalLinked;
+}
+
 export function setUserTerminalLinked(linked: boolean): void {
+  const changed = userTerminalLinked !== linked;
   userTerminalLinked = linked;
+  if (changed) {
+    try {
+      window.dispatchEvent(new Event(USER_TERMINAL_LINK_EVENT));
+    } catch {
+      /* no window (tests): nothing to notify */
+    }
+  }
   try {
     if (linked) localStorage.setItem(USER_TERMINAL_LINK_KEY, "1");
     else localStorage.removeItem(USER_TERMINAL_LINK_KEY);

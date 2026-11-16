@@ -39,7 +39,7 @@ use std::time::Duration;
 
 use axum::{
     extract::{
-        ws::{Message, WebSocket},
+        ws::{CloseFrame, Message, WebSocket},
         WebSocketUpgrade,
     },
     http::{HeaderMap, StatusCode},
@@ -1353,6 +1353,18 @@ impl Cause {
     }
 }
 
+/// Close code sent when the shell side ended on its own (tmux detach, or the
+/// shell exited): the page then stops reconnecting instead of reattaching.
+pub const CLOSE_DETACHED: u16 = 4000;
+
+/// The close frame for the end of a connection. Only a pty that ended by
+/// itself, and was not killed, gets the distinct `4000 "detached"`; a kill, the
+/// 12-hour limit or a client close keep the plain close, so the page reconnects
+/// (or was the one closing).
+fn close_frame(pty_ended: bool, killed: bool) -> Option<CloseFrame> {
+    (pty_ended && !killed).then(|| CloseFrame { code: CLOSE_DETACHED, reason: "detached".into() })
+}
+
 fn set_winsize(fd: i32, cols: u16, rows: u16) {
     let ws = libc::winsize { ws_row: rows, ws_col: cols, ws_xpixel: 0, ws_ypixel: 0 };
     unsafe {
@@ -1561,6 +1573,9 @@ async fn run_session(mut socket: WebSocket, ctx: SessionCtx, _slot: SlotGuard, c
     let mut recording = open_recording(&ctx);
     let mut decoder = Utf8Decoder::default();
     let deadline = tokio::time::Instant::now() + CONNECTION_LIMIT;
+    // The pty reached EOF: tmux detached or the shell exited. Still audited as
+    // `closed` (the contract's causes), but told apart in the close frame.
+    let mut pty_ended = false;
 
     let cause = loop {
         tokio::select! {
@@ -1586,6 +1601,7 @@ async fn run_session(mut socket: WebSocket, ctx: SessionCtx, _slot: SlotGuard, c
                     }
                 }
                 if end {
+                    pty_ended = true;
                     break Cause::Closed;
                 }
             }
@@ -1639,7 +1655,8 @@ async fn run_session(mut socket: WebSocket, ctx: SessionCtx, _slot: SlotGuard, c
     crate::routes::terminal::forget_terminal(pid);
     drop(afd);
 
-    let cause = if conn.killed() { Cause::Killed } else { cause };
+    let killed = conn.killed();
+    let cause = if killed { Cause::Killed } else { cause };
     audit(
         "info",
         "user_terminal.detach",
@@ -1647,7 +1664,7 @@ async fn run_session(mut socket: WebSocket, ctx: SessionCtx, _slot: SlotGuard, c
         &ctx.ip,
         &format!("{base} duration_secs={} cause={}", started.elapsed().as_secs(), cause.as_str()),
     );
-    let _ = socket.send(Message::Close(None)).await;
+    let _ = socket.send(Message::Close(close_frame(pty_ended, killed))).await;
 }
 
 #[cfg(test)]
@@ -1917,6 +1934,15 @@ mod tests {
             .await
         });
         assert!(r.expect("must not hang").is_err());
+    }
+
+    #[test]
+    fn detach_gets_its_own_close_frame() {
+        let f = close_frame(true, false).expect("a detach sends a close frame");
+        assert_eq!(f.code, CLOSE_DETACHED);
+        assert_eq!(f.reason.as_str(), "detached");
+        assert!(close_frame(true, true).is_none(), "a kill is not a detach");
+        assert!(close_frame(false, false).is_none(), "client close, timeout: plain close");
     }
 
     #[test]

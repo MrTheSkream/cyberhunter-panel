@@ -1,7 +1,14 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useAuth } from "../context/AuthContext";
 import { api } from "../api";
-import { navGroups, isNavVisible, type NavGroup } from "../data/navItems";
+import {
+  navGroups,
+  isNavVisible,
+  isUserTerminalLinked,
+  refreshUserTerminalLink,
+  USER_TERMINAL_LINK_EVENT,
+  type NavGroup,
+} from "../data/navItems";
 
 const themeOrder = ["terminal", "midnight", "ember", "arctic", "clean", "clean-dark"] as const;
 
@@ -226,6 +233,17 @@ export function useLayoutState(): LayoutState {
       .catch(() => {});
   }, []);
 
+  // The "My session" row follows the link of the signed-in account. The answer
+  // is cached in navItems.ts; this re-asks the backend on mount and redraws
+  // whenever the cache changes (Save/Unlink in the settings, /terminal/me).
+  const [userTerminalLinked, setUserTerminalLinkedState] = useState(isUserTerminalLinked);
+  useEffect(() => {
+    const sync = () => setUserTerminalLinkedState(isUserTerminalLinked());
+    window.addEventListener(USER_TERMINAL_LINK_EVENT, sync);
+    if (isAdmin) void refreshUserTerminalLink().then(sync);
+    return () => window.removeEventListener(USER_TERMINAL_LINK_EVENT, sync);
+  }, [isAdmin]);
+
   // Filter nav groups by role
   const visibleGroups = useMemo(() => {
     if (!user) return [];
@@ -235,7 +253,9 @@ export function useLayoutState(): LayoutState {
       // decision instead of having its own (it had none at all).
       items: g.items.filter(item => isNavVisible(item, user.role)),
     })).filter(g => g.items.length > 0);
-  }, [user]);
+    // `userTerminalLinked` is read by `isNavVisible` through the module cache;
+    // listed here so a change redraws the menu.
+  }, [user, userTerminalLinked]);
 
   return {
     user: user || { email: "", role: "" },
