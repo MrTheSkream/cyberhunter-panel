@@ -2749,12 +2749,12 @@ function ServiceInstallers({ pdnsApiUrl, setPdnsApiUrl, pdnsApiKey, setPdnsApiKe
           {/* ClamAV, FTP and GoAccess take one column each (08-stats-web C-3).
               Their status grids are written for a full row (4 columns from
               sm), so inside a half-width column they are held at 2. */}
-          <div className="sm:[&_dl]:grid-cols-2">
+          <div className="sm:[&_dl]:grid-cols-2 [&>div]:h-full">
             <ClamavCard />
           </div>
           {/* vsftpd has its own routes (/ftp/install, /ftp/status) and a
               richer status than the generic rows above. */}
-          <div className="sm:[&_dl]:grid-cols-2">
+          <div className="sm:[&_dl]:grid-cols-2 [&>div]:h-full">
             <FtpServerCard />
           </div>
           {/* GoAccess has its own routes (/web-stats/*). */}

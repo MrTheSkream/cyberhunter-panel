@@ -58,7 +58,10 @@ export default function WebStatsServerCard() {
   const cancelConfirm = useCallback(() => setConfirm(null), []);
 
   const refresh = useCallback(async () => {
-    if (!activeServerId) return;
+    if (!activeServerId) {
+      setLoading(false);
+      return;
+    }
     try {
       const s = await api.get<WebStatsStatus>(`/web-stats/status?server_id=${encodeURIComponent(activeServerId)}`);
       setStatus(s);

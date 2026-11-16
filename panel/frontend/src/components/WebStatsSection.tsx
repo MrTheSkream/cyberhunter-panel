@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 import { api, ApiError } from "../api";
 import { timeAgo, formatDate } from "../utils/format";
@@ -6,7 +7,7 @@ import { DbIpAttribution } from "./WebStatsServerCard";
 
 // ── Shapes (08-stats-web-contrats.md B-3) ────────────────────────────────────
 
-/** `GET /api/sites/{id}/stats`, and the answer of `POST .../stats/refresh`. */
+/** `GET /api/sites/{id}/stats/state`, and the answer of `POST .../stats/refresh`. */
 export interface SiteWebStats {
   installed: boolean;
   updated_at: string | null;
@@ -86,7 +87,7 @@ export default function WebStatsSection({ siteId, domain, isAdmin }: Props) {
 
   const loadStats = useCallback(async () => {
     try {
-      const s = await api.get<SiteWebStats>(`/sites/${siteId}/stats`);
+      const s = await api.get<SiteWebStats>(`/sites/${siteId}/stats/state`);
       setStats(s);
       setStatsError("");
       return s;
@@ -118,6 +119,18 @@ export default function WebStatsSection({ siteId, domain, isAdmin }: Props) {
     if (open && stats?.installed && report.kind === "idle") loadReport();
   }, [open, stats?.installed, report.kind, loadReport]);
 
+  // A run in progress (hourly pass, the first run after install, or a
+  // Refresh from another tab): follow it, then reload the report it produced.
+  const running = stats?.running ?? false;
+  useEffect(() => {
+    if (!running) return;
+    const t = setInterval(async () => {
+      const s = await loadStats();
+      if (s && !s.running && s.installed && open) loadReport();
+    }, 15000);
+    return () => clearInterval(t);
+  }, [running, open, loadStats, loadReport]);
+
   const refresh = async () => {
     setRefreshing(true);
     setMsg("");
@@ -136,6 +149,9 @@ export default function WebStatsSection({ siteId, domain, isAdmin }: Props) {
         loadStats();
       } else {
         setMsg(errText(e, "Statistics run failed"));
+        // The run is synchronous and long: the request can die on the way
+        // while the run goes on. Re-read the state rather than guess.
+        loadStats();
       }
     } finally {
       setRefreshing(false);
@@ -148,7 +164,8 @@ export default function WebStatsSection({ siteId, domain, isAdmin }: Props) {
   // blob URL. The link is clicked without navigating anywhere, then revoked.
   const download = () => {
     if (!html) return;
-    const url = URL.createObjectURL(new Blob([html], { type: "text/html;charset=utf-8" }));
+    // octet-stream: a browser that ignored `download` could not render it.
+    const url = URL.createObjectURL(new Blob([html], { type: "application/octet-stream" }));
     const a = document.createElement("a");
     a.href = url;
     a.download = `${domain}-stats.html`;
@@ -157,7 +174,7 @@ export default function WebStatsSection({ siteId, domain, isAdmin }: Props) {
     document.body.appendChild(a);
     a.click();
     a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 0);
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
   };
 
   // Full screen: Escape closes it (when focus is in the panel, not inside the
@@ -218,12 +235,16 @@ export default function WebStatsSection({ siteId, domain, isAdmin }: Props) {
             <button onClick={refresh} disabled={refreshing || stats?.running} className={btn}>
               {refreshing || stats?.running ? "Computing..." : "Refresh"}
             </button>
-            <button onClick={() => setFullScreen(true)} disabled={!html} className={btn}>
-              Full screen
-            </button>
-            <button onClick={download} disabled={!html} className={btn}>
-              Download
-            </button>
+            {html && (
+              <>
+                <button onClick={() => setFullScreen(true)} className={btn}>
+                  Full screen
+                </button>
+                <button onClick={download} className={btn}>
+                  Download
+                </button>
+              </>
+            )}
           </div>
         )}
         {(stats?.error || msg) && (
@@ -277,7 +298,7 @@ export default function WebStatsSection({ siteId, domain, isAdmin }: Props) {
         </div>
       )}
 
-      {fullScreen && html && (
+      {fullScreen && html && createPortal(
         <div
           className="fixed inset-0 z-50 flex flex-col bg-dark-900"
           role="dialog"
@@ -296,7 +317,8 @@ export default function WebStatsSection({ siteId, domain, isAdmin }: Props) {
             </div>
           </div>
           <ReportFrame html={html} className="flex-1 w-full bg-white" />
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );
