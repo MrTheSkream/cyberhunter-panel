@@ -245,6 +245,7 @@ pub async fn list(
 
     let mut sites = sites;
     crate::services::server_ips::fill_bind_ips(&state.db, &mut sites).await;
+    crate::services::disk_usage::fill_disk_usage(&state.db, &mut sites).await;
 
     Ok(Json(sites))
 }
@@ -273,6 +274,11 @@ pub struct AdminSiteRow {
     /// Multi-IP, as on [`Site`]: the declared address id and its IP (null = primary).
     pub ip_id: Option<Uuid>,
     pub bind_ip: Option<String>,
+    /// Feature 6, as on [`Site`].
+    pub ftp_enabled: bool,
+    pub disk_quota_mb: Option<i32>,
+    #[sqlx(skip)]
+    pub disk_usage: Option<crate::models::DiskUsage>,
 }
 
 /// GET /api/admin/sites - every site on this server, with its owner. Admin only.
@@ -309,7 +315,7 @@ pub async fn list_for_admin(
         "SELECT s.id, s.domain, s.runtime, s.status, s.enabled, s.ssl_enabled, \
                 s.created_at, s.parent_site_id, s.user_id, \
                 u.email AS owner_email, u.role AS owner_role, \
-                s.ip_id, si.ip AS bind_ip \
+                s.ip_id, si.ip AS bind_ip, s.ftp_enabled, s.disk_quota_mb \
          FROM sites s LEFT JOIN users u ON u.id = s.user_id \
          LEFT JOIN server_ips si ON si.id = s.ip_id \
          WHERE s.server_id = $1 ORDER BY s.created_at DESC LIMIT $2 OFFSET $3",
@@ -320,6 +326,13 @@ pub async fn list_for_admin(
     .fetch_all(&state.db)
     .await
     .map_err(|e| internal_error("list sites for admin", e))?;
+
+    let mut sites = sites;
+    let ids: Vec<Uuid> = sites.iter().map(|s| s.id).collect();
+    let mut usage = crate::services::disk_usage::load_disk_usage(&state.db, &ids).await;
+    for s in sites.iter_mut() {
+        s.disk_usage = usage.remove(&s.id);
+    }
 
     Ok(Json(sites))
 }
@@ -1518,6 +1531,7 @@ pub async fn get_one(
 
     let mut site = site;
     crate::services::server_ips::fill_bind_ip(&state.db, &mut site).await;
+    crate::services::disk_usage::fill_disk_usage(&state.db, std::slice::from_mut(&mut site)).await;
     Ok(Json(site))
 }
 
@@ -2339,6 +2353,22 @@ pub async fn remove(
     // directory that is about to be deleted anyway is redundant work, but it
     // keeps `deprovision`'s contract simple (it always leaves the box in a
     // fully-reverted state) rather than growing a delete-vs-disable branch.
+    //
+    // FTP first (feature 6): out of the whitelist, open FTP sessions cut, so no
+    // vsftpd process of the account is left for `userdel` to trip over.
+    // Best-effort, like the SFTP teardown: the site is going away regardless.
+    if site.ftp_enabled {
+        let _ = sqlx::query("UPDATE sites SET ftp_enabled = false WHERE id = $1")
+            .bind(id)
+            .execute(&state.db)
+            .await;
+        if let Some(server_id) = site.server_id {
+            match crate::routes::ftp::sync_ftp_users(&state.db, &agent, server_id).await {
+                Ok(_) | Err(crate::routes::ftp::FtpSyncError::NotInstalled) => {}
+                Err(e) => tracing::warn!("FTP teardown failed for {} during site deletion - continuing: {e}", site.domain),
+            }
+        }
+    }
     if site.sftp_enabled
         && let (Some(uid), Some(gid)) = (site.sftp_uid, site.sftp_gid)
     {
@@ -4423,6 +4453,13 @@ pub async fn disable_sftp(
 
     let agent = crate::helpers::agent_for_site_server(&state, site.server_id, &site.domain).await?;
 
+    // FTP goes first (feature 6): the account leaves the whitelist and its FTP
+    // sessions are cut before the account is removed. A missing vsftpd (412) has
+    // nothing to cut; any other failure stops here with the box still ticked.
+    if site.ftp_enabled {
+        ftp_off_before_sftp_removal(&state, &agent, &site).await?;
+    }
+
     let last_sftp_site: (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM sites WHERE sftp_enabled = true AND id != $1",
     )
@@ -4526,6 +4563,264 @@ pub async fn reset_sftp_password(
     ).await;
 
     Ok(Json(serde_json::json!({ "ok": true, "password": password })))
+}
+
+// ── Feature 6: FTP (FTPS) and disk quotas ────────────────────────────────
+
+/// Untick FTP and resync the whitelist before the site's SFTP account goes away
+/// (`disable_sftp`). A 412 (vsftpd not installed) or a 404 (an agent without the
+/// FTP routes) has no session to cut and passes; any other failure puts the box
+/// back and is returned.
+async fn ftp_off_before_sftp_removal(
+    state: &AppState,
+    agent: &crate::services::agent::AgentHandle,
+    site: &Site,
+) -> Result<(), ApiError> {
+    use crate::routes::ftp::{FtpSyncError, sync_ftp_users};
+    let Some(server_id) = site.server_id else { return Ok(()) };
+    sqlx::query("UPDATE sites SET ftp_enabled = false, updated_at = NOW() WHERE id = $1")
+        .bind(site.id)
+        .execute(&state.db)
+        .await
+        .map_err(|e| internal_error("disable ftp", e))?;
+    match sync_ftp_users(&state.db, agent, server_id).await {
+        Ok(_) | Err(FtpSyncError::NotInstalled) => Ok(()),
+        Err(FtpSyncError::Agent(crate::services::agent::AgentError::Status(404, _))) => Ok(()),
+        Err(e) => {
+            let _ = sqlx::query("UPDATE sites SET ftp_enabled = true WHERE id = $1")
+                .bind(site.id)
+                .execute(&state.db)
+                .await;
+            Err(e.into_api("FTP whitelist"))
+        }
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub struct FtpToggleRequest {
+    pub enabled: bool,
+}
+
+/// POST /api/sites/{id}/ftp {enabled} -> {ftp_enabled}
+///
+/// Same rights and lockdown check as `enable_sftp`. FTP reuses the site's SFTP
+/// account (same name, same password), so SFTP must be enabled first. The column
+/// is written, then the server's whole whitelist is sent (A-4); if the agent
+/// refuses, the column gets its old value back and the refusal is returned.
+pub async fn set_ftp(
+    State(state): State<AppState>,
+    AuthUser(claims): AuthUser,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+    Json(body): Json<FtpToggleRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    use crate::routes::ftp::{FtpSyncError, sync_ftp_users};
+
+    if crate::services::security_hardening::is_locked_down(&state.db).await {
+        return Err(err(StatusCode::SERVICE_UNAVAILABLE, "System is in lockdown mode"));
+    }
+    let site: Site = sqlx::query_as(SITE_FOR_CALLER_ALL.as_str())
+        .bind(id)
+        .bind(claims.sub)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| internal_error("set ftp", e))?
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "Site not found"))?;
+
+    if body.enabled && !site.sftp_enabled {
+        return Err(err(StatusCode::PRECONDITION_FAILED, "Enable SFTP first"));
+    }
+    let agent = crate::helpers::agent_for_site_server(&state, site.server_id, &site.domain).await?;
+    let server_id = site
+        .server_id
+        .ok_or_else(|| err(StatusCode::CONFLICT, "This site is not associated with a server"))?;
+
+    sqlx::query("UPDATE sites SET ftp_enabled = $1, updated_at = NOW() WHERE id = $2")
+        .bind(body.enabled)
+        .bind(id)
+        .execute(&state.db)
+        .await
+        .map_err(|e| internal_error("set ftp", e))?;
+
+    match sync_ftp_users(&state.db, &agent, server_id).await {
+        Ok(_) => {}
+        // Unticking with no FTP server: there is nothing to cut, the box just goes.
+        Err(FtpSyncError::NotInstalled) if !body.enabled => {}
+        Err(e) => {
+            let _ = sqlx::query("UPDATE sites SET ftp_enabled = $1 WHERE id = $2")
+                .bind(site.ftp_enabled)
+                .bind(id)
+                .execute(&state.db)
+                .await;
+            return Err(e.into_api("FTP whitelist"));
+        }
+    }
+
+    let action = if body.enabled { "site.ftp.enabled" } else { "site.ftp.disabled" };
+    let username = sftp_account_name(&site);
+    let ip = crate::routes::client_ip(&headers);
+    tracing::info!("FTP {} for {}", if body.enabled { "enabled" } else { "disabled" }, site.domain);
+    activity::log_activity(
+        &state.db, claims.sub, &claims.email, action,
+        Some("site"), Some(&site.domain), Some(&username), ip.as_deref(),
+        claims.key_id,
+    ).await;
+    crate::services::security_hardening::audit_log(
+        &state.db, action, Some(&claims.email), ip.as_deref(),
+        Some("site"), Some(&site.domain), None, None, "warning",
+        claims.key_id,
+    ).await;
+
+    Ok(Json(serde_json::json!({ "ftp_enabled": body.enabled })))
+}
+
+/// Who may do what with a site's disk quota (B-3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct QuotaCaller {
+    /// An administrator of the site's server (the `SITE_CALLER_PREDICATE` admin arm).
+    pub admin: bool,
+    /// The reseller of the site owner's account.
+    pub reseller: bool,
+    pub owner: bool,
+}
+
+impl QuotaCaller {
+    /// Setting the quota: admin or the owner's reseller. The owner sees the
+    /// quota but cannot change it (403); anybody else does not see the site (404).
+    pub fn may_set(self) -> Result<(), StatusCode> {
+        if self.admin || self.reseller {
+            Ok(())
+        } else if self.owner {
+            Err(StatusCode::FORBIDDEN)
+        } else {
+            Err(StatusCode::NOT_FOUND)
+        }
+    }
+
+    /// Measuring now: admin, owner, or the owner's reseller.
+    pub fn may_measure(self) -> bool {
+        self.admin || self.reseller || self.owner
+    }
+}
+
+/// `(domain, server_id, caller rights)` of a site; roles are read from the
+/// database, never from the token.
+async fn quota_caller(
+    state: &AppState,
+    claims: &Claims,
+    id: Uuid,
+) -> Result<Option<(String, Option<Uuid>, QuotaCaller)>, ApiError> {
+    let row: Option<(String, Option<Uuid>, bool, bool, bool)> = sqlx::query_as(
+        "SELECT s.domain, s.server_id, \
+           EXISTS (SELECT 1 FROM users u, servers sv WHERE u.id = $2 AND u.role = 'admin' \
+                   AND sv.id = s.server_id AND (sv.is_local OR sv.user_id = u.id)), \
+           EXISTS (SELECT 1 FROM users o, users r WHERE o.id = s.user_id AND r.id = $2 \
+                   AND r.role = 'reseller' AND o.reseller_id = r.id), \
+           s.user_id = $2 \
+         FROM sites s WHERE s.id = $1",
+    )
+    .bind(id)
+    .bind(claims.sub)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| internal_error("site quota lookup", e))?;
+    Ok(row.map(|(domain, server_id, admin, reseller, owner)| (domain, server_id, QuotaCaller { admin, reseller, owner })))
+}
+
+/// The `quota_mb` of a request: `None` (unlimited) or 1 ..= i32::MAX MiB.
+pub(crate) fn parse_quota_mb(v: Option<i64>) -> Result<Option<i32>, &'static str> {
+    match v {
+        None => Ok(None),
+        Some(n) if n > 0 && n <= i64::from(i32::MAX) => Ok(Some(n as i32)),
+        Some(_) => Err("quota_mb must be a positive number of MB, or null for unlimited"),
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub struct DiskQuotaRequest {
+    #[serde(default)]
+    pub quota_mb: Option<i64>,
+}
+
+/// PUT /api/sites/{id}/disk-quota {quota_mb: n | null} -> {disk_quota_mb}
+///
+/// Admin, or the reseller of the site owner's account. The alert is recomputed
+/// right away from the last measurement.
+pub async fn set_disk_quota(
+    State(state): State<AppState>,
+    AuthUser(claims): AuthUser,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+    Json(body): Json<DiskQuotaRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let (domain, _server_id, caller) = quota_caller(&state, &claims, id)
+        .await?
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "Site not found"))?;
+    match caller.may_set() {
+        Ok(()) => {}
+        Err(StatusCode::FORBIDDEN) => {
+            return Err(err(
+                StatusCode::FORBIDDEN,
+                "Only an administrator or the account's reseller can change the disk quota",
+            ));
+        }
+        Err(_) => return Err(err(StatusCode::NOT_FOUND, "Site not found")),
+    }
+    let quota = parse_quota_mb(body.quota_mb).map_err(|m| err(StatusCode::BAD_REQUEST, m))?;
+
+    sqlx::query("UPDATE sites SET disk_quota_mb = $1, updated_at = NOW() WHERE id = $2")
+        .bind(quota)
+        .bind(id)
+        .execute(&state.db)
+        .await
+        .map_err(|e| internal_error("set disk quota", e))?;
+    crate::services::disk_usage::refresh_site_alert(&state.db, id).await;
+
+    let details = match quota {
+        Some(mb) => format!("{mb} MB"),
+        None => "unlimited".to_string(),
+    };
+    let ip = crate::routes::client_ip(&headers);
+    activity::log_activity(
+        &state.db, claims.sub, &claims.email, "site.disk_quota.updated",
+        Some("site"), Some(&domain), Some(&details), ip.as_deref(),
+        claims.key_id,
+    ).await;
+
+    Ok(Json(serde_json::json!({ "disk_quota_mb": quota })))
+}
+
+/// POST /api/sites/{id}/disk-usage/refresh -> {disk_usage}
+///
+/// Measures this site now (A-5), records the result, recomputes the alert.
+/// Admin, owner, or the owner's reseller. One measurement at a time per site:
+/// 429 while one (manual or scheduled) is running.
+pub async fn refresh_disk_usage(
+    State(state): State<AppState>,
+    AuthUser(claims): AuthUser,
+    Path(id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    use crate::services::disk_usage::{MeasureGuard, load_disk_usage, measure_sites};
+
+    let (domain, server_id, _caller) = quota_caller(&state, &claims, id)
+        .await?
+        .filter(|(_, _, c)| c.may_measure())
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "Site not found"))?;
+    if !is_valid_domain(&domain) {
+        return Err(err(StatusCode::BAD_REQUEST, "Invalid site domain"));
+    }
+    let guard = MeasureGuard::claim(&[id]);
+    if guard.is_empty() {
+        return Err(err(StatusCode::TOO_MANY_REQUESTS, "A measurement is already running for this site"));
+    }
+    let agent = crate::helpers::agent_for_site_server(&state, server_id, &domain).await?;
+    measure_sites(&state.db, &agent, &[(id, domain)])
+        .await
+        .map_err(|e| agent_error("Disk usage", e))?;
+    drop(guard);
+
+    let usage = load_disk_usage(&state.db, &[id]).await.remove(&id);
+    Ok(Json(serde_json::json!({ "disk_usage": usage })))
 }
 
 /// PUT /api/sites/{id}/waf - Toggle WAF and set mode for a site.
@@ -5844,6 +6139,32 @@ pub async fn set_ssl_options(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── feature 6: disk quota rights and values ──────────────────────────
+
+    #[test]
+    fn only_admins_and_resellers_set_a_quota() {
+        let c = |admin, reseller, owner| QuotaCaller { admin, reseller, owner };
+        assert_eq!(c(true, false, false).may_set(), Ok(()));
+        assert_eq!(c(false, true, false).may_set(), Ok(()));
+        assert_eq!(c(true, false, true).may_set(), Ok(()), "an admin who owns the site");
+        assert_eq!(c(false, false, true).may_set(), Err(StatusCode::FORBIDDEN));
+        assert_eq!(c(false, false, false).may_set(), Err(StatusCode::NOT_FOUND));
+        // Measuring is open to the owner too.
+        assert!(c(false, false, true).may_measure());
+        assert!(c(false, true, false).may_measure());
+        assert!(!c(false, false, false).may_measure());
+    }
+
+    #[test]
+    fn quota_values_are_positive_mebibytes_or_unlimited() {
+        assert_eq!(parse_quota_mb(None), Ok(None));
+        assert_eq!(parse_quota_mb(Some(2048)), Ok(Some(2048)));
+        assert_eq!(parse_quota_mb(Some(i64::from(i32::MAX))), Ok(Some(i32::MAX)));
+        assert!(parse_quota_mb(Some(0)).is_err());
+        assert!(parse_quota_mb(Some(-1)).is_err());
+        assert!(parse_quota_mb(Some(i64::from(i32::MAX) + 1)).is_err());
+    }
 
     // ── multi-IP: the DNS follow-up of an address change ─────────────────
 

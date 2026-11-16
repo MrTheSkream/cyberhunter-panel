@@ -210,6 +210,35 @@ pub struct Site {
     #[sqlx(default)]
     #[serde(default)]
     pub sftp_username: Option<String>,
+    /// FTP (FTPS) access for the site's SFTP account (feature 6): the account
+    /// name is listed in the server's vsftpd whitelist. Meaningful only while
+    /// `sftp_enabled`; kept when vsftpd is uninstalled.
+    #[sqlx(default)]
+    #[serde(default)]
+    pub ftp_enabled: bool,
+    /// Disk quota in MiB (feature 6). `None` = unlimited. An alert threshold
+    /// only: nothing is ever blocked.
+    #[sqlx(default)]
+    #[serde(default)]
+    pub disk_quota_mb: Option<i32>,
+    /// The last measurement of `site_disk_usage`, for the API response only -
+    /// NOT a column. Filled by [`crate::services::disk_usage::fill_disk_usage`]
+    /// in the handlers that return sites (detail and list).
+    #[sqlx(skip)]
+    #[serde(default)]
+    pub disk_usage: Option<DiskUsage>,
+}
+
+/// One `site_disk_usage` row as the API returns it (feature 6, B-3).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, sqlx::FromRow)]
+pub struct DiskUsage {
+    /// Allocated bytes (`st_blocks * 512`); the last known value when the
+    /// latest measurement failed, `None` if none ever succeeded.
+    pub bytes: Option<i64>,
+    pub files: Option<i64>,
+    pub measured_at: DateTime<Utc>,
+    /// Why the latest measurement failed, `None` when it succeeded.
+    pub error: Option<String>,
 }
 
 fn default_web_server() -> String {

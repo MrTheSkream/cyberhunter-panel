@@ -28,6 +28,11 @@ pub struct ResellerProfile {
     pub hide_branding: bool,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
+    /// Feature 6: measured disk usage of the sites of the reseller's clients.
+    /// Filled by `get` only (not a column); absent from the other responses.
+    #[sqlx(skip)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub disk_used_bytes: Option<i64>,
 }
 
 #[derive(serde::Serialize, sqlx::FromRow)]
@@ -43,7 +48,17 @@ pub struct ResellerListItem {
     pub used_sites: i32,
     pub used_databases: i32,
     pub created_at: chrono::DateTime<chrono::Utc>,
+    /// Feature 6: the (unenforced) disk limit, and the measured usage of the
+    /// sites of the reseller's clients.
+    pub max_disk_mb: Option<i64>,
+    pub disk_used_bytes: i64,
 }
+
+/// Sum of the last measured `site_disk_usage.bytes` of the sites owned by the
+/// clients of the reseller `rp.user_id`. `SUM(bigint)` is numeric: cast back.
+const DISK_USED_SQL: &str = "COALESCE((SELECT SUM(du.bytes) FROM site_disk_usage du \
+    JOIN sites s ON s.id = du.site_id JOIN users c ON c.id = s.user_id \
+    WHERE c.reseller_id = rp.user_id), 0)::bigint";
 
 #[derive(serde::Deserialize)]
 pub struct CreateResellerRequest {
@@ -89,16 +104,16 @@ pub async fn list(
     State(state): State<AppState>,
     AdminUser(_claims): AdminUser,
 ) -> Result<Json<Vec<ResellerListItem>>, ApiError> {
-    let resellers: Vec<ResellerListItem> = sqlx::query_as(
+    let resellers: Vec<ResellerListItem> = sqlx::query_as(&format!(
         "SELECT rp.id, rp.user_id, u.email, rp.panel_name, \
          rp.max_users, rp.max_sites, rp.max_databases, \
          rp.used_users, rp.used_sites, rp.used_databases, \
-         rp.created_at \
+         rp.created_at, rp.max_disk_mb, {DISK_USED_SQL} AS disk_used_bytes \
          FROM reseller_profiles rp \
          JOIN users u ON u.id = rp.user_id \
          WHERE u.role = 'reseller' \
-         ORDER BY rp.created_at ASC",
-    )
+         ORDER BY rp.created_at ASC"
+    ))
     .fetch_all(&state.db)
     .await
     .map_err(|e| internal_error("list resellers", e))?;
@@ -235,6 +250,16 @@ pub async fn get(
     .await
     .map_err(|e| internal_error("get resellers", e))?
     .ok_or_else(|| err(StatusCode::NOT_FOUND, "Reseller profile not found"))?;
+
+    let mut profile = profile;
+    let (used,): (i64,) = sqlx::query_as(&format!(
+        "SELECT {DISK_USED_SQL} FROM reseller_profiles rp WHERE rp.id = $1"
+    ))
+    .bind(id)
+    .fetch_one(&state.db)
+    .await
+    .map_err(|e| internal_error("reseller disk usage", e))?;
+    profile.disk_used_bytes = Some(used);
 
     Ok(Json(profile))
 }

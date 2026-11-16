@@ -20,6 +20,7 @@ pub mod dns;
 pub mod docker_apps;
 pub mod extensions;
 pub mod files;
+pub mod ftp;
 pub mod incidents;
 pub mod git_deploys;
 pub mod logs;
@@ -1146,6 +1147,10 @@ pub fn router() -> Router<AppState> {
         .route("/api/sites/{id}/sftp/enable", post(sites::enable_sftp))
         .route("/api/sites/{id}/sftp/disable", post(sites::disable_sftp))
         .route("/api/sites/{id}/sftp/reset-password", post(sites::reset_sftp_password))
+        // FTP (FTPS) and disk quotas (feature 6)
+        .route("/api/sites/{id}/ftp", post(sites::set_ftp))
+        .route("/api/sites/{id}/disk-quota", put(sites::set_disk_quota))
+        .route("/api/sites/{id}/disk-usage/refresh", post(sites::refresh_disk_usage))
         .route("/api/sites/{id}/waf", put(sites::toggle_waf))
         .route("/api/sites/{id}/waf/logs", get(sites::waf_logs))
         .route("/api/sites/{id}/optimize-images", post(sites::optimize_images))
@@ -1329,6 +1334,10 @@ pub fn router() -> Router<AppState> {
         .route("/api/security/unverified-users", get(security::unverified_users))
         .route("/api/security/users/{id}/verify-email", post(security::verify_user_email))
         // Security Scanning
+        // FTP server (vsftpd, feature 6)
+        .route("/api/ftp/status", get(ftp::status))
+        .route("/api/ftp/install", post(ftp::install))
+        .route("/api/ftp/uninstall", post(ftp::uninstall))
         // Antivirus (ClamAV, feature 5)
         .route("/api/antivirus/status", get(antivirus::status))
         .route("/api/antivirus/install", post(antivirus::install))
