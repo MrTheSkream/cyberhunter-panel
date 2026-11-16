@@ -137,11 +137,16 @@ pub async fn import_sftp(ctx: &ImportCtx, site_id: Uuid, domain: &str) -> ItemOu
         if hestia_user.is_some() && !site.ftp_enabled {
             let mut warnings = Vec::new();
             let ftp = enable_ftp(ctx, site_id, &mut warnings).await;
-            let mut message = "SFTP already enabled for this site, FTP enabled".to_string();
-            if !warnings.is_empty() {
-                message = format!("{message}; {}", warnings.join("; "));
-            }
-            return outcome(ItemStatus::Skipped, message, json!({ "ftp": ftp }));
+            // Finished (done / warning), not skipped: a skipped row runs again at
+            // every resume, which would re-tick a box the admin unticked and drop
+            // the `ftp` detail the manual action reads.
+            let message = "SFTP already enabled for this site, FTP enabled".to_string();
+            let details = json!({ "sftp_username": crate::routes::sites::sftp_account_name(&site), "ftp": ftp });
+            return if warnings.is_empty() {
+                outcome(ItemStatus::Done, message, details)
+            } else {
+                outcome(ItemStatus::Warning, format!("{message}; {}", warnings.join("; ")), details)
+            };
         }
         return ItemOutcome::new(ItemStatus::Skipped, "SFTP already enabled for this site");
     }

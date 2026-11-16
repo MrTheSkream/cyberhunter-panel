@@ -4703,6 +4703,11 @@ impl QuotaCaller {
     }
 }
 
+/// Roles of a client account its reseller may act on. Same list as
+/// `reseller_dashboard::RESELLER_MANAGEABLE_ROLES`: an admin or reseller account
+/// that happens to carry a reseller's id never becomes theirs.
+const QUOTA_RESELLER_CLIENT_ROLES: &[&str] = &["user", "client", "suspended"];
+
 /// `(domain, server_id, caller rights)` of a site; roles are read from the
 /// database, never from the token.
 async fn quota_caller(
@@ -4715,12 +4720,13 @@ async fn quota_caller(
            EXISTS (SELECT 1 FROM users u, servers sv WHERE u.id = $2 AND u.role = 'admin' \
                    AND sv.id = s.server_id AND (sv.is_local OR sv.user_id = u.id)), \
            EXISTS (SELECT 1 FROM users o, users r WHERE o.id = s.user_id AND r.id = $2 \
-                   AND r.role = 'reseller' AND o.reseller_id = r.id), \
+                   AND r.role = 'reseller' AND o.reseller_id = r.id AND o.role = ANY($3)), \
            s.user_id = $2 \
          FROM sites s WHERE s.id = $1",
     )
     .bind(id)
     .bind(claims.sub)
+    .bind(QUOTA_RESELLER_CLIENT_ROLES)
     .fetch_optional(&state.db)
     .await
     .map_err(|e| internal_error("site quota lookup", e))?;
