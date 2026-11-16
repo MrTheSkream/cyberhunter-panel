@@ -1,7 +1,48 @@
 import { useState, useEffect, FormEvent, useCallback } from "react";
-import { useNavigate, Link, Navigate } from "react-router-dom";
+import { useNavigate, useSearchParams, Link, Navigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { useBranding } from "../context/BrandingContext";
+import { refreshUserTerminalLink } from "../data/navItems";
+
+/**
+ * The `?next=` target, or null when it is not an internal path. Only a path on
+ * this origin is honoured: it starts with "/" and not with "//" or "/\", which
+ * browsers read as a protocol-relative URL to another host.
+ */
+export function safeNextPath(raw: string | null): string | null {
+  if (!raw || raw.length > 2048) return null;
+  if (!raw.startsWith("/")) return null;
+  if (raw.startsWith("//") || raw.startsWith("/\\")) return null;
+  // Control characters (tab, newline) are stripped by URL parsers and can turn
+  // "/<tab>/evil.example" into "//evil.example".
+  if (/[\x00-\x1f\x7f]/.test(raw)) return null;
+  return raw;
+}
+
+/**
+ * Leaves the sign-in page once a session exists. The "My session" menu row is
+ * decided from a cached answer, so it is refreshed first: the layout reads it
+ * when it mounts after this navigation.
+ */
+function PostLoginRedirect({ to }: { to: string }) {
+  const navigate = useNavigate();
+  useEffect(() => {
+    let cancelled = false;
+    // Bounded: a slow answer must never hold anyone on the sign-in page.
+    const timeout = new Promise<void>((resolve) => window.setTimeout(resolve, 1500));
+    void Promise.race([refreshUserTerminalLink(), timeout]).finally(() => {
+      if (!cancelled) navigate(to, { replace: true });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [navigate, to]);
+  return (
+    <div className="min-h-screen flex items-center justify-center">
+      <div className="w-6 h-6 border-2 border-dark-600 border-t-rust-500 rounded-full animate-spin" />
+    </div>
+  );
+}
 
 function base64urlToBuffer(b64: string): ArrayBuffer {
   const pad = b64.length % 4 === 0 ? "" : "=".repeat(4 - (b64.length % 4));
@@ -21,7 +62,8 @@ function bufferToBase64url(buf: ArrayBuffer): string {
 
 export default function Login() {
   const { user, login, verify2fa, loading } = useAuth();
-  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const nextPath = safeNextPath(searchParams.get("next")) ?? "/";
   const branding = useBranding();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -92,7 +134,7 @@ export default function Login() {
       }
 
       // Refresh auth state and navigate
-      window.location.href = "/";
+      window.location.href = nextPath;
     } catch (err) {
       if (err instanceof Error && err.name !== "NotAllowedError") {
         setError(err.message || "Passkey authentication failed");
@@ -100,7 +142,7 @@ export default function Login() {
     } finally {
       setSubmitting(false);
     }
-  }, []);
+  }, [nextPath]);
 
   // Check if setup is needed (no users exist)
   useEffect(() => {
@@ -115,7 +157,8 @@ export default function Login() {
       <div className="w-6 h-6 border-2 border-dark-600 border-t-rust-500 rounded-full animate-spin" />
     </div>
   );
-  if (user) return <Navigate to="/" replace />;
+  // Every successful sign-in lands here: setting `user` re-renders this page.
+  if (user) return <PostLoginRedirect to={nextPath} />;
   if (needsSetup) return <Navigate to="/setup" replace />;
 
   const handleSubmit = async (e: FormEvent) => {
@@ -127,9 +170,8 @@ export default function Login() {
       if (challenge) {
         // 2FA required
         setTwoFaToken(challenge.temp_token);
-      } else {
-        navigate("/");
       }
+      // Otherwise `user` is set and the page redirects to `nextPath`.
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
     } finally {
@@ -143,7 +185,7 @@ export default function Login() {
     setSubmitting(true);
     try {
       await verify2fa(twoFaToken, twoFaCode);
-      navigate("/");
+      // `user` is set: the page redirects to `nextPath`.
     } catch (err) {
       setError(err instanceof Error ? err.message : "Invalid 2FA code");
     } finally {

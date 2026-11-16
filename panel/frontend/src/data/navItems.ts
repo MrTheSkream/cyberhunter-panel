@@ -18,6 +18,59 @@ export interface NavItem {
    * behaviour we want.
    */
   resellerOnly?: boolean;
+  /**
+   * Shown only to an admin whose panel account is linked to a Linux user for
+   * the user terminal (`GET /api/terminal/user/me` answered `linked: true`).
+   * The answer is held below, outside React, because this registry is read
+   * synchronously by every menu.
+   */
+  requiresUserTerminal?: boolean;
+}
+
+// ── User terminal link (the "My session" row) ──
+//
+// Cached per browser so the row is drawn on the first render after a reload,
+// and refreshed at boot, after sign-in and whenever /terminal/me loads. A plain
+// `fetch`, not `api.get`: a 401 here must never navigate anyone to /login.
+const USER_TERMINAL_LINK_KEY = "dp-user-terminal-linked";
+
+function readUserTerminalLink(): boolean {
+  try {
+    return localStorage.getItem(USER_TERMINAL_LINK_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+let userTerminalLinked = readUserTerminalLink();
+
+export function setUserTerminalLinked(linked: boolean): void {
+  userTerminalLinked = linked;
+  try {
+    if (linked) localStorage.setItem(USER_TERMINAL_LINK_KEY, "1");
+    else localStorage.removeItem(USER_TERMINAL_LINK_KEY);
+  } catch {
+    /* storage unavailable: keep the in-memory answer */
+  }
+}
+
+/** Re-asks the backend. Resolves with the answer, or the cached one on a network failure. */
+export async function refreshUserTerminalLink(): Promise<boolean> {
+  try {
+    const res = await fetch("/api/terminal/user/me", {
+      credentials: "same-origin",
+      headers: { "X-Requested-With": "DockPanel" },
+    });
+    if (!res.ok) {
+      setUserTerminalLinked(false);
+      return false;
+    }
+    const data = (await res.json().catch(() => ({}))) as { linked?: boolean };
+    setUserTerminalLinked(data.linked === true);
+    return userTerminalLinked;
+  } catch {
+    return userTerminalLinked;
+  }
 }
 
 export interface NavGroup {
@@ -37,9 +90,11 @@ export interface NavGroup {
  * 403s. A decision inlined in two menus is a decision that drifts.
  */
 export function isNavVisible(
-  item: Pick<NavItem, "adminOnly" | "resellerVisible" | "resellerOnly">,
+  item: Pick<NavItem, "adminOnly" | "resellerVisible" | "resellerOnly" | "requiresUserTerminal">,
   role: string,
 ): boolean {
+  // The user terminal is admin-only and needs a linked Linux account.
+  if (item.requiresUserTerminal) return role === "admin" && userTerminalLinked;
   // Ahead of the admin branch, because it is the one kind of row "admin sees
   // everything" gets wrong: a tenant-scoped page has nothing to show an account
   // that is not a tenant, and the handler behind it says so with a 403.
@@ -59,7 +114,7 @@ export function isNavVisible(
  */
 export function navFlagsFor(
   path: string,
-): Pick<NavItem, "adminOnly" | "resellerVisible" | "resellerOnly"> {
+): Pick<NavItem, "adminOnly" | "resellerVisible" | "resellerOnly" | "requiresUserTerminal"> {
   const base = path.split("?")[0];
   for (const group of navGroups) {
     for (const item of group.items) {
@@ -119,6 +174,9 @@ export const navGroups: NavGroup[] = [
       { to: "/notifications", label: "Notifications", iconName: "notifications" },
       { to: "/logs", label: "Logs", iconName: "logs", adminOnly: true },
       { to: "/terminal", label: "Terminal", iconName: "terminal" },
+      // Full-screen page outside the layout: a shell as the linked Linux user,
+      // attached to a persistent tmux session.
+      { to: "/terminal/me", label: "My session", iconName: "terminal", requiresUserTerminal: true },
     ],
   },
   {

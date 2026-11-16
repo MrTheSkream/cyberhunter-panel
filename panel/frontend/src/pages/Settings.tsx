@@ -10,6 +10,7 @@ import ConfirmDialog from "../components/ConfirmDialog";
 import ClamavCard from "../components/ClamavCard";
 import FtpServerCard from "../components/FtpServerCard";
 import WebStatsServerCard from "../components/WebStatsServerCard";
+import UserTerminalSettings from "../components/UserTerminalSettings";
 import {
   TwoFactorCard,
   PasskeysCard,
@@ -1759,6 +1760,26 @@ export default function Settings() {
                 <div className={`absolute top-0.5 w-5 h-5 bg-white rounded-full transition-transform ${settings.server_terminal_disabled !== "true" ? "translate-x-5.5 left-0.5" : "left-0.5"}`} />
               </button>
             </div>
+            {/* User terminal kill switch. Inverted like Server Terminal
+                (`user_terminal_disabled`, absent means enabled). Turning it off
+                also makes the backend close open user terminal connections. */}
+            <div className="px-5 py-3 flex items-center justify-between">
+              <div>
+                <p className="text-sm text-dark-100">User Terminal</p>
+                <p className="text-xs text-dark-400">Shell as a linked Linux user in a persistent tmux session. Disabling it also closes open user terminal connections.</p>
+              </div>
+              <button onClick={async () => {
+                const enabled = settings.user_terminal_disabled !== "true";
+                const next = enabled ? "true" : "false";
+                try {
+                  await api.put("/settings", { user_terminal_disabled: next });
+                  setSettings(prev => ({ ...prev, user_terminal_disabled: next }));
+                  setMessage({ text: `User terminal ${enabled ? "disabled" : "enabled"}`, type: "success" });
+                } catch (e) { setMessage({ text: e instanceof Error ? e.message : "Failed", type: "error" }); }
+              }} aria-label="User terminal" className={`relative w-11 h-6 rounded-full transition-colors ${settings.user_terminal_disabled !== "true" ? "bg-rust-500" : "bg-dark-600"}`}>
+                <div className={`absolute top-0.5 w-5 h-5 bg-white rounded-full transition-transform ${settings.user_terminal_disabled !== "true" ? "translate-x-5.5 left-0.5" : "left-0.5"}`} />
+              </button>
+            </div>
             <div className="px-5 py-3">
               <p className="text-sm text-dark-100">Panel IP Allowlist</p>
               <p className="text-xs text-dark-400 mb-2">
@@ -1782,6 +1803,9 @@ export default function Settings() {
           </div>
         </div>
         )}
+
+        {/* User terminal: which Linux user each admin account opens. */}
+        {user?.role === "admin" && <UserTerminalSettings />}
 
         {/* Data retention windows. The reader (auto_healer.rs's run_retention_cleanup,
             GAP 67) has existed for a while but had no ALLOWED_KEYS entry and no
