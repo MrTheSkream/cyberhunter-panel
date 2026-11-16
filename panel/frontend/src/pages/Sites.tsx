@@ -8,6 +8,7 @@ import { PrereqCallout, useDnsPrereq } from "../components/Prerequisite";
 import { FieldHelp, InfoTip } from "../components/FieldHelp";
 import PhpVersionPicker from "../components/PhpVersionPicker";
 import { useAuth } from "../context/AuthContext";
+import { type DiskUsage, formatUsage, quotaRatio } from "../components/DiskUsageCard";
 import { useServerIps, serverIpOptionLabel } from "../utils/serverIps";
 import {
   ApacheInstallCallout,
@@ -39,6 +40,9 @@ interface Site {
   user_id?: string;
   owner_email?: string | null;
   owner_role?: string | null;
+  // 07-ftp-quotas (B-3). Optional: a list that does not carry them shows "-".
+  disk_quota_mb?: number | null;
+  disk_usage?: DiskUsage | null;
 }
 
 interface PanelUser {
@@ -615,6 +619,7 @@ export default function Sites() {
                 <th scope="col" className="text-left text-xs font-medium text-dark-200 uppercase tracking-widest font-mono px-5 py-3 hidden sm:table-cell">Runtime</th>
                 <th scope="col" className="text-left text-xs font-medium text-dark-200 uppercase tracking-widest font-mono px-5 py-3">Status</th>
                 <th scope="col" className="text-left text-xs font-medium text-dark-200 uppercase tracking-widest font-mono px-5 py-3 hidden md:table-cell">SSL</th>
+                <th scope="col" className="text-left text-xs font-medium text-dark-200 uppercase tracking-widest font-mono px-5 py-3 hidden md:table-cell">Disk</th>
                 <th scope="col" className="text-left text-xs font-medium text-dark-200 uppercase tracking-widest font-mono px-5 py-3 hidden lg:table-cell">Created</th>
                 {allSites && (
                   <>
@@ -668,6 +673,23 @@ export default function Sites() {
                       </span>
                     ) : (
                       <span className="text-xs text-dark-300">None</span>
+                    )}
+                  </td>
+                  <td className="px-5 py-4 hidden md:table-cell">
+                    {site.disk_usage?.bytes != null ? (
+                      (() => {
+                        const ratio = quotaRatio(site.disk_usage.bytes, site.disk_quota_mb);
+                        return (
+                          <span
+                            className={`text-xs font-mono whitespace-nowrap ${ratio != null && ratio >= 1 ? "text-danger-400" : "text-dark-200"}`}
+                            title={ratio != null && ratio >= 1 ? "Disk quota exceeded" : undefined}
+                          >
+                            {formatUsage(site.disk_usage.bytes, site.disk_quota_mb)}
+                          </span>
+                        );
+                      })()
+                    ) : (
+                      <span className="text-xs text-dark-300">-</span>
                     )}
                   </td>
                   <td className="px-5 py-4 text-sm text-dark-200 hidden lg:table-cell">
