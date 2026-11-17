@@ -101,11 +101,11 @@ has  "$REPO/panel/agent/src/routes/mod.rs" 'if request.uri().path() == "/health"
 echo
 echo "C. The installer installs the version it was given"
 code "$SETUP" 'DOCKPANEL_VERSION' \
-     "download_binaries reads the pin instead of ignoring it"
+     "install_release_binaries reads the pin instead of ignoring it"
 code "$SETUP" 'Pinned release' \
      "and says so, rather than printing a version it did not install"
-code "$SETUP" 'releases/latest' \
-     "unpinned installs still resolve the latest release"
+code "$SETUP" 'CYBERHUNTER_RELEASE_DIR' \
+     "a release install reads the release placed on the box (10: nothing is fetched)"
 code "$INSTALL" 'git clone .*-b "\$VERSION"' \
      "install.sh still selects the tree by the same variable"
 [ -n "$(diff "$INSTALL" "$WEBINSTALL" 2>&1)" ] \

@@ -16,7 +16,9 @@
 # Usage:
 #   bash scripts/setup.sh                         # Interactive (asks for domain)
 #   PANEL_DOMAIN=panel.example.com bash scripts/setup.sh  # Non-interactive with domain
-#   INSTALL_FROM_RELEASE=1 bash scripts/setup.sh  # Download pre-built binaries
+#   INSTALL_FROM_RELEASE=1 CYBERHUNTER_RELEASE_DIR=/root/release bash scripts/setup.sh
+#                                                 # Install a release downloaded by hand
+#                                                 # (SHA-256 checked against its checksums.txt)
 #   PANEL_PORT=9090 bash scripts/setup.sh         # Custom port (no domain)
 #
 set -euo pipefail
@@ -31,7 +33,6 @@ CLI_BIN="/usr/local/bin/dockpanel"
 DB_PORT=5450
 DB_CONTAINER="dockpanel-postgres"
 INSTALL_FROM_RELEASE="${INSTALL_FROM_RELEASE:-0}"
-GITHUB_REPO="ovexro/dockpanel"
 # Set to 1 by configure_nginx when the panel is served over a self-signed
 # certificate (no domain → no Let's Encrypt). print_summary reads it to print
 # the right scheme and explain the browser warning before it happens.
@@ -161,8 +162,6 @@ on_exit() {
     echo ""
     echo -e "  Re-running the installer is safe - it picks up where it left off:"
     echo -e "    ${BOLD}curl -sL https://dockpanel.dev/install.sh | sudo bash${NC}"
-    echo ""
-    echo -e "  Stuck? Open an issue: https://github.com/ovexro/dockpanel/issues"
     echo ""
 }
 trap on_exit EXIT
@@ -443,14 +442,16 @@ check_root() {
 }
 
 check_source() {
-    # Source check only needed if building from source
+    # Release mode: the local release must be there and carry a manifest,
+    # checked before anything is installed.
     if [ "$INSTALL_FROM_RELEASE" = "1" ]; then
+        check_release_dir
         return
     fi
     if [ ! -d "$AGENT_SRC/src" ]; then
         error "Cannot find agent source at $AGENT_SRC"
         error "Run this script from the CyberHunter - Panel repository root,"
-        error "or set INSTALL_FROM_RELEASE=1 to download pre-built binaries."
+        error "or set INSTALL_FROM_RELEASE=1 and CYBERHUNTER_RELEASE_DIR to install a downloaded release."
         exit 1
     fi
 }
@@ -1026,160 +1027,126 @@ setup_database() {
     fi
 }
 
-# ── Download Pre-built Binaries ──────────────────────────────────────────
+# ── Install Pre-built Binaries from a local release ──────────────────────
 INSTALLED_VERSION=""
 
-# fetch_asset <asset-name> <dest> - download to a QUARANTINE temp file next to
-# dest, verify its sha256 against the release checksums.txt, and only move it
-# onto the live path AFTER it verifies - so the live executable path never
-# holds unverified bytes (a mismatch aborts without touching the old binary).
-# A checksum MISMATCH is fatal; a missing manifest only warns (availability
-# must not brick an install, integrity must). Sets FETCH_VERIFIED=1/0 so the
-# caller can report honestly whether a checksum was actually compared.
-FETCH_VERIFIED=0
-
-# dp_fetch <url> <out> - download, retrying the failures curl's own --retry will
-# not.
+# Release mode installs ONLY from a release already on this box, downloaded by
+# hand into CYBERHUNTER_RELEASE_DIR (the files of a CyberHunter release: the
+# cyberhunter-*-linux-<arch> binaries, cyberhunter-frontend.tar.gz and
+# checksums.txt). Nothing is fetched from a release page any more: the
+# repository is private, and the panel updates itself through its own verified
+# path (Telemetry, Updates) once installed.
 #
-# `--retry` covers connection refusals, timeouts and some HTTP codes. It does NOT
-# cover a connection dropped MID-TRANSFER, which exits 56 - and 56 is precisely
-# what the release CDN has now returned on three separate installs across two
-# sessions, each time aborting the install at the binary download. `curl` grew
-# `--retry-all-errors` for exactly this, but it landed in 7.71 and Ubuntu 20.04,
-# which this installer supports, ships 7.68 - so the loop lives in shell, where
-# every supported box can run it.
-#
-# ⚠ `rc=$?` on the line after a bare `if` reads 0, because a false `if` with no
-# `else` is itself a success - the bug that shipped inside the last fix written
-# for this same failure. Capture with `|| rc=$?` on the command itself.
-dp_fetch() {
-    local url="$1" out="$2" attempt=1 rc=0
-    while [ "$attempt" -le 3 ]; do
-        rc=0
-        curl --retry 3 --retry-delay 2 -sfL "$url" -o "$out" || rc=$?
-        [ "$rc" -eq 0 ] && return 0
-        plog "  fetch attempt ${attempt}/3 exited ${rc} - $url"
-        rm -f "$out"
-        attempt=$((attempt + 1))
-        [ "$attempt" -le 3 ] && sleep 3
-    done
-    return "$rc"
-}
+# The SHA-256 check is MANDATORY: a missing or malformed checksums.txt, a
+# missing entry, a missing file or a mismatch aborts the install. The minisign
+# signature is not checked here (no key in shell, by design): the operator
+# chose this directory, and every later update is verified by the panel binary.
 
-fetch_asset() {
-    local asset="$1" dest="$2"
-    local tmp="${dest}.dpdl.$$"
-    FETCH_VERIFIED=0
-    if ! run "Downloading ${asset}" dp_fetch "${BASE_URL}/${asset}" "$tmp"; then
-        rm -f "$tmp"
-        error "Download failed after 3 attempts: ${asset} - see $INSTALL_LOG"
+# check_release_dir - the directory exists and holds a well-formed manifest.
+# Called from check_source, before anything is installed.
+check_release_dir() {
+    if [ -z "${CYBERHUNTER_RELEASE_DIR:-}" ]; then
+        error "INSTALL_FROM_RELEASE=1 needs CYBERHUNTER_RELEASE_DIR: a directory holding a CyberHunter release"
+        error "(its cyberhunter-*-linux-<arch> binaries, cyberhunter-frontend.tar.gz and checksums.txt),"
+        error "or run from a checkout of the repository to build from source."
         exit 1
     fi
-    if [ -s "$CHECKSUMS_FILE" ]; then
-        local want got
-        want=$(awk -v n="$asset" '$2 == n {print $1; exit}' "$CHECKSUMS_FILE")
-        if [ -n "$want" ]; then
-            got=$(sha256sum "$tmp" | awk '{print $1}')
-            if [ "$want" != "$got" ]; then
-                rm -f "$tmp"
-                error "Checksum MISMATCH for ${asset} - refusing to install a corrupt binary"
-                plog "expected $want got $got"
-                exit 1
-            fi
-            FETCH_VERIFIED=1
-        fi
+    RELEASE_DIR="$CYBERHUNTER_RELEASE_DIR"
+    RELEASE_SUMS="$RELEASE_DIR/checksums.txt"
+    if [ ! -f "$RELEASE_SUMS" ]; then
+        error "No checksums.txt in $RELEASE_DIR - refusing to install unverified binaries"
+        exit 1
+    fi
+    # One `<64 hex>  <name>` per line, LF only; any other line is a refusal.
+    if [ "$(tr -cd '\r' < "$RELEASE_SUMS" | wc -c)" -ne 0 ] \
+       || grep -vqE '^[0-9a-f]{64}  [A-Za-z0-9._-]{1,128}$' "$RELEASE_SUMS"; then
+        error "checksums.txt in $RELEASE_DIR is malformed - refusing to install"
+        exit 1
+    fi
+}
+
+# install_asset <asset-name> <dest> - copy to a QUARANTINE temp file next to
+# dest, verify the COPY's sha256 against the release checksums.txt, and only
+# move it onto the live path AFTER it verifies - so the live executable path
+# never holds unverified bytes (a mismatch aborts without touching the old
+# binary).
+install_asset() {
+    local asset="$1" dest="$2"
+    local tmp="${dest}.dpdl.$$"
+    local want got
+    want=$(awk -v n="$asset" '$2 == n {print $1}' "$RELEASE_SUMS")
+    if [ -z "$want" ] || [ "$(printf '%s\n' "$want" | wc -l)" -ne 1 ]; then
+        error "checksums.txt has no single entry for ${asset} - refusing to install"
+        exit 1
+    fi
+    if [ ! -f "$RELEASE_DIR/$asset" ]; then
+        error "${asset} is missing from $RELEASE_DIR"
+        exit 1
+    fi
+    cp "$RELEASE_DIR/$asset" "$tmp"
+    got=$(sha256sum "$tmp" | awk '{print $1}')
+    if [ "$want" != "$got" ]; then
+        rm -f "$tmp"
+        error "Checksum MISMATCH for ${asset} - refusing to install a corrupt binary"
+        plog "expected $want got $got"
+        exit 1
     fi
     # Atomic swap into the live path (never `cp` onto a running binary).
     mv -f "$tmp" "$dest"
 }
 
-# Truthful post-download line - "verified" ONLY when a checksum was compared.
-fetched_msg() {
+installed_msg() {
     local what="$1" path="$2"
-    if [ "$FETCH_VERIFIED" = "1" ]; then
-        log "${what} downloaded + verified ($(du -h "$path" | cut -f1))"
-    else
-        log "${what} downloaded ($(du -h "$path" | cut -f1)) - checksum not verified"
-    fi
+    log "${what} installed + verified ($(du -h "$path" | cut -f1))"
 }
 
-download_binaries() {
-    header "Downloading Pre-built Binaries"
+install_release_binaries() {
+    header "Installing Pre-built Binaries"
 
-    # Which release to install.
-    #
-    # install.sh already reads DOCKPANEL_VERSION and clones that ref - but this,
-    # its only consumer, used to always fetch releases/latest. So
-    # `DOCKPANEL_VERSION=v2.31.2 install.sh` produced a v2.31.2 tree running
-    # v2.34.2 binaries and printed "Version: v2.34.2" at the end (s261). Unit
-    # files, nginx templates and install-agent.sh are deployed from the tree,
-    # so that skew is the same class that stranded the v2.8.13 -> v2.8.14
-    # upgrade path. Honour the pin here; `main` (the default) means "latest".
-    local RELEASE_TAG
+    # The release being installed, for the summary. DOCKPANEL_VERSION when the
+    # operator names it; otherwise the directory name.
     if [ -n "${DOCKPANEL_VERSION:-}" ] && [ "${DOCKPANEL_VERSION}" != "main" ]; then
-        RELEASE_TAG="$DOCKPANEL_VERSION"
-        case "$RELEASE_TAG" in
-            [0-9]*) RELEASE_TAG="v$RELEASE_TAG" ;;
+        INSTALLED_VERSION="$DOCKPANEL_VERSION"
+        case "$INSTALLED_VERSION" in
+            [0-9]*) INSTALLED_VERSION="v$INSTALLED_VERSION" ;;
         esac
-        log "Pinned release: $RELEASE_TAG (DOCKPANEL_VERSION)"
+        log "Pinned release: $INSTALLED_VERSION (DOCKPANEL_VERSION)"
     else
-        RELEASE_TAG=$(curl --retry 3 --retry-delay 2 -sf "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" | grep '"tag_name"' | head -1 | cut -d'"' -f4)
-        log "Latest release: $RELEASE_TAG"
+        INSTALLED_VERSION="$(basename "$RELEASE_DIR")"
     fi
+    log "Installing from $RELEASE_DIR"
 
-    if [ -z "$RELEASE_TAG" ]; then
-        error "Could not determine latest release. Check https://github.com/${GITHUB_REPO}/releases"
-        exit 1
-    fi
-    INSTALLED_VERSION="$RELEASE_TAG"
-    BASE_URL="https://github.com/${GITHUB_REPO}/releases/download/${RELEASE_TAG}"
-
-    # Checksum manifest first - every later download is verified against it.
-    # mktemp (root-owned, O_EXCL, unpredictable) so a local user can't pre-seed
-    # a manifest that would make a tampered binary "verify".
-    CHECKSUMS_FILE=$(umask 077; mktemp /tmp/dockpanel-checksums.XXXXXX 2>/dev/null || echo "")
-    # Through dp_fetch like every other release download, including this file's
-    # own. This line kept a bare `curl --retry` after dp_fetch was written eleven
-    # lines above it, so the one fetch that decides whether ANY binary gets
-    # verified was the one still exposed to a mid-transfer drop - and its failure
-    # is a warning, so a transient blip silently downgraded the whole install to
-    # unverified. The fail-open policy is deliberate and is unchanged: three
-    # attempts, then warn and continue.
-    if [ -z "$CHECKSUMS_FILE" ] || ! dp_fetch "${BASE_URL}/checksums.txt" "$CHECKSUMS_FILE" 2>/dev/null; then
-        warn "checksums.txt not available - skipping integrity verification"
-        : > "$CHECKSUMS_FILE" 2>/dev/null || CHECKSUMS_FILE=""
-    fi
-
-    # Stop running services before overwriting their binaries. Re-running the
-    # installer with services active causes `curl -o` to fail with "Text file
-    # busy" (exit 23) because Linux refuses to overwrite a running executable.
-    # systemctl stop is a no-op if the unit is inactive or missing.
+    # Stop running services before replacing their binaries. systemctl stop is
+    # a no-op if the unit is inactive or missing.
     if command -v systemctl >/dev/null 2>&1; then
         systemctl stop dockpanel-api dockpanel-agent 2>/dev/null || true
     fi
 
-    fetch_asset "dockpanel-agent-linux-${DL_ARCH}" "$AGENT_BIN"
+    install_asset "cyberhunter-agent-linux-${DL_ARCH}" "$AGENT_BIN"
     chmod +x "$AGENT_BIN"
-    fetched_msg "Agent" "$AGENT_BIN"
+    installed_msg "Agent" "$AGENT_BIN"
 
-    fetch_asset "dockpanel-api-linux-${DL_ARCH}" "$API_BIN"
+    install_asset "cyberhunter-api-linux-${DL_ARCH}" "$API_BIN"
     chmod +x "$API_BIN"
-    fetched_msg "API" "$API_BIN"
+    installed_msg "API" "$API_BIN"
 
-    fetch_asset "dockpanel-cli-linux-${DL_ARCH}" "$CLI_BIN"
+    install_asset "cyberhunter-cli-linux-${DL_ARCH}" "$CLI_BIN"
     chmod +x "$CLI_BIN"
-    fetched_msg "CLI" "$CLI_BIN"
+    installed_msg "CLI" "$CLI_BIN"
+
+    install_asset "cyberhunter-mcp-linux-${DL_ARCH}" /usr/local/bin/dockpanel-mcp
+    chmod +x /usr/local/bin/dockpanel-mcp
+    installed_msg "MCP server" /usr/local/bin/dockpanel-mcp
 
     local FE_TARBALL
-    FE_TARBALL=$(umask 077; mktemp /tmp/dockpanel-frontend.XXXXXX.tar.gz 2>/dev/null || echo /tmp/dockpanel-frontend.tar.gz)
-    fetch_asset "dockpanel-frontend.tar.gz" "$FE_TARBALL"
+    FE_TARBALL=$(umask 077; mktemp /tmp/dockpanel-frontend.XXXXXX.tar.gz)
+    install_asset "cyberhunter-frontend.tar.gz" "$FE_TARBALL"
 
     # Extract frontend - need a target directory
     local FE_DIR="/opt/dockpanel/frontend"
     mkdir -p "$FE_DIR"
     tar xzf "$FE_TARBALL" -C "$FE_DIR"
     rm -f "$FE_TARBALL"
-    [ -n "$CHECKSUMS_FILE" ] && rm -f "$CHECKSUMS_FILE"
 
     # If dist/ is nested inside, flatten it
     if [ -d "$FE_DIR/dist" ]; then
@@ -1229,7 +1196,7 @@ build_binaries() {
     fi
 
     # Stop running services so cp can overwrite their binaries (see note in
-    # download_binaries - same "Text file busy" trap).
+    # install_release_binaries - same "Text file busy" trap).
     if command -v systemctl >/dev/null 2>&1; then
         systemctl stop dockpanel-api dockpanel-agent 2>/dev/null || true
     fi
@@ -2425,7 +2392,7 @@ main() {
     setup_database
 
     if [ "$INSTALL_FROM_RELEASE" = "1" ]; then
-        download_binaries
+        install_release_binaries
     else
         build_binaries
         build_frontend

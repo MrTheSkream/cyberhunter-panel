@@ -1,11 +1,19 @@
 #!/usr/bin/env bash
 #
 # CyberHunter - Panel Updater
-# Pulls latest code, rebuilds binaries + frontend, restarts services.
-# Preserves database, secrets, and configuration.
+# Rebuilds (source mode) or installs (release mode) binaries + frontend,
+# restarts services. Preserves database, secrets, and configuration.
 #
-# Usage: bash scripts/update.sh
-#        INSTALL_FROM_RELEASE=1 bash scripts/update.sh  # Download pre-built binaries
+# Usage: BUILD_FROM_SOURCE=1 bash scripts/update.sh   # compile the tree this script sits in
+#
+# Release mode (INSTALL_FROM_RELEASE=1) is started by the panel (Telemetry,
+# Updates), never by hand. This script downloads nothing: the panel binary has
+# already fetched the release, checked the minisign signature of checksums.txt
+# and the SHA-256 of every file, and placed it in a root-only directory passed
+# as CYBERHUNTER_RELEASE_DIR. The script runs from <release>/cyberhunter-source
+# /scripts/, so the units, nginx templates and install-agent.sh it deploys come
+# from that verified release, and it re-checks the SHA-256 of every file it
+# installs against $CYBERHUNTER_RELEASE_DIR/checksums.txt before touching the box.
 #
 set -euo pipefail
 
@@ -33,7 +41,7 @@ if [ -z "${DOCKPANEL_UPDATE_DETACHED:-}" ] && command -v systemd-run >/dev/null 
             --setenv=DOCKPANEL_UPDATE_DETACHED=1 \
             --setenv=INSTALL_FROM_RELEASE="${INSTALL_FROM_RELEASE:-}" \
             --setenv=DOCKPANEL_VERSION="${DOCKPANEL_VERSION:-}" \
-            --setenv=DOCKPANEL_NO_SELF_REFRESH="${DOCKPANEL_NO_SELF_REFRESH:-}" \
+            --setenv=CYBERHUNTER_RELEASE_DIR="${CYBERHUNTER_RELEASE_DIR:-}" \
             bash "$0" "$@"
     fi
 fi
@@ -91,6 +99,10 @@ _dockpanel_on_exit() {
     if [ "$_dockpanel_services_stopped" = "1" ]; then
         systemctl start dockpanel-agent dockpanel-api 2>/dev/null || true
     fi
+    # The verified copies staged for a release install (root-only, in /tmp).
+    if [ -n "${STAGE_DIR:-}" ] && [ -d "${STAGE_DIR:-}" ]; then
+        rm -rf "$STAGE_DIR" 2>/dev/null || true
+    fi
     # Every exit path leaves a verdict, including the ones nobody wrote by hand:
     # a `set -e` abort, a SIGTERM, a failed curl. Without this the only paths
     # that reported anything were the ones that happened to be instrumented.
@@ -112,35 +124,9 @@ log()    { echo -e "${GREEN}[+]${NC} $1"; }
 warn()   { echo -e "${YELLOW}[!]${NC} $1"; }
 error()  { echo -e "${RED}[x]${NC} $1" >&2; }
 
-# dp_fetch <url> <out> - download, retrying the failures curl's own --retry does
-# not. Same shape as setup.sh's dp_fetch, deliberately: four programs in this
-# repo perform the identical operation against the identical host, and until
-# s354 only the installer retried it at all.
-#
-# `--retry` covers connection refusals, timeouts and some HTTP codes. It does
-# NOT cover a connection dropped MID-TRANSFER, which exits 56 - the error that
-# has aborted real installs against the release CDN. curl grew
-# `--retry-all-errors` for exactly this, but it landed in 7.71 and the installer
-# supports Ubuntu 20.04, which ships 7.68 - so the loop lives in shell, and the
-# four copies stay identical rather than drifting apart.
-#
-# ⚠ `rc=$?` on the line after a bare `if` reads 0, because a false `if` with no
-# `else` is itself a success. Capture with `|| rc=$?` on the command itself.
-# ⚠ Written as explicit `if` blocks, not `[ … ] && …`: under `set -e` a false
-# test at statement level aborts the script.
-dp_fetch() {
-    local url="$1" out="$2" attempt=1 rc=0
-    while [ "$attempt" -le 3 ]; do
-        rc=0
-        curl --retry 3 --retry-delay 2 -sfL "$url" -o "$out" || rc=$?
-        if [ "$rc" -eq 0 ]; then return 0; fi
-        warn "  fetch attempt ${attempt}/3 exited ${rc} - $url"
-        rm -f "$out"
-        attempt=$((attempt + 1))
-        if [ "$attempt" -le 3 ]; then sleep 3; fi
-    done
-    return "$rc"
-}
+# No download helper here any more (10, mises a jour): this script never
+# fetches anything. In release mode every file comes from the directory the
+# panel prepared and verified; in source mode it compiles the tree it sits in.
 
 # ── Checks ────────────────────────────────────────────────────────────────
 if [ "$EUID" -ne 0 ]; then
@@ -171,30 +157,25 @@ API_BIN="/usr/local/bin/dockpanel-api"
 CLI_BIN="/usr/local/bin/dockpanel"
 MCP_BIN="/usr/local/bin/dockpanel-mcp"
 INSTALL_FROM_RELEASE="${INSTALL_FROM_RELEASE:-0}"
-GITHUB_REPO="ovexro/dockpanel"
 
-# ── Mode detection (must run BEFORE self-refresh) ─────────────────────────
-# Self-refresh is gated on INSTALL_FROM_RELEASE=1, so the auto-detect that
-# flips it to 1 has to happen first. v2.8.15 and earlier had this in the
-# wrong order: a user running `bash update.sh` (no env vars) entered with
-# INSTALL_FROM_RELEASE=0, failed the self-refresh check, then got bumped
-# to 1 by auto-detect - but with the stale local script still running.
-# Result: binaries upgrade fine, but script-side fixes (unit files, nginx
-# tweaks, install-agent.sh deploy) never reach pre-v2.8.16 panels.
+# ── Mode detection ────────────────────────────────────────────────────────
+# Without a source tree or without cargo, this box can only be updated from a
+# release - and a release update is started from the panel, which prepares and
+# verifies the release first. The auto-detect is kept so that a bare
+# `bash update.sh` on such a box stops with the message below instead of
+# trying to compile nothing.
 if [ "$INSTALL_FROM_RELEASE" != "1" ] && [ ! -d "$AGENT_SRC/src" ]; then
-    log "No source found - switching to pre-built binary download"
+    log "No source found - this box can only be updated from a release"
     INSTALL_FROM_RELEASE=1
 fi
 
-# Auto-detect: if Rust toolchain isn't available, use release binaries.
 # Production VPS installs typically don't have cargo on PATH (and usually
 # don't have enough RAM to compile rustc's dep tree - proc-macro2 OOMs at
-# ~1-2 GB). Fall back to the pre-built artifacts on the matching tag rather
-# than asking the operator to install rustup just to update.
+# ~1-2 GB).
 if [ "$INSTALL_FROM_RELEASE" != "1" ] \
    && ! command -v cargo > /dev/null 2>&1 \
    && [ ! -x "$HOME/.cargo/bin/cargo" ]; then
-    log "Rust toolchain not found - switching to pre-built binary download"
+    log "Rust toolchain not found - this box can only be updated from a release"
     log "(set BUILD_FROM_SOURCE=1 to force compile-from-source instead)"
     INSTALL_FROM_RELEASE=1
 fi
@@ -205,37 +186,19 @@ if [ "${BUILD_FROM_SOURCE:-0}" = "1" ]; then
     INSTALL_FROM_RELEASE=0
 fi
 
-# ── Self-refresh ──────────────────────────────────────────────────────────
-# In binary-release mode, the on-disk copy of this script can lag the
-# repo by several releases (it's only refreshed by re-running install.sh).
-# That means a bug in update.sh - like the 405-rollback bug fixed in
-# v2.7.13 - strands operators unable to upgrade. Pull the latest script
-# from the latest release tag and re-exec ourselves before running any
-# update logic. SELF_REFRESHED=1 prevents an infinite re-exec loop.
-# DOCKPANEL_NO_SELF_REFRESH=1 - set by the panel-internal orchestrator
-# (services/panel_update.rs) so it can stream a single update.sh invocation's
-# stdout into its state machine without a mid-flight re-exec breaking the pipe.
-# SSH-operator flow keeps self-refresh on by default.
-if [ "${SELF_REFRESHED:-0}" != "1" ] && [ "$INSTALL_FROM_RELEASE" = "1" ] \
-   && [ "${DOCKPANEL_NO_SELF_REFRESH:-0}" != "1" ]; then
-    LATEST_TAG=$(curl -fsSL "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" 2>/dev/null \
-        | grep -m1 '"tag_name"' | cut -d'"' -f4 || true)
-    if [ -n "$LATEST_TAG" ]; then
-        REMOTE_URL="https://raw.githubusercontent.com/${GITHUB_REPO}/${LATEST_TAG}/scripts/update.sh"
-        TMP=$(mktemp)
-        if curl -fsSL "$REMOTE_URL" -o "$TMP" 2>/dev/null && [ -s "$TMP" ]; then
-            # Compare to current to avoid an unnecessary re-exec on every run
-            if ! cmp -s "$TMP" "${BASH_SOURCE[0]}"; then
-                log "Refreshing update.sh from $LATEST_TAG (current copy is stale)"
-                cp "$TMP" "${BASH_SOURCE[0]}" 2>/dev/null || true
-                rm -f "$TMP"
-                export SELF_REFRESHED=1
-                exec bash "${BASH_SOURCE[0]}" "$@"
-            fi
-            rm -f "$TMP"
-        else
-            rm -f "$TMP"
-        fi
+# ── Release mode: only from a release the panel has verified ──────────────
+# There is no self-refresh and no repo sync any more. Both fetched code from a
+# remote that, on servers installed before the fork, is the upstream project:
+# a refreshed updater or a reset tree would have come from outside this
+# project's signed releases. The trust chain is now: the panel binary verifies
+# the minisign signature of checksums.txt (with its compiled-in key, and the
+# trusted comment bound to the tag) and the SHA-256 of each file, then runs
+# THIS script from inside that release. The script re-checks the SHA-256 of
+# every file it installs below.
+if [ "$INSTALL_FROM_RELEASE" = "1" ]; then
+    if [ -z "${CYBERHUNTER_RELEASE_DIR:-}" ]; then
+        error "Release updates are started from the panel (Telemetry, Updates). To update by hand, build from source."
+        exit 1
     fi
 fi
 
@@ -249,32 +212,81 @@ echo ""
 echo -e "${GREEN}${BOLD}CyberHunter - Panel Updater${NC}"
 echo ""
 
-# ── Sync repo to origin/main ──────────────────────────────────────────────
-_dockpanel_stage="sync-repo"
-# Both modes need a fresh tree: the canonical systemd unit
-# (panel/agent/dockpanel-agent.service), nginx templates, install-agent.sh,
-# and a few other repo-resident files are deployed from $REPO_DIR. Without a
-# pull, `bash /opt/dockpanel/scripts/update.sh` would download new binaries
-# but redeploy the OLD canonical unit - exactly what stranded the v2.8.13 →
-# v2.8.14 upgrade-path test (RuntimeDirectory=dockpanel and /var/cache/nginx
-# in ReadWritePaths never reached the deployed unit). v2.8.15.
+# ── Release mode: re-check every file against checksums.txt ───────────────
+# Before ANY change to the box (database dump included). Fail closed: a missing
+# checksums.txt, a malformed one, a missing entry, a missing file or a hash
+# mismatch aborts here, with nothing touched.
 #
-# `git pull --ff-only` doesn't cover installs cloned with `-b vX.Y.Z` (those
-# end up on a detached HEAD with no `main` known locally), so the sync uses
-# `git fetch origin main` + `git reset --hard FETCH_HEAD` to forcibly track
-# main. Local edits to /opt/dockpanel are unsupported (it's a deploy
-# artifact, not a working tree) - `git stash` captures any incidental drift
-# in case anyone wants to inspect it post-upgrade.
-if [ -d "$REPO_DIR/.git" ]; then
-    log "Syncing repo to latest origin/main..."
-    (cd "$REPO_DIR" && {
-        git stash -q 2>/dev/null || true
-        if git fetch --depth=1 origin main 2>/dev/null; then
-            git reset --hard FETCH_HEAD 2>&1 | tail -1 >/dev/null || true
-        else
-            log "Warning: git fetch failed - deploying from existing on-disk source"
+# Each file is COPIED to a root-only staging directory first and the COPY is
+# hashed, so the bytes that are installed are the bytes that were checked (no
+# window between the check and the use).
+#
+# The source tree this script runs from (<release>/cyberhunter-source) cannot be
+# checked file by file: checksums.txt lists the archive, not its contents. The
+# panel extracted it only after verifying that archive; its SHA-256 is checked
+# again here when the archive is still in the release directory.
+if [ "$INSTALL_FROM_RELEASE" = "1" ]; then
+    _dockpanel_stage="verify"
+    case "$(uname -m)" in
+        x86_64)         DL_ARCH="amd64" ;;
+        aarch64|arm64)  DL_ARCH="arm64" ;;
+        *) error "Unsupported architecture: $(uname -m)"; exit 1 ;;
+    esac
+    RELEASE_TAG="${DOCKPANEL_VERSION:-}"
+    case "$RELEASE_TAG" in
+        [0-9]*) RELEASE_TAG="v$RELEASE_TAG" ;;
+    esac
+    RELEASE_DIR="$CYBERHUNTER_RELEASE_DIR"
+    CHECKSUMS="$RELEASE_DIR/checksums.txt"
+    if [ ! -f "$CHECKSUMS" ]; then
+        error "No checksums.txt in $RELEASE_DIR - refusing to install unverified files"
+        exit 1
+    fi
+    # The manifest format (one `<64 hex>  <name>` per line, LF only). A line
+    # that does not match is a refusal, never a line to skip.
+    if [ "$(tr -cd '\r' < "$CHECKSUMS" | wc -c)" -ne 0 ] \
+       || grep -vqE '^[0-9a-f]{64}  [A-Za-z0-9._-]{1,128}$' "$CHECKSUMS"; then
+        error "checksums.txt in $RELEASE_DIR is malformed - refusing to install"
+        exit 1
+    fi
+    STAGE_DIR="$(umask 077; mktemp -d /tmp/dockpanel-release-XXXXXX)"
+    # verify_release_file <asset name> <staged copy>
+    verify_release_file() {
+        local asset="$1" dest="$2" expect actual
+        expect=$(awk -v a="$asset" '$2 == a {print $1}' "$CHECKSUMS")
+        if [ -z "$expect" ] || [ "$(printf '%s\n' "$expect" | wc -l)" -ne 1 ]; then
+            error "checksums.txt for ${RELEASE_TAG:-this release} has no single entry for $asset - refusing to install"
+            exit 1
         fi
-    }) || log "Warning: repo sync failed - deploying from existing on-disk source"
+        if [ ! -f "$RELEASE_DIR/$asset" ]; then
+            error "$asset is missing from $RELEASE_DIR - refusing to install"
+            exit 1
+        fi
+        cp "$RELEASE_DIR/$asset" "$dest"
+        actual=$(sha256sum "$dest" | awk '{print $1}')
+        if [ "$actual" != "$expect" ]; then
+            error "sha256 mismatch for $asset: got $actual, expected $expect - refusing to install"
+            exit 1
+        fi
+        log "Verified $asset (sha256)"
+    }
+    verify_release_file "cyberhunter-agent-linux-${DL_ARCH}" "$STAGE_DIR/dockpanel-agent-new"
+    verify_release_file "cyberhunter-api-linux-${DL_ARCH}"   "$STAGE_DIR/dockpanel-api-new"
+    verify_release_file "cyberhunter-cli-linux-${DL_ARCH}"   "$STAGE_DIR/dockpanel-cli-new"
+    verify_release_file "cyberhunter-mcp-linux-${DL_ARCH}"   "$STAGE_DIR/dockpanel-mcp-new"
+    verify_release_file "cyberhunter-frontend.tar.gz"        "$STAGE_DIR/dockpanel-frontend.tar.gz"
+    if [ -f "$RELEASE_DIR/cyberhunter-source.tar.gz" ]; then
+        verify_release_file "cyberhunter-source.tar.gz" "$STAGE_DIR/source.tar.gz"
+        rm -f "$STAGE_DIR/source.tar.gz"
+    fi
+    for b in agent api cli mcp; do
+        if [ "$(head -c 4 "$STAGE_DIR/dockpanel-${b}-new" | od -An -tx1 | tr -d ' \n')" != "7f454c46" ]; then
+            error "cyberhunter-${b}-linux-${DL_ARCH} is not an ELF executable - refusing to install"
+            exit 1
+        fi
+        chmod 0755 "$STAGE_DIR/dockpanel-${b}-new"
+    done
+    log "Release ${RELEASE_TAG:-} verified from $RELEASE_DIR"
 fi
 
 # ── Backup database before upgrade ────────────────────────────────────────
@@ -333,102 +345,16 @@ if crontab -l 2>/dev/null | grep -c 'pg_dump -U dockpanel.*/var/backups/dockpane
     fi
 fi
 
-# ── Build or download binaries ────────────────────────────────────────────
+# ── Build or install binaries ─────────────────────────────────────────────
 _dockpanel_stage="binaries"
 if [ "$INSTALL_FROM_RELEASE" = "1" ]; then
-    # Download pre-built binaries from GitHub Releases
-    ARCH=$(uname -m)
-    case "$ARCH" in
-        x86_64)  DL_ARCH="amd64" ;;
-        aarch64) DL_ARCH="arm64" ;;
-        *) error "Unsupported architecture: $ARCH"; exit 1 ;;
-    esac
-
-    # DOCKPANEL_VERSION=vX.Y.Z (or vX.Y.Z-rc.N) - pin to a specific release
-    # tag instead of /releases/latest. Lets the panel-internal orchestrator
-    # honour the operator's candidate-channel pick and the in-process
-    # "available version" snapshot, instead of racing /releases/latest mid-
-    # apply (which could shift to a newer GA between poll and click).
-    if [ -n "${DOCKPANEL_VERSION:-}" ]; then
-        RELEASE_TAG="$DOCKPANEL_VERSION"
-        # Accept a bare semver too. Panels up to v2.11.2 passed the version with
-        # the `v` already stripped (their poller normalises it for display), which
-        # built releases/download/2.11.2/... - a 404 - so their self-update could
-        # never complete. Those panels ship a fixed binary only by updating, so
-        # the only thing that can heal them is this script: the repo sync above
-        # pulls this file before the download runs, meaning a second attempt on
-        # an old panel now succeeds.
-        case "$RELEASE_TAG" in
-            [0-9]*) RELEASE_TAG="v$RELEASE_TAG" ;;
-        esac
-        log "Pinned release: $RELEASE_TAG (DOCKPANEL_VERSION)"
-    else
-        log "Fetching latest release..."
-        RELEASE_TAG=$(curl -sf "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" | grep '"tag_name"' | head -1 | cut -d'"' -f4)
-        if [ -z "$RELEASE_TAG" ]; then
-            error "Could not determine latest release. Check https://github.com/${GITHUB_REPO}/releases"
-            exit 1
-        fi
-        log "Latest release: $RELEASE_TAG"
-    fi
-    BASE_URL="https://github.com/${GITHUB_REPO}/releases/download/${RELEASE_TAG}"
-
-    # Verify every downloaded asset against the release's checksums.txt before
-    # installing it - parity with scripts/agent-self-update.sh. The release ships
-    # checksums.txt (.github/workflows/release.yml: `sha256sum dockpanel-* >
-    # checksums.txt`; entries are bare basenames). Fail closed: a missing
-    # checksums.txt, a missing entry, or a hash mismatch aborts the upgrade -
-    # never install unverified bytes (lesson #25/#48).
-    CHECKSUMS=/tmp/dockpanel-checksums.txt
-    if ! dp_fetch "${BASE_URL}/checksums.txt" "$CHECKSUMS"; then
-        error "Could not download ${BASE_URL}/checksums.txt - refusing to install unverified binaries"
-        exit 1
-    fi
-    verify_checksum() {
-        # $1 = downloaded file, $2 = asset name as it appears in checksums.txt
-        local file="$1" asset="$2" expect actual
-        expect=$(awk -v a="$asset" '$2 == a {print $1}' "$CHECKSUMS" | head -1)
-        if [ -z "$expect" ]; then
-            error "checksums.txt for $RELEASE_TAG has no entry for $asset - refusing to install"
-            exit 1
-        fi
-        actual=$(sha256sum "$file" | awk '{print $1}')
-        if [ "$actual" != "$expect" ]; then
-            error "sha256 mismatch for $asset: got $actual, expected $expect - refusing to install"
-            exit 1
-        fi
-        log "Verified $asset (sha256)"
-    }
-
-    log "Downloading agent (${DL_ARCH})..."
-    dp_fetch "${BASE_URL}/dockpanel-agent-linux-${DL_ARCH}" /tmp/dockpanel-agent-new
-    verify_checksum /tmp/dockpanel-agent-new "dockpanel-agent-linux-${DL_ARCH}"
-    chmod +x /tmp/dockpanel-agent-new
-
-    log "Downloading API (${DL_ARCH})..."
-    dp_fetch "${BASE_URL}/dockpanel-api-linux-${DL_ARCH}" /tmp/dockpanel-api-new
-    verify_checksum /tmp/dockpanel-api-new "dockpanel-api-linux-${DL_ARCH}"
-    chmod +x /tmp/dockpanel-api-new
-
-    log "Downloading CLI (${DL_ARCH})..."
-    dp_fetch "${BASE_URL}/dockpanel-cli-linux-${DL_ARCH}" /tmp/dockpanel-cli-new
-    verify_checksum /tmp/dockpanel-cli-new "dockpanel-cli-linux-${DL_ARCH}"
-    chmod +x /tmp/dockpanel-cli-new
-
-    log "Downloading MCP server (${DL_ARCH})..."
-    dp_fetch "${BASE_URL}/dockpanel-mcp-linux-${DL_ARCH}" /tmp/dockpanel-mcp-new
-    verify_checksum /tmp/dockpanel-mcp-new "dockpanel-mcp-linux-${DL_ARCH}"
-    chmod +x /tmp/dockpanel-mcp-new
-
-    # Download and extract frontend
-    log "Downloading frontend..."
-    dp_fetch "${BASE_URL}/dockpanel-frontend.tar.gz" /tmp/dockpanel-frontend.tar.gz
-    verify_checksum /tmp/dockpanel-frontend.tar.gz "dockpanel-frontend.tar.gz"
+    # The binaries were verified and staged above; only the frontend is
+    # unpacked here, from the verified staged copy.
+    log "Installing frontend from the verified release..."
     FE_DIR="/opt/dockpanel/frontend"
     mkdir -p "$FE_DIR"
-    tar xzf /tmp/dockpanel-frontend.tar.gz -C "$FE_DIR"
-    rm -f /tmp/dockpanel-frontend.tar.gz
-    rm -f "$CHECKSUMS"
+    tar xzf "$STAGE_DIR/dockpanel-frontend.tar.gz" -C "$FE_DIR"
+    rm -f "$STAGE_DIR/dockpanel-frontend.tar.gz"
     log "Frontend updated"
 else
     # Build from source
@@ -439,7 +365,7 @@ else
         CARGO_CMD="$HOME/.cargo/bin/cargo"
     else
         error "Rust toolchain not found, but BUILD_FROM_SOURCE=1 was requested."
-        error "Recommended: drop BUILD_FROM_SOURCE=1 - update.sh will auto-fetch pre-built binaries."
+        error "Without a toolchain, update this panel from its own interface (Telemetry, Updates)."
         error "If you really want to compile from source: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
         error "(note: building from source needs ~4 GB RAM - most production VPSes won't have it)"
         exit 1
@@ -1097,10 +1023,10 @@ systemctl stop dockpanel-agent dockpanel-api 2>/dev/null || true
 [ "$MCP_WAS_ACTIVE" = "1" ] && systemctl stop dockpanel-mcp 2>/dev/null || true
 
 if [ "$INSTALL_FROM_RELEASE" = "1" ]; then
-    mv /tmp/dockpanel-agent-new "$AGENT_BIN"
-    mv /tmp/dockpanel-api-new "$API_BIN"
-    mv /tmp/dockpanel-cli-new "$CLI_BIN"
-    mv /tmp/dockpanel-mcp-new "$MCP_BIN"
+    mv "$STAGE_DIR/dockpanel-agent-new" "$AGENT_BIN"
+    mv "$STAGE_DIR/dockpanel-api-new" "$API_BIN"
+    mv "$STAGE_DIR/dockpanel-cli-new" "$CLI_BIN"
+    mv "$STAGE_DIR/dockpanel-mcp-new" "$MCP_BIN"
 else
     cp "$AGENT_SRC/target/release/dockpanel-agent" "$AGENT_BIN"
     cp "$API_SRC/target/release/dockpanel-api" "$API_BIN"
@@ -1257,6 +1183,23 @@ if ! dockpanel --version > /dev/null 2>&1; then
 fi
 
 log "Health checks passed"
+
+# ── Release mode: refresh /opt/dockpanel/scripts from the verified release ──
+# Only now, after the health checks: a release that rolled back must not leave
+# its scripts behind for the next SSH session. These copies are for operators
+# working over SSH (restore, uninstall, sync of site vhosts); the panel itself
+# always runs update.sh from inside the release it has just verified.
+if [ "$INSTALL_FROM_RELEASE" = "1" ] && [ -d "$REPO_DIR/scripts" ] \
+   && [ "$REPO_DIR/scripts" != "/opt/dockpanel/scripts" ]; then
+    _dockpanel_stage="scripts"
+    mkdir -p /opt/dockpanel/scripts
+    if cp -a "$REPO_DIR/scripts/." /opt/dockpanel/scripts/; then
+        log "Refreshed /opt/dockpanel/scripts from the release"
+    else
+        warn "Could not refresh /opt/dockpanel/scripts - the update itself is complete"
+    fi
+fi
+
 _dockpanel_stage="complete"
 _dockpanel_finished=1
 _dockpanel_write_result true "complete" \
