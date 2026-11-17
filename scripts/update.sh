@@ -221,10 +221,15 @@ echo ""
 # hashed, so the bytes that are installed are the bytes that were checked (no
 # window between the check and the use).
 #
-# The source tree this script runs from (<release>/cyberhunter-source) cannot be
-# checked file by file: checksums.txt lists the archive, not its contents. The
-# panel extracted it only after verifying that archive; its SHA-256 is checked
-# again here when the archive is still in the release directory.
+# The source tree this script runs from (<release>/cyberhunter-source) is
+# checked too, fail closed: checksums.txt lists the archive, not its contents,
+# so the archive is MANDATORY here (the panel keeps it in the release
+# directory), its SHA-256 is checked, it is extracted to the staging directory
+# and the tree this script runs from must be identical to it, file for file.
+#
+# Every archive is listed BEFORE it is extracted as root (check_release_archive):
+# no absolute path, no `..`, nothing but regular files and directories. And it
+# is extracted with --no-same-owner --no-same-permissions.
 if [ "$INSTALL_FROM_RELEASE" = "1" ]; then
     _dockpanel_stage="verify"
     case "$(uname -m)" in
@@ -270,15 +275,57 @@ if [ "$INSTALL_FROM_RELEASE" = "1" ]; then
         fi
         log "Verified $asset (sha256)"
     }
+    # check_release_archive <archive> [prefix]
+    check_release_archive() {
+        local archive="$1" prefix="${2:-}" name names verbose n_names n_types
+        name=$(basename "$archive")
+        if ! names=$(LC_ALL=C tar -tzf "$archive") || ! verbose=$(LC_ALL=C tar -tvzf "$archive"); then
+            error "$name cannot be listed - refusing to install"
+            exit 1
+        fi
+        n_names=$(printf '%s\n' "$names" | grep -c . || true)
+        n_types=$(printf '%s\n' "$verbose" | grep -c . || true)
+        if [ "$n_names" -eq 0 ] || [ "$n_names" -ne "$n_types" ]; then
+            error "$name has an empty or ambiguous listing - refusing to install"
+            exit 1
+        fi
+        if [ "$(printf '%s\n' "$names" | grep -cE '^/|(^|/)\.\.(/|$)' || true)" -ne 0 ]; then
+            error "$name holds an absolute path or a .. component - refusing to install"
+            exit 1
+        fi
+        if [ "$(printf '%s\n' "$verbose" | cut -c1 | grep -cv '^[-d]$' || true)" -ne 0 ]; then
+            error "$name holds a link or a special file - refusing to install"
+            exit 1
+        fi
+        if [ -n "$prefix" ] \
+           && [ "$(printf '%s\n' "$names" | grep -cv "^${prefix}/" || true)" -ne 0 ]; then
+            error "$name holds files outside ${prefix}/ - refusing to install"
+            exit 1
+        fi
+    }
+    # tree_digest <dir>: every path with its type, and the SHA-256 of every file.
+    tree_digest() {
+        (cd "$1" && LC_ALL=C find . -printf '%y %p\n' | LC_ALL=C sort \
+            && LC_ALL=C find . -type f -print0 | LC_ALL=C sort -z | xargs -0 -r sha256sum)
+    }
     verify_release_file "cyberhunter-agent-linux-${DL_ARCH}" "$STAGE_DIR/dockpanel-agent-new"
     verify_release_file "cyberhunter-api-linux-${DL_ARCH}"   "$STAGE_DIR/dockpanel-api-new"
     verify_release_file "cyberhunter-cli-linux-${DL_ARCH}"   "$STAGE_DIR/dockpanel-cli-new"
     verify_release_file "cyberhunter-mcp-linux-${DL_ARCH}"   "$STAGE_DIR/dockpanel-mcp-new"
     verify_release_file "cyberhunter-frontend.tar.gz"        "$STAGE_DIR/dockpanel-frontend.tar.gz"
-    if [ -f "$RELEASE_DIR/cyberhunter-source.tar.gz" ]; then
-        verify_release_file "cyberhunter-source.tar.gz" "$STAGE_DIR/source.tar.gz"
-        rm -f "$STAGE_DIR/source.tar.gz"
+    check_release_archive "$STAGE_DIR/dockpanel-frontend.tar.gz"
+    # Mandatory, never "if it is still there": without it, nothing proves the
+    # tree this script runs from is the one that was signed.
+    verify_release_file "cyberhunter-source.tar.gz" "$STAGE_DIR/source.tar.gz"
+    check_release_archive "$STAGE_DIR/source.tar.gz" "cyberhunter-source"
+    mkdir "$STAGE_DIR/source-check"
+    tar -xzf "$STAGE_DIR/source.tar.gz" -C "$STAGE_DIR/source-check" --no-same-owner --no-same-permissions
+    if [ "$(tree_digest "$STAGE_DIR/source-check/cyberhunter-source")" != "$(tree_digest "$REPO_DIR")" ]; then
+        error "The source tree in $REPO_DIR differs from the verified cyberhunter-source.tar.gz - refusing to install"
+        exit 1
     fi
+    rm -rf "$STAGE_DIR/source-check" "$STAGE_DIR/source.tar.gz"
+    log "Verified the release source tree this updater runs from"
     for b in agent api cli mcp; do
         if [ "$(head -c 4 "$STAGE_DIR/dockpanel-${b}-new" | od -An -tx1 | tr -d ' \n')" != "7f454c46" ]; then
             error "cyberhunter-${b}-linux-${DL_ARCH} is not an ELF executable - refusing to install"
@@ -353,7 +400,7 @@ if [ "$INSTALL_FROM_RELEASE" = "1" ]; then
     log "Installing frontend from the verified release..."
     FE_DIR="/opt/dockpanel/frontend"
     mkdir -p "$FE_DIR"
-    tar xzf "$STAGE_DIR/dockpanel-frontend.tar.gz" -C "$FE_DIR"
+    tar xzf "$STAGE_DIR/dockpanel-frontend.tar.gz" -C "$FE_DIR" --no-same-owner --no-same-permissions
     rm -f "$STAGE_DIR/dockpanel-frontend.tar.gz"
     log "Frontend updated"
 else
