@@ -24,6 +24,16 @@
 # Usage:
 #   GITHUB_REPO=owner/name DEMO_HOST=panel.example.com bash scripts/deploy-demo.sh v3.0.0
 #
+# ⚠ NOT FOR 3.0.0 RELEASES, ON PURPOSE. Since 3.0.0 the published binaries are
+# glibc builds (compiled on Ubuntu 22.04, scripts/release-build), so
+# require_static_musl below refuses every one of them, and this script stops
+# before touching the box. That refusal is kept rather than "aligned" with
+# check-glibc.sh: this script downloads from a release page and checks only
+# the SHA-256 against a checksums.txt fetched from the same place, with no
+# minisign signature. Making it accept 3.0.0 binaries would reopen exactly the
+# unsigned install path feature 10 closed. Deploy a 3.0.0 box from the panel
+# (Telemetry, Updates), or by hand from a release whose signature you checked.
+#
 # DEMO_HOST and GITHUB_REPO are required and have no default: the public
 # hostname is a property of the box you are deploying, and the repository that
 # publishes its releases is the operator's choice, not this file's.
