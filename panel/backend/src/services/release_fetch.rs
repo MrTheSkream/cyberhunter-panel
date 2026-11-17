@@ -978,8 +978,16 @@ pub async fn prepare_with<A: ReleaseApi>(
             return Err(FetchError::ReleaseIncomplete(format!("{name} is not in checksums.txt")));
         }
         let path = dir.join(name);
-        if path.exists() {
-            continue;
+        // A cached file is trusted only after it is hashed AGAIN against the
+        // signed manifest: the cache outlives the check that filled it, and a
+        // file altered (or torn) on disk since must never be served to an agent
+        // or installed. A mismatch is dropped and downloaded afresh.
+        if std::fs::symlink_metadata(&path).is_ok() {
+            if cached_file_matches(&path, manifest.sha256(name)).await {
+                continue;
+            }
+            tracing::warn!("Cached {name} of {tag} no longer matches checksums.txt; fetching it again");
+            std::fs::remove_file(&path).map_err(io_failed)?;
         }
         if release.is_none() {
             release = Some(fetch_release(api, repo, tag).await?);
@@ -1011,11 +1019,94 @@ pub async fn prepare_with<A: ReleaseApi>(
         })?;
     }
 
-    if names.contains(&SOURCE_ARCHIVE) && !update_script_path(&dir).exists() {
+    // Extracted again on every preparation that asks for the source: the tree
+    // update.sh runs from is then always the one in the archive verified just
+    // above, never an older extraction that may have changed on disk.
+    if names.contains(&SOURCE_ARCHIVE) {
         extract_source(&dir).await?;
     }
 
     Ok(Prepared { dir, manifest })
+}
+
+/// `true` when `path` is a regular file (not a link) whose SHA-256 is `want`.
+/// Hashed off the async runtime: release binaries are tens of megabytes.
+async fn cached_file_matches(path: &Path, want: Option<&str>) -> bool {
+    let Some(want) = want.map(str::to_string) else {
+        return false;
+    };
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || -> std::io::Result<bool> {
+        let meta = std::fs::symlink_metadata(&path)?;
+        if !meta.file_type().is_file() {
+            return Ok(false);
+        }
+        let mut f = std::fs::File::open(&path)?;
+        let mut hasher = Sha256::new();
+        std::io::copy(&mut f, &mut hasher)?;
+        Ok(hex::encode(hasher.finalize()) == want)
+    })
+    .await
+    .ok()
+    .and_then(Result::ok)
+    .unwrap_or(false)
+}
+
+/// Check the listing of the source archive BEFORE it is extracted as root.
+/// `names` is `tar -tzf` (one member per line), `verbose` is `tar -tvzf`
+/// (same members, same order, type in the first column). Refused: an absolute
+/// path, a `..` component, a member outside `cyberhunter-source/`, and any
+/// member that is not a regular file or a directory (symbolic and hard links,
+/// devices, FIFOs). Two listings of different lengths (a name with a newline)
+/// are refused too. Pure.
+pub fn check_source_listing(names: &str, verbose: &str) -> Result<(), String> {
+    let lines = |s: &str| -> Vec<String> {
+        s.split('\n').filter(|l| !l.is_empty()).map(str::to_string).collect()
+    };
+    let names = lines(names);
+    let verbose = lines(verbose);
+    if names.is_empty() {
+        return Err("the archive is empty".into());
+    }
+    if names.len() != verbose.len() {
+        return Err("the archive listing is ambiguous".into());
+    }
+    let prefix = format!("{SOURCE_DIR}/");
+    for (name, line) in names.iter().zip(&verbose) {
+        if name.starts_with('/') {
+            return Err(format!("absolute path in the archive: {name}"));
+        }
+        if name.split('/').any(|c| c == "..") {
+            return Err(format!("`..` in the archive: {name}"));
+        }
+        if !name.starts_with(&prefix) {
+            return Err(format!("member outside {prefix}: {name}"));
+        }
+        match line.chars().next() {
+            Some('-') | Some('d') => {}
+            _ => return Err(format!("not a regular file or directory: {name}")),
+        }
+    }
+    Ok(())
+}
+
+/// Run `tar` with `args` on the archive and return its stdout.
+async fn tar_list(archive: &Path, verbose: bool) -> Result<String, FetchError> {
+    let out = tokio::process::Command::new("tar")
+        .arg(if verbose { "-tvzf" } else { "-tzf" })
+        .arg(archive)
+        .env("LC_ALL", "C")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .await
+        .map_err(|e| FetchError::ReleaseIncomplete(format!("tar could not run: {}", e.kind())))?;
+    if !out.status.success() {
+        return Err(FetchError::ReleaseIncomplete(format!(
+            "{SOURCE_ARCHIVE} could not be listed ({})",
+            out.status
+        )));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
 /// `scripts/update.sh` of the extracted source of a prepared release.
@@ -1081,12 +1172,19 @@ async fn extract_source(dir: &Path) -> Result<(), FetchError> {
     let tmp = dir.join(format!(".extract-{}", Uuid::new_v4()));
     ensure_private_dir(&tmp)?;
     let result = async {
+        let archive = dir.join(SOURCE_ARCHIVE);
+        let names = tar_list(&archive, false).await?;
+        let verbose = tar_list(&archive, true).await?;
+        check_source_listing(&names, &verbose).map_err(|why| {
+            FetchError::ReleaseIncomplete(format!("{SOURCE_ARCHIVE} refused: {why}"))
+        })?;
         let out = tokio::process::Command::new("tar")
             .arg("-xzf")
-            .arg(dir.join(SOURCE_ARCHIVE))
+            .arg(&archive)
             .arg("-C")
             .arg(&tmp)
             .arg("--no-same-owner")
+            .arg("--no-same-permissions")
             .stdin(std::process::Stdio::null())
             .output()
             .await
@@ -1614,7 +1712,40 @@ pub(crate) mod tests {
         let before = api.count();
         prepare_with(&api, Some(("o/n", &key)), &root, FIX_TAG, &refs).await.unwrap();
         assert_eq!(api.count(), before);
+
+        // A cached file altered on disk is hashed again, dropped and fetched
+        // afresh: what is served or installed always matches checksums.txt.
+        let cached = p.dir.join(AGENT_AMD64);
+        let good = std::fs::read(&cached).unwrap();
+        std::fs::write(&cached, b"altered after the check\n").unwrap();
+        // The extracted tree is replaced from the verified archive each time.
+        std::fs::write(update_script_path(&p.dir), b"echo tampered\n").unwrap();
+        prepare_with(&api, Some(("o/n", &key)), &root, FIX_TAG, &refs).await.unwrap();
+        assert!(api.count() > before, "the altered file was downloaded again");
+        assert_eq!(std::fs::read(&cached).unwrap(), good);
+        assert_ne!(std::fs::read(update_script_path(&p.dir)).unwrap(), b"echo tampered\n".to_vec());
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_source_listing_is_checked_before_extraction() {
+        let ok_names = "cyberhunter-source/\ncyberhunter-source/scripts/\ncyberhunter-source/scripts/update.sh\n";
+        let ok_verbose = "drwxr-xr-x root/root 0 2026-11-17 10:34 cyberhunter-source/\n\
+                          drwxr-xr-x root/root 0 2026-11-17 10:34 cyberhunter-source/scripts/\n\
+                          -rw-r--r-- root/root 43 2026-11-17 10:34 cyberhunter-source/scripts/update.sh\n";
+        assert!(check_source_listing(ok_names, ok_verbose).is_ok());
+        let one = |name: &str, kind: char| {
+            check_source_listing(&format!("{name}\n"), &format!("{kind}rw-r--r-- root/root 1 d t {name}\n"))
+        };
+        assert!(one("cyberhunter-source/a", '-').is_ok());
+        assert!(one("/etc/passwd", '-').is_err(), "absolute path");
+        assert!(one("cyberhunter-source/../../etc/x", '-').is_err(), "dot-dot");
+        assert!(one("other/a", '-').is_err(), "outside the prefix");
+        for kind in ['l', 'h', 'c', 'b', 'p'] {
+            assert!(one("cyberhunter-source/a", kind).is_err(), "type {kind}");
+        }
+        assert!(check_source_listing("", "").is_err(), "empty");
+        assert!(check_source_listing(ok_names, "-rw-r--r-- x\n").is_err(), "listings differ");
     }
 
     #[tokio::test]
