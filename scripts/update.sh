@@ -400,7 +400,9 @@ if [ "$INSTALL_FROM_RELEASE" = "1" ]; then
     log "Installing frontend from the verified release..."
     FE_DIR="/opt/dockpanel/frontend"
     mkdir -p "$FE_DIR"
-    tar xzf "$STAGE_DIR/dockpanel-frontend.tar.gz" -C "$FE_DIR" --no-same-owner --no-same-permissions
+    # Modes through umask 022 whatever this process inherited: nginx serves
+    # this tree as www-data.
+    ( umask 022; tar xzf "$STAGE_DIR/dockpanel-frontend.tar.gz" -C "$FE_DIR" --no-same-owner --no-same-permissions )
     rm -f "$STAGE_DIR/dockpanel-frontend.tar.gz"
     log "Frontend updated"
 else

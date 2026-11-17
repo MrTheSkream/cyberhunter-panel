@@ -261,6 +261,76 @@ else
     bad "install-agent.sh does not hash the downloaded binary"
 fi
 
+echo "── 4b. update.sh: source archive mandatory, archives listed before extraction ──"
+# Fail closed (B-4): the archive this script runs from is checked every time,
+# never only "when it is still there", and the tree is compared to it.
+if has_code "$UPD" -F 'if [ -f "$RELEASE_DIR/cyberhunter-source.tar.gz" ]'; then
+    bad "update.sh still checks cyberhunter-source.tar.gz only when it is present"
+else
+    ok "update.sh does not make the source archive optional"
+fi
+if printf '%s\n' "$VBLOCK" | grep -cF 'verify_release_file "cyberhunter-source.tar.gz"' >/dev/null \
+   && printf '%s\n' "$VBLOCK" | grep -cF 'check_release_archive "$STAGE_DIR/source.tar.gz" "cyberhunter-source"' >/dev/null \
+   && printf '%s\n' "$VBLOCK" | grep -cF '"$(tree_digest "$REPO_DIR")"' >/dev/null; then
+    ok "update.sh verifies the source archive, lists it, and compares the tree it runs from"
+else
+    bad "update.sh does not verify, list and compare the source archive in its verify block"
+fi
+if printf '%s\n' "$VBLOCK" | grep -cF 'check_release_archive "$STAGE_DIR/dockpanel-frontend.tar.gz"' >/dev/null \
+   && has_code "$UPD" -F 'tar xzf "$STAGE_DIR/dockpanel-frontend.tar.gz" -C "$FE_DIR" --no-same-owner --no-same-permissions'; then
+    ok "the frontend archive is listed first and extracted without owners or archived modes"
+else
+    bad "the frontend archive is not listed first, or is extracted with its owners and modes"
+fi
+
+# The listing guard, EXECUTED on archives built here.
+GUARD=$(code_lines "$UPD" | sed -n '/^    check_release_archive() {/,/^    }/p')
+if [ -z "$GUARD" ]; then
+    bad "update.sh has no check_release_archive function to exercise"
+else
+    G="$TMP/guard"; mkdir -p "$G/src/cyberhunter-source/scripts" "$G/src/other"
+    printf '%s\n' "$GUARD" > "$G/guard.sh"
+    echo x > "$G/src/cyberhunter-source/scripts/update.sh"
+    echo y > "$G/src/other/a"
+    tar -C "$G/src" -czf "$G/ok.tgz" cyberhunter-source
+    tar -C "$G/src" -czf "$G/outside.tgz" cyberhunter-source other
+    ln -s /etc/passwd "$G/src/cyberhunter-source/link"
+    tar -C "$G/src" -czf "$G/symlink.tgz" cyberhunter-source
+    rm -f "$G/src/cyberhunter-source/link"
+    ln "$G/src/cyberhunter-source/scripts/update.sh" "$G/src/cyberhunter-source/hard"
+    tar -C "$G/src" -czf "$G/hardlink.tgz" cyberhunter-source
+    rm -f "$G/src/cyberhunter-source/hard"
+    tar -czPf "$G/absolute.tgz" "$G/src/other/a" 2>/dev/null
+    run_guard() { # run_guard <archive> [prefix] ; echoes PASS or REFUSE
+        if bash -c "error() { :; }; . '$G/guard.sh'; check_release_archive '$1' '${2:-}'" >/dev/null 2>&1; then
+            echo PASS
+        else
+            echo REFUSE
+        fi
+    }
+    expect() { # expect <label> <PASS|REFUSE> <archive> [prefix]
+        local got; got=$(run_guard "$3" "${4:-}")
+        if [ "$got" = "$2" ]; then ok "$1 -> $got"; else bad "$1 -> got $got, expected $2"; fi
+    }
+    expect "a plain source archive is accepted" PASS "$G/ok.tgz" cyberhunter-source
+    expect "a member outside cyberhunter-source/ is refused" REFUSE "$G/outside.tgz" cyberhunter-source
+    expect "a symbolic link is refused" REFUSE "$G/symlink.tgz" cyberhunter-source
+    expect "a hard link is refused" REFUSE "$G/hardlink.tgz" cyberhunter-source
+    expect "an absolute path is refused" REFUSE "$G/absolute.tgz"
+    if command -v python3 >/dev/null 2>&1; then
+        python3 - "$G/dotdot.tgz" <<'PY'
+import io, sys, tarfile
+with tarfile.open(sys.argv[1], "w:gz") as t:
+    i = tarfile.TarInfo("cyberhunter-source/../../evil")
+    i.size = 1
+    t.addfile(i, io.BytesIO(b"x"))
+PY
+        expect "a .. component is refused" REFUSE "$G/dotdot.tgz" cyberhunter-source
+    else
+        echo "  (python3 not installed - the .. case is skipped)"
+    fi
+fi
+
 echo "── 5. syntax of every script work stream B touches ──"
 B_SCRIPTS=(scripts/update.sh scripts/agent-self-update.sh scripts/release.sh scripts/install.sh
            scripts/install-agent.sh scripts/setup.sh scripts/deploy-demo.sh)
