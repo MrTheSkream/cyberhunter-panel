@@ -172,7 +172,12 @@ done
 # output. Reduce to ASCII first, then cut.
 snippet() { printf '%s' "$1" | head -1 | tr -cd '\11\40-\176' | cut -c1-70; }
 
-verifies_its_download() { has_code "$1" 'checksums\.txt' && has_code "$1" 'sha256sum'; }
+# agent-self-update.sh compares against the SHA-256 the agent took from the
+# SIGNED checksums.txt (feature 10) and hands over in DOCKPANEL_AGENT_STAGED_SHA256.
+verifies_its_download() {
+  has_code "$1" 'sha256sum' \
+    && { has_code "$1" 'checksums\.txt' || has_code "$1" 'DOCKPANEL_AGENT_STAGED_SHA256'; }
+}
 
 live_bin_writes() { # -o targets directly under the live bin dir whose basename is not a dotfile
   code_lines "$1" | grep -nE -- '-o[[:space:]]+"?/usr/local/bin/[^.]' || true

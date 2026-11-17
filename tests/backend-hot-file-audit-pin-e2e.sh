@@ -224,14 +224,22 @@ fi
 # ── §E update.rs: apply_fleet's include_panel path enforces direction ───
 echo "── §E update.rs: apply_fleet(include_panel) reuses reject_apply_target ──"
 
-if has "$APPLY_FLEET_BODY" 'if body\.include_panel' && has "$APPLY_FLEET_BODY" 'reject_apply_target'; then
-  ok "E1 apply_fleet calls reject_apply_target when include_panel is set"
+# Feature 10 moved the guard into two helpers: `fleet_target_ok` (pure, the
+# include_panel decision) and `advertised_version` (the settings row read).
+# The pins follow the logic into them and check apply_fleet still calls both.
+FLEET_TARGET_OK_BODY=$(fnbody "$UPDATE_C" "fleet_target_ok")
+ADVERTISED_BODY=$(fnbody "$UPDATE_C" "advertised_version")
+
+if has "$APPLY_FLEET_BODY" 'fleet_target_ok\(.*body\.include_panel' \
+   && has "$FLEET_TARGET_OK_BODY" 'if include_panel' \
+   && has "$FLEET_TARGET_OK_BODY" 'reject_apply_target'; then
+  ok "E1 apply_fleet calls reject_apply_target (via fleet_target_ok) when include_panel is set"
 else
   bad "E1 apply_fleet's include_panel path still skips the direction/advertised-match guard"
 fi
 
-if has "$APPLY_FLEET_BODY" "update_available_version"; then
-  ok "E2 apply_fleet reads the same advertised-version row apply_update checks"
+if has "$APPLY_FLEET_BODY" 'advertised_version\(' && has "$ADVERTISED_BODY" "update_available_version"; then
+  ok "E2 apply_fleet reads the same advertised-version row apply_update checks (via advertised_version)"
 else
   bad "E2 apply_fleet does not consult the advertised-version row"
 fi
