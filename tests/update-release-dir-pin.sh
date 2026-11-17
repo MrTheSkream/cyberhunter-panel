@@ -134,13 +134,19 @@ else
         for b in agent api cli mcp; do
             { printf '\177ELF'; head -c 64 /dev/urandom; } > "$d/cyberhunter-$b-linux-$ARCH"
         done
-        printf 'frontend' > "$d/cyberhunter-frontend.tar.gz"
-        printf 'source' > "$d/cyberhunter-source.tar.gz"
+        # Real archives: update.sh lists them, and compares the tree it runs
+        # from ($d.src/cyberhunter-source here) with the source archive.
+        mkdir -p "$d.fe/dist" "$d.src/cyberhunter-source/scripts"
+        printf 'frontend' > "$d.fe/dist/index.html"
+        printf 'source' > "$d.src/cyberhunter-source/scripts/update.sh"
+        tar -C "$d.fe" -czf "$d/cyberhunter-frontend.tar.gz" dist
+        tar -C "$d.src" -czf "$d/cyberhunter-source.tar.gz" cyberhunter-source
         (cd "$d" && sha256sum cyberhunter-* | sed 's/ \*/  /' | LC_ALL=C sort -k2 > checksums.txt)
     }
     # run_vblock <release dir> ; prints PASS or REFUSE
     run_vblock() {
-        if INSTALL_FROM_RELEASE=1 CYBERHUNTER_RELEASE_DIR="$1" DOCKPANEL_VERSION=v9.9.9 bash -c '
+        if INSTALL_FROM_RELEASE=1 CYBERHUNTER_RELEASE_DIR="$1" DOCKPANEL_VERSION=v9.9.9 \
+           REPO_DIR="$1.src/cyberhunter-source" bash -c '
             set -euo pipefail
             log() { :; }; warn() { :; }; error() { echo "ERR: $1" >&2; }
             STAGE_DIR=""
@@ -169,6 +175,10 @@ else
                                  expect "no checksums.txt at all"                 REFUSE "$TMP/nosums"
     make_release "$TMP/badsrc";  printf 'X' >> "$TMP/badsrc/cyberhunter-source.tar.gz"
                                  expect "a tampered source archive"               REFUSE "$TMP/badsrc"
+    make_release "$TMP/nosrc";   rm -f "$TMP/nosrc/cyberhunter-source.tar.gz"
+                                 expect "no source archive in the release"        REFUSE "$TMP/nosrc"
+    make_release "$TMP/drift";   printf 'changed' >> "$TMP/drift.src/cyberhunter-source/scripts/update.sh"
+                                 expect "a running tree that differs from the archive" REFUSE "$TMP/drift"
     make_release "$TMP/notelf";  e=$(awk -v n="cyberhunter-agent-linux-$ARCH" '$2==n{print $1}' "$TMP/notelf/checksums.txt")
                                  printf 'not an elf at all' > "$TMP/notelf/cyberhunter-agent-linux-$ARCH"
                                  (cd "$TMP/notelf" && sha256sum cyberhunter-* | sed 's/ \*/  /' | LC_ALL=C sort -k2 > checksums.txt)
