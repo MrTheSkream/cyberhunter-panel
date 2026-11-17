@@ -37,6 +37,9 @@ export default function UpdateSourceCard({
   const [saving, setSaving] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
+  // Last backend message for this card (contract 2.6), kept next to the field
+  // that caused it; it never contains the token.
+  const [error, setError] = useState("");
 
   const emptyTokenField = () => {
     if (tokenRef.current) tokenRef.current.value = "";
@@ -51,11 +54,16 @@ export default function UpdateSourceCard({
     // No default literal here: without a repo the backend keeps its own value.
     if (trimmedRepo) body.repo = trimmedRepo;
     setSaving(true);
+    setError("");
     try {
-      await api.put("/update/source", body);
+      const resp = await api.put<{ repo?: string | null }>("/update/source", body);
+      // The backend applies its default when no repo was sent: show what it kept.
+      if (resp?.repo) setRepo(resp.repo);
       onMessage("Update token saved.", "success");
     } catch (e: unknown) {
-      onMessage(e instanceof Error ? e.message : "Could not save the token", "error");
+      const text = e instanceof Error ? e.message : "Could not save the token";
+      setError(text);
+      onMessage(text, "error");
     } finally {
       // Emptied once the response is in, whatever it said (contract C-3).
       emptyTokenField();
@@ -67,11 +75,14 @@ export default function UpdateSourceCard({
   const clearToken = async () => {
     setConfirmClear(false);
     setClearing(true);
+    setError("");
     try {
       await api.delete("/update/source/token");
       onMessage("Update token cleared.", "success");
     } catch (e: unknown) {
-      onMessage(e instanceof Error ? e.message : "Could not clear the token", "error");
+      const text = e instanceof Error ? e.message : "Could not clear the token";
+      setError(text);
+      onMessage(text, "error");
     } finally {
       setClearing(false);
     }
@@ -148,6 +159,9 @@ export default function UpdateSourceCard({
             </button>
           )}
         </div>
+        {error && (
+          <div className="text-xs text-danger-400 break-words">{error}</div>
+        )}
         <div className="pt-3 border-t border-dark-700 text-xs">
           {source.signing_key_id ? (
             <span className="text-dark-400">

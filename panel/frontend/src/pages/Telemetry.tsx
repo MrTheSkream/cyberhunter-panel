@@ -235,7 +235,7 @@ function vTag(version: string | null | undefined): string {
 const UPDATE_CHANNELS = [
   { value: "stable", label: "Stable", help: "Stable releases only (recommended for production)." },
   { value: "candidate", label: "Beta (pre-releases)", help: "Includes pre-releases. They may break; the snapshot taken before each install is your way back." },
-  { value: "hold", label: "Hold (no automatic checks)", help: "No automatic checks. Use Check Now to look for a stable release by hand." },
+  { value: "hold", label: "Hold (no automatic checks)", help: "No automatic checks. Use Check now to look for a stable release by hand." },
 ] as const;
 
 const EVENT_TYPE_COLORS: Record<string, string> = {
@@ -546,7 +546,7 @@ export default function Telemetry() {
     }
   };
 
-  // The single "Check Now" of the Updates tab (C-1): manual-check, then a
+  // The single "Check now" of the Updates tab (C-1): manual-check, then a
   // status reload. It answers 409 when updates are not configured, and the
   // button is disabled in that case anyway.
   const triggerManualCheck = async () => {
@@ -576,7 +576,7 @@ export default function Telemetry() {
     setSavingChannel(true);
     try {
       await api.put("/update/channel", { channel: next });
-      flash(`Channel set to ${next}.`, "success");
+      flash(`Channel set to ${UPDATE_CHANNELS.find(ch => ch.value === next)?.label ?? next}.`, "success");
       await loadUpdateState();
     } catch (e: unknown) {
       flash(e instanceof Error ? e.message : "Channel change failed", "error");
@@ -1037,7 +1037,7 @@ export default function Telemetry() {
                 <h3 className="text-sm font-medium text-warn-400">Updates are not configured</h3>
                 <button disabled
                   className="px-3 py-1.5 bg-dark-700 text-dark-300 border border-dark-500 rounded-lg text-xs transition-colors disabled:opacity-50">
-                  Check Now
+                  Check now
                 </button>
               </div>
               <p className="text-xs text-dark-300">
@@ -1057,7 +1057,7 @@ export default function Telemetry() {
                 <h3 className="text-sm font-medium text-dark-100">Version Status</h3>
                 <button onClick={triggerManualCheck} disabled={checking}
                   className="px-3 py-1.5 bg-dark-700 text-dark-300 hover:bg-dark-600 hover:text-dark-100 border border-dark-500 rounded-lg text-xs transition-colors disabled:opacity-50">
-                  {checking ? "Checking..." : "Check Now"}
+                  {checking ? "Checking..." : "Check now"}
                 </button>
               </div>
 
@@ -1078,7 +1078,7 @@ export default function Telemetry() {
                   </div>
                 </div>
                 <div>
-                  <div className="text-xs text-dark-400 mb-1">Last Checked</div>
+                  <div className="text-xs text-dark-400 mb-1">Last checked</div>
                   <div className="text-sm text-dark-300">
                     {updateState.checked_at ? formatDate(updateState.checked_at) : "Never"}
                   </div>
