@@ -102,6 +102,13 @@ pub async fn run(config: PhoneHomeConfig, cpu: CpuSampler) {
         config.central_url
     );
 
+    // Parse the compiled update key once at startup, so a malformed one is
+    // reported now (as an error) rather than at the first update attempt.
+    match crate::services::release_verify::signing_key_id() {
+        Some(id) => tracing::info!("Update signing key {id} compiled in"),
+        None => tracing::warn!("No update signing key compiled in; agent updates are disabled"),
+    }
+
     // Initial delay to let the agent fully start
     tokio::time::sleep(Duration::from_secs(5)).await;
 
@@ -169,8 +176,8 @@ pub async fn run(config: PhoneHomeConfig, cpu: CpuSampler) {
 /// afterwards, wrote a `.bak` that nothing in the tree ever read back, staged
 /// through `/tmp` so the rename was cross-device wherever `/tmp` is a tmpfs, and
 /// restarted itself from inside its own cgroup. `scripts/agent-self-update.sh`
-/// already does every one of those correctly, is checksum-verified against the
-/// release's own `checksums.txt`, health-verifies the result, rolls back when it
+/// already does every one of those correctly, installs only a binary the agent
+/// verified against the signed release manifest (`release_verify`), health-verifies the result, rolls back when it
 /// does not come up, and is pinned by tests. So the timer goes through it, and
 /// nothing in this file touches a binary any more (s233).
 async fn auto_update_loop(config: PhoneHomeConfig) {
@@ -229,7 +236,7 @@ async fn auto_update_loop(config: PhoneHomeConfig) {
         // Jitter. Unlike the panel-driven fleet path - which the orchestrator
         // serialises - every agent runs this timer independently, so a fleet
         // restarted together would otherwise check in together and then all pull
-        // from GitHub at the same moment.
+        // the release from the panel at the same moment.
         let jitter = rand::random::<u64>() % 1800;
         tokio::time::sleep(Duration::from_secs(6 * 3600 + jitter)).await;
     }
