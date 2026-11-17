@@ -88,6 +88,52 @@ else
     bad "gh release create without --verify-tag"
 fi
 
+echo "── 2b. signing step: Git Bash hands the command to PowerShell ──"
+# sign_native and ps_quote are extracted from release.sh and run against a
+# fake minisign that only logs its arguments.
+SFUNCS="$(tr -d '\r' < "$REL" | awk '/^(ps_quote|sign_native)\(\) \{/ {on=1} on {print} on && /\}$/ && (/^\}/ || /^ps_quote/) {on=0}')"
+if printf '%s\n' "$SFUNCS" | grep -c '^sign_native() {' >/dev/null \
+   && printf '%s\n' "$SFUNCS" | grep -c '^ps_quote() {' >/dev/null; then
+    ok "sign_native and ps_quote were extracted from release.sh"
+    FB="$TMP/fakebin"; mkdir -p "$FB"
+    printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "$FAKE_MS_LOG"\n' > "$FB/minisign"
+    chmod +x "$FB/minisign"
+    run_sign() {  # run_sign <IS_MSYS> <CYBERHUNTER_SIGN_INLINE>: output, log in $TMP/ms.log
+        : > "$TMP/ms.log"; : > "$TMP/sig"; printf 'sig\n' > "$TMP/sig"
+        printf '\n' | PATH="$FB:$PATH" FAKE_MS_LOG="$TMP/ms.log" CYBERHUNTER_SIGN_INLINE="$2" bash -c '
+            set -euo pipefail
+            die() { echo "ERROR: $*" >&2; exit 1; }
+            eval "$1"
+            IS_MSYS="$2"; TRUSTED="cyberhunter-release v9.9.9"; SIG_FILE="$3"
+            M_KEY="C:\\Users\\O'"'"'Brien\\.minisign\\k.key"; M_PUB="C:\\k.pub"
+            M_SUMS="F:\\r\\dist\\release-9.9.9\\checksums.txt"; M_SIG="F:\\r\\dist\\release-9.9.9\\checksums.txt.minisig"
+            sign_native' _ "$SFUNCS" "$1" "$TMP/sig" 2>&1
+    }
+    out="$(run_sign 1 "")"; rc=$?
+    want="minisign -S -s 'C:\\Users\\O''Brien\\.minisign\\k.key' -m 'F:\\r\\dist\\release-9.9.9\\checksums.txt' -x 'F:\\r\\dist\\release-9.9.9\\checksums.txt.minisig' -t 'cyberhunter-release v9.9.9'"
+    if [ "$rc" = "0" ] && printf '%s\n' "$out" | grep -cF "    $want" >/dev/null; then
+        ok "MSYS: prints the single-quoted PowerShell signing command"
+    else
+        bad "MSYS: the PowerShell signing command is missing or wrong (rc $rc): $out"
+    fi
+    if grep -q '^-S ' "$TMP/ms.log"; then bad "MSYS: minisign -S was still run inline"; else ok "MSYS: minisign -S is not run inline"; fi
+    if grep -q '^-V -p C:\\k.pub ' "$TMP/ms.log"; then ok "MSYS: the signature is still verified (minisign -V)"; else bad "MSYS: no minisign -V after the handoff"; fi
+    out="$(run_sign 1 1)"; rc=$?
+    if [ "$rc" = "0" ] && grep -q '^-S -s ' "$TMP/ms.log" && ! printf '%s' "$out" | grep -q 'PowerShell'; then
+        ok "MSYS + CYBERHUNTER_SIGN_INLINE=1: minisign -S runs inline"
+    else
+        bad "CYBERHUNTER_SIGN_INLINE=1 does not force inline signing (rc $rc)"
+    fi
+    out="$(run_sign 0 "")"; rc=$?
+    if [ "$rc" = "0" ] && grep -q '^-S -s .* -t cyberhunter-release v9.9.9$' "$TMP/ms.log" && grep -q '^-V ' "$TMP/ms.log"; then
+        ok "Linux/macOS: minisign -S then -V run inline"
+    else
+        bad "Linux/macOS: inline signing broken (rc $rc): $out"
+    fi
+else
+    bad "could not extract sign_native/ps_quote from release.sh - section 2b is measuring nothing"
+fi
+
 echo "── 3. build image: ubuntu 22.04 by digest, exact toolchain ──"
 RUST_BOOKWORM="rust:1-""bookworm"
 if grep -qF "$RUST_BOOKWORM" "$REL"; then

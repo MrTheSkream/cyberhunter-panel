@@ -50,3 +50,6 @@ lab/*.tar
 lab/*.tar.gz
 lab/*.tar.zst
 lab/import/
+
+# --- Release output (scripts/release.sh) ---
+/dist/

@@ -16,8 +16,18 @@
 #   CYBERHUNTER_MINISIGN_KEY   secret key  (default $HOME/.minisign/cyberhunter.key)
 #   CYBERHUNTER_MINISIGN_PUB   public key  (default $HOME/.minisign/cyberhunter.pub)
 #   CYBERHUNTER_RELEASE_REPO   GitHub repo (default MrTheSkream/cyberhunter-panel)
+#   CYBERHUNTER_SIGN_INLINE    set to 1 to run a native minisign inline under
+#                              Git Bash too (see "Signing" below)
 #   Test releases use the same variables pointed at a test key pair kept
 #   outside the repository.
+#
+# Signing (step 7, also done by --dry-run):
+#   Linux/macOS: minisign runs inline and asks for the key passphrase.
+#   Git Bash with a native Windows minisign.exe: the console app does not get
+#   the keyboard through mintty/bash, so the script prints the one-line
+#   PowerShell command to run in another terminal, waits for Enter, then
+#   verifies the signature. CYBERHUNTER_SIGN_INLINE=1 forces inline signing.
+#   No minisign on PATH: it runs in a Debian container (winpty under MSYS).
 #
 # What a release contains (and nothing else):
 #   cyberhunter-agent-linux-amd64  cyberhunter-api-linux-amd64
@@ -61,6 +71,37 @@ write_checksums() {
     ( cd "$dir" && sha256sum --text cyberhunter-* | LC_ALL=C sort -k2 > checksums.txt )
 }
 
+# ps_quote <s>: <s> as a PowerShell single-quoted string ('' escapes ').
+ps_quote() { local q="'"; printf "'%s'" "${1//$q/$q$q}"; }
+
+# sign_native: step 7 with the minisign found on PATH. Reads M_KEY, M_PUB,
+# M_SUMS, M_SIG (paths as minisign sees them), SIG_FILE (the same signature as
+# this shell sees it), TRUSTED and IS_MSYS. Under Git Bash a native Windows
+# minisign.exe cannot read the passphrase from the terminal (it sees an empty
+# input and fails with "Wrong password"), so the signing command is handed to
+# the user to run in PowerShell; CYBERHUNTER_SIGN_INLINE=1 overrides that.
+# The verification always runs here.
+sign_native() {
+    if [ "$IS_MSYS" = "1" ] && [ "${CYBERHUNTER_SIGN_INLINE:-0}" != "1" ]; then
+        echo "  Git Bash cannot pass the passphrase to the native minisign. In another"
+        echo "  terminal (PowerShell), run this one line and type the passphrase there:"
+        echo ""
+        echo "    minisign -S -s $(ps_quote "$M_KEY") -m $(ps_quote "$M_SUMS") -x $(ps_quote "$M_SIG") -t $(ps_quote "$TRUSTED")"
+        echo ""
+        echo "  (CYBERHUNTER_SIGN_INLINE=1 runs minisign here instead, if this terminal works.)"
+        local _answer
+        while :; do
+            read -r -p "Press Enter once checksums.txt.minisig is written... " _answer \
+                || die "no input while waiting for the signature"
+            [ -s "$SIG_FILE" ] && break
+            echo "  $SIG_FILE is not there yet."
+        done
+    else
+        minisign -S -s "$M_KEY" -m "$M_SUMS" -x "$M_SIG" -t "$TRUSTED"
+    fi
+    minisign -V -p "$M_PUB" -m "$M_SUMS" -x "$M_SIG"
+}
+
 if [ "${1:-}" = "--checksums-only" ]; then
     [ -n "${2:-}" ] && [ -d "$2" ] || die "usage: release.sh --checksums-only <dir>"
     write_checksums "$2"
@@ -75,7 +116,7 @@ while [ $# -gt 0 ]; do
         --arm64) ARM64=1 ;;
         --dry-run) DRY_RUN=1 ;;
         --notes-file) shift; NOTES_FILE="${1:-}"; [ -n "$NOTES_FILE" ] || die "--notes-file needs a file" ;;
-        -h|--help) sed -n '2,36p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,46p' "$0"; exit 0 ;;
         *) die "unknown argument: $1 (usage: release.sh [--arm64] [--dry-run] [--notes-file <file>])" ;;
     esac
     shift
@@ -92,7 +133,7 @@ ROOT="$(pwd)"
 # otherwise rewrite /src-style container paths. Both are handled here.
 export MSYS_NO_PATHCONV=1
 host_path() {
-    if command -v cygpath >/dev/null 2>&1; then cygpath -w "$1"; else printf '%s' "$1"; fi
+    if command -v cygpath >/dev/null 2>&1; then cygpath -wa "$1"; else printf '%s' "$1"; fi
 }
 IS_MSYS=0
 case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) IS_MSYS=1 ;; esac
@@ -245,13 +286,13 @@ done
 # ── 7. Signature ─────────────────────────────────────────────────────────
 step "7. Signing checksums.txt (minisign will ask for the key passphrase)"
 TRUSTED="cyberhunter-release ${TAG}"
+SIG_FILE="$DIST/checksums.txt.minisig"
 if command -v minisign >/dev/null 2>&1; then
     # MSYS path conversion is off for docker, so a native Windows minisign
     # gets Windows paths explicitly.
     M_KEY="$(host_path "$MINISIGN_KEY")"; M_PUB="$(host_path "$MINISIGN_PUB")"
-    M_SUMS="$(host_path "$ROOT/$DIST/checksums.txt")"; M_SIG="$(host_path "$ROOT/$DIST/checksums.txt.minisig")"
-    minisign -S -s "$M_KEY" -m "$M_SUMS" -x "$M_SIG" -t "$TRUSTED"
-    minisign -V -p "$M_PUB" -m "$M_SUMS" -x "$M_SIG"
+    M_SUMS="$(host_path "$ROOT/$DIST/checksums.txt")"; M_SIG="$(host_path "$ROOT/$SIG_FILE")"
+    sign_native
 else
     KEY_DIR_HOST="$(host_path "$(cd "$(dirname "$MINISIGN_KEY")" && pwd)")"
     PUB_DIR_HOST="$(host_path "$(cd "$(dirname "$MINISIGN_PUB")" && pwd)")"
