@@ -1,7 +1,9 @@
-import { useState, useEffect, Fragment } from "react";
+import { useState, useEffect, useCallback, Fragment } from "react";
 import { useSearchParams } from "react-router-dom";
-import { api } from "../api";
+import { api, ApiError } from "../api";
 import { formatDate } from "../utils/format";
+import ConfirmDialog from "../components/ConfirmDialog";
+import UpdateSourceCard from "../components/UpdateSourceCard";
 
 interface TelemetryEvent {
   id: string;
@@ -64,10 +66,26 @@ interface UpdateStateView {
   attempted_version?: string;
   completed_at?: string;
   reason?: string;
+  /// Feature 10: stable error code of a `failed` state (contract 2.6), when
+  /// the failure came from preparing the release (download, signature,
+  /// checksum). `reason` is the message to show; this is only a marker.
+  code?: string | null;
   at?: string;
   current_version: string;
   available_version?: string | null;
   channel: string;
+  /// Feature 10 (contract A-6.1). All optional: a missing `configured` reads
+  /// as "not configured", so an older backend fails closed.
+  configured?: boolean;
+  not_configured_reason?: "no_signing_key" | "no_source" | "no_token" | null;
+  repo?: string | null;
+  token_set?: boolean;
+  signing_key_id?: string | null;
+  available_prerelease?: boolean;
+  release_notes?: string | null;
+  release_url?: string | null;
+  checked_at?: string | null;
+  last_check_error?: string | null;
   /// Verdict of the last snapshot restore. A restore stops and restarts the
   /// panel, so its outcome cannot come back through the request that began it -
   /// the backend reads it from a file the restore writes on every exit path.
@@ -205,6 +223,20 @@ function safeHttpUrl(url: string | undefined): string | null {
   if (!url) return null;
   return /^https:\/\/[a-z0-9.-]+\//i.test(url) ? url : null;
 }
+
+/// A release tag as shown and sent: exactly one leading "v", whichever form the
+/// backend stored (`3.0.0` or `v3.0.0`).
+function vTag(version: string | null | undefined): string {
+  return `v${(version ?? "").replace(/^v/, "")}`;
+}
+
+/// Stored channel values are unchanged (`stable`, `candidate`, `hold`); only
+/// their labels changed (contract 2.7 and C-4).
+const UPDATE_CHANNELS = [
+  { value: "stable", label: "Stable", help: "Stable releases only (recommended for production)." },
+  { value: "candidate", label: "Beta (pre-releases)", help: "Includes pre-releases. They may break; the snapshot taken before each install is your way back." },
+  { value: "hold", label: "Hold (no automatic checks)", help: "No automatic checks. Use Check now to look for a stable release by hand." },
+] as const;
 
 const EVENT_TYPE_COLORS: Record<string, string> = {
   panic: "bg-danger-500/20 text-danger-400 border-danger-500/30",
@@ -427,24 +459,32 @@ export default function Telemetry() {
     return () => clearInterval(t);
   }, [hasRunningFleet]);
 
-  // Phase 4 W4: poll /update/status while applying so the modal reflects
-  // live progress. Stops when the state transitions out of in_flight.
+  // Phase 4 W4: poll /update/status while an update runs, and while the
+  // progress modal is open. Feature 10: `apply` answers 202 after its quick
+  // checks and downloads and verifies the release in the background, so a
+  // signature or checksum refusal only ever shows up here, as `failed`. The
+  // poll therefore follows `in_flight` whether or not the modal is open (it
+  // may have been closed, or the page reloaded mid-update).
+  const updateInFlight = updateState?.state === "in_flight";
   useEffect(() => {
-    if (!showApplyProgress) return;
+    if (!showApplyProgress && !updateInFlight) return;
     const tick = async () => {
       await loadUpdateState();
       await loadSnapshots();
     };
     const interval = setInterval(tick, 2000);
     return () => clearInterval(interval);
-  }, [showApplyProgress]);
+  }, [showApplyProgress, updateInFlight]);
 
+  // Feature 10 (C-5): the fleet target starts as this panel's version, once.
+  // Later polls must not overwrite what the operator typed.
+  const [fleetPrefilled, setFleetPrefilled] = useState(false);
   useEffect(() => {
-    if (showApplyProgress && updateState && updateState.state !== "in_flight") {
-      // Update flow reached a terminal state - leave the modal open so
-      // the operator can read the outcome, but stop polling.
-    }
-  }, [updateState, showApplyProgress]);
+    const current = updateState?.current_version;
+    if (fleetPrefilled || !current) return;
+    setFleetPrefilled(true);
+    setFleetVersion(prev => prev || vTag(current));
+  }, [fleetPrefilled, updateState?.current_version]);
 
   const flash = (text: string, type: string) => {
     setMessage({ text, type });
@@ -467,53 +507,76 @@ export default function Telemetry() {
     }
   };
 
+  // Feature 10 (C-1): update errors are shown exactly as the backend wrote
+  // them (contract 2.6). "Not configured" means this page is out of date (the
+  // token was cleared elsewhere, say), so the status is reloaded too.
+  const updateError = (e: unknown, fallback: string) => {
+    flash(e instanceof Error ? e.message : fallback, "error");
+    if (e instanceof ApiError && e.code === "updates_not_configured") {
+      void loadUpdateState();
+    }
+  };
+
   // Phase 4 W4: apply update through the panel itself.
   const applyUpdate = async () => {
-    if (!config.update_available || !config.update_available_version) return;
     setApplyConfirm(false);
+    const version = updateState?.configured === true ? updateState.available_version : null;
+    if (!version) return;
     setApplying(true);
-    setShowApplyProgress(true);
     try {
-      const target = `v${config.update_available_version}`;
-      await api.post("/update/apply", { target_version: target });
-      flash("Update started - services may briefly become unavailable.", "success");
-      // First status poll fires immediately (the useEffect interval kicks
-      // in once showApplyProgress is true).
-      loadUpdateState();
+      const resp = await api.post<{ accepted: boolean; state?: Partial<UpdateStateView> }>(
+        "/update/apply",
+        { target_version: vTag(version) }
+      );
+      // Show the state the 202 carries right away, so the modal never opens
+      // on the outcome of a PREVIOUS attempt while the first poll is pending.
+      const next = resp?.state;
+      if (next && typeof next.state === "string") {
+        setUpdateState(prev => prev
+          ? { ...prev, reason: undefined, code: undefined, last_log_line: undefined, ...next }
+          : prev);
+      }
+      setShowApplyProgress(true);
+      flash("Update started. Services may briefly become unavailable.", "success");
+      void loadUpdateState();
     } catch (e: unknown) {
-      flash(e instanceof Error ? e.message : "Apply failed", "error");
-      setShowApplyProgress(false);
+      updateError(e, "Apply failed");
     } finally {
       setApplying(false);
     }
   };
 
+  // The single "Check now" of the Updates tab (C-1): manual-check, then a
+  // status reload. It answers 409 when updates are not configured, and the
+  // button is disabled in that case anyway.
   const triggerManualCheck = async () => {
     setChecking(true);
     try {
-      const resp = await api.post<{ checked_at: string; available_version: string | null }>(
+      const resp = await api.post<{ checked_at: string; available_version: string | null; prerelease?: boolean }>(
         "/update/manual-check",
         {}
       );
       flash(
         resp.available_version
-          ? `Available: v${resp.available_version}`
-          : "No update available - you are on the latest version.",
+          ? `Available: ${vTag(resp.available_version)}${resp.prerelease ? " (pre-release)" : ""}`
+          : "No update available. You are on the latest version.",
         "success"
       );
-      await Promise.all([loadConfig(), loadUpdateState()]);
     } catch (e: unknown) {
-      flash(e instanceof Error ? e.message : "Check failed", "error");
+      updateError(e, "Check failed");
     } finally {
       setChecking(false);
     }
+    // Reloaded after a failure too: a GitHub refusal is stored as
+    // last_check_error and shown on the tab.
+    await Promise.all([loadConfig(), loadUpdateState()]);
   };
 
   const changeChannel = async (next: string) => {
     setSavingChannel(true);
     try {
       await api.put("/update/channel", { channel: next });
-      flash(`Channel set to ${next}.`, "success");
+      flash(`Channel set to ${UPDATE_CHANNELS.find(ch => ch.value === next)?.label ?? next}.`, "success");
       await loadUpdateState();
     } catch (e: unknown) {
       flash(e instanceof Error ? e.message : "Channel change failed", "error");
@@ -580,7 +643,7 @@ export default function Telemetry() {
       );
       await loadFleetRuns();
     } catch (e: unknown) {
-      flash(e instanceof Error ? e.message : "Fleet apply failed", "error");
+      updateError(e, "Fleet apply failed");
     } finally {
       setFleetSubmitting(false);
     }
@@ -648,23 +711,9 @@ export default function Telemetry() {
     }
   };
 
-  // Same endpoint as before, but it now runs the poll inline and answers with
-  // what it found, so the flash reports the check instead of announcing one.
-  // Reloads the config afterwards rather than guessing at a 5s delay.
-  const checkUpdates = async () => {
-    setChecking(true);
-    try {
-      const resp = await api.post<{ message: string; available_version: string | null }>(
-        "/telemetry/check-updates"
-      );
-      flash(resp.message, "success");
-      await Promise.all([loadConfig(), loadUpdateState()]);
-    } catch (e: unknown) {
-      flash(e instanceof Error ? e.message : "Failed to check", "error");
-    } finally {
-      setChecking(false);
-    }
-  };
+  // Stable identity for ConfirmDialog, which refocuses Cancel whenever
+  // onCancel changes, and this page re-renders on every status poll.
+  const cancelApplyConfirm = useCallback(() => setApplyConfirm(false), []);
 
   if (loading) {
     return (
@@ -676,10 +725,19 @@ export default function Telemetry() {
 
   const totalPages = Math.ceil(total / limit);
 
-  // Every "is there an update" question on this page answers from the backend's
-  // derived flag, never from the mere presence of the stored version - that row
-  // outlives the release it names on any panel upgraded from the shell (#98).
-  const updateAvailable = Boolean(config.update_available && config.update_available_version);
+  // Every "is there an update" question on this page answers from
+  // /update/status (contract C-1, single source). The backend only returns
+  // `available_version` when it is newer than the running panel (#98), and
+  // none at all when updates are not configured. `configured` must be
+  // literally true: a missing field (older backend) reads as not configured.
+  const updatesConfigured = updateState?.configured === true;
+  const availableVersion = updatesConfigured ? (updateState?.available_version || null) : null;
+  const updateAvailable = Boolean(availableVersion);
+  const availableTag = availableVersion ? vTag(availableVersion) : "";
+  const releaseUrl = updatesConfigured ? safeHttpUrl(updateState?.release_url ?? undefined) : null;
+  const releaseNotes = updatesConfigured ? (updateState?.release_notes || "") : "";
+  const currentVersion = updateState?.current_version || config.current_version || "";
+  const channel = updateState?.channel || "stable";
 
   // The two update-path verdicts, newest first. Built here rather than inline so
   // the Updates tab can order them against each other; each is still rendered
@@ -782,15 +840,15 @@ export default function Telemetry() {
             <svg className="w-5 h-5 text-rust-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
             <div>
               <span className="text-sm font-medium text-rust-300">
-                CyberHunter - Panel v{config.update_available_version} available
+                CyberHunter - Panel {availableTag} available
               </span>
               <span className="text-xs text-dark-400 ml-2">
-                (current: v{config.current_version})
+                (current: {vTag(currentVersion)})
               </span>
             </div>
           </div>
-          {safeHttpUrl(config.update_release_url) && (
-            <a href={safeHttpUrl(config.update_release_url)!} target="_blank" rel="noopener noreferrer"
+          {releaseUrl && (
+            <a href={releaseUrl} target="_blank" rel="noopener noreferrer"
               className="px-3 py-1.5 bg-rust-500 hover:bg-rust-600 text-white rounded-lg text-xs font-medium transition-colors">
               View Release
             </a>
@@ -970,84 +1028,102 @@ export default function Telemetry() {
             <div className="space-y-3">{updateVerdicts.map(v => v.el)}</div>
           )}
 
-          <div className="bg-dark-800 border border-dark-600 rounded-lg p-4">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-medium text-dark-100">Version Status</h3>
-              <button onClick={checkUpdates} disabled={checking}
-                className="px-3 py-1.5 bg-dark-700 text-dark-300 hover:bg-dark-600 hover:text-dark-100 border border-dark-500 rounded-lg text-xs transition-colors disabled:opacity-50">
-                {checking ? "Checking..." : "Check Now"}
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div>
-                <div className="text-xs text-dark-400 mb-1">Current Version</div>
-                <div className="text-sm font-mono text-dark-100">v{config.current_version}</div>
+          {/* Feature 10 (C-2, C-4): updates come only from a signed release of
+              the configured repository. Without a compiled signing key, a valid
+              update.conf and a token, nothing checks or installs. */}
+          {updateState && !updatesConfigured && (
+            <div className="bg-dark-800 border border-warn-500/30 rounded-lg p-4">
+              <div className="flex items-center justify-between gap-4 mb-2">
+                <h3 className="text-sm font-medium text-warn-400">Updates are not configured</h3>
+                <button disabled
+                  className="px-3 py-1.5 bg-dark-700 text-dark-300 border border-dark-500 rounded-lg text-xs transition-colors disabled:opacity-50">
+                  Check now
+                </button>
               </div>
-              <div>
-                <div className="text-xs text-dark-400 mb-1">Latest Available</div>
-                <div className={`text-sm font-mono ${updateAvailable ? "text-warn-400" : "text-rust-400"}`}>
-                  {updateAvailable ? `v${config.update_available_version}` : "Up to date"}
-                </div>
+              <p className="text-xs text-dark-300">
+                {updateState.not_configured_reason === "no_signing_key"
+                  ? "This build has no update signing key. Install a signed CyberHunter release by hand to enable updates."
+                  : "Add a GitHub fine-grained token with read-only access to Contents of the release repository."}
+              </p>
+              <div className="text-xs text-dark-400 mt-3">
+                Installed version: <span className="font-mono text-dark-200">{vTag(currentVersion)}</span>
               </div>
-              <div>
-                <div className="text-xs text-dark-400 mb-1">Last Checked</div>
-                <div className="text-sm text-dark-300">
-                  {config.update_checked_at ? formatDate(config.update_checked_at) : "Never"}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {updateAvailable && config.update_release_notes && (
-            <div className="bg-dark-800 border border-dark-600 rounded-lg p-4">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-sm font-medium text-dark-100">
-                  Release Notes - v{config.update_available_version}
-                </h3>
-                {safeHttpUrl(config.update_release_url) && (
-                  <a href={safeHttpUrl(config.update_release_url)!} target="_blank" rel="noopener noreferrer"
-                    className="text-xs text-rust-400 hover:text-rust-300 transition-colors">
-                    View on GitHub
-                  </a>
-                )}
-              </div>
-              <pre className="text-xs font-mono text-dark-300 whitespace-pre-wrap max-h-64 overflow-y-auto bg-dark-900 rounded-lg p-3 border border-dark-700">
-                {config.update_release_notes}
-              </pre>
             </div>
           )}
 
-          {/* Phase 4 W4: channel selector + apply update from UI */}
-          <div className="bg-dark-800 border border-dark-600 rounded-lg p-4">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-medium text-dark-100">Update Channel</h3>
-              <button onClick={triggerManualCheck} disabled={checking}
-                className="px-3 py-1.5 bg-dark-700 text-dark-300 hover:bg-dark-600 hover:text-dark-100 border border-dark-500 rounded-lg text-xs transition-colors disabled:opacity-50">
-                {checking ? "Checking..." : "Check Now"}
-              </button>
-            </div>
-            <div className="grid grid-cols-3 gap-2">
-              {(["stable", "candidate", "hold"] as const).map(ch => (
-                <button key={ch} disabled={savingChannel} onClick={() => changeChannel(ch)}
-                  className={`px-3 py-2 rounded-lg text-xs font-medium border transition-colors ${
-                    (updateState?.channel || "stable") === ch
-                      ? "bg-rust-500/20 border-rust-500/40 text-rust-300"
-                      : "bg-dark-700 border-dark-600 text-dark-300 hover:bg-dark-600 hover:text-dark-100"
-                  } disabled:opacity-50`}>
-                  {ch === "stable" ? "Stable" : ch === "candidate" ? "Candidate (RC)" : "Hold"}
+          {updatesConfigured && updateState && (
+            <div className="bg-dark-800 border border-dark-600 rounded-lg p-4">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-sm font-medium text-dark-100">Version Status</h3>
+                <button onClick={triggerManualCheck} disabled={checking}
+                  className="px-3 py-1.5 bg-dark-700 text-dark-300 hover:bg-dark-600 hover:text-dark-100 border border-dark-500 rounded-lg text-xs transition-colors disabled:opacity-50">
+                  {checking ? "Checking..." : "Check now"}
                 </button>
-              ))}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div>
+                  <div className="text-xs text-dark-400 mb-1">Installed Version</div>
+                  <div className="text-sm font-mono text-dark-100">{vTag(currentVersion)}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-dark-400 mb-1">Latest Available</div>
+                  <div className={`text-sm font-mono ${updateAvailable ? "text-warn-400" : "text-rust-400"}`}>
+                    {updateAvailable ? availableTag : "Up to date"}
+                    {updateAvailable && updateState.available_prerelease && (
+                      <span className="ml-2 px-1.5 py-0.5 rounded text-[10px] font-sans font-medium border bg-warn-500/10 text-warn-400 border-warn-500/20">
+                        Pre-release
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs text-dark-400 mb-1">Last checked</div>
+                  <div className="text-sm text-dark-300">
+                    {updateState.checked_at ? formatDate(updateState.checked_at) : "Never"}
+                  </div>
+                </div>
+              </div>
+              {updateState.last_check_error && (
+                <div className="mt-3 text-xs text-danger-400 break-words">
+                  {updateState.last_check_error}
+                </div>
+              )}
             </div>
-            <div className="mt-2 text-xs text-dark-400">
-              {(updateState?.channel || "stable") === "stable" &&
-                "GA releases only (recommended for production)."}
-              {updateState?.channel === "candidate" &&
-                "Includes pre-release builds - may break, snapshot rollback is your safety net."}
-              {updateState?.channel === "hold" &&
-                "Auto-polling disabled. Use Check Now to manually look for updates."}
+          )}
+
+          {updatesConfigured && (
+            <div className="bg-dark-800 border border-dark-600 rounded-lg p-4">
+              <h3 className="text-sm font-medium text-dark-100 mb-3">Update Channel</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                {UPDATE_CHANNELS.map(ch => (
+                  <button key={ch.value} disabled={savingChannel} onClick={() => changeChannel(ch.value)}
+                    className={`px-3 py-2 rounded-lg text-xs font-medium border transition-colors ${
+                      channel === ch.value
+                        ? "bg-rust-500/20 border-rust-500/40 text-rust-300"
+                        : "bg-dark-700 border-dark-600 text-dark-300 hover:bg-dark-600 hover:text-dark-100"
+                    } disabled:opacity-50`}>
+                    {ch.label}
+                  </button>
+                ))}
+              </div>
+              <div className="mt-2 text-xs text-dark-400">
+                {UPDATE_CHANNELS.find(ch => ch.value === channel)?.help}
+              </div>
             </div>
-          </div>
+          )}
+
+          {updateState && (
+            <UpdateSourceCard
+              source={{
+                repo: updateState.repo,
+                token_set: updateState.token_set,
+                signing_key_id: updateState.signing_key_id,
+              }}
+              onChanged={async () => { await Promise.all([loadConfig(), loadUpdateState()]); }}
+              onMessage={flash}
+            />
+          )}
 
           {/* s233: agent auto-update. Off unless switched on here - the panel
               answers every agent's version query with "nothing to do" until it
@@ -1089,38 +1165,86 @@ export default function Telemetry() {
             </div>
           </div>
 
-          {updateAvailable && (
+          {/* Feature 10 (C-4): the install runs in the background after the
+              202. Its progress and a refusal (signature, checksum, download)
+              are shown here as well as in the modal, so closing the modal or
+              reloading the page never hides why nothing was installed. */}
+          {updateState?.state === "in_flight" && (
+            <div className="bg-dark-800 border border-rust-500/30 rounded-lg p-4">
+              <div className="flex items-center gap-3">
+                <div className="w-3 h-3 rounded-full bg-rust-500 animate-pulse" />
+                <span className="text-sm text-dark-200">
+                  Update in progress{updateState.target_version ? `: ${vTag(updateState.target_version)}` : ""}
+                </span>
+              </div>
+              {updateState.last_log_line && (
+                <pre className="mt-2 text-xs font-mono text-dark-400 bg-dark-900 border border-dark-700 rounded p-2 whitespace-pre-wrap break-all">
+                  {updateState.last_log_line}
+                </pre>
+              )}
+            </div>
+          )}
+          {updateState?.state === "failed" && (
+            <div className="rounded-lg border px-3 py-2 text-xs bg-danger-500/10 border-danger-500/30 text-danger-400">
+              <div className="font-medium">Last update attempt failed</div>
+              <div className="mt-1 break-words">{updateState.reason || "Unknown failure"}</div>
+              {updateState.at && (
+                <div className="mt-1 font-mono text-[10px] text-dark-400">
+                  {new Date(updateState.at).toLocaleString()}
+                </div>
+              )}
+            </div>
+          )}
+
+          {updatesConfigured && updateAvailable && (
             <div className="bg-dark-800 border border-dark-600 rounded-lg p-4">
-              <h3 className="text-sm font-medium text-dark-100 mb-3">Apply Update</h3>
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                <h3 className="text-sm font-medium text-dark-100 flex items-center gap-2">
+                  <span className="font-mono">{availableTag}</span>
+                  {updateState?.available_prerelease && (
+                    <span className="px-1.5 py-0.5 rounded text-[10px] font-medium border bg-warn-500/10 text-warn-400 border-warn-500/20">
+                      Pre-release
+                    </span>
+                  )}
+                </h3>
+                {releaseUrl && (
+                  <a href={releaseUrl} target="_blank" rel="noopener noreferrer"
+                    className="text-xs text-rust-400 hover:text-rust-300 transition-colors">
+                    View on GitHub
+                  </a>
+                )}
+              </div>
+              {/* Release notes are plain text, rendered as a React text node:
+                  any markup in them shows literally and is never interpreted. */}
+              {releaseNotes && (
+                <pre className="text-xs font-mono text-dark-300 whitespace-pre-wrap break-words max-h-64 overflow-y-auto bg-dark-900 rounded-lg p-3 border border-dark-700 mb-3">
+                  {releaseNotes}
+                </pre>
+              )}
               <div className="bg-dark-900 rounded-lg p-3 border border-dark-700 mb-3">
-                <div className="text-xs text-dark-400 mb-1">Target version</div>
-                <div className="text-sm font-mono text-rust-300">v{config.update_available_version}</div>
-                <div className="text-xs text-dark-400 mt-3 mb-1">What will happen</div>
+                <div className="text-xs text-dark-400 mb-1">What will happen</div>
                 <ol className="text-xs text-dark-300 list-decimal list-inside space-y-0.5">
-                  <li>Pre-update snapshot (binaries + DB dump + /etc/dockpanel)</li>
-                  <li>Download new binaries from GitHub, verify checksums</li>
-                  <li>Swap binaries + restart services (~5s admin UI unavailability)</li>
-                  <li>Health check; auto-rollback on failure within 5min</li>
+                  <li>Download the release and verify its signature and checksums (nothing is installed if a check fails)</li>
+                  <li>Pre-update snapshot (binaries, database dump, /etc/dockpanel)</li>
+                  <li>Swap binaries and restart services (about 5s of admin UI unavailability)</li>
+                  <li>Health check; automatic rollback on failure within 5 min</li>
                 </ol>
               </div>
-              {applyConfirm ? (
-                <div className="flex gap-2 items-center">
-                  <span className="text-sm text-rust-300 font-medium flex-1">Apply v{config.update_available_version}?</span>
-                  <button onClick={() => setApplyConfirm(false)}
-                    className="px-3 py-1.5 bg-dark-700 text-dark-300 hover:bg-dark-600 border border-dark-600 rounded-lg text-xs">
-                    Cancel
-                  </button>
-                  <button onClick={applyUpdate} disabled={applying}
-                    className="px-3 py-1.5 bg-rust-500 hover:bg-rust-600 text-white rounded-lg text-xs font-medium disabled:opacity-50">
-                    {applying ? "Starting..." : "Yes, apply update"}
-                  </button>
-                </div>
-              ) : (
-                <button onClick={() => setApplyConfirm(true)}
-                  disabled={updateState?.state === "in_flight"}
-                  className="px-4 py-2 bg-rust-500 hover:bg-rust-600 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50">
-                  {updateState?.state === "in_flight" ? "Update in flight..." : "Apply Update"}
-                </button>
+              <button onClick={() => setApplyConfirm(true)}
+                disabled={applying || updateState?.state === "in_flight"}
+                className="px-4 py-2 bg-rust-500 hover:bg-rust-600 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50">
+                {updateState?.state === "in_flight"
+                  ? "Update in progress..."
+                  : applying ? "Starting..." : `Install ${availableTag}`}
+              </button>
+              {applyConfirm && (
+                <ConfirmDialog
+                  label={`Install ${availableTag}? A snapshot is taken first.`}
+                  confirmLabel={`Install ${availableTag}`}
+                  tone="warn"
+                  onConfirm={() => void applyUpdate()}
+                  onCancel={cancelApplyConfirm}
+                />
               )}
             </div>
           )}
@@ -1138,7 +1262,7 @@ export default function Telemetry() {
             </div>
             {snapshots.length === 0 ? (
               <div className="text-xs text-dark-400 py-3 text-center">
-                No snapshots yet. Pre-update snapshots appear here automatically when you Apply Update.
+                No snapshots yet. Pre-update snapshots appear here automatically when you install an update.
               </div>
             ) : (
               <div className="space-y-2">
@@ -1217,10 +1341,16 @@ export default function Telemetry() {
               Update all reachable remote agents to a target version, oldest first.
               Halts on first failure by default.
             </div>
-            <div className="space-y-2 mb-3">
+            {/* Feature 10 (C-5): disabled while updates are not configured;
+                the backend refuses with 409 anyway. Recent runs stay visible. */}
+            <fieldset disabled={!updatesConfigured} className="space-y-2 mb-3 disabled:opacity-50">
               <input type="text" value={fleetVersion} onChange={e => setFleetVersion(e.target.value)}
-                placeholder="vX.Y.Z (e.g. v2.10.0)"
+                placeholder={currentVersion ? vTag(currentVersion) : "vX.Y.Z"}
+                aria-label="Fleet target version"
                 className="w-full bg-dark-900 border border-dark-600 text-dark-100 text-sm rounded-lg px-3 py-1.5 font-mono" />
+              <div className="text-xs text-dark-400">
+                Agents can only move to this panel&apos;s version, or to the advertised update when the panel is included.
+              </div>
               <label className="flex items-center gap-2 text-xs text-dark-300">
                 <input type="checkbox" checked={fleetHalt} onChange={e => setFleetHalt(e.target.checked)}
                   className="rounded bg-dark-900 border-dark-600" />
@@ -1231,8 +1361,11 @@ export default function Telemetry() {
                   className="rounded bg-dark-900 border-dark-600" />
                 Include this panel server (runs last)
               </label>
-            </div>
-            <button onClick={applyToFleet} disabled={fleetSubmitting || !fleetVersion.trim()}
+            </fieldset>
+            {!updatesConfigured && (
+              <div className="text-xs text-warn-400 mb-3">Updates are not configured</div>
+            )}
+            <button onClick={applyToFleet} disabled={!updatesConfigured || fleetSubmitting || !fleetVersion.trim()}
               className="px-4 py-2 bg-rust-500 hover:bg-rust-600 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50">
               {fleetSubmitting ? "Starting..." : "Apply to Fleet"}
             </button>
@@ -1456,7 +1589,7 @@ export default function Telemetry() {
                 <div className="flex items-center gap-3 mb-3">
                   <div className="w-3 h-3 rounded-full bg-rust-500 animate-pulse" />
                   <span className="text-sm text-dark-300">
-                    Targeting v{updateState.target_version}
+                    Targeting {vTag(updateState.target_version)}
                   </span>
                 </div>
                 {updateState.last_log_line && (
@@ -1471,7 +1604,7 @@ export default function Telemetry() {
             )}
             {updateState.state === "succeeded" && (
               <div className="text-sm text-rust-400 mb-3">
-                v{updateState.from_version} → v{updateState.to_version}
+                {vTag(updateState.from_version)} → {vTag(updateState.to_version)}
               </div>
             )}
             {updateState.state === "rolled_back" && (
