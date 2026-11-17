@@ -94,8 +94,95 @@ fn collect_system_info(cpu: &CpuSampler) -> serde_json::Value {
     })
 }
 
+/// The single rule for the server token (shared with the release downloads,
+/// `release_verify::panel_url_is_secure`): `https://`, or plain `http://` only
+/// to the loopback (`127.0.0.1`, `::1`, `localhost`).
+fn panel_url_is_secure(url: &str) -> bool {
+    crate::services::release_verify::panel_url_is_secure(url)
+}
+
+/// The panel URL is plain http to a non-loopback host: nothing was sent.
+#[derive(Debug, PartialEq, Eq)]
+struct InsecurePanelUrl;
+
+/// A client for the panel that never follows a redirect. reqwest keeps the
+/// `Authorization` header across a redirect that stays on the same host and
+/// port, so `https://panel:8443` answering with a redirect to
+/// `http://panel:8443` would otherwise put the token on the wire in the clear,
+/// after the URL check below had already passed. The panel answers these
+/// endpoints itself; a redirect is never expected. Same client as the release
+/// downloads.
+fn panel_client() -> Result<reqwest::Client, String> {
+    crate::services::release_verify::http_client().map_err(|e| e.to_string())
+}
+
+/// Every request this file makes with the server token goes through here. The
+/// URL is checked BEFORE the credential is attached; an insecure one yields no
+/// request at all (never a request without the token, which would still leak
+/// the payload and fail anyway).
+fn authed_request(
+    client: &reqwest::Client,
+    method: reqwest::Method,
+    url: &str,
+    server_token: &str,
+) -> Result<reqwest::RequestBuilder, InsecurePanelUrl> {
+    if !panel_url_is_secure(url) {
+        return Err(InsecurePanelUrl);
+    }
+    Ok(client
+        .request(method, url)
+        .header(reqwest::header::AUTHORIZATION, format!("Bearer {server_token}")))
+}
+
+#[derive(Debug)]
+enum CheckinError {
+    /// Refused before any network activity.
+    InsecureUrl,
+    Http(reqwest::Error),
+}
+
+/// POST one check-in. Returns the panel's status, or why nothing was sent.
+async fn checkin(
+    client: &reqwest::Client,
+    checkin_url: &str,
+    server_token: &str,
+    info: &serde_json::Value,
+) -> Result<reqwest::StatusCode, CheckinError> {
+    let req = authed_request(client, reqwest::Method::POST, checkin_url, server_token)
+        .map_err(|_| CheckinError::InsecureUrl)?;
+    let resp = req
+        .json(info)
+        .timeout(Duration::from_secs(15))
+        .send()
+        .await
+        .map_err(CheckinError::Http)?;
+    Ok(resp.status())
+}
+
 /// Run the phone-home loop: periodically POST system info to central API.
 pub async fn run(config: PhoneHomeConfig, cpu: CpuSampler) {
+    // Every request below carries the server token. Over plain http to another
+    // host it would travel in the clear, so such a URL disables phone-home
+    // entirely: the check is made once, here, so the refusal is logged once
+    // per process instead of on every tick, and no loop is ever started.
+    if !panel_url_is_secure(&config.central_url) {
+        tracing::error!(
+            "Phone-home DISABLED: DOCKPANEL_CENTRAL_URL ({}) is not https, and this agent never \
+             sends its server token over plain http except to the loopback. Set an https:// \
+             panel URL in the agent's environment and restart it.",
+            config.central_url
+        );
+        return;
+    }
+
+    let client = match panel_client() {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!("Phone-home disabled: could not build the HTTP client: {e}");
+            return;
+        }
+    };
+
     tracing::info!(
         "Phone-home enabled: server_id={}, central={}",
         config.server_id,
@@ -127,11 +214,11 @@ pub async fn run(config: PhoneHomeConfig, cpu: CpuSampler) {
 
     // Spawn auto-update checker (every 6 hours)
     let update_config = config.clone();
+    let update_client = client.clone();
     tokio::spawn(async move {
-        auto_update_loop(update_config).await;
+        auto_update_loop(update_config, update_client).await;
     });
 
-    let client = reqwest::Client::new();
     let checkin_url = format!("{}/api/agent/checkin", config.central_url);
 
     loop {
@@ -141,27 +228,16 @@ pub async fn run(config: PhoneHomeConfig, cpu: CpuSampler) {
             info["cert_fingerprint"] = serde_json::json!(fp);
         }
 
-        match client
-            .post(&checkin_url)
-            .header("Authorization", format!("Bearer {}", config.server_token))
-            .json(&info)
-            .timeout(Duration::from_secs(15))
-            .send()
-            .await
-        {
-            Ok(resp) => {
-                if resp.status().is_success() {
-                    tracing::debug!("Phone-home checkin OK");
-                } else {
-                    tracing::warn!(
-                        "Phone-home checkin failed: HTTP {}",
-                        resp.status()
-                    );
-                }
+        match checkin(&client, &checkin_url, &config.server_token, &info).await {
+            Ok(status) if status.is_success() => tracing::debug!("Phone-home checkin OK"),
+            Ok(status) => tracing::warn!("Phone-home checkin failed: HTTP {status}"),
+            // Unreachable after the startup check above; kept so the loop can
+            // never fall back to sending the token anyway.
+            Err(CheckinError::InsecureUrl) => {
+                tracing::error!("Phone-home checkin refused: the panel URL is not https");
+                return;
             }
-            Err(e) => {
-                tracing::warn!("Phone-home checkin error: {e}");
-            }
+            Err(CheckinError::Http(e)) => tracing::warn!("Phone-home checkin error: {e}"),
         }
 
         tokio::time::sleep(Duration::from_secs(60)).await;
@@ -180,8 +256,7 @@ pub async fn run(config: PhoneHomeConfig, cpu: CpuSampler) {
 /// verified against the signed release manifest (`release_verify`), health-verifies the result, rolls back when it
 /// does not come up, and is pinned by tests. So the timer goes through it, and
 /// nothing in this file touches a binary any more (s233).
-async fn auto_update_loop(config: PhoneHomeConfig) {
-    let client = reqwest::Client::new();
+async fn auto_update_loop(config: PhoneHomeConfig, client: reqwest::Client) {
     let version_url = format!("{}/api/agent/version", config.central_url);
     let current_version = env!("CARGO_PKG_VERSION");
 
@@ -267,9 +342,8 @@ async fn fetch_target(
     version_url: &str,
     server_token: &str,
 ) -> Result<Option<String>, String> {
-    let resp = client
-        .get(version_url)
-        .header("Authorization", format!("Bearer {server_token}"))
+    let resp = authed_request(client, reqwest::Method::GET, version_url, server_token)
+        .map_err(|_| "the panel URL is not https; the token is not sent".to_string())?
         .timeout(Duration::from_secs(15))
         .send()
         .await
@@ -340,5 +414,147 @@ mod tests {
             code.contains("format!(\"Bearer {server_token}\")"),
             "the version query must authenticate"
         );
+    }
+
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[test]
+    fn https_remote_gets_the_token() {
+        let client = panel_client().unwrap();
+        for url in [
+            "https://panel.example.com/api/agent/checkin",
+            "https://panel.example.com:8443/api/agent/version",
+        ] {
+            let req = authed_request(&client, reqwest::Method::POST, url, "tok")
+                .expect("https must be allowed")
+                .build()
+                .unwrap();
+            assert_eq!(req.url().as_str(), url);
+            assert_eq!(req.headers()[reqwest::header::AUTHORIZATION], "Bearer tok");
+        }
+    }
+
+    #[test]
+    fn http_remote_is_refused_before_any_request_exists() {
+        let client = panel_client().unwrap();
+        for url in [
+            "http://panel.example.com/api/agent/checkin",
+            "http://10.0.0.5:3080/api/agent/version",
+            "http://127.0.0.2/api/agent/checkin",
+            "http://localhost.example.com/api/agent/checkin",
+            "ftp://panel.example.com/x",
+            "",
+        ] {
+            assert_eq!(
+                authed_request(&client, reqwest::Method::GET, url, "tok").err(),
+                Some(InsecurePanelUrl),
+                "{url}"
+            );
+        }
+    }
+
+    /// Unroutable host (TEST-NET-1): if a request were attempted, these would
+    /// come back with a connect error after a timeout, not the refusal at once.
+    #[tokio::test]
+    async fn http_remote_checkin_and_version_poll_send_nothing() {
+        let client = panel_client().unwrap();
+        let info = serde_json::json!({"server_id": "s"});
+        let t = std::time::Instant::now();
+        let r = checkin(&client, "http://192.0.2.1/api/agent/checkin", "tok", &info).await;
+        assert!(matches!(r, Err(CheckinError::InsecureUrl)), "{r:?}");
+        let v = fetch_target(&client, "http://192.0.2.1/api/agent/version", "tok").await;
+        assert!(v.unwrap_err().contains("not https"));
+        assert!(t.elapsed() < Duration::from_secs(2), "nothing may hit the network");
+    }
+
+    /// Accept one connection on the loopback, return the raw request head,
+    /// answer 200 with `body`.
+    async fn one_shot_server(body: &'static str) -> (String, tokio::task::JoinHandle<String>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut buf = Vec::new();
+            let mut chunk = [0u8; 4096];
+            // Read the head, then the whole body (Content-Length), so the
+            // socket is never closed with unread data (which may reset it).
+            let head_end = loop {
+                if let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                    break i + 4;
+                }
+                let n = sock.read(&mut chunk).await.unwrap();
+                assert!(n > 0, "client closed before the end of the head");
+                buf.extend_from_slice(&chunk[..n]);
+            };
+            let body_len = String::from_utf8_lossy(&buf[..head_end])
+                .lines()
+                .find_map(|l| {
+                    let (k, v) = l.split_once(':')?;
+                    k.trim().eq_ignore_ascii_case("content-length").then(|| v.trim().parse::<usize>().ok())?
+                })
+                .unwrap_or(0);
+            while buf.len() < head_end + body_len {
+                let n = sock.read(&mut chunk).await.unwrap();
+                assert!(n > 0, "client closed before the end of the body");
+                buf.extend_from_slice(&chunk[..n]);
+            }
+            buf.truncate(head_end);
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            sock.write_all(resp.as_bytes()).await.unwrap();
+            String::from_utf8_lossy(&buf).to_string()
+        });
+        (format!("http://{addr}"), handle)
+    }
+
+    #[tokio::test]
+    async fn http_loopback_checkin_is_sent_with_the_token() {
+        let (base, server) = one_shot_server("{}").await;
+        let client = panel_client().unwrap();
+        let info = serde_json::json!({"server_id": "s"});
+        let status = checkin(&client, &format!("{base}/api/agent/checkin"), "tok", &info)
+            .await
+            .expect("loopback http must be sent");
+        assert!(status.is_success());
+        let head = server.await.unwrap().to_ascii_lowercase();
+        assert!(head.starts_with("post /api/agent/checkin "), "{head}");
+        assert!(head.contains("authorization: bearer tok\r\n"), "{head}");
+    }
+
+    #[tokio::test]
+    async fn http_loopback_version_poll_is_sent_with_the_token() {
+        let (base, server) = one_shot_server(r#"{"target_version":"v9.9.9"}"#).await;
+        let client = panel_client().unwrap();
+        let target = fetch_target(&client, &format!("{base}/api/agent/version"), "tok")
+            .await
+            .expect("loopback http must be sent");
+        assert_eq!(target.as_deref(), Some("v9.9.9"));
+        let head = server.await.unwrap().to_ascii_lowercase();
+        assert!(head.starts_with("get /api/agent/version "), "{head}");
+        assert!(head.contains("authorization: bearer tok\r\n"), "{head}");
+    }
+
+    /// No request in this file may attach the token by hand: they all go
+    /// through `authed_request`, which checks the URL first. And `run` refuses
+    /// an insecure URL before it spawns either loop.
+    #[test]
+    fn the_token_is_attached_in_one_checked_place_only() {
+        let src = include_str!("phone_home.rs");
+        let code: String = src
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let prod = &code[..code.find(concat!("#[cfg(", "test)]")).unwrap()];
+        assert_eq!(prod.matches(concat!("header(reqwest::header::", "AUTHORIZATION")).count(), 1);
+        assert!(!prod.contains(concat!("\"Author", "ization\"")));
+        assert!(!prod.contains(concat!("reqwest::Client::", "new()")));
+        let run = &prod[prod.find("pub async fn run(").unwrap()..];
+        let guard = run.find("if !panel_url_is_secure(&config.central_url)").unwrap();
+        assert!(guard < run.find("tokio::spawn(").unwrap());
+        assert!(guard < run.find("checkin(&client").unwrap());
     }
 }
