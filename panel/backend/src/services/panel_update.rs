@@ -949,6 +949,58 @@ pub async fn finalize_pending_on_startup(pool: &PgPool) {
         }
     }
 
+    // A new binary stamps its row "succeeded" as soon as it boots, which is
+    // before update.sh's health check: when that check then fails, update.sh
+    // restores the old binary and this boot finds a recent row naming a
+    // version it is not running. Restamp it (what `current_state` already
+    // reports at read time) and journal the rollback; the restamp is what
+    // keeps this from firing twice.
+    if let Ok(stamped) = sqlx::query_as::<_, PanelSnapshot>(
+        "SELECT * FROM panel_snapshots \
+         WHERE trigger LIKE 'pre-update:%' AND to_version IS NOT NULL \
+           AND to_version <> 'abandoned' AND from_version = $1 AND to_version <> $1 \
+           AND created_at > $2",
+    )
+    .bind(&current_version)
+    .bind(cutoff)
+    .fetch_all(pool)
+    .await
+    {
+        for snap in stamped {
+            if sqlx::query("UPDATE panel_snapshots SET to_version = $1 WHERE id = $2")
+                .bind(&current_version)
+                .bind(snap.id)
+                .execute(pool)
+                .await
+                .is_err()
+            {
+                continue;
+            }
+            let attempted = snap.to_version.clone().unwrap_or_default();
+            tracing::warn!(
+                "Snapshot {} re-finalized as rolled-back: {attempted} booted, then {current_version} was restored",
+                snap.id
+            );
+            let reason = last_panel_update_result()
+                .await
+                .and_then(|v| v.get("detail").and_then(|d| d.as_str()).map(str::to_string))
+                .unwrap_or_else(|| "the updater restored the previous version".into());
+            let actor = Actor::System(snap.operator.clone().unwrap_or_else(|| "system".to_string()));
+            update_source::audit(
+                pool,
+                &actor,
+                "update.rolled_back",
+                Some(&release_fetch::release_tag(&attempted)),
+                serde_json::json!({
+                    "from_version": snap.from_version,
+                    "attempted_version": attempted,
+                    "reason": reason,
+                }),
+            )
+            .await;
+        }
+    }
+
     // Mark older, abandoned in-flight rows with a sentinel so they don't
     // perpetually block /api/update/apply. Manual snapshots are exempt - they
     // are never in flight, and stamping one 'abandoned' made it the newest

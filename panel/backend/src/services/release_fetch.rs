@@ -1130,6 +1130,16 @@ pub fn retain_only(root: &Path, keep: &HashSet<String>, startup: bool) {
             continue;
         }
         if keep.contains(&name) {
+            // A download cut by a timeout leaves its `.part-*` or `.extract-*`
+            // inside the tag directory; at start-up nothing can own them.
+            if startup && let Ok(inner) = std::fs::read_dir(entry.path()) {
+                for f in inner.flatten() {
+                    if f.file_name().to_string_lossy().starts_with('.') {
+                        let p = f.path();
+                        let _ = std::fs::remove_dir_all(&p).or_else(|_| std::fs::remove_file(&p));
+                    }
+                }
+            }
             continue;
         }
         if tag_lock(&name).try_lock().is_err() {
@@ -1673,16 +1683,22 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn retention_keeps_what_is_needed() {
         let root = temp_dir();
-        for d in ["v1.0.0", "v2.0.0", "v3.0.0", ".partial-v4.0.0-x"] {
+        for d in ["v1.0.0", "v2.0.0", "v3.0.0", ".partial-v4.0.0-x", "v2.0.0/.extract-y"] {
             std::fs::create_dir_all(root.join(d)).unwrap();
         }
+        std::fs::write(root.join("v2.0.0/.a.part-z"), b"x").unwrap();
+        std::fs::write(root.join("v2.0.0/checksums.txt"), b"x").unwrap();
         let keep: HashSet<String> = ["v2.0.0".to_string()].into();
         retain_only(&root, &keep, false);
         assert!(!root.join("v1.0.0").exists());
         assert!(root.join("v2.0.0").exists());
         assert!(root.join(".partial-v4.0.0-x").exists(), "hidden entries wait for start-up");
+        assert!(root.join("v2.0.0/.a.part-z").exists());
         retain_only(&root, &keep, true);
         assert!(!root.join(".partial-v4.0.0-x").exists());
+        assert!(!root.join("v2.0.0/.a.part-z").exists());
+        assert!(!root.join("v2.0.0/.extract-y").exists());
+        assert!(root.join("v2.0.0/checksums.txt").exists());
         let _ = std::fs::remove_dir_all(&root);
     }
 
