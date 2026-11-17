@@ -783,6 +783,13 @@ set -g window-size latest
 set -g history-limit 50000
 set -g escape-time 10
 set -g focus-events on
+# Right-click pastes in the panel: no tmux menu, or the pasted keys pick its entries.
+unbind -n MouseDown3Pane
+unbind -n M-MouseDown3Pane
+unbind -n MouseDown3Status
+unbind -n M-MouseDown3Status
+unbind -n MouseDown3StatusLeft
+unbind -n M-MouseDown3StatusLeft
 source-file -q ~/.tmux.conf
 DP_UTERM_TMUX_CONF
 
