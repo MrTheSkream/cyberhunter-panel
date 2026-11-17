@@ -50,11 +50,16 @@ PY=$(mktemp "${TMPDIR:-/tmp}/ut-e2e.XXXXXX.py")
 trap 'rm -f "$PY"' EXIT
 
 cat > "$PY" <<'PYEOF'
-import asyncio, base64, hashlib, hmac, json, os, re, ssl, struct, subprocess, sys, time
+import asyncio, base64, hashlib, hmac, json, os, random, re, ssl, string, struct, subprocess, sys, time
 import urllib.request, urllib.error, urllib.parse
 import websockets
 
 SECRETS = os.environ["UT_SECRETS_DIR"]
+# Per-run marker suffix. The user terminal is a PERSISTENT tmux session: on
+# reattach tmux redraws the screen, old markers from a previous run included,
+# so a fixed marker would match stale output.
+NONCE = "".join(random.choice(string.ascii_uppercase) for _ in range(6))
+RUN_SEQ = [0]
 PASS = FAIL = SKIP = 0
 
 def secret(name, required=True):
@@ -96,6 +101,8 @@ def http(method, path, cookie=None, bearer=None, body=None):
     req = urllib.request.Request(PANEL + path, data=data, method=method)
     req.add_header("Content-Type", "application/json")
     req.add_header("Origin", PANEL)
+    # The panel's CSRF guard: cookie-authenticated POST/PUT/DELETE need it.
+    req.add_header("X-Requested-With", "XMLHttpRequest")
     if cookie:
         req.add_header("Cookie", f"token={cookie}")
     if bearer:
@@ -186,6 +193,10 @@ class Term:
                 return None
     async def run(self, cmd, tag, timeout=20):
         # The marker is computed by the shell, so the echoed command never matches.
+        # Run nonce + call counter: unique even when a tag is reused (W in §6
+        # and §7) and tmux redraws the previous marker on reattach.
+        RUN_SEQ[0] += 1
+        tag += f"{NONCE}{RUN_SEQ[0]}"
         await self.send(f"{cmd}; echo UT$((40+2)){tag}:$?:END\r")
         m = await self.wait(rf"UT42{tag}:(\d+):END", timeout)
         return None if m is None else int(m.group(1))
@@ -216,8 +227,13 @@ def tmux_active():
 
 async def s_refusals(admin):
     print("§1 refusals")
-    st, _, _ = http("GET", "/api/terminal/user/token", bearer=secret("dp_key"))
-    check(st == 403, f"a dp_ key gets no ticket ({st})")
+    st, js, _ = http("GET", "/api/terminal/user/token", bearer=secret("dp_key"))
+    if st == 401 and "revoked" in json.dumps(js or {}).lower():
+        # §7's panic revokes every dp_ key minted before it (by design), so
+        # after one full run the fixture key no longer reaches the gate.
+        skip("dp_ key refusal (the fixture key was revoked by an earlier panic: mint a new one)")
+    else:
+        check(st == 403, f"a dp_ key gets no ticket ({st})")
     na = login(secret("nonadmin_email"), secret("nonadmin_password"))
     if na:
         st, _, _ = user_ticket(na)
@@ -242,12 +258,12 @@ async def s_refusals(admin):
         for target in ("root", "daemon"):
             st, js, _ = http("PUT", f"/api/terminal/user/accounts/{me['user_id']}", cookie=admin, body={
                 "linux_user": target, "autostart_command": None, "record": False,
-                "proof": {"password": secret("admin_password")}})
+                "proof": {"current_password": secret("admin_password")}})
             check(st in (400, 403) and js and js.get("reasons"), f"a mapping to {target} is refused with reasons ({st})")
         # Restore the real mapping, in case a refusal was not one.
         http("PUT", f"/api/terminal/user/accounts/{me['user_id']}", cookie=admin, body={
             "linux_user": LOGIN, "autostart_command": None, "record": False,
-            "proof": {"password": secret("admin_password")}})
+            "proof": {"current_password": secret("admin_password")}})
     else:
         skip("mapping refusals (could not find the admin's mapping)")
     # Replay and Origin.
@@ -273,20 +289,31 @@ async def s_shell(admin):
     if not t:
         bad(f"cannot open the user terminal ({st})"); return
     _, want_uid = ssh(f"id -u {LOGIN}")
-    await t.send(f"echo UT$((1+1))ID$(id -u)X\r")
-    m = await t.wait(r"UT2ID(\d+)X")
+    await t.send(f"echo UT$((1+1))ID{NONCE}$(id -u)X\r")
+    m = await t.wait(rf"UT2ID{NONCE}(\d+)X")
     check(m and m.group(1) == want_uid, f"id -u is the Linux user's uid ({m.group(1) if m else 'no answer'})")
     check(await t.run(f"ls /home/{LOGIN} >/dev/null", "LS") == 0, f"/home/{LOGIN} is visible")
     check(await t.run("test -d ~/.claude", "CL") == 0, "~/.claude is visible")
     rc = await t.run("sudo -k; sudo -n true 2>/dev/null", "SN")
     check(rc is not None and rc != 0, f"sudo -n true fails with a non-zero code ({rc})")
     check(await t.run("true", "ALIVE") == 0, "the terminal survives the refused sudo")
-    await t.send("sudo -k; sudo -p 'UTPW:' true; echo UT$((40+2))SP:$?:END\r")
-    if await t.wait(r"UTPW:"):
+    # The prompt is computed by the shell (UT2PW:), so the echoed command line
+    # never matches and the password is only sent once sudo is asking for it.
+    await t.send(f"sudo -k; sudo -p \"UT$((1+1))PW{NONCE}:\" true; echo UT$((40+2))SP{NONCE}:$?:END\r")
+    if await t.wait(rf"UT2PW{NONCE}:"):
         await t.send(secret("linux_password") + "\r")
-        m = await t.wait(r"UT42SP:(\d+):END", 30)
-        check(m and m.group(1) == "0", "sudo with the Linux password succeeds")
+        # Either sudo finishes, or it asks again (wrong password).
+        m = await t.wait(rf"UT42SP{NONCE}:(\d+):END|(UT2PW{NONCE}:)", 30)
+        if m and m.group(2):
+            # Abort the retry prompt: otherwise it swallows the next commands
+            # (and every later scenario typed into this persistent tmux).
+            await t.send("\x03")
+            bad("sudo with the Linux password succeeds (sudo asked again: the "
+                "password in linux_password is rejected by PAM for this user)")
+        else:
+            check(m and m.group(1) == "0", "sudo with the Linux password succeeds")
     else:
+        await t.send("\x03")
         bad("sudo did not prompt for the password")
     await t.run("sudo -k", "K")
     await t.ws.close()
@@ -336,8 +363,8 @@ async def s_paste(admin):
         await t.send(chunk)
     await asyncio.sleep(2)
     await t.send("\x04")
-    await t.send(f"echo UT$((1+1))H$(sha256sum < ~/.ut-paste | cut -c1-64)X\r")
-    m = await t.wait(r"UT2H([0-9a-f]{64})X", 30)
+    await t.send(f"echo UT$((1+1))H{NONCE}$(sha256sum < ~/.ut-paste | cut -c1-64)X\r")
+    m = await t.wait(rf"UT2H{NONCE}([0-9a-f]{{64}})X", 30)
     check(m and m.group(1) == want, "200 pasted lines arrive intact (sha256 matches)")
     await t.run("rm -f ~/.ut-paste", "RM2")
     await t.ws.close()
@@ -403,7 +430,18 @@ async def s_panic(admin):
     await asyncio.sleep(3)
     check(not tmux_active(), "panic stops the tmux session")
     check("user_terminals_killed" in json.dumps(js or {}), "the panic report carries user_terminals_killed")
-    http("POST", "/api/security/lockdown/deactivate", cookie=admin, body={})
+
+def unlock_panel():
+    # The panic revokes every session (sessions_revoked_at), so the cookie used
+    # to press it is dead: sign in again, then unlock the way the panel does
+    # (Security -> Lockdown -> deactivate), and check it took.
+    admin = login(secret("admin_email"), secret("admin_password"), secret("admin_totp_secret"))
+    if not admin:
+        bad("re-login after the panic failed: the panel may still be LOCKED DOWN"); return
+    st, _, _ = http("POST", "/api/security/lockdown/deactivate", cookie=admin, body={})
+    _, js, _ = http("GET", "/api/security/lockdown", cookie=admin)
+    check(st == 200 and js and js.get("active") is False,
+          f"the panel is unlocked again after the panic ({st})")
 
 async def main():
     admin = login(secret("admin_email"), secret("admin_password"), secret("admin_totp_secret"))
@@ -419,6 +457,8 @@ async def main():
         await asyncio.wait_for(s_panic(admin), 120)
     except Exception as e:
         bad(f"s_panic raised {type(e).__name__}")
+    finally:
+        unlock_panel()
 
 asyncio.run(main())
 print(f"\nPASS {PASS} / FAIL {FAIL} / SKIP {SKIP}")
