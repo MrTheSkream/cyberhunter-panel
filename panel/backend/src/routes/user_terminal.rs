@@ -602,7 +602,7 @@ async fn require_proof(
         .fetch_one(&state.db)
         .await
         .map_err(|e| internal_error("user terminal proof", e))?;
-    require_enrolment_proof(state, claims, &user, proof).await
+    require_enrolment_proof(state, claims, &user, proof, "change a user terminal link").await
 }
 
 /// PUT /api/terminal/user/accounts/{user_id} -

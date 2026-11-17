@@ -1277,11 +1277,16 @@ fn reauth_required(msg: &str, methods: &[&str], provider: Option<&str>) -> ApiEr
 /// but weaker bound: it stops a cookie replayed from another machine and buys
 /// little against script injection on the panel's own origin. Stated plainly so
 /// the next reader does not mistake it for equivalence.
+///
+/// `action` completes the refusal messages ("... to {action}."): this helper
+/// guards more than passkey enrolment (the user-terminal link uses it too), so
+/// the caller names what is being confirmed, e.g. `"add a passkey"`.
 pub async fn require_enrolment_proof(
     state: &AppState,
     claims: &Claims,
     user: &User,
     proof: &EnrolmentProof,
+    action: &str,
 ) -> Result<(), ApiError> {
     let has_password = !user.password_hash.is_empty();
     let has_totp = user.totp_enabled;
@@ -1297,7 +1302,7 @@ pub async fn require_enrolment_proof(
         let provider = user.oauth_provider.as_deref();
         let label = provider.unwrap_or("your identity provider");
         return Err(reauth_required(
-            &format!("For security, sign in again with {label} before adding a passkey."),
+            &format!("For security, sign in again with {label} to {action}."),
             &["oauth"],
             provider,
         ));
@@ -1373,12 +1378,12 @@ pub async fn require_enrolment_proof(
     }
 
     let msg = match (has_password, has_totp) {
-        (true, true) => "Confirm your password, or enter a code from your authenticator app or a recovery code, to add a passkey.",
-        (true, false) => "Confirm your password to add a passkey.",
-        _ => "Enter a code from your authenticator app, or one of your recovery codes, to add a passkey.",
+        (true, true) => format!("Confirm your password, or enter a code from your authenticator app or a recovery code, to {action}."),
+        (true, false) => format!("Confirm your password to {action}."),
+        _ => format!("Enter a code from your authenticator app, or one of your recovery codes, to {action}."),
     };
 
-    Err(reauth_required(msg, &methods, None))
+    Err(reauth_required(&msg, &methods, None))
 }
 
 /// How many unused recovery codes an account is holding.

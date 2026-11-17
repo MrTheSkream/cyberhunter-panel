@@ -375,7 +375,7 @@ pub async fn register_begin(
 
     let proof = body.map(|Json(p)| p).unwrap_or_default();
 
-    if let Err(e) = require_enrolment_proof(&state, &claims, &user, &proof).await {
+    if let Err(e) = require_enrolment_proof(&state, &claims, &user, &proof, "add a passkey").await {
         // A rejected proof is worth a trail; a bare challenge is not an event.
         if proof.code.is_some() || proof.current_password.is_some() {
             crate::services::activity::log_activity(

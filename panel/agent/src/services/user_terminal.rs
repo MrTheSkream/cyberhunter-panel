@@ -88,6 +88,10 @@ pub const CONNECTION_LIMIT: Duration = Duration::from_secs(12 * 3600);
 pub const MAX_CONNECTIONS_PER_LOGIN: usize = 4;
 /// Largest accepted input frame.
 pub const MAX_INPUT_FRAME: usize = 64 * 1024;
+/// Input received before the pty has produced its first byte is held back,
+/// at most this long and this much (see `run_session`).
+pub const INPUT_HOLD_LIMIT: Duration = Duration::from_secs(5);
+pub const MAX_HELD_INPUT: usize = 256 * 1024;
 /// Most `jti` remembered at once.
 pub const MAX_JTI: usize = 10_000;
 /// Longest accepted start command.
@@ -1467,6 +1471,17 @@ async fn read_loop(afd: Arc<AsyncFd<OwnedFd>>, tx: tokio::sync::mpsc::Sender<Vec
     }
 }
 
+/// Send the input held while the pty was silent, in order. `false` when the
+/// writer is gone.
+async fn flush_held(in_tx: &tokio::sync::mpsc::Sender<Vec<u8>>, held: &mut Vec<Vec<u8>>) -> bool {
+    for data in held.drain(..) {
+        if in_tx.send(data).await.is_err() {
+            return false;
+        }
+    }
+    true
+}
+
 async fn write_loop(afd: Arc<AsyncFd<OwnedFd>>, mut rx: tokio::sync::mpsc::Receiver<Vec<u8>>) {
     let mut w = FdWriter(afd.get_ref().as_raw_fd());
     while let Some(data) = rx.recv().await {
@@ -1576,9 +1591,28 @@ async fn run_session(mut socket: WebSocket, ctx: SessionCtx, _slot: SlotGuard, c
     // The pty reached EOF: tmux detached or the shell exited. Still audited as
     // `closed` (the contract's causes), but told apart in the close frame.
     let mut pty_ended = false;
+    // Input is held until the pty speaks. Bytes written into the pty before
+    // the unit has its tty settled are echoed back by the line discipline;
+    // `systemd-run --pty` reads that echo, which ends its "ignore the initial
+    // hangup" grace, and the hangup PID 1 then does on the tty when it starts
+    // the unit tears its forwarder down for good: the connection stays open
+    // and silent while tmux runs unseen. The first byte we read comes from
+    // tmux drawing the screen, after that hangup, so input is safe from then
+    // on. A typist (or a page restoring a draft) who is quick is enough to
+    // hit it; the bound keeps a silent pty from holding input for ever.
+    let mut held: Vec<Vec<u8>> = Vec::new();
+    let mut held_bytes = 0usize;
+    let mut pty_spoke = false;
+    let hold_until = tokio::time::Instant::now() + INPUT_HOLD_LIMIT;
 
     let cause = loop {
         tokio::select! {
+            _ = tokio::time::sleep_until(hold_until), if !pty_spoke => {
+                pty_spoke = true;
+                if !flush_held(&in_tx, &mut held).await {
+                    break Cause::Closed;
+                }
+            }
             _ = tokio::time::sleep_until(deadline) => {
                 let _ = socket.send(Message::Text(
                     "\r\n\x1b[1;33mConnection limit reached (12 hours). Reconnect to continue: the session is still running.\x1b[0m\r\n".into()
@@ -1590,6 +1624,12 @@ async fn run_session(mut socket: WebSocket, ctx: SessionCtx, _slot: SlotGuard, c
                     Some(d) => (decoder.decode(&d), false),
                     None => (decoder.finish(), true),
                 };
+                if !pty_spoke && !text.is_empty() {
+                    pty_spoke = true;
+                    if !flush_held(&in_tx, &mut held).await {
+                        break Cause::Closed;
+                    }
+                }
                 if !text.is_empty() {
                     if let Some(f) = recording.as_mut() {
                         use std::io::Write;
@@ -1611,6 +1651,13 @@ async fn run_session(mut socket: WebSocket, ctx: SessionCtx, _slot: SlotGuard, c
                         Frame::Input(data) => {
                             if data.len() > MAX_INPUT_FRAME {
                                 tracing::warn!("user terminal for {}: input frame over 64 KiB dropped", ctx.login);
+                            } else if !pty_spoke {
+                                if held_bytes + data.len() <= MAX_HELD_INPUT {
+                                    held_bytes += data.len();
+                                    held.push(data.into_bytes());
+                                } else {
+                                    tracing::warn!("user terminal for {}: early input over 256 KiB dropped", ctx.login);
+                                }
                             } else if in_tx.send(data.into_bytes()).await.is_err() {
                                 break Cause::Closed;
                             }
