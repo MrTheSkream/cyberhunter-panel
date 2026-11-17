@@ -74,6 +74,10 @@ interface UpdateInfo {
   /// the release it names on any panel upgraded from the shell, so only this
   /// flag may gate the banner.
   update_available: boolean;
+  /// Feature 10 (contract A-6.5, C-6): false while updates are not configured
+  /// (no signing key, no source or no token). Must be literally true for the
+  /// banner: a backend that does not send it reads as not configured.
+  configured?: boolean;
   update_available_version?: string;
   update_release_url?: string;
   current_version?: string;
@@ -926,7 +930,7 @@ export default function Dashboard() {
       {/* Health banner moved to page header */}
 
       {/* Update available banner */}
-      {updateInfo?.update_available && updateInfo.update_available_version && (
+      {updateInfo?.configured === true && updateInfo.update_available && updateInfo.update_available_version && (
         <div className="rounded-lg border border-rust-500/30 bg-rust-500/10 px-4 py-3 flex flex-wrap items-center gap-3">
           <svg className="w-[18px] h-[18px] text-rust-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
           <span className="flex-[1_1_260px] min-w-0 text-dark-100">
