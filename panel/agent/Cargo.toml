@@ -44,5 +44,4 @@ libc = "0.2"
 url = "2"
 tikv-jemallocator = { version = "0.6", features = ["background_threads"] }
 walkdir = "2"
-minisign-verify = "0.3.0"
 sha-crypt ={ version = "0.6.0", features = ["getrandom"] }

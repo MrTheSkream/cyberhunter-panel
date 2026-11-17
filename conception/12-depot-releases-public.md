@@ -146,7 +146,8 @@ VM (instantané avant chaque étape) :
 2. Installation à neuf **sans jeton** sur une VM Ubuntu 22.04 vierge par la commande ci-dessus. Cette
    étape avance aussi la section 3 de `11-mise-en-production.md`.
 3. « Check now » puis installation de `rc+1` sans jeton.
-4. Release falsifiée (signée avec une autre clé) : refusée par `install.sh` et par le panel.
+4. Fichier de release qui ne correspond pas à `checksums.txt` : refusé par `install.sh` et par le panel
+   (depuis D6, il n'y a plus de signature à falsifier).
 5. VM de lab actuelle avec jeton et dépôt privé : fonctionne toujours (non-régression).
 
 ## Points à trancher avec toi

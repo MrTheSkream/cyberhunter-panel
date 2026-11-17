@@ -5,7 +5,6 @@
 # Usage (from scripts/release.sh, source tree on stdin):
 #   git -c core.autocrlf=false archive --format=tar HEAD | \
 #     docker run --rm -i \
-#       -e CYBERHUNTER_UPDATE_PUBKEY=<base64 key line> \
 #       -v dp-cargo-registry:/usr/local/cargo/registry \
 #       -v <target volume>:/target \
 #       -v <output dir>:/out \
@@ -43,10 +42,6 @@ rm -rf "$SRC"
 mkdir -p "$SRC" /out
 tar -C "$SRC" -xf -
 [ -f "$SRC/panel/agent/Cargo.toml" ] || { echo "stdin did not contain the repository tree" >&2; exit 2; }
-
-if [ -z "${CYBERHUNTER_UPDATE_PUBKEY:-}" ]; then
-    echo "WARNING: CYBERHUNTER_UPDATE_PUBKEY is empty - these binaries will have updates disabled" >&2
-fi
 
 TARGETS=(x86_64-unknown-linux-gnu)
 [ "$ARM64" = "1" ] && TARGETS+=(aarch64-unknown-linux-gnu)

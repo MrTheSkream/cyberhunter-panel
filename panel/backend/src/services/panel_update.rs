@@ -47,17 +47,18 @@ use crate::services::panel_snapshot::{self, SnapshotTrigger};
 use crate::services::release_fetch;
 use crate::services::update_source::{self, Actor};
 
-/// The oldest agent that verifies signed releases itself. An older agent would
-/// fetch its update from somewhere else on its own, so the fleet refuses it.
-pub const MIN_SIGNED_AGENT_VERSION: &str = "3.0.0-rc.1";
+/// The oldest agent that fetches its release from this panel and checks it
+/// against the release's `checksums.txt` itself. An older agent would fetch
+/// its update from somewhere else on its own, so the fleet refuses it.
+pub const MIN_PANEL_RELEASE_AGENT_VERSION: &str = "3.0.0-rc.1";
 
-/// `true` when an agent reporting `version` can verify signed releases.
-/// Unknown or unparseable versions cannot.
-pub fn agent_can_verify_signed(version: Option<&str>) -> bool {
+/// `true` when an agent reporting `version` fetches its release from this
+/// panel. Unknown or unparseable versions do not.
+pub fn agent_fetches_from_panel(version: Option<&str>) -> bool {
     match version.map(str::trim) {
         Some(v) if validate_target_version(v) => {
             crate::services::telemetry_collector::release_key(v.trim_start_matches('v'))
-                >= crate::services::telemetry_collector::release_key(MIN_SIGNED_AGENT_VERSION)
+                >= crate::services::telemetry_collector::release_key(MIN_PANEL_RELEASE_AGENT_VERSION)
         }
         _ => false,
     }
@@ -103,9 +104,10 @@ pub fn non_upgrade_refusal(agent_version: Option<&str>, target: &str) -> Option<
     ))
 }
 
-/// The per-server refusal for an agent too old to verify signed releases.
+/// The per-server refusal for an agent too old to fetch its release from
+/// this panel.
 pub fn legacy_agent_refusal(version: Option<&str>) -> Option<String> {
-    if agent_can_verify_signed(version) {
+    if agent_fetches_from_panel(version) {
         return None;
     }
     let running = match version {
@@ -113,8 +115,8 @@ pub fn legacy_agent_refusal(version: Option<&str>) -> Option<String> {
         _ => "an unknown version".to_string(),
     };
     Some(format!(
-        "This agent runs {running}, older than {MIN_SIGNED_AGENT_VERSION}, and cannot verify \
-         signed releases. Reinstall it with install-agent.sh."
+        "This agent runs {running}, older than {MIN_PANEL_RELEASE_AGENT_VERSION}, and cannot \
+         fetch its update from this panel. Reinstall it with install-agent.sh."
     ))
 }
 
@@ -1361,8 +1363,8 @@ async fn update_one_server(
     // re-added here whatever the operator typed.
     let normalized = format!("v{}", target_version.trim_start_matches('v'));
     let payload = Some(serde_json::json!({ "target_version": normalized }));
-    // An agent older than the signed-release series would not fetch its
-    // update from this panel but from elsewhere, unverified: refuse it here,
+    // An agent older than the 3.0.0-rc.1 series would not fetch its update
+    // from this panel but from elsewhere, unverified: refuse it here,
     // before any request reaches it.
     if let Some(refusal) = legacy_agent_refusal(agent_version) {
         return Err(refusal);
@@ -1715,21 +1717,21 @@ mod tests {
     }
 
     #[test]
-    fn only_agents_from_the_signed_series_are_updated() {
-        assert!(agent_can_verify_signed(Some("3.0.0-rc.1")));
-        assert!(agent_can_verify_signed(Some("v3.0.0-rc.2")));
-        assert!(agent_can_verify_signed(Some("3.0.0")));
-        assert!(agent_can_verify_signed(Some("3.1.4")));
-        assert!(!agent_can_verify_signed(Some("2.242.1")));
-        assert!(!agent_can_verify_signed(Some("3.0.0-beta")));
-        assert!(!agent_can_verify_signed(Some("garbage")));
-        assert!(!agent_can_verify_signed(Some("")));
-        assert!(!agent_can_verify_signed(None));
+    fn only_agents_that_fetch_from_the_panel_are_updated() {
+        assert!(agent_fetches_from_panel(Some("3.0.0-rc.1")));
+        assert!(agent_fetches_from_panel(Some("v3.0.0-rc.2")));
+        assert!(agent_fetches_from_panel(Some("3.0.0")));
+        assert!(agent_fetches_from_panel(Some("3.1.4")));
+        assert!(!agent_fetches_from_panel(Some("2.242.1")));
+        assert!(!agent_fetches_from_panel(Some("3.0.0-beta")));
+        assert!(!agent_fetches_from_panel(Some("garbage")));
+        assert!(!agent_fetches_from_panel(Some("")));
+        assert!(!agent_fetches_from_panel(None));
 
         assert_eq!(
             legacy_agent_refusal(Some("2.242.1")).unwrap(),
-            "This agent runs v2.242.1, older than 3.0.0-rc.1, and cannot verify signed \
-             releases. Reinstall it with install-agent.sh."
+            "This agent runs v2.242.1, older than 3.0.0-rc.1, and cannot fetch its update \
+             from this panel. Reinstall it with install-agent.sh."
         );
         assert!(legacy_agent_refusal(None).unwrap().contains("an unknown version"));
         assert!(legacy_agent_refusal(Some("3.0.0-rc.1")).is_none());
@@ -1780,20 +1782,20 @@ mod tests {
     #[test]
     fn a_failed_state_carries_its_code() {
         let s = UpdateState::Failed {
-            reason: "Signature check failed, nothing was installed".into(),
+            reason: "Checksum check failed, nothing was installed".into(),
             at: Utc::now(),
-            code: Some("signature_failed".into()),
+            code: Some("checksum_failed".into()),
         };
         let v = serde_json::to_value(&s).unwrap();
         assert_eq!(v["state"], "failed");
-        assert_eq!(v["code"], "signature_failed");
+        assert_eq!(v["code"], "checksum_failed");
         let s = UpdateState::Failed { reason: "x".into(), at: Utc::now(), code: None };
         assert!(serde_json::to_value(&s).unwrap().get("code").is_none());
     }
 
     #[test]
     fn apply_failed_details_hold_no_url() {
-        let d = apply_failed_details("v3.0.0-rc.2", "verify", Some("signature_failed"), "Signature check failed, nothing was installed");
+        let d = apply_failed_details("v3.0.0-rc.2", "verify", Some("checksum_failed"), "Checksum check failed, nothing was installed");
         assert_eq!(d["to_version"], "3.0.0-rc.2");
         assert_eq!(d["stage"], "verify");
         assert!(!d.to_string().contains("https://"));

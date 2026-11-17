@@ -1,97 +1,39 @@
-//! Signed releases, agent side (feature 10).
+//! Release verification, agent side (feature 10).
 //!
-//! The agent never talks to the release host. It asks ITS PANEL for three
-//! files of a release (`checksums.txt.minisig`, `checksums.txt`, then its own
-//! binary), and installs nothing unless:
+//! The agent never talks to the release host. It asks ITS PANEL, over https
+//! (or plain http to the loopback only), for two files of a release
+//! (`checksums.txt`, then its own binary), and installs nothing unless:
 //!
-//! 1. the minisign signature of `checksums.txt` verifies with the public key
-//!    compiled into this binary (`CYBERHUNTER_UPDATE_PUBKEY` at build time);
-//! 2. the signature's trusted comment is exactly `cyberhunter-release <tag>`,
-//!    which binds the signed manifest to the version being installed;
-//! 3. the binary's SHA-256 equals its manifest entry, and it is an ELF file.
+//! 1. `checksums.txt` parses strictly (contract §2.2) and has an entry for
+//!    this machine's binary;
+//! 2. the binary's SHA-256 equals that entry, it is within the size limit,
+//!    and it is an ELF file.
 //!
-//! The panel is therefore only a relay: a compromised or mistaken panel can
-//! refuse to serve, but cannot make this agent run bytes the release key did
-//! not sign. `agent-self-update.sh` then only re-checks the SHA-256 it is
-//! handed, on a file this module already verified.
+//! There is no signature (conception 12, D6): these checks catch a corrupted
+//! or truncated transfer, not a release published by whoever controls the
+//! release repository, nor a panel that serves a consistent but altered pair.
+//! `agent-self-update.sh` then only re-checks the SHA-256 it is handed, on a
+//! file this module already verified.
 //!
 //! Same rules as the backend's reader (contract §2.2/§2.3), written separately
 //! on purpose: the two crates share no code.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
 use std::time::Duration;
 
-use minisign_verify::{PublicKey, Signature};
 use sha2::{Digest, Sha256};
 
 /// `checksums.txt` is at most this many bytes (contract §2.2).
 pub const MAX_CHECKSUMS_BYTES: usize = 64 * 1024;
 /// And at most this many lines.
 pub const MAX_CHECKSUMS_LINES: usize = 32;
-/// `checksums.txt.minisig` is at most this many bytes.
-pub const MAX_MINISIG_BYTES: usize = 4 * 1024;
 /// One release file is at most 200 MiB.
 pub const MAX_ASSET_BYTES: usize = 209_715_200;
 /// Where the verified agent binary is staged for `agent-self-update.sh`.
 pub const STAGING_DIR: &str = "/var/lib/dockpanel/agent-release";
-/// The prefix of the trusted comment; the tag follows after one space.
-pub const TRUSTED_COMMENT_PREFIX: &str = "cyberhunter-release ";
 
 const ELF_MAGIC: [u8; 4] = [0x7f, b'E', b'L', b'F'];
-
-/// The base64 line of the minisign `.pub` this binary was built with, if any.
-/// A COMPILE-TIME variable: no key lives in the repository, a development
-/// build has none (updates off, fail closed), and nobody who can write a file
-/// on the box can swap it - only a new signed binary can.
-pub fn compiled_key_b64() -> Option<&'static str> {
-    option_env!("CYBERHUNTER_UPDATE_PUBKEY")
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-}
-
-/// Parse a minisign public key from the `.pub` file's second line.
-pub fn parse_public_key(b64: &str) -> Option<PublicKey> {
-    PublicKey::from_base64(b64.trim()).ok()
-}
-
-/// The key ID minisign prints (`untrusted comment: minisign public key <ID>`):
-/// bytes 2..10 of the decoded key, read as a little-endian u64, upper hex.
-pub fn key_id(b64: &str) -> Option<String> {
-    use base64::Engine;
-    let bin = base64::engine::general_purpose::STANDARD
-        .decode(b64.trim())
-        .ok()?;
-    if bin.len() != 42 {
-        return None;
-    }
-    let mut id = [0u8; 8];
-    id.copy_from_slice(&bin[2..10]);
-    Some(format!("{:016X}", u64::from_le_bytes(id)))
-}
-
-/// The compiled-in key, parsed once. Absent or empty: `None`. Malformed:
-/// `None` too, and an error in the log, because that is a broken build rather
-/// than a configuration choice.
-pub fn signing_key() -> Option<&'static PublicKey> {
-    static KEY: OnceLock<Option<PublicKey>> = OnceLock::new();
-    KEY.get_or_init(|| {
-        let b64 = compiled_key_b64()?;
-        let key = parse_public_key(b64);
-        if key.is_none() {
-            tracing::error!("CYBERHUNTER_UPDATE_PUBKEY is not a valid minisign public key");
-        }
-        key
-    })
-    .as_ref()
-}
-
-/// ID of the compiled-in key, for logs.
-pub fn signing_key_id() -> Option<String> {
-    signing_key()?;
-    key_id(compiled_key_b64()?)
-}
 
 /// Why a release was refused. `Display` is the exact text the panel shows
 /// (contract B-2 and §2.6); the precise cause goes to the log.
@@ -99,9 +41,6 @@ pub fn signing_key_id() -> Option<String> {
 pub enum ReleaseError {
     /// The panel answered 409 `updates_not_configured`.
     NotConfigured,
-    /// Missing, unreadable, other key, bad signature, legacy algorithm, or a
-    /// trusted comment that does not name this tag.
-    Signature(String),
     /// `checksums.txt` malformed, or no entry for the file we need.
     Incomplete(String),
     /// SHA-256 differs, not an ELF file, or too large.
@@ -117,7 +56,6 @@ impl std::fmt::Display for ReleaseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NotConfigured => write!(f, "Updates are not configured"),
-            Self::Signature(_) => write!(f, "Signature check failed, nothing was installed"),
             Self::Incomplete(_) => write!(
                 f,
                 "The release is missing required files, nothing was installed"
@@ -134,8 +72,7 @@ impl ReleaseError {
     pub fn detail(&self) -> &str {
         match self {
             Self::NotConfigured => "panel answered updates_not_configured",
-            Self::Signature(d)
-            | Self::Incomplete(d)
+            Self::Incomplete(d)
             | Self::Checksum(d)
             | Self::Download(d)
             | Self::Io(d) => d,
@@ -197,39 +134,6 @@ pub fn parse_checksums(bytes: &[u8]) -> Result<Manifest, String> {
 /// `v`-prefixed tag, whatever the caller passed (`3.0.0` or `v3.0.0`).
 pub fn normalize_tag(tag: &str) -> String {
     format!("v{}", tag.trim().trim_start_matches('v'))
-}
-
-/// Verify the signature of `checksums` for `tag`, then parse it.
-///
-/// `allow_legacy = false`: only pre-hashed signatures (algorithm `ED`). The
-/// global signature, which `verify` checks, covers the trusted comment, so
-/// comparing the comment after a successful `verify` is sound.
-pub fn verify_manifest(
-    key: &PublicKey,
-    checksums: &[u8],
-    minisig: &[u8],
-    tag: &str,
-) -> Result<Manifest, ReleaseError> {
-    if minisig.is_empty() {
-        return Err(ReleaseError::Signature("checksums.txt.minisig is empty".into()));
-    }
-    if minisig.len() > MAX_MINISIG_BYTES {
-        return Err(ReleaseError::Signature("checksums.txt.minisig is too large".into()));
-    }
-    let sig_text = std::str::from_utf8(minisig)
-        .map_err(|_| ReleaseError::Signature("checksums.txt.minisig is not UTF-8".into()))?;
-    let sig = Signature::decode(sig_text)
-        .map_err(|e| ReleaseError::Signature(format!("unreadable signature: {e}")))?;
-    key.verify(checksums, &sig, false)
-        .map_err(|e| ReleaseError::Signature(format!("signature rejected: {e}")))?;
-    let expected = format!("{TRUSTED_COMMENT_PREFIX}{}", normalize_tag(tag));
-    if sig.trusted_comment() != expected {
-        return Err(ReleaseError::Signature(format!(
-            "trusted comment is '{}', expected '{expected}'",
-            sig.trusted_comment()
-        )));
-    }
-    parse_checksums(checksums).map_err(ReleaseError::Incomplete)
 }
 
 /// Lowercase SHA-256 hex.
@@ -407,7 +311,6 @@ pub async fn download_and_stage(
     central: &str,
     server_token: &str,
     tag: &str,
-    key: &PublicKey,
 ) -> Result<StagedAgent, ReleaseError> {
     if !panel_url_is_secure(central) {
         return Err(ReleaseError::Download("the panel URL is not https".into()));
@@ -416,14 +319,6 @@ pub async fn download_and_stage(
         ReleaseError::Download(format!("unsupported architecture {}", std::env::consts::ARCH))
     })?;
     let client = http_client()?;
-    let minisig = fetch(
-        &client,
-        &release_url(central, tag, "checksums.txt.minisig"),
-        server_token,
-        MAX_MINISIG_BYTES,
-        Duration::from_secs(30),
-    )
-    .await?;
     let checksums = fetch(
         &client,
         &release_url(central, tag, "checksums.txt"),
@@ -432,7 +327,7 @@ pub async fn download_and_stage(
         Duration::from_secs(30),
     )
     .await?;
-    let manifest = verify_manifest(key, &checksums, &minisig, tag)?;
+    let manifest = parse_checksums(&checksums).map_err(ReleaseError::Incomplete)?;
     if !manifest.contains_key(&asset) {
         return Err(ReleaseError::Incomplete(format!("checksums.txt has no entry for {asset}")));
     }
@@ -479,21 +374,8 @@ fn stage(bytes: &[u8], tag: &str) -> std::io::Result<PathBuf> {
 mod tests {
     use super::*;
 
-    const PUB: &str = include_str!("testdata/release/test.pub");
     const CHECKSUMS: &[u8] = include_bytes!("testdata/release/checksums.txt");
-    const SIG: &[u8] = include_bytes!("testdata/release/checksums.txt.minisig");
-    const SIG_OTHER_KEY: &[u8] = include_bytes!("testdata/release/checksums.txt.other-key.minisig");
-    const SIG_WRONG_TAG: &[u8] = include_bytes!("testdata/release/checksums.txt.wrong-tag.minisig");
-    const SIG_LEGACY: &[u8] = include_bytes!("testdata/release/checksums.txt.legacy.minisig");
     const FAKE_AGENT: &[u8] = include_bytes!("testdata/release/cyberhunter-agent-linux-amd64");
-    const TAG: &str = "v9.9.9";
-
-    fn pub_b64() -> &'static str {
-        PUB.lines().nth(1).unwrap().trim()
-    }
-    fn key() -> PublicKey {
-        parse_public_key(pub_b64()).unwrap()
-    }
     const H: &str = "a960c613f821aa1ae6bbe7f00d1c25adcfe461be108408a23add1f194b2a0303";
 
     // ── checksums.txt ────────────────────────────────────────────────────
@@ -540,92 +422,20 @@ mod tests {
         assert!(parse_checksums(&big).unwrap_err().contains("bytes"));
     }
 
-    // ── signature ────────────────────────────────────────────────────────
+    /// No signature is asked for any more (conception 12, D6): the agent
+    /// fetches `checksums.txt` and its binary, nothing else, and the manifest
+    /// is parsed strictly before the binary is even requested.
     #[test]
-    fn a_valid_signature_for_the_right_tag_verifies() {
-        let m = verify_manifest(&key(), CHECKSUMS, SIG, TAG).unwrap();
-        assert!(m.contains_key("cyberhunter-agent-linux-amd64"));
-        // The tag is normalised: `9.9.9` names the same release.
-        assert!(verify_manifest(&key(), CHECKSUMS, SIG, "9.9.9").is_ok());
-    }
-
-    #[test]
-    fn a_manifest_changed_by_one_byte_is_refused() {
-        let mut bad = CHECKSUMS.to_vec();
-        bad[0] = if bad[0] == b'a' { b'b' } else { b'a' };
-        let e = verify_manifest(&key(), &bad, SIG, TAG).unwrap_err();
-        assert!(matches!(e, ReleaseError::Signature(_)), "{e:?}");
-    }
-
-    #[test]
-    fn a_missing_or_garbled_signature_is_refused() {
-        for sig in [&b""[..], &b"not a signature"[..], &SIG[..SIG.len() / 2]] {
-            let e = verify_manifest(&key(), CHECKSUMS, sig, TAG).unwrap_err();
-            assert!(matches!(e, ReleaseError::Signature(_)), "{e:?}");
-        }
-    }
-
-    #[test]
-    fn a_signature_by_another_key_is_refused() {
-        let e = verify_manifest(&key(), CHECKSUMS, SIG_OTHER_KEY, TAG).unwrap_err();
-        assert!(matches!(e, ReleaseError::Signature(_)), "{e:?}");
-    }
-
-    /// The trusted comment binds the signature to a version: a whole, intact
-    /// older release republished under a new tag must be refused.
-    #[test]
-    fn a_signature_for_another_tag_is_refused() {
-        let e = verify_manifest(&key(), CHECKSUMS, SIG_WRONG_TAG, TAG).unwrap_err();
-        assert!(matches!(e, ReleaseError::Signature(_)), "{e:?}");
-        let e = verify_manifest(&key(), CHECKSUMS, SIG, "v9.9.10").unwrap_err();
-        assert!(matches!(e, ReleaseError::Signature(_)), "{e:?}");
-    }
-
-    #[test]
-    fn a_legacy_non_prehashed_signature_is_refused() {
-        // The fixture really is a legacy one (`Ed`), or this test proves nothing.
-        use base64::Engine;
-        let line = std::str::from_utf8(SIG_LEGACY).unwrap().lines().nth(1).unwrap();
-        let bin = base64::engine::general_purpose::STANDARD.decode(line).unwrap();
-        assert_eq!(&bin[..2], b"Ed");
-        let e = verify_manifest(&key(), CHECKSUMS, SIG_LEGACY, TAG).unwrap_err();
-        assert!(matches!(e, ReleaseError::Signature(_)), "{e:?}");
-    }
-
-    #[test]
-    fn a_validly_signed_but_malformed_manifest_is_incomplete_not_accepted() {
-        // Covered by the signature for a well-formed file only, so the parse
-        // step is checked on its own: a signed file is still parsed strictly.
-        assert!(parse_checksums(b"garbage\n").is_err());
-    }
-
-    #[test]
-    fn the_key_id_matches_what_minisign_printed() {
-        let printed = PUB
-            .lines()
-            .next()
-            .unwrap()
-            .trim()
-            .rsplit(' ')
-            .next()
-            .unwrap()
-            .to_string();
-        assert_eq!(key_id(pub_b64()).unwrap(), printed);
-        assert!(key_id("not base64!").is_none());
-        assert!(parse_public_key("RWQ").is_none());
-    }
-
-    /// The tests above must not depend on how this binary was built: with
-    /// and without `-e CYBERHUNTER_UPDATE_PUBKEY` they take the key as a
-    /// parameter. What the build changes is only `signing_key()`.
-    #[test]
-    fn the_compiled_key_is_optional_and_consistent() {
-        match compiled_key_b64() {
-            None => assert!(signing_key().is_none() && signing_key_id().is_none()),
-            Some(b64) => {
-                assert_eq!(signing_key().is_some(), parse_public_key(b64).is_some());
-            }
-        }
+    fn the_agent_fetches_no_signature_and_parses_the_manifest_first() {
+        let src = include_str!("release_verify.rs");
+        let f = &src[src.find("pub async fn download_and_stage").unwrap()..];
+        let f = &f[..f.find("\n}\n").unwrap()];
+        assert!(!f.contains(concat!(".mini", "sig")), "no signature file is fetched");
+        assert_eq!(f.matches("fetch(").count(), 2, "checksums.txt, then the binary");
+        let sums = f.find("\"checksums.txt\"").unwrap();
+        let parse = f.find("parse_checksums(&checksums)").unwrap();
+        let bin = f.find("&release_url(central, tag, &asset)").unwrap();
+        assert!(sums < parse && parse < bin);
     }
 
     // ── binary ───────────────────────────────────────────────────────────
@@ -697,8 +507,8 @@ mod tests {
         assert_eq!(classify_status(403, b"").to_string(), "Download failed (403)");
         assert_eq!(classify_status(302, b"").to_string(), "Download failed (302)");
         assert_eq!(
-            ReleaseError::Signature("x".into()).to_string(),
-            "Signature check failed, nothing was installed"
+            ReleaseError::Incomplete("x".into()).to_string(),
+            "The release is missing required files, nothing was installed"
         );
         assert_eq!(
             ReleaseError::Checksum("x".into()).to_string(),

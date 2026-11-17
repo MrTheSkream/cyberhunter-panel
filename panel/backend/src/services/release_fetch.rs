@@ -1,12 +1,15 @@
 //! Fetching and verifying CyberHunter releases from GitHub.
 //!
-//! Nothing a release contains is used before three checks pass, all here:
-//!   1. the minisign signature of `checksums.txt`, against the key compiled
-//!      into this binary (`update_source::signing_key`), pre-hashed only;
-//!   2. the signature's trusted comment, which must be exactly
-//!      `cyberhunter-release <tag>` so a signed set cannot be republished
-//!      under another tag;
-//!   3. the SHA-256 and the size of every file, against that manifest.
+//! Nothing a release contains is used before these checks pass, all here:
+//!   1. `checksums.txt` is attached to the release and parses strictly
+//!      (§2.2: nothing skipped, a malformed manifest is a refusal);
+//!   2. every file is listed in it, and its SHA-256 matches its entry;
+//!   3. every file has exactly the size GitHub announced, within the limits.
+//!
+//! There is no signature (conception 12, D6): the manifest comes from the
+//! same release as the files, so these checks catch a corrupted or truncated
+//! download, not a release published by someone who controls the repository.
+//! Any failure stops the operation and installs nothing (fail closed).
 //!
 //! Verified files land in `/var/lib/dockpanel/releases/<tag>/`. A file present
 //! there has passed its check: it is written under a temporary name and only
@@ -64,7 +67,6 @@ const MAX_REDIRECTS: u8 = 3;
 
 pub const MAX_LIST_BYTES: u64 = 2 * 1024 * 1024;
 pub const MAX_CHECKSUMS_BYTES: u64 = 64 * 1024;
-pub const MAX_MINISIG_BYTES: u64 = 4 * 1024;
 pub const MAX_ASSET_BYTES: u64 = 209_715_200;
 const MAX_MANIFEST_LINES: usize = 32;
 
@@ -78,7 +80,6 @@ pub const PREPARE_TIMEOUT: Duration = Duration::from_secs(900);
 pub const FLEET_PREPARE_TIMEOUT: Duration = Duration::from_secs(240);
 
 pub const CHECKSUMS_NAME: &str = "checksums.txt";
-pub const MINISIG_NAME: &str = "checksums.txt.minisig";
 pub const FRONTEND_ARCHIVE: &str = "cyberhunter-frontend.tar.gz";
 pub const SOURCE_ARCHIVE: &str = "cyberhunter-source.tar.gz";
 pub const SOURCE_DIR: &str = "cyberhunter-source";
@@ -86,7 +87,7 @@ pub const AGENT_AMD64: &str = "cyberhunter-agent-linux-amd64";
 pub const AGENT_ARM64: &str = "cyberhunter-agent-linux-arm64";
 
 /// What `GET /api/agent/release/{tag}/{name}` may serve.
-pub const AGENT_RELEASE_FILES: [&str; 4] = [CHECKSUMS_NAME, MINISIG_NAME, AGENT_AMD64, AGENT_ARM64];
+pub const AGENT_RELEASE_FILES: [&str; 3] = [CHECKSUMS_NAME, AGENT_AMD64, AGENT_ARM64];
 
 static NAME_RE: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"^[A-Za-z0-9._-]{1,128}$").unwrap());
@@ -106,7 +107,6 @@ pub enum FetchError {
     RateLimited,
     ReleaseNotFound,
     ReleaseIncomplete(String),
-    SignatureFailed(String),
     ChecksumFailed(String),
     DownloadFailed(String),
     FileUnknown,
@@ -122,7 +122,6 @@ impl FetchError {
             FetchError::RateLimited => "github_rate_limited",
             FetchError::ReleaseNotFound => "release_not_found",
             FetchError::ReleaseIncomplete(_) => "release_incomplete",
-            FetchError::SignatureFailed(_) => "signature_failed",
             FetchError::ChecksumFailed(_) => "checksum_failed",
             FetchError::DownloadFailed(_) => "download_failed",
             FetchError::FileUnknown => "release_file_unknown",
@@ -142,7 +141,6 @@ impl FetchError {
             FetchError::ReleaseIncomplete(_) => {
                 "The release is missing required files, nothing was installed"
             }
-            FetchError::SignatureFailed(_) => "Signature check failed, nothing was installed",
             FetchError::ChecksumFailed(_) => "Checksum check failed, nothing was installed",
             FetchError::DownloadFailed(_) => "Download failed",
             FetchError::FileUnknown => "Release file not available",
@@ -157,9 +155,9 @@ impl FetchError {
             | FetchError::RepoNotFoundAnonymous => StatusCode::CONFLICT,
             FetchError::RateLimited => StatusCode::SERVICE_UNAVAILABLE,
             FetchError::ReleaseNotFound | FetchError::FileUnknown => StatusCode::NOT_FOUND,
-            FetchError::ReleaseIncomplete(_)
-            | FetchError::SignatureFailed(_)
-            | FetchError::ChecksumFailed(_) => StatusCode::UNPROCESSABLE_ENTITY,
+            FetchError::ReleaseIncomplete(_) | FetchError::ChecksumFailed(_) => {
+                StatusCode::UNPROCESSABLE_ENTITY
+            }
             FetchError::DownloadFailed(_) => StatusCode::BAD_GATEWAY,
         }
     }
@@ -167,7 +165,6 @@ impl FetchError {
     pub fn detail(&self) -> Option<&str> {
         match self {
             FetchError::ReleaseIncomplete(d)
-            | FetchError::SignatureFailed(d)
             | FetchError::ChecksumFailed(d)
             | FetchError::DownloadFailed(d) => Some(d),
             _ => None,
@@ -178,9 +175,7 @@ impl FetchError {
     /// that could not be fetched (`update.apply_failed` stage).
     pub fn stage(&self) -> &'static str {
         match self {
-            FetchError::ReleaseIncomplete(_)
-            | FetchError::SignatureFailed(_)
-            | FetchError::ChecksumFailed(_) => "verify",
+            FetchError::ReleaseIncomplete(_) | FetchError::ChecksumFailed(_) => "verify",
             _ => "download",
         }
     }
@@ -362,46 +357,6 @@ pub fn parse_checksums(bytes: &[u8]) -> Result<Manifest, FetchError> {
         }
     }
     Ok(Manifest { entries })
-}
-
-// ── Signature ────────────────────────────────────────────────────────────
-
-/// The trusted comment a release for `tag` must carry.
-pub fn trusted_comment_for(tag: &str) -> String {
-    format!("cyberhunter-release {tag}")
-}
-
-/// Check the minisign signature of `checksums` against `key` (pre-hashed
-/// signatures only), bind it to `tag`, then parse the manifest.
-pub fn verify_signed_manifest(
-    key: &minisign_verify::PublicKey,
-    checksums: &[u8],
-    minisig: &[u8],
-    tag: &str,
-) -> Result<Manifest, FetchError> {
-    let failed = |why: &str| FetchError::SignatureFailed(why.to_string());
-    if minisig.is_empty() {
-        return Err(failed("no signature file"));
-    }
-    if minisig.len() as u64 > MAX_MINISIG_BYTES {
-        return Err(failed("signature file larger than 4 KiB"));
-    }
-    let text = std::str::from_utf8(minisig).map_err(|_| failed("unreadable signature file"))?;
-    let sig = minisign_verify::Signature::decode(text).map_err(|e| match e {
-        minisign_verify::Error::UnsupportedAlgorithm => failed("unsupported signature algorithm"),
-        _ => failed("unreadable signature file"),
-    })?;
-    key.verify(checksums, &sig, false).map_err(|e| match e {
-        minisign_verify::Error::UnexpectedKeyId => failed("signed by another key"),
-        minisign_verify::Error::UnexpectedAlgorithm => {
-            failed("legacy signature (not pre-hashed) refused")
-        }
-        _ => failed("invalid signature"),
-    })?;
-    if sig.trusted_comment() != trusted_comment_for(tag) {
-        return Err(failed("trusted comment does not name this tag"));
-    }
-    parse_checksums(checksums)
 }
 
 // ── Redirects and headers ────────────────────────────────────────────────
@@ -903,26 +858,24 @@ pub fn panel_files() -> Result<Vec<String>, FetchError> {
         .ok_or_else(|| FetchError::ReleaseIncomplete("no release files for this architecture".into()))
 }
 
-/// The key and repository to prepare with, or `NotConfigured`.
+/// The source to prepare with, or `NotConfigured`.
 pub fn configured_source(
     status: &update_source::SourceStatus,
-) -> Result<(update_source::UpdateSource, &'static minisign_verify::PublicKey), FetchError> {
+) -> Result<update_source::UpdateSource, FetchError> {
     if !status.configured {
         return Err(FetchError::NotConfigured);
     }
-    let source = status.source.clone().ok_or(FetchError::NotConfigured)?;
-    let key = update_source::signing_key().ok_or(FetchError::NotConfigured)?;
-    Ok((source, key))
+    status.source.clone().ok_or(FetchError::NotConfigured)
 }
 
 /// Prepare `names` of release `tag` in the real cache, with the real client.
 /// Requires "configured" even when everything is already cached.
 pub async fn prepare_full(tag: &str, names: &[&str]) -> Result<Prepared, FetchError> {
-    let (source, key) = configured_source(&update_source::load())?;
+    let source = configured_source(&update_source::load())?;
     let api = GithubApi::new(source.token_file.clone())?;
     prepare_with(
         &api,
-        Some((source.repo.as_str(), key)),
+        Some(source.repo.as_str()),
         Path::new(RELEASE_CACHE_DIR),
         tag,
         names,
@@ -950,27 +903,22 @@ pub fn agent_files(manifest: &Manifest) -> Vec<&'static str> {
     v
 }
 
-/// Read and re-verify a cached manifest. `None` when it is not cached.
-fn cached_manifest(
-    dir: &Path,
-    key: &minisign_verify::PublicKey,
-    tag: &str,
-) -> Option<Result<Manifest, FetchError>> {
+/// Read and parse a cached manifest again. `None` when it is not cached.
+fn cached_manifest(dir: &Path) -> Option<Result<Manifest, FetchError>> {
     let sums = std::fs::read(dir.join(CHECKSUMS_NAME)).ok()?;
-    let sig = std::fs::read(dir.join(MINISIG_NAME)).ok()?;
-    Some(verify_signed_manifest(key, &sums, &sig, tag))
+    Some(parse_checksums(&sums))
 }
 
 /// The core of [`prepare`], with every dependency injected. `cfg` is `None`
 /// when updates are not configured: then nothing is called at all.
 pub async fn prepare_with<A: ReleaseApi>(
     api: &A,
-    cfg: Option<(&str, &minisign_verify::PublicKey)>,
+    cfg: Option<&str>,
     root: &Path,
     tag: &str,
     names: &[&str],
 ) -> Result<Prepared, FetchError> {
-    let Some((repo, key)) = cfg else {
+    let Some(repo) = cfg else {
         return Err(FetchError::NotConfigured);
     };
     if !is_release_tag(tag) {
@@ -987,15 +935,15 @@ pub async fn prepare_with<A: ReleaseApi>(
     let dir = root.join(tag);
 
     let mut release: Option<ReleaseInfo> = None;
-    let manifest = match cached_manifest(&dir, key, tag) {
+    let manifest = match cached_manifest(&dir) {
         Some(Ok(m)) => m,
         cached => {
             if cached.is_some() {
-                // A cached manifest that no longer verifies (the key changed):
+                // A cached manifest that no longer parses (altered on disk):
                 // start over rather than trust anything in that directory.
-                tracing::warn!("Cached release {tag} no longer verifies; fetching it again");
+                tracing::warn!("Cached checksums.txt of {tag} is not valid; fetching the release again");
             }
-            let (m, rel) = fetch_manifest(api, repo, key, root, &dir, tag).await?;
+            let (m, rel) = fetch_manifest(api, repo, root, &dir, tag).await?;
             release = Some(rel);
             m
         }
@@ -1007,7 +955,7 @@ pub async fn prepare_with<A: ReleaseApi>(
         }
         let path = dir.join(name);
         // A cached file is trusted only after it is hashed AGAIN against the
-        // signed manifest: the cache outlives the check that filled it, and a
+        // manifest: the cache outlives the check that filled it, and a
         // file altered (or torn) on disk since must never be served to an agent
         // or installed. A mismatch is dropped and downloaded afresh.
         if std::fs::symlink_metadata(&path).is_ok() {
@@ -1150,12 +1098,11 @@ async fn fetch_release<A: ReleaseApi>(api: &A, repo: &str, tag: &str) -> Result<
     Ok(rel)
 }
 
-/// Download, verify and cache `checksums.txt` and its signature, through a
-/// `.partial-*` directory renamed into place only once both verified.
+/// Download, parse and cache `checksums.txt`, through a `.partial-*`
+/// directory renamed into place only once it parsed.
 async fn fetch_manifest<A: ReleaseApi>(
     api: &A,
     repo: &str,
-    key: &minisign_verify::PublicKey,
     root: &Path,
     dir: &Path,
     tag: &str,
@@ -1164,24 +1111,16 @@ async fn fetch_manifest<A: ReleaseApi>(
     let sums_asset = rel
         .asset(CHECKSUMS_NAME)
         .ok_or_else(|| FetchError::ReleaseIncomplete("checksums.txt is not attached".into()))?;
-    let sig_asset = rel
-        .asset(MINISIG_NAME)
-        .ok_or_else(|| FetchError::SignatureFailed("no signature file".into()))?;
     if sums_asset.size > MAX_CHECKSUMS_BYTES {
         return Err(incomplete("larger than 64 KiB"));
     }
-    if sig_asset.size > MAX_MINISIG_BYTES {
-        return Err(FetchError::SignatureFailed("signature file larger than 4 KiB".into()));
-    }
     let sums = api.asset_bytes(repo, sums_asset, MAX_CHECKSUMS_BYTES).await?;
-    let sig = api.asset_bytes(repo, sig_asset, MAX_MINISIG_BYTES).await?;
-    let manifest = verify_signed_manifest(key, &sums, &sig, tag)?;
+    let manifest = parse_checksums(&sums)?;
 
     let partial = root.join(format!(".partial-{tag}-{}", Uuid::new_v4()));
     let write = || -> Result<(), FetchError> {
         ensure_private_dir(&partial)?;
         std::fs::write(partial.join(CHECKSUMS_NAME), &sums).map_err(io_failed)?;
-        std::fs::write(partial.join(MINISIG_NAME), &sig).map_err(io_failed)?;
         if dir.exists() {
             std::fs::remove_dir_all(dir).map_err(io_failed)?;
         }
@@ -1308,14 +1247,10 @@ pub async fn cleanup_cache(pool: &PgPool, startup: bool) {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::services::update_source::tests::{temp_dir, test_key_line, KNOWN_TOKEN};
+    use crate::services::update_source::tests::{temp_dir, KNOWN_TOKEN};
     use std::sync::atomic::AtomicUsize;
 
     const FIX_SUMS: &[u8] = include_bytes!("testdata/release/checksums.txt");
-    const FIX_SIG: &[u8] = include_bytes!("testdata/release/checksums.txt.minisig");
-    const FIX_SIG_OTHER_KEY: &[u8] = include_bytes!("testdata/release/checksums.txt.minisig-otherkey");
-    const FIX_SIG_OTHER_TAG: &[u8] = include_bytes!("testdata/release/checksums.txt.minisig-othertag");
-    const FIX_SIG_LEGACY: &[u8] = include_bytes!("testdata/release/checksums.txt.minisig-legacy");
     const FIX_FILES: [(&str, &[u8]); 6] = [
         ("cyberhunter-agent-linux-amd64", include_bytes!("testdata/release/cyberhunter-agent-linux-amd64")),
         ("cyberhunter-api-linux-amd64", include_bytes!("testdata/release/cyberhunter-api-linux-amd64")),
@@ -1325,10 +1260,6 @@ pub(crate) mod tests {
         ("cyberhunter-source.tar.gz", include_bytes!("testdata/release/cyberhunter-source.tar.gz")),
     ];
     pub(crate) const FIX_TAG: &str = "v9.9.9";
-
-    pub(crate) fn test_key() -> minisign_verify::PublicKey {
-        update_source::parse_public_key(test_key_line()).unwrap().0
-    }
 
     fn line(name: &str) -> String {
         format!("{}  {name}", "a".repeat(64))
@@ -1378,57 +1309,6 @@ pub(crate) mod tests {
         // Over 64 KiB, even before looking at lines.
         let big = vec![b'a'; 64 * 1024 + 1];
         assert_eq!(parse_checksums(&big).unwrap_err().code(), "release_incomplete");
-    }
-
-    // ── Signature ──
-
-    #[test]
-    fn the_fixture_signature_verifies() {
-        let m = verify_signed_manifest(&test_key(), FIX_SUMS, FIX_SIG, FIX_TAG).unwrap();
-        assert!(m.contains("cyberhunter-source.tar.gz"));
-    }
-
-    #[test]
-    fn a_manifest_changed_by_one_byte_is_refused() {
-        let mut sums = FIX_SUMS.to_vec();
-        sums[0] = if sums[0] == b'0' { b'1' } else { b'0' };
-        let e = verify_signed_manifest(&test_key(), &sums, FIX_SIG, FIX_TAG).unwrap_err();
-        assert_eq!(e.code(), "signature_failed");
-    }
-
-    #[test]
-    fn a_missing_signature_is_refused() {
-        let e = verify_signed_manifest(&test_key(), FIX_SUMS, b"", FIX_TAG).unwrap_err();
-        assert_eq!(e.code(), "signature_failed");
-        let e = verify_signed_manifest(&test_key(), FIX_SUMS, b"garbage\n", FIX_TAG).unwrap_err();
-        assert_eq!(e.code(), "signature_failed");
-    }
-
-    #[test]
-    fn a_signature_from_another_key_is_refused() {
-        let e = verify_signed_manifest(&test_key(), FIX_SUMS, FIX_SIG_OTHER_KEY, FIX_TAG).unwrap_err();
-        assert_eq!(e, FetchError::SignatureFailed("signed by another key".into()));
-        // ...and the other key's own signature does not pass under our key
-        // through some other route either.
-        let other = include_str!("testdata/release/other.pub").lines().nth(1).unwrap();
-        let (other_key, _) = update_source::parse_public_key(other).unwrap();
-        assert!(verify_signed_manifest(&other_key, FIX_SUMS, FIX_SIG_OTHER_KEY, FIX_TAG).is_ok());
-        assert!(verify_signed_manifest(&other_key, FIX_SUMS, FIX_SIG, FIX_TAG).is_err());
-    }
-
-    #[test]
-    fn a_trusted_comment_for_another_tag_is_refused() {
-        let e = verify_signed_manifest(&test_key(), FIX_SUMS, FIX_SIG_OTHER_TAG, FIX_TAG).unwrap_err();
-        assert_eq!(e.code(), "signature_failed");
-        // The valid signature is bound to its own tag: v9.9.9 only.
-        let e = verify_signed_manifest(&test_key(), FIX_SUMS, FIX_SIG, "v9.9.10").unwrap_err();
-        assert_eq!(e.code(), "signature_failed");
-    }
-
-    #[test]
-    fn a_legacy_signature_is_refused() {
-        let e = verify_signed_manifest(&test_key(), FIX_SUMS, FIX_SIG_LEGACY, FIX_TAG).unwrap_err();
-        assert_eq!(e, FetchError::SignatureFailed("legacy signature (not pre-hashed) refused".into()));
     }
 
     // ── Redirects and headers ──
@@ -1554,7 +1434,6 @@ pub(crate) mod tests {
             (FetchError::RateLimited, 503, "github_rate_limited", "GitHub rate limit reached, try again later"),
             (FetchError::ReleaseNotFound, 404, "release_not_found", "Release not found"),
             (FetchError::ReleaseIncomplete("x".into()), 422, "release_incomplete", "The release is missing required files, nothing was installed"),
-            (FetchError::SignatureFailed("x".into()), 422, "signature_failed", "Signature check failed, nothing was installed"),
             (FetchError::ChecksumFailed("x".into()), 422, "checksum_failed", "Checksum check failed, nothing was installed"),
             (FetchError::DownloadFailed("x".into()), 502, "download_failed", "Download failed"),
             (FetchError::FileUnknown, 404, "release_file_unknown", "Release file not available"),
@@ -1685,7 +1564,6 @@ pub(crate) mod tests {
                 .map(|(n, b)| (n.to_string(), b.to_vec()))
                 .collect();
             files.insert(CHECKSUMS_NAME.into(), FIX_SUMS.to_vec());
-            files.insert(MINISIG_NAME.into(), FIX_SIG.to_vec());
             let mut r = rel(FIX_TAG, false, false);
             r.assets = files
                 .iter()
@@ -1764,10 +1642,9 @@ pub(crate) mod tests {
     async fn prepare_verifies_caches_and_extracts_a_release() {
         let api = FakeApi::fixture();
         let root = temp_dir();
-        let key = test_key();
         let names = panel_names();
         let refs: Vec<&str> = names.iter().map(String::as_str).collect();
-        let p = prepare_with(&api, Some(("o/n", &key)), &root, FIX_TAG, &refs).await.unwrap();
+        let p = prepare_with(&api, Some("o/n"), &root, FIX_TAG, &refs).await.unwrap();
         assert_eq!(p.dir, root.join(FIX_TAG));
         for n in &names {
             assert!(p.dir.join(n).exists(), "{n}");
@@ -1789,7 +1666,7 @@ pub(crate) mod tests {
         // Everything cached: a second preparation verifies from disk and makes
         // no request.
         let before = api.count();
-        prepare_with(&api, Some(("o/n", &key)), &root, FIX_TAG, &refs).await.unwrap();
+        prepare_with(&api, Some("o/n"), &root, FIX_TAG, &refs).await.unwrap();
         assert_eq!(api.count(), before);
 
         // A cached file altered on disk is hashed again, dropped and fetched
@@ -1799,7 +1676,7 @@ pub(crate) mod tests {
         std::fs::write(&cached, b"altered after the check\n").unwrap();
         // The extracted tree is replaced from the verified archive each time.
         std::fs::write(update_script_path(&p.dir), b"echo tampered\n").unwrap();
-        prepare_with(&api, Some(("o/n", &key)), &root, FIX_TAG, &refs).await.unwrap();
+        prepare_with(&api, Some("o/n"), &root, FIX_TAG, &refs).await.unwrap();
         assert!(api.count() > before, "the altered file was downloaded again");
         assert_eq!(std::fs::read(&cached).unwrap(), good);
         assert_ne!(std::fs::read(update_script_path(&p.dir)).unwrap(), b"echo tampered\n".to_vec());
@@ -1832,11 +1709,11 @@ pub(crate) mod tests {
         let mut api = FakeApi::fixture();
         api.files.insert(AGENT_AMD64.into(), b"fake agent binary for testX\n".to_vec());
         let root = temp_dir();
-        let key = test_key();
-        let e = prepare_with(&api, Some(("o/n", &key)), &root, FIX_TAG, &[AGENT_AMD64])
+        let e = prepare_with(&api, Some("o/n"), &root, FIX_TAG, &[AGENT_AMD64])
             .await
             .unwrap_err();
-        assert_eq!(e.code(), "checksum_failed");
+        // Same size, other bytes: refused on the SHA-256 itself.
+        assert_eq!(e, FetchError::ChecksumFailed(format!("{AGENT_AMD64}: SHA-256 differs")));
         let dir = root.join(FIX_TAG);
         assert!(!dir.join(AGENT_AMD64).exists());
         assert_eq!(
@@ -1846,27 +1723,95 @@ pub(crate) mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// The manifest is the only reference: without it, or when it is not
+    /// exactly the §2.2 format, nothing is fetched further and nothing is
+    /// cached. No signature is asked for (conception 12, D6).
     #[tokio::test]
-    async fn a_release_without_signature_is_refused_and_nothing_is_cached() {
+    async fn a_release_without_a_valid_manifest_is_refused_and_nothing_is_cached() {
+        // No checksums.txt attached at all.
         let mut api = FakeApi::fixture();
-        api.releases[0].assets.retain(|a| a.name != MINISIG_NAME);
+        api.releases[0].assets.retain(|a| a.name != CHECKSUMS_NAME);
         let root = temp_dir();
-        let key = test_key();
-        let e = prepare_with(&api, Some(("o/n", &key)), &root, FIX_TAG, &[]).await.unwrap_err();
-        assert_eq!(e.code(), "signature_failed");
+        let e = prepare_with(&api, Some("o/n"), &root, FIX_TAG, &[AGENT_AMD64]).await.unwrap_err();
+        assert_eq!(e.code(), "release_incomplete");
         assert!(!root.join(FIX_TAG).exists());
+
+        // A malformed one: a bad line, a carriage return, a duplicate.
+        let good = String::from_utf8(FIX_SUMS.to_vec()).unwrap();
+        let first = good.lines().next().unwrap().to_string();
+        for (what, text) in [
+            ("garbage line", format!("{good}not a checksum line\n")),
+            ("carriage return", good.replace('\n', "\r\n")),
+            ("duplicate entry", format!("{good}{first}\n")),
+        ] {
+            let mut api = FakeApi::fixture();
+            api.files.insert(CHECKSUMS_NAME.into(), text.into_bytes());
+            let size = api.files[CHECKSUMS_NAME].len() as u64;
+            for a in api.releases[0].assets.iter_mut().filter(|a| a.name == CHECKSUMS_NAME) {
+                a.size = size;
+            }
+            let e = prepare_with(&api, Some("o/n"), &root, FIX_TAG, &[AGENT_AMD64]).await.unwrap_err();
+            assert_eq!(e.code(), "release_incomplete", "{what}");
+            assert!(!root.join(FIX_TAG).exists(), "{what}: nothing cached");
+        }
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// No signature file is needed any more: the fixture release carries
+    /// none, prepares fine, and nothing but the manifest and files is cached.
     #[tokio::test]
-    async fn the_same_set_under_another_tag_is_refused() {
-        let mut api = FakeApi::fixture();
-        api.releases[0].tag_name = "v9.9.10".into();
+    async fn a_release_with_checksums_only_is_prepared() {
+        let api = FakeApi::fixture();
+        assert!(api.releases[0].asset("checksums.txt.minisig").is_none());
         let root = temp_dir();
-        let key = test_key();
-        let e = prepare_with(&api, Some(("o/n", &key)), &root, "v9.9.10", &[]).await.unwrap_err();
-        assert_eq!(e.code(), "signature_failed");
-        assert!(!root.join("v9.9.10").exists());
+        let p = prepare_with(&api, Some("o/n"), &root, FIX_TAG, &[AGENT_AMD64]).await.unwrap();
+        assert!(p.dir.join(AGENT_AMD64).exists());
+        assert!(p.dir.join(CHECKSUMS_NAME).exists());
+        let cached: Vec<String> = std::fs::read_dir(&p.dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        assert!(!cached.iter().any(|n| n.ends_with(".minisig")), "{cached:?}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A file whose bytes differ in size from what GitHub announced is refused
+    /// even before its SHA-256 is compared, and is not kept.
+    #[tokio::test]
+    async fn a_file_of_the_wrong_size_is_refused_and_not_kept() {
+        let root = temp_dir();
+        for delta in [-1i64, 1] {
+            let mut api = FakeApi::fixture();
+            for a in api.releases[0].assets.iter_mut().filter(|a| a.name == AGENT_AMD64) {
+                a.size = (a.size as i64 + delta) as u64;
+            }
+            let e = prepare_with(&api, Some("o/n"), &root, FIX_TAG, &[AGENT_AMD64]).await.unwrap_err();
+            assert_eq!(e.code(), "checksum_failed", "size off by {delta}");
+            let dir = root.join(FIX_TAG);
+            assert!(!dir.join(AGENT_AMD64).exists());
+            let hidden = std::fs::read_dir(&dir)
+                .unwrap()
+                .flatten()
+                .filter(|e| e.file_name().to_string_lossy().starts_with('.'))
+                .count();
+            assert_eq!(hidden, 0, "no temporary file left");
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A cached checksums.txt altered on disk into something that does not
+    /// parse is not trusted: the release is fetched again.
+    #[tokio::test]
+    async fn a_cached_manifest_that_no_longer_parses_is_fetched_again() {
+        let api = FakeApi::fixture();
+        let root = temp_dir();
+        prepare_with(&api, Some("o/n"), &root, FIX_TAG, &[]).await.unwrap();
+        let before = api.count();
+        std::fs::write(root.join(FIX_TAG).join(CHECKSUMS_NAME), b"tampered\n").unwrap();
+        let p = prepare_with(&api, Some("o/n"), &root, FIX_TAG, &[]).await.unwrap();
+        assert!(api.count() > before, "fetched again");
+        assert_eq!(std::fs::read(p.dir.join(CHECKSUMS_NAME)).unwrap(), FIX_SUMS.to_vec());
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -1875,16 +1820,15 @@ pub(crate) mod tests {
         let mut api = FakeApi::fixture();
         api.releases[0].assets.retain(|a| a.name != AGENT_AMD64);
         let root = temp_dir();
-        let key = test_key();
-        let e = prepare_with(&api, Some(("o/n", &key)), &root, FIX_TAG, &[AGENT_AMD64]).await.unwrap_err();
+        let e = prepare_with(&api, Some("o/n"), &root, FIX_TAG, &[AGENT_AMD64]).await.unwrap_err();
         assert_eq!(e.code(), "release_incomplete");
-        let e = prepare_with(&api, Some(("o/n", &key)), &root, FIX_TAG, &[AGENT_ARM64]).await.unwrap_err();
+        let e = prepare_with(&api, Some("o/n"), &root, FIX_TAG, &[AGENT_ARM64]).await.unwrap_err();
         assert_eq!(e.code(), "release_incomplete", "not in the manifest");
 
         let mut api = FakeApi::fixture();
         api.releases[0].draft = true;
         let root2 = temp_dir();
-        let e = prepare_with(&api, Some(("o/n", &key)), &root2, FIX_TAG, &[]).await.unwrap_err();
+        let e = prepare_with(&api, Some("o/n"), &root2, FIX_TAG, &[]).await.unwrap_err();
         assert_eq!(e.code(), "release_not_found");
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_dir_all(&root2);

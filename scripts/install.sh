@@ -14,10 +14,9 @@
 #
 # Modes:
 #   Release (default):  download a published release from the public release
-#                       repository, check the minisign signature of its
-#                       checksums.txt against the key written in this file
-#                       (trusted comment "cyberhunter-release <tag>"), check
-#                       the SHA-256 of every file, then install it.
+#                       repository over https, check the format of its
+#                       checksums.txt and the SHA-256 of every file against
+#                       it, then install it.
 #   CYBERHUNTER_RELEASE_DIR=<dir>, without CYBERHUNTER_REPO_URL:
 #                       the same checks and the same install, on a release
 #                       downloaded by hand into <dir> (nothing is fetched). The
@@ -36,18 +35,17 @@
 #                              Clone mode: the git ref (default main).
 #   CYBERHUNTER_RELEASE_REPO   release repository (default
 #                              MrTheSkream/cyberhunter-releases)
-#   CYBERHUNTER_PUBKEY         override the signing public key written below
-#                              (tests, or a fork with its own key). Leave it
-#                              unset to use the key this file was released with.
 #   CYBERHUNTER_RELEASE_BASE_URL
 #                              where the release files are read from, instead of
 #                              https://github.com/<repo>/releases/download/<tag>.
 #                              https:// or file:// only. Used by
 #                              tests/install-release-mode-pin.sh (file://); the
-#                              signature and checksum checks are the same.
+#                              checksum checks are the same.
 #
-# Release mode needs minisign. It is installed with the package manager when
-# missing; if that fails, the install stops. Verification is never skipped.
+# Releases are not signed. checksums.txt comes from the same release as the
+# files it lists: it catches a corrupted or truncated download, not a release
+# replaced by someone who controls the GitHub account that publishes it. The
+# integrity of a release rests on the security of that account.
 #
 # The verified release is kept in /var/lib/dockpanel/releases/<tag>/ (the
 # panel's verified-release cache), its source archive is unpacked into
@@ -56,11 +54,6 @@
 # Telemetry, Updates.
 #
 set -euo pipefail
-
-# Written by scripts/release.sh into the copy attached to each release: the
-# release signing public key (2nd line of the .pub). Empty in the repository:
-# an unstamped copy refuses release mode.
-CYBERHUNTER_STAMPED_PUBKEY=""
 
 INSTALL_DIR="/opt/dockpanel"
 RELEASES_ROOT="/var/lib/dockpanel/releases"
@@ -146,27 +139,11 @@ if [ -n "${CYBERHUNTER_REPO_URL:-}" ]; then
 fi
 
 # ══════════════════════════════════════════════════════════════════════════
-# Release mode: a signed release, verified here before anything is installed.
+# Release mode: a published release, checked here before anything is installed.
 # ══════════════════════════════════════════════════════════════════════════
 TAG_RE='^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$'
 STABLE_RE='^v[0-9]+\.[0-9]+\.[0-9]+$'
 SUMS_LINE_RE='^[0-9a-f]{64}  [A-Za-z0-9._-]{1,128}$'
-
-# The signing key: the stamped one, unless CYBERHUNTER_PUBKEY overrides it.
-PUBKEY="$CYBERHUNTER_STAMPED_PUBKEY"
-if [ -n "${CYBERHUNTER_PUBKEY:-}" ]; then
-    PUBKEY="$CYBERHUNTER_PUBKEY"
-    echo "  Note: using the signing key from CYBERHUNTER_PUBKEY, not the one in this file."
-fi
-if [ -z "$PUBKEY" ]; then
-    die "This install.sh has no release signing key (it is the unstamped copy from the
-    source repository). Download install.sh from a release instead:
-      https://github.com/${DEFAULT_RELEASE_REPO}/releases/latest/download/install.sh
-    or set CYBERHUNTER_REPO_URL to build from source."
-fi
-if ! printf '%s' "$PUBKEY" | grep -Eqx 'RW[A-Za-z0-9+/]{54}'; then
-    die "The release signing key is not a minisign public key (RW... , 56 characters)"
-fi
 
 RELEASE_REPO="${CYBERHUNTER_RELEASE_REPO:-$DEFAULT_RELEASE_REPO}"
 if ! printf '%s' "$RELEASE_REPO" | grep -Eqx '[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+'; then
@@ -228,7 +205,6 @@ if [ -z "$TAG" ]; then
 fi
 printf '%s\n' "$TAG" | grep -Eq "$TAG_RE" \
     || die "Release tag '$TAG' is not vX.Y.Z or vX.Y.Z-rc.N"
-TRUSTED="cyberhunter-release ${TAG}"
 
 case "$(uname -m)" in
     x86_64)         ARCH="amd64" ;;
@@ -259,15 +235,7 @@ if [ -d "$INSTALL_DIR/.git" ]; then
     CYBERHUNTER_REPO_URL, or move it away to install release $TAG."
 fi
 
-# ── 2. minisign ───────────────────────────────────────────────────────────
-if ! ensure_pkg minisign minisign; then
-    die "minisign is required to verify the release signature and could not be installed
-    with the package manager (it is not packaged on every distribution: Ubuntu
-    22.04 does not have it). Install minisign 0.11 or later, then run this again.
-    The signature is never skipped."
-fi
-
-# ── 3. Staging, then the signed manifest ─────────────────────────────────
+# ── 2. Staging, then the manifest ────────────────────────────────────────
 mkdir -p "$RELEASES_ROOT"
 chmod 0700 "$RELEASES_ROOT"
 # A hidden name: the panel removes leftover hidden entries at start-up.
@@ -275,25 +243,8 @@ STAGE="$(umask 077; mktemp -d "$RELEASES_ROOT/.install-XXXXXX")"
 cleanup() { rm -rf "$STAGE"; }
 trap cleanup EXIT
 
-fetch "$BASE_URL/checksums.txt.minisig" "$STAGE/checksums.txt.minisig" 4096 \
-    || die "checksums.txt.minisig of $TAG could not be downloaded - refusing to install an unsigned release"
 fetch "$BASE_URL/checksums.txt" "$STAGE/checksums.txt" 65536 \
-    || die "checksums.txt of $TAG could not be downloaded"
-
-# Pre-hashed signatures only ("ED"), as the panel requires.
-SIG_ALG="$(sed -n '2p' "$STAGE/checksums.txt.minisig" | tr -d '\r\n' | base64 -d 2>/dev/null | head -c 2 || true)"
-[ "$SIG_ALG" = "ED" ] || die "checksums.txt.minisig is not a pre-hashed minisign signature - refusing to install"
-
-# -Q prints only the trusted comment, and only once both the signature and the
-# trusted comment signature have verified with this key.
-if ! COMMENT="$(minisign -Q -V -m "$STAGE/checksums.txt" -x "$STAGE/checksums.txt.minisig" -P "$PUBKEY" 2>"$STAGE/minisign.err")"; then
-    sed 's/^/    /' "$STAGE/minisign.err" >&2
-    die "The signature of checksums.txt does not verify with the release signing key - refusing to install"
-fi
-if [ "$COMMENT" != "$TRUSTED" ]; then
-    die "The signature is for '$COMMENT', not '$TRUSTED' - refusing to install"
-fi
-log "Signature verified ($TRUSTED)"
+    || die "checksums.txt of $TAG could not be downloaded - refusing to install"
 
 # One `<64 hex>  <name>` per line, LF only, no duplicate: any other line is a
 # refusal, never a line to skip.
@@ -305,7 +256,7 @@ if [ "$(tr -cd '\r' < "$SUMS" | wc -c)" -ne 0 ] \
     die "checksums.txt of $TAG is malformed - refusing to install"
 fi
 
-# ── 4. Every file, against the signed manifest ───────────────────────────
+# ── 3. Every file, against the manifest ──────────────────────────────────
 for a in "${ASSETS[@]}"; do
     want="$(awk -v n="$a" '$2 == n {print $1}' "$SUMS")"
     [ -n "$want" ] || die "checksums.txt of $TAG has no entry for $a - refusing to install"
@@ -344,14 +295,13 @@ check_archive() {
 check_archive "$STAGE/cyberhunter-frontend.tar.gz"
 check_archive "$STAGE/cyberhunter-source.tar.gz" cyberhunter-source
 
-# ── 5. The verified release in the cache, its source in /opt/dockpanel ───
+# ── 4. The verified release in the cache, its source in /opt/dockpanel ───
 mkdir "$STAGE/.extract"
 tar -xzf "$STAGE/cyberhunter-source.tar.gz" -C "$STAGE/.extract" --no-same-owner --no-same-permissions
 [ -f "$STAGE/.extract/cyberhunter-source/scripts/setup.sh" ] \
     || die "cyberhunter-source.tar.gz has no scripts/setup.sh - refusing to install"
 mv "$STAGE/.extract/cyberhunter-source" "$STAGE/cyberhunter-source"
 rmdir "$STAGE/.extract"
-rm -f "$STAGE/minisign.err"
 
 RELEASE_DIR="$RELEASES_ROOT/$TAG"
 # Every file is in the staging directory now (a hand-downloaded release that

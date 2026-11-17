@@ -33,10 +33,10 @@
 //! embedded below), and success is never inferred from a child's exit status.
 //!
 //! Feature 10: the binary is fetched from this agent's PANEL (never from the
-//! release host), verified here against the minisign key compiled into this
-//! binary (`services::release_verify`), and only then handed to the shell
-//! updater, which re-checks its SHA-256. A box that carries a panel is updated
-//! by that panel and refuses here.
+//! release host), checked here against the release's `checksums.txt`
+//! (`services::release_verify`: SHA-256, size, ELF), and only then handed to
+//! the shell updater, which re-checks its SHA-256. A box that carries a panel
+//! is updated by that panel and refuses here.
 
 use axum::{routing::{get, post}, Json, Router};
 use serde::{Deserialize, Serialize};
@@ -56,7 +56,6 @@ const API_BIN: &str = "/usr/local/bin/dockpanel-api";
 /// Refusal texts, plain text as before (contract B-2).
 const MSG_FULL_PANEL: &str = "This server is a full panel install, update it from its own panel";
 const MSG_NO_PANEL_URL: &str = "This agent has no panel URL (DOCKPANEL_CENTRAL_URL)";
-const MSG_NO_SIGNING_KEY: &str = "This agent build has no update signing key";
 const MSG_INSECURE_PANEL_URL: &str =
     "This agent's panel URL (DOCKPANEL_CENTRAL_URL) is not https, so it does not send its token there";
 
@@ -217,8 +216,6 @@ pub(crate) enum StartUpdateError {
     FullPanel,
     /// No `DOCKPANEL_CENTRAL_URL` / `DOCKPANEL_SERVER_TOKEN`: nowhere to fetch from.
     NoPanelUrl,
-    /// Built without `CYBERHUNTER_UPDATE_PUBKEY`: nothing could be verified.
-    NoSigningKey,
     /// `DOCKPANEL_CENTRAL_URL` is plain http to another host: the server
     /// token would travel in the clear.
     InsecurePanelUrl,
@@ -232,7 +229,7 @@ impl StartUpdateError {
             Self::InFlight | Self::FullPanel | Self::NotNewer { .. } => {
                 axum::http::StatusCode::CONFLICT
             }
-            Self::NoPanelUrl | Self::NoSigningKey | Self::InsecurePanelUrl => {
+            Self::NoPanelUrl | Self::InsecurePanelUrl => {
                 axum::http::StatusCode::PRECONDITION_FAILED
             }
             Self::Internal(_) => axum::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -252,7 +249,6 @@ impl std::fmt::Display for StartUpdateError {
             ),
             Self::FullPanel => write!(f, "{MSG_FULL_PANEL}"),
             Self::NoPanelUrl => write!(f, "{MSG_NO_PANEL_URL}"),
-            Self::NoSigningKey => write!(f, "{MSG_NO_SIGNING_KEY}"),
             Self::InsecurePanelUrl => write!(f, "{MSG_INSECURE_PANEL_URL}"),
             Self::Internal(m) => write!(f, "{m}"),
         }
@@ -286,7 +282,6 @@ fn preflight(
     target: &str,
     is_full_panel: bool,
     has_panel_url: bool,
-    has_signing_key: bool,
 ) -> Result<(), StartUpdateError> {
     if !validate_target_version(target) {
         return Err(StartUpdateError::Invalid(target.to_string()));
@@ -296,9 +291,6 @@ fn preflight(
     }
     if !has_panel_url {
         return Err(StartUpdateError::NoPanelUrl);
-    }
-    if !has_signing_key {
-        return Err(StartUpdateError::NoSigningKey);
     }
     Ok(())
 }
@@ -318,18 +310,12 @@ pub(crate) async fn start_agent_self_update(target: &str) -> Result<(), StartUpd
     // verified itself; this agent does not drive the panel updater any more.
     // Every other box - every box added with install-agent.sh, the entire
     // fleet population - gets the agent-only updater, fed with a binary this
-    // process fetched from its panel and verified against the compiled key.
+    // process fetched from its panel and checked against `checksums.txt`.
     let source = ReleaseSource::from_env();
-    let key = crate::services::release_verify::signing_key();
-    preflight(
-        &target,
-        std::path::Path::new(API_BIN).exists(),
-        source.is_some(),
-        key.is_some(),
-    )?;
+    preflight(&target, std::path::Path::new(API_BIN).exists(), source.is_some())?;
     refuse_non_upgrade(&target, env!("CARGO_PKG_VERSION"))?;
-    let (Some(source), Some(key)) = (source, key) else {
-        return Err(StartUpdateError::Internal("preflight passed without a source or key".into()));
+    let Some(source) = source else {
+        return Err(StartUpdateError::Internal("preflight passed without a source".into()));
     };
     if !crate::services::release_verify::panel_url_is_secure(&source.central_url) {
         return Err(StartUpdateError::InsecurePanelUrl);
@@ -380,13 +366,12 @@ pub(crate) async fn start_agent_self_update(target: &str) -> Result<(), StartUpd
     }
 
     tokio::spawn(async move {
-        // Fetch from the panel, verify signature, trusted comment, SHA-256
-        // and ELF magic, and stage - all before the shell updater exists.
+        // Fetch from the panel, check checksums.txt, SHA-256, size and ELF
+        // magic, and stage - all before the shell updater exists.
         match crate::services::release_verify::download_and_stage(
             &source.central_url,
             &source.server_token,
             &target,
-            key,
         )
         .await
         {
@@ -1052,29 +1037,25 @@ mod tests {
     }
 
     /// A full panel install is refused (its own panel updates it); a box
-    /// without a panel URL or without a compiled key is refused too, each
+    /// without a panel URL is refused too, each
     /// with its contract status and text, before anything is claimed.
     #[test]
     fn the_synchronous_refusals_come_in_contract_order() {
         use axum::http::StatusCode;
-        let r = |t, full, url, key| preflight(t, full, url, key).map_err(|e| (e.status_code(), e.to_string()));
-        assert!(r("v3.0.0", false, true, true).is_ok());
-        assert_eq!(r("latest", true, false, false).unwrap_err().0, StatusCode::BAD_REQUEST);
+        let r = |t, full, url| preflight(t, full, url).map_err(|e| (e.status_code(), e.to_string()));
+        // No compiled key is needed any more (conception 12, D6).
+        assert!(r("v3.0.0", false, true).is_ok());
+        assert_eq!(r("latest", true, false).unwrap_err().0, StatusCode::BAD_REQUEST);
         assert_eq!(
-            r("v3.0.0", true, true, true).unwrap_err(),
+            r("v3.0.0", true, true).unwrap_err(),
             (StatusCode::CONFLICT, MSG_FULL_PANEL.to_string())
         );
         assert_eq!(
-            r("v3.0.0", false, false, true).unwrap_err(),
+            r("v3.0.0", false, false).unwrap_err(),
             (StatusCode::PRECONDITION_FAILED, MSG_NO_PANEL_URL.to_string())
-        );
-        assert_eq!(
-            r("v3.0.0", false, true, false).unwrap_err(),
-            (StatusCode::PRECONDITION_FAILED, MSG_NO_SIGNING_KEY.to_string())
         );
         assert_eq!(MSG_FULL_PANEL, "This server is a full panel install, update it from its own panel");
         assert_eq!(MSG_NO_PANEL_URL, "This agent has no panel URL (DOCKPANEL_CENTRAL_URL)");
-        assert_eq!(MSG_NO_SIGNING_KEY, "This agent build has no update signing key");
     }
 
     /// The refusals are decided before the in-flight slot is claimed, so a

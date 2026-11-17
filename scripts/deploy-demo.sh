@@ -28,11 +28,10 @@
 # glibc builds (compiled on Ubuntu 22.04, scripts/release-build), so
 # require_static_musl below refuses every one of them, and this script stops
 # before touching the box. That refusal is kept rather than "aligned" with
-# check-glibc.sh: this script downloads from a release page and checks only
-# the SHA-256 against a checksums.txt fetched from the same place, with no
-# minisign signature. Making it accept 3.0.0 binaries would reopen exactly the
-# unsigned install path feature 10 closed. Deploy a 3.0.0 box from the panel
-# (Telemetry, Updates), or by hand from a release whose signature you checked.
+# check-glibc.sh: this script downloads from a release page on its own, outside
+# the checks the panel and install.sh make (tag validation, closed host list,
+# size limits, strict manifest format, archive checks). Deploy a 3.0.0 box with
+# install.sh or from the panel (Telemetry, Updates).
 #
 # DEMO_HOST and GITHUB_REPO are required and have no default: the public
 # hostname is a property of the box you are deploying, and the repository that

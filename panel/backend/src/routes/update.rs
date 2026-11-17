@@ -57,7 +57,6 @@ pub struct StatusResponse {
     pub not_configured_reason: Option<&'static str>,
     pub repo: Option<String>,
     pub token_set: bool,
-    pub signing_key_id: Option<String>,
     pub available_prerelease: bool,
     pub release_notes: Option<String>,
     pub release_url: Option<String>,
@@ -165,7 +164,6 @@ pub fn build_status(
         not_configured_reason: source.reason,
         repo: source.repo.clone(),
         token_set: source.token_set,
-        signing_key_id: source.signing_key_id.clone(),
         available_prerelease: ad.prerelease,
         release_notes: ad.release_notes,
         release_url: ad.release_url,
@@ -969,7 +967,7 @@ mod tests {
         let dir = temp_dir();
         let conf = dir.join("update.conf");
         update_source::write_source_at(&conf, "owner/name", KNOWN_TOKEN).unwrap();
-        let source = update_source::load_from(&conf, Some("531546B906DAE39E".into()));
+        let source = update_source::load_from(&conf);
         assert!(source.configured);
 
         let status = build_status(
@@ -983,7 +981,7 @@ mod tests {
         assert_eq!(json["configured"], true);
         assert_eq!(json["token_set"], true);
         assert_eq!(json["repo"], "owner/name");
-        assert_eq!(json["signing_key_id"], "531546B906DAE39E");
+        assert!(json.get("signing_key_id").is_none(), "no signing key any more");
         assert!(json["not_configured_reason"].is_null());
         assert_eq!(json["state"], "idle", "existing fields kept");
         assert!(json.get("current_version").is_some());
@@ -1006,7 +1004,8 @@ mod tests {
 
     #[test]
     fn a_not_configured_status_reports_its_reason_and_nothing_else() {
-        let source = update_source::evaluate(None, Err(update_source::ConfError::Missing), false);
+        let source =
+            update_source::evaluate(Err(update_source::ConfError::Invalid("x")), false);
         let status = build_status(
             panel_update::UpdateState::Idle,
             &source,
@@ -1016,7 +1015,7 @@ mod tests {
         );
         let json = serde_json::to_value(&status).unwrap();
         assert_eq!(json["configured"], false);
-        assert_eq!(json["not_configured_reason"], "no_signing_key");
+        assert_eq!(json["not_configured_reason"], "no_source");
         assert!(json["available_version"].is_null());
         assert!(json["release_url"].is_null());
         assert!(json["release_notes"].is_null());

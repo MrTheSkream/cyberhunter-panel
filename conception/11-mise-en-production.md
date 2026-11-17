@@ -10,12 +10,12 @@ Validé dans la VM de lab (Ubuntu 24.04, panel installé depuis DockPanel puis b
 `lab/deploy.ps1`) :
 - fonctionnalités 1 à 9 (multi-IP, PHP par domaine, login-as-user, Apache/.htaccess, import HestiaCP sur
   une vraie archive, ClamAV, FTP et quotas, stats web, terminal utilisateur) ;
-- fonctionnalité 10 (mises à jour signées) : scénarios 1 à 6 et 9 de `10-mises-a-jour-contrats.md` §V.
+- fonctionnalité 10 (mises à jour depuis l'interface, alors signées ; signature retirée depuis, voir `12`) : scénarios 1 à 6 et 9 de `10-mises-a-jour-contrats.md` §V.
 
 Jamais fait :
 - installation à neuf par `scripts/install.sh` ;
 - exécution sur Ubuntu 22.04 (cible de production) ;
-- release signée avec la clé de **production** ;
+- release publiée sur le dépôt public `cyberhunter-releases` ;
 - agent distant (scénarios 7, 8, 10 de la fonctionnalité 10) ;
 - import HestiaCP suivi d'une vraie bascule (DNS, mail entrant).
 
@@ -32,36 +32,35 @@ Jamais fait :
       distants et pour éviter `curl -k`.
 - [ ] Fenêtre de bascule et liste des sites/boîtes mail par ordre de criticité.
 
-## 2. Clé de production et première release (bloquant)
+## 2. Dépôt public et première release (bloquant)
 
-- [ ] Générer la paire de **production** sur la machine de release, distincte de la clé de test :
-      `minisign -G -p "$HOME\.minisign\cyberhunter.pub" -s "$HOME\.minisign\cyberhunter.key"`.
-- [ ] Phrase de passe forte, stockée dans le gestionnaire de mots de passe.
-- [ ] Copie hors ligne de `cyberhunter.key` (clé USB chiffrée ou coffre) : perdre la clé = plus aucune
-      mise à jour possible pour les serveurs installés, il faudrait les réinstaller.
-- [ ] Noter l'ID de clé (affiché par `release.sh`) dans ce document : `________________`.
+Les releases ne sont plus signées (`12-depot-releases-public.md`, D6) : leur intégrité repose
+entièrement sur la sécurité du compte GitHub.
+
+- [ ] Compte GitHub `MrTheSkream` : 2FA active (clé de sécurité ou application), e-mail de récupération
+      à jour, jetons et clés SSH inutiles révoqués.
+- [ ] Dépôt public `MrTheSkream/cyberhunter-releases` créé avec `README.md` et `LICENSE` sur `main`.
 - [ ] Version `3.0.0-rc.N` cohérente dans les 4 `Cargo.toml`, `Cargo.lock` et `package.json`.
-- [ ] `bash scripts/release.sh --dry-run` depuis Git Bash : résumé avec la bonne clé, `GLIBC_` ≤ 2.35
-      pour chaque binaire ; signature lancée dans PowerShell à l'invite du script.
-- [ ] `bash scripts/release.sh` : publication de la pre-release sur `MrTheSkream/cyberhunter-panel`.
-- [ ] Jeton GitHub fine-grained de **production** : ce dépôt seulement, Contents: read-only, expiration
-      notée ici `__________` (rappel de renouvellement dans l'agenda).
-- [ ] Révoquer le jeton de test du 17/11/2026 s'il ne l'est pas déjà.
+- [ ] `bash scripts/release.sh --dry-run` depuis Git Bash : bon dépôt cible, `GLIBC_` ≤ 2.35 pour chaque
+      binaire.
+- [ ] `bash scripts/release.sh` : publication de la pre-release sur `MrTheSkream/cyberhunter-releases`.
+- [ ] Révoquer le jeton de test du 17/11/2026 s'il ne l'est pas déjà (plus aucun jeton n'est nécessaire).
 
 ## 3. Recette sur une VM Ubuntu 22.04 vierge (bloquant)
 
 Instantané Hyper-V avant chaque étape.
 
 - [ ] VM Ubuntu 22.04 à jour, aucune installation préalable.
-- [ ] Release de la section 2 téléchargée dans un dossier, puis
-      `CYBERHUNTER_REPO_URL=<url git> CYBERHUNTER_RELEASE_DIR=<dossier> DOCKPANEL_VERSION=v3.0.0-rc.N sudo -E bash install.sh` :
-      fin sans erreur, `setup.sh` a vérifié chaque fichier contre `checksums.txt`.
+- [ ] Installation par la commande du README de `cyberhunter-releases` (forme par tag tant qu'il n'y a que
+      des pre-releases) : `curl -fsSLO .../releases/download/v3.0.0-rc.N/install.sh` puis
+      `sudo DOCKPANEL_VERSION=v3.0.0-rc.N bash install.sh` ; fin sans erreur, chaque fichier vérifié
+      contre `checksums.txt`, sans jeton ni accès au dépôt privé.
 - [ ] `systemctl is-active dockpanel-api dockpanel-agent` ; `ldd /usr/local/bin/dockpanel-agent` sans
       version manquante ; `/api/health` renvoie la bonne version.
 - [ ] Compte admin créé, 2FA activée, codes de secours rangés.
-- [ ] Telemetry, Updates : « Signing key ID » = ID de la section 2 ; jeton enregistré.
+- [ ] Telemetry, Updates : source `MrTheSkream/cyberhunter-releases`, « No token », vérification OK.
 - [ ] Mise à jour depuis l'interface : publier `rc.N+1`, l'installer (canal Beta), vérifier la version
-      et le journal ; puis un « Roll back » vers l'instantané : le jeton reste tel quel.
+      et le journal ; puis un « Roll back » vers l'instantané.
 - [ ] Test rapide par fonctionnalité :
   - [ ] 1. multi-IP : IP par site, IP d'envoi mail ;
   - [ ] 2. PHP par domaine et php.ini global ;
@@ -122,5 +121,5 @@ Go seulement si :
 
 - [ ] Canal de mise à jour « Stable » ; les pre-releases restent pour la VM de recette.
 - [ ] Sauvegardes du panel et des sites copiées hors serveur, restauration testée une fois.
-- [ ] Rappels : expiration du jeton GitHub, renouvellement des certificats, mises à jour Ubuntu.
-- [ ] Procédure de release écrite (clé, `release.sh`, test sur la VM de recette avant le canal Stable).
+- [ ] Rappels : renouvellement des certificats, mises à jour Ubuntu.
+- [ ] Procédure de release écrite (`release.sh`, test sur la VM de recette avant le canal Stable).

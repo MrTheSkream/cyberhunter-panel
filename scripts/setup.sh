@@ -1038,9 +1038,9 @@ INSTALLED_VERSION=""
 # path (Telemetry, Updates) once installed.
 #
 # The SHA-256 check is MANDATORY: a missing or malformed checksums.txt, a
-# missing entry, a missing file or a mismatch aborts the install. The minisign
-# signature is not checked here (no key in shell, by design): the operator
-# chose this directory, and every later update is verified by the panel binary.
+# missing entry, a missing file or a mismatch aborts the install. Releases are
+# not signed: the operator chose this directory, and every later update is
+# checked the same way (checksums.txt) by the panel binary.
 
 # check_release_dir - the directory exists and holds a well-formed manifest.
 # Called from check_source, before anything is installed.

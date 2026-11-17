@@ -72,7 +72,6 @@ pub async fn run(
     // dropping partial downloads safe.
     static STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     if !STARTED.swap(true, std::sync::atomic::Ordering::SeqCst) {
-        update_source::log_signing_key_at_startup();
         release_fetch::cleanup_cache(&pool, true).await;
     }
 
@@ -747,7 +746,6 @@ mod tests {
 
     fn configured_status() -> SourceStatus {
         update_source::evaluate(
-            Some("531546B906DAE39E".into()),
             update_source::read_conf(
                 "UPDATE_REPO=o/n\nUPDATE_TOKEN_FILE=/etc/dockpanel/update-token\n",
             ),
@@ -760,11 +758,11 @@ mod tests {
         let api = crate::services::release_fetch::tests::FakeApi::fixture();
         let pool = dead_pool();
         for status in [
-            update_source::evaluate(None, update_source::read_conf("UPDATE_REPO=o/n\nUPDATE_TOKEN_FILE=/etc/dockpanel/t\n"), true),
             // An update.conf that exists but is invalid (here: a token path
             // other than /etc/dockpanel/update-token), with or without a token.
-            update_source::evaluate(Some("ID".into()), update_source::read_conf("UPDATE_REPO=o/n\nUPDATE_TOKEN_FILE=/etc/dockpanel/t\n"), true),
-            update_source::evaluate(Some("ID".into()), Err(update_source::ConfError::Invalid("x")), false),
+            update_source::evaluate(update_source::read_conf("UPDATE_REPO=o/n\nUPDATE_TOKEN_FILE=/etc/dockpanel/t\n"), true),
+            update_source::evaluate(update_source::read_conf("UPDATE_REPO=o/n\nUPDATE_TOKEN_FILE=/etc/dockpanel/t\n"), false),
+            update_source::evaluate(Err(update_source::ConfError::Invalid("x")), false),
         ] {
             let r = check_for_updates_inner(&pool, &api, &status, "candidate").await;
             assert_eq!(r.unwrap_err(), FetchError::NotConfigured);

@@ -27,7 +27,7 @@ pub mod migration;
 pub mod nginx;
 pub mod ownership;
 pub mod phone_home;
-pub mod release_verify; // 10 (signed releases)
+pub mod release_verify; // 10 (release checksums)
 pub mod php_ini;
 pub mod php_pool;
 pub mod pkg;

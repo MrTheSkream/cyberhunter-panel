@@ -1,5 +1,18 @@
 # Mises à jour depuis l'interface - Contrats d'interface
 
+> **Amendé le 17/11/2026 par `12-depot-releases-public.md`**, qui l'emporte sur ce document en cas de
+> conflit :
+> - **Signature minisign supprimée partout (D6).** Les sections §2.3, A-2, B-1, la signature de B-5 et
+>   tout ce qui parle de clé, de `.minisig`, de trusted comment ou de `CYBERHUNTER_UPDATE_PUBKEY` sont
+>   caducs. La vérification se limite à `checksums.txt` (§2.2) : SHA-256 et taille de chaque fichier.
+> - **Jeton facultatif (D2).** Les raisons `no_token` et `no_signing_key` n'existent plus. Un `update.conf`
+>   absent vaut source par défaut `MrTheSkream/cyberhunter-releases`, sans jeton. Nouvelle erreur
+>   `repo_not_found` (409) : « Repository not found or private. Add a token if the release repository is
+>   private. »
+> - **Publication sur le dépôt public `MrTheSkream/cyberhunter-releases` (D3).** Le tag reste créé dans le
+>   dépôt privé. `install.sh` fait partie des pièces de la release et figure dans `checksums.txt`.
+> - **Installation sans dépôt privé (D4).** Le mode release devient le mode par défaut d'`install.sh`.
+
 Référence : `10-mises-a-jour.md` (validée). Choix du propriétaire (§11) : signature minisign obligatoire,
 nouvelle série 3.0.0, jeton GitHub *fine-grained* en lecture seule stocké sur le serveur, publication
 depuis la machine Windows (compilation Docker), sans GitHub Actions.

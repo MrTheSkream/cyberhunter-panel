@@ -6,13 +6,14 @@
 #
 # Why: servers installed before the fork, and every copy of these scripts that
 # still pointed at the upstream repository, would fetch code from a project
-# whose releases this one does not sign. One stray default (a GITHUB_REPO=, a
-# clone URL, a "check for updates" constant) is enough for an update to come
-# from outside the signed chain. The panel binary now reaches GitHub itself,
-# with an operator-supplied token, and verifies minisign + SHA-256 before
-# anything runs; the scripts only receive verified files. One exception since
-# 12 (D4): install.sh downloads a release, from the public release repository
-# only, and verifies its signature first (section 2b).
+# whose releases this one does not publish. One stray default (a GITHUB_REPO=, a clone URL, a
+# "check for updates" constant) is enough for an update to come from outside
+# this project's releases. The panel binary now reaches GitHub itself (the
+# token is optional) and checks every file against the release's checksums.txt
+# before anything runs; the scripts only receive checked files. One exception
+# since 12 (D4): install.sh downloads a release, from the public release
+# repository only, and checks it against checksums.txt first (section 2b).
+# Releases are not signed (12, D6).
 #
 # Run from anywhere inside the repository, with git available (it reads the
 # TRACKED files only, so an untracked scratch file cannot make it pass or fail).
@@ -72,10 +73,10 @@ for f in "${CLOSED_LIST[@]}"; do
     fi
 done
 
-echo "── 2b. install.sh downloads only from the release repository, signature first ──"
-# 12 (D4): install.sh's release mode is the one script that downloads a
-# release, from the public release repository and nowhere else, and only
-# after minisign has verified checksums.txt against the key stamped into it.
+echo "── 2b. install.sh downloads only from the release repository, checksums first ──"
+# 12 (D4, D6): install.sh's release mode is the one script that downloads a
+# release, from the public release repository and nowhere else, and checks
+# every file against its checksums.txt. No signature (D6).
 INST=scripts/install.sh
 if git ls-files --error-unmatch -- "$INST" >/dev/null 2>&1; then
     H=$(git grep -n -e "api.github.com" -e "raw.githubusercontent" -- "$INST" 2>/dev/null || true)
@@ -93,10 +94,16 @@ if git ls-files --error-unmatch -- "$INST" >/dev/null 2>&1; then
     else
         bad "$INST does not default to the public release repository"
     fi
-    if git grep -q -e 'minisign -Q -V -m "\$STAGE/checksums.txt"' -- "$INST"; then
-        ok "$INST verifies checksums.txt with minisign"
+    if git grep -q -e 'fetch "\$BASE_URL/checksums.txt" "\$STAGE/checksums.txt"' -- "$INST" \
+       && git grep -q -e 'sha256 mismatch for \$a' -- "$INST"; then
+        ok "$INST checks every file against the release's checksums.txt"
     else
-        bad "$INST does not verify checksums.txt with minisign"
+        bad "$INST does not check the files against checksums.txt"
+    fi
+    if git grep -q -i -e 'minisign' -e 'minisig' -e 'PUBKEY' -- "$INST"; then
+        bad "$INST still names minisign or a signing key"
+    else
+        ok "$INST names no minisign and no signing key"
     fi
 else
     bad "$INST is not tracked"

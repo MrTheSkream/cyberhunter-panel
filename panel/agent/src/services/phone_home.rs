@@ -189,13 +189,6 @@ pub async fn run(config: PhoneHomeConfig, cpu: CpuSampler) {
         config.central_url
     );
 
-    // Parse the compiled update key once at startup, so a malformed one is
-    // reported now (as an error) rather than at the first update attempt.
-    match crate::services::release_verify::signing_key_id() {
-        Some(id) => tracing::info!("Update signing key {id} compiled in"),
-        None => tracing::warn!("No update signing key compiled in; agent updates are disabled"),
-    }
-
     // Initial delay to let the agent fully start
     tokio::time::sleep(Duration::from_secs(5)).await;
 
@@ -253,7 +246,7 @@ pub async fn run(config: PhoneHomeConfig, cpu: CpuSampler) {
 /// through `/tmp` so the rename was cross-device wherever `/tmp` is a tmpfs, and
 /// restarted itself from inside its own cgroup. `scripts/agent-self-update.sh`
 /// already does every one of those correctly, installs only a binary the agent
-/// verified against the signed release manifest (`release_verify`), health-verifies the result, rolls back when it
+/// checked against the release's `checksums.txt` (`release_verify`), health-verifies the result, rolls back when it
 /// does not come up, and is pinned by tests. So the timer goes through it, and
 /// nothing in this file touches a binary any more (s233).
 async fn auto_update_loop(config: PhoneHomeConfig, client: reqwest::Client) {

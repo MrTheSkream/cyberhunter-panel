@@ -20,7 +20,6 @@ import ConfirmDialog from "./ConfirmDialog";
 export interface UpdateSourceInfo {
   repo?: string | null;
   token_set?: boolean;
-  signing_key_id?: string | null;
 }
 
 export default function UpdateSourceCard({
@@ -169,15 +168,6 @@ export default function UpdateSourceCard({
         {error && (
           <div className="text-xs text-danger-400 break-words">{error}</div>
         )}
-        <div className="pt-3 border-t border-dark-700 text-xs">
-          {source.signing_key_id ? (
-            <span className="text-dark-400">
-              Signing key ID: <span className="font-mono text-dark-200">{source.signing_key_id}</span>
-            </span>
-          ) : (
-            <span className="text-dark-400">No signing key in this build</span>
-          )}
-        </div>
       </div>
       {confirmClear && (
         <ConfirmDialog

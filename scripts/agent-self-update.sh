@@ -35,9 +35,8 @@
 #
 # WHERE THE BINARY COMES FROM (feature 10):
 #   This script downloads nothing. The agent fetched the binary from its panel,
-#   verified the minisign signature of the release's checksums.txt with the key
-#   compiled into the agent, checked the trusted comment names this tag, checked
-#   the SHA-256 and the ELF magic, and staged the file under
+#   checked the tag, the format of the release's checksums.txt, the SHA-256 of
+#   the binary against it and the ELF magic, and staged the file under
 #   /var/lib/dockpanel/agent-release (root, 0700). This script only re-checks
 #   that SHA-256 on the copy it installs. The staged file is removed on exit.
 #
@@ -168,8 +167,7 @@ if [ -n "$from_version" ] && [ "$from_version" = "$TARGET_CLEAN" ]; then
 fi
 
 # ── 1. Re-check the binary the agent verified and staged ─────────────────
-# The agent already checked the release signature, the trusted comment and
-# this SHA-256. This is a second look at the bytes actually being installed,
+# The agent already checked the release's checksums.txt and this SHA-256. This is a second look at the bytes actually being installed,
 # on a private copy, so nothing can change them between the check and the swap.
 stage="verify"
 if [ -z "$INPUT_BIN" ] || [ -z "$INPUT_SHA256" ] || [ ! -f "$INPUT_BIN" ]; then

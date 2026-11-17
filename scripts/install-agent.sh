@@ -218,10 +218,9 @@ chmod 600 /etc/dockpanel/agent.env
 #
 # The panel serves the release it runs itself (`current`) through
 # /api/agent/release/<tag>/<name>, authenticated with this server's token: it
-# has already checked the minisign signature of checksums.txt and the SHA-256
-# of the binary. The trust anchor of this script is the panel itself (the
-# operator runs the script the panel served), so there is no signature check in
-# shell; the installed agent verifies every later update on its own.
+# has already checked checksums.txt and the SHA-256 of the binary. The trust
+# anchor of this script is the panel itself (the operator runs the script the
+# panel served); the installed agent checks every later update on its own.
 #
 # The SHA-256 is MANDATORY: no manifest, no entry, or a mismatch stops the
 # install. The binary is written to a quarantine file and renamed into place

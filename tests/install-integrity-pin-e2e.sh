@@ -173,7 +173,7 @@ done
 snippet() { printf '%s' "$1" | head -1 | tr -cd '\11\40-\176' | cut -c1-70; }
 
 # agent-self-update.sh compares against the SHA-256 the agent took from the
-# SIGNED checksums.txt (feature 10) and hands over in DOCKPANEL_AGENT_STAGED_SHA256.
+# release's checksums.txt (feature 10) and hands over in DOCKPANEL_AGENT_STAGED_SHA256.
 verifies_its_download() {
   has_code "$1" 'sha256sum' \
     && { has_code "$1" 'checksums\.txt' || has_code "$1" 'DOCKPANEL_AGENT_STAGED_SHA256'; }
@@ -694,7 +694,7 @@ rm -rf "$M_TMP"
 # release page. setup.sh installs from a release directory the operator
 # downloaded, update.sh from the one the panel prepared and verified, and
 # agent-self-update.sh from the binary the agent staged after checking its
-# signature. Those three must not download a release at all: no retry helper,
+# SHA-256. Those three must not download a release at all: no retry helper,
 # and no curl line naming a release base, a release asset or a release host.
 RELEASE_CONSUMERS="scripts/deploy-demo.sh"
 for consumer in $RELEASE_CONSUMERS; do

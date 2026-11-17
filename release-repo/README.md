@@ -1,6 +1,6 @@
 # CyberHunter - Panel: releases
 
-This repository only holds the **signed releases** of CyberHunter - Panel, a
+This repository only holds the **releases** of CyberHunter - Panel, a
 self-hosted server management panel. There is no panel code in its git
 history: the code of each version is attached to its release (see
 [Source code](#source-code-agpl-v3) below).
@@ -28,47 +28,34 @@ No GitHub account and no token are needed. `install.sh`:
 1. picks the latest stable release (or the one named by `DOCKPANEL_VERSION`,
    for example `sudo DOCKPANEL_VERSION=v3.0.0-rc.5 bash install.sh`; a
    pre-release is only installed when you name it);
-2. installs `minisign` with the package manager if it is missing, and stops
-   if it cannot (the signature is never skipped);
-3. downloads `checksums.txt` and `checksums.txt.minisig`, and checks the
-   signature against the release signing key written inside `install.sh`. The
-   signature's trusted comment must be exactly `cyberhunter-release <tag>`;
-4. downloads every file it installs and checks its SHA-256 against
+2. downloads `checksums.txt` over https and checks its format strictly;
+3. downloads every file it installs and checks its SHA-256 against
    `checksums.txt`. Any mismatch or missing file stops the install;
-5. unpacks the release source into `/opt/dockpanel` and runs its `setup.sh`.
+4. unpacks the release source into `/opt/dockpanel` and runs its `setup.sh`.
 
-Once installed, the panel updates itself (Telemetry, Updates). Every update is
-checked against the same key, by the panel itself.
+Once installed, the panel updates itself (Telemetry, Updates), with the same
+checks against each release's `checksums.txt`.
 
-**Supported systems.** `minisign` comes from the distribution's packages:
-Ubuntu 24.04 and Debian 12 have it (minisign 0.11). **Ubuntu 22.04 does not package
-it**: install minisign 0.11 or later by hand first (for example from
-<https://github.com/jedisct1/minisign/releases>, checking it as its author
-documents), or `install.sh` stops.
+## Releases are not signed
 
-## Verify install.sh before running it
+There is no signature on these releases. `checksums.txt` comes from the same
+release as the files it lists: it proves that a download is complete and
+intact, not who published it. Someone who took control of the GitHub account
+that publishes this repository could publish a modified release, with matching
+checksums, and every panel would install it as root. The integrity of a
+release therefore rests on the security of that GitHub account (two-factor
+authentication, keys, scoped tokens).
 
-The very first `install.sh` comes from GitHub, so check it yourself if you
-want to be sure it is the one that was signed. `install.sh` is listed in the
-signed `checksums.txt` of each release.
+## Check install.sh before running it
 
-Release signing key (minisign):
-
-```
-Key ID:     <KEY_ID - filled in at the first public release>
-Public key: <PUBLIC_KEY - filled in at the first public release>
-```
+`install.sh` is listed in the `checksums.txt` of each release. To check that
+your copy matches the release it came from:
 
 ```bash
 TAG=v3.0.0                                   # the release you downloaded
 BASE=https://github.com/MrTheSkream/cyberhunter-releases/releases/download/$TAG
 curl -fsSLO "$BASE/install.sh"
 curl -fsSLO "$BASE/checksums.txt"
-curl -fsSLO "$BASE/checksums.txt.minisig"
-
-minisign -Vm checksums.txt -P '<PUBLIC_KEY>'
-# must print: Signature and comment signature verified
-#             Trusted comment: cyberhunter-release v3.0.0   (your TAG)
 
 sha256sum -c --ignore-missing checksums.txt
 # must print: install.sh: OK
@@ -76,12 +63,9 @@ sha256sum -c --ignore-missing checksums.txt
 sudo DOCKPANEL_VERSION=$TAG bash install.sh
 ```
 
-Check that the trusted comment names the tag you asked for: a signature made
-for another release does not vouch for this one. Use files from the same
-release (`releases/download/<tag>/`), not a mix of `latest` and a tag.
-
-The key inside `install.sh` is on its `CYBERHUNTER_STAMPED_PUBKEY=` line; it
-must be the public key above.
+Use files from the same release (`releases/download/<tag>/`), not a mix of
+`latest` and a tag. This catches a corrupted download; it does not protect
+against a release replaced on GitHub (see above).
 
 ## What a release contains
 
@@ -91,9 +75,8 @@ must be the public key above.
 | `cyberhunter-{agent,api,cli,mcp}-linux-arm64` | the binaries (ARM64), when built |
 | `cyberhunter-frontend.tar.gz` | the web interface |
 | `cyberhunter-source.tar.gz` | the complete source code of this version |
-| `install.sh` | the installer, with the signing key written in |
+| `install.sh` | the installer |
 | `checksums.txt` | SHA-256 of every file above |
-| `checksums.txt.minisig` | minisign signature of `checksums.txt` |
 
 ## Source code (AGPL v3)
 
@@ -108,6 +91,6 @@ The corresponding source code of each release is attached to it as
 https://github.com/MrTheSkream/cyberhunter-releases/releases/download/<tag>/cyberhunter-source.tar.gz
 ```
 
-It is covered by the same signed `checksums.txt` as the binaries. If you run a
+It is listed in the same `checksums.txt` as the binaries. If you run a
 modified version of the panel for users over a network, the AGPL asks you to
 offer them its source as well.

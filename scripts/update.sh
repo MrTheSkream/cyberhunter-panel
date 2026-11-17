@@ -8,8 +8,8 @@
 #
 # Release mode (INSTALL_FROM_RELEASE=1) is started by the panel (Telemetry,
 # Updates), never by hand. This script downloads nothing: the panel binary has
-# already fetched the release, checked the minisign signature of checksums.txt
-# and the SHA-256 of every file, and placed it in a root-only directory passed
+# already fetched the release, checked the format of its checksums.txt and the
+# SHA-256 of every file against it, and placed it in a root-only directory passed
 # as CYBERHUNTER_RELEASE_DIR. The script runs from <release>/cyberhunter-source
 # /scripts/, so the units, nginx templates and install-agent.sh it deploys come
 # from that verified release, and it re-checks the SHA-256 of every file it
@@ -190,10 +190,12 @@ fi
 # There is no self-refresh and no repo sync any more. Both fetched code from a
 # remote that, on servers installed before the fork, is the upstream project:
 # a refreshed updater or a reset tree would have come from outside this
-# project's signed releases. The trust chain is now: the panel binary verifies
-# the minisign signature of checksums.txt (with its compiled-in key, and the
-# trusted comment bound to the tag) and the SHA-256 of each file, then runs
-# THIS script from inside that release. The script re-checks the SHA-256 of
+# project's releases. The chain is now: the panel binary fetches the release
+# over https from its configured release repository, checks the tag, the
+# format of checksums.txt and the SHA-256 of each file against it, then runs
+# THIS script from inside that release (releases are not signed: the
+# checksums come from the same release, so a replaced release is only kept
+# out by the security of the GitHub account that publishes it). The script re-checks the SHA-256 of
 # every file it installs below.
 if [ "$INSTALL_FROM_RELEASE" = "1" ]; then
     if [ -z "${CYBERHUNTER_RELEASE_DIR:-}" ]; then
@@ -315,7 +317,7 @@ if [ "$INSTALL_FROM_RELEASE" = "1" ]; then
     verify_release_file "cyberhunter-frontend.tar.gz"        "$STAGE_DIR/dockpanel-frontend.tar.gz"
     check_release_archive "$STAGE_DIR/dockpanel-frontend.tar.gz"
     # Mandatory, never "if it is still there": without it, nothing proves the
-    # tree this script runs from is the one that was signed.
+    # tree this script runs from is the one listed in checksums.txt.
     verify_release_file "cyberhunter-source.tar.gz" "$STAGE_DIR/source.tar.gz"
     check_release_archive "$STAGE_DIR/source.tar.gz" "cyberhunter-source"
     mkdir "$STAGE_DIR/source-check"

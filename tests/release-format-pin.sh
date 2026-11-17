@@ -2,9 +2,10 @@
 # Pins for the release format (conception/10-mises-a-jour-contrats.md, 2.1,
 # 2.2, B-5, B-5bis):
 #
-#   - scripts/release.sh names exactly the release files servers ask for, signs
-#     with the trusted comment that binds the signature to the tag, and builds
-#     its archives with core.autocrlf=false;
+#   - scripts/release.sh names exactly the release files servers ask for, has
+#     no signing step at all (releases are not signed,
+#     conception/12-depot-releases-public.md D6), ships install.sh as committed,
+#     and builds its archives with core.autocrlf=false;
 #   - its checksum step, run for real on dummy files, produces the exact
 #     checksums.txt format both readers (backend and agent) accept;
 #   - the release build image starts from a digest-pinned ubuntu:22.04 and an
@@ -39,7 +40,7 @@ REL_CODE="$(code_of "$REL")"
 for name in cyberhunter-agent-linux-amd64 cyberhunter-api-linux-amd64 cyberhunter-cli-linux-amd64 \
             cyberhunter-mcp-linux-amd64 cyberhunter-agent-linux-arm64 cyberhunter-api-linux-arm64 \
             cyberhunter-cli-linux-arm64 cyberhunter-mcp-linux-arm64 cyberhunter-frontend.tar.gz \
-            cyberhunter-source.tar.gz install.sh checksums.txt checksums.txt.minisig; do
+            cyberhunter-source.tar.gz install.sh checksums.txt; do
     if printf '%s\n' "$REL_CODE" | grep -cF "$name" >/dev/null; then ok "names $name"; else bad "does not name $name"; fi
 done
 if printf '%s\n' "$REL_CODE" | grep -cE 'dockpanel-[a-z]+-linux-|SHA256SUMS|spdx' >/dev/null; then
@@ -48,18 +49,31 @@ else
     ok "no old asset names, no SBOM"
 fi
 
-echo "── 2. signature, trusted comment, archives ──"
-if printf '%s\n' "$REL_CODE" | grep -c 'TRUSTED="cyberhunter-release ${TAG}"' >/dev/null \
-   && printf '%s\n' "$REL_CODE" | grep -c 'minisign -S .* -t "\$TRUSTED"' >/dev/null; then
-    ok "signs with trusted comment 'cyberhunter-release <tag>'"
+echo "── 2. no signature, archives ──"
+# The whole file, comments included: none of the signing machinery may remain.
+REL_ALL="$(tr -d '\r' < "$REL")"
+for tok in minisign minisig sign_native ps_quote stamp_install stamp-install-only SIGN_INLINE \
+           PUBKEY KEY_ID TRUSTED 'trusted comment' 'cyberhunter-release ' winpty PowerShell; do
+    if printf '%s\n' "$REL_ALL" | grep -cF -- "$tok" >/dev/null; then
+        bad "release.sh still names '$tok' (releases are not signed)"
+    else
+        ok "release.sh does not name '$tok'"
+    fi
+done
+if printf '%s\n' "$REL_CODE" | grep -cE 'CYBERHUNTER_UPDATE_PUBKEY|-e [A-Z_]*KEY' >/dev/null; then
+    bad "release.sh still passes a key to the build container"
 else
-    bad "the signature is not made with the trusted comment cyberhunter-release <tag>"
+    ok "no key is passed to the build container"
 fi
-if printf '%s\n' "$REL_CODE" | grep -c 'minisign -V ' >/dev/null; then ok "verifies its own signature"; else bad "never runs minisign -V"; fi
-if printf '%s\n' "$REL_CODE" | grep -c '\[ "\$SIG_ALG" = "ED" \]' >/dev/null; then
-    ok "refuses a legacy (non pre-hashed) signature"
+if tr -d '\r' < "$BUILD" | grep -cE 'PUBKEY|minisign' >/dev/null; then
+    bad "build-in-container.sh still expects a signing key"
 else
-    bad "does not check that the signature is pre-hashed (ED)"
+    ok "build-in-container.sh expects no signing key"
+fi
+if printf '%s\n' "$REL_CODE" | grep -c 'for f in "${REQUIRED\[@\]}" checksums.txt; do FILES+=' >/dev/null; then
+    ok "gh release create uploads the release files and checksums.txt, nothing else"
+else
+    bad "the uploaded file list is not REQUIRED + checksums.txt"
 fi
 if printf '%s\n' "$REL_CODE" | grep -c 'git -c core.autocrlf=false archive --format=tar.gz --prefix=cyberhunter-source/ HEAD -- scripts panel LICENSE' >/dev/null; then
     ok "source archive is the contract's git archive command, LICENSE included (AGPL)"
@@ -112,64 +126,22 @@ if [ -n "$DRY_REPO_AT" ] && [ -n "$DRY_AT" ] && [ "$DRY_REPO_AT" -gt "$DRY_AT" ]
 else
     bad "--dry-run does not print the target repository before exiting"
 fi
-if printf '%s\n' "$REL_CODE" | grep -c 'git -c core.autocrlf=false show HEAD:scripts/install.sh' >/dev/null \
-   && printf '%s\n' "$REL_CODE" | grep -c 'stamp_install "\$DIST.install.sh.src" "\$PUBKEY" "\$DIST/install.sh"' >/dev/null; then
-    ok "install.sh is stamped from the committed blob with the compiled key"
+if printf '%s\n' "$REL_CODE" | grep -c 'git -c core.autocrlf=false show HEAD:scripts/install.sh > "\$DIST/install.sh"' >/dev/null; then
+    ok "install.sh is the committed blob, written as is"
 else
-    bad "install.sh is not stamped from HEAD:scripts/install.sh with \$PUBKEY"
+    bad "install.sh is not written from HEAD:scripts/install.sh"
 fi
-STAMP_AT="$(printf '%s\n' "$REL_CODE" | grep -n 'stamp_install "\$DIST' | head -1 | cut -d: -f1)"
+INST_AT="$(printf '%s\n' "$REL_CODE" | grep -n 'show HEAD:scripts/install.sh' | head -1 | cut -d: -f1)"
 SUMS_AT="$(printf '%s\n' "$REL_CODE" | grep -n -- '--checksums-only /d' | head -1 | cut -d: -f1)"
-if [ -n "$STAMP_AT" ] && [ -n "$SUMS_AT" ] && [ "$STAMP_AT" -lt "$SUMS_AT" ]; then
-    ok "install.sh is stamped before checksums.txt is computed"
+if [ -n "$INST_AT" ] && [ -n "$SUMS_AT" ] && [ "$INST_AT" -lt "$SUMS_AT" ]; then
+    ok "install.sh is written before checksums.txt is computed"
 else
-    bad "install.sh is not stamped before the checksum step"
+    bad "install.sh is not written before the checksum step"
 fi
-
-echo "── 2b. signing step: Git Bash hands the command to PowerShell ──"
-# sign_native and ps_quote are extracted from release.sh and run against a
-# fake minisign that only logs its arguments.
-SFUNCS="$(tr -d '\r' < "$REL" | awk '/^(ps_quote|sign_native)\(\) \{/ {on=1} on {print} on && /\}$/ && (/^\}/ || /^ps_quote/) {on=0}')"
-if printf '%s\n' "$SFUNCS" | grep -c '^sign_native() {' >/dev/null \
-   && printf '%s\n' "$SFUNCS" | grep -c '^ps_quote() {' >/dev/null; then
-    ok "sign_native and ps_quote were extracted from release.sh"
-    FB="$TMP/fakebin"; mkdir -p "$FB"
-    printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "$FAKE_MS_LOG"\n' > "$FB/minisign"
-    chmod +x "$FB/minisign"
-    run_sign() {  # run_sign <IS_MSYS> <CYBERHUNTER_SIGN_INLINE>: output, log in $TMP/ms.log
-        : > "$TMP/ms.log"; : > "$TMP/sig"; printf 'sig\n' > "$TMP/sig"
-        printf '\n' | PATH="$FB:$PATH" FAKE_MS_LOG="$TMP/ms.log" CYBERHUNTER_SIGN_INLINE="$2" bash -c '
-            set -euo pipefail
-            die() { echo "ERROR: $*" >&2; exit 1; }
-            eval "$1"
-            IS_MSYS="$2"; TRUSTED="cyberhunter-release v9.9.9"; SIG_FILE="$3"
-            M_KEY="C:\\Users\\O'"'"'Brien\\.minisign\\k.key"; M_PUB="C:\\k.pub"
-            M_SUMS="F:\\r\\dist\\release-9.9.9\\checksums.txt"; M_SIG="F:\\r\\dist\\release-9.9.9\\checksums.txt.minisig"
-            sign_native' _ "$SFUNCS" "$1" "$TMP/sig" 2>&1
-    }
-    out="$(run_sign 1 "")"; rc=$?
-    want="minisign -S -s 'C:\\Users\\O''Brien\\.minisign\\k.key' -m 'F:\\r\\dist\\release-9.9.9\\checksums.txt' -x 'F:\\r\\dist\\release-9.9.9\\checksums.txt.minisig' -t 'cyberhunter-release v9.9.9'"
-    if [ "$rc" = "0" ] && printf '%s\n' "$out" | grep -cF "    $want" >/dev/null; then
-        ok "MSYS: prints the single-quoted PowerShell signing command"
-    else
-        bad "MSYS: the PowerShell signing command is missing or wrong (rc $rc): $out"
-    fi
-    if grep -q '^-S ' "$TMP/ms.log"; then bad "MSYS: minisign -S was still run inline"; else ok "MSYS: minisign -S is not run inline"; fi
-    if grep -q '^-V -p C:\\k.pub ' "$TMP/ms.log"; then ok "MSYS: the signature is still verified (minisign -V)"; else bad "MSYS: no minisign -V after the handoff"; fi
-    out="$(run_sign 1 1)"; rc=$?
-    if [ "$rc" = "0" ] && grep -q '^-S -s ' "$TMP/ms.log" && ! printf '%s' "$out" | grep -q 'PowerShell'; then
-        ok "MSYS + CYBERHUNTER_SIGN_INLINE=1: minisign -S runs inline"
-    else
-        bad "CYBERHUNTER_SIGN_INLINE=1 does not force inline signing (rc $rc)"
-    fi
-    out="$(run_sign 0 "")"; rc=$?
-    if [ "$rc" = "0" ] && grep -q '^-S -s .* -t cyberhunter-release v9.9.9$' "$TMP/ms.log" && grep -q '^-V ' "$TMP/ms.log"; then
-        ok "Linux/macOS: minisign -S then -V run inline"
-    else
-        bad "Linux/macOS: inline signing broken (rc $rc): $out"
-    fi
+if [ "$(sed -n 's/^ *-h|--help) sed -n .2,\([0-9]*\)p. .*/\1/p' "$REL")" = "$(( $(grep -n '^set -euo pipefail$' "$REL" | head -1 | cut -d: -f1) - 1 ))" ]; then
+    ok "--help prints the whole header"
 else
-    bad "could not extract sign_native/ps_quote from release.sh - section 2b is measuring nothing"
+    bad "--help does not print the header up to set -euo pipefail"
 fi
 
 echo "── 3. build image: ubuntu 22.04 by digest, exact toolchain ──"

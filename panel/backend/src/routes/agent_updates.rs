@@ -31,16 +31,17 @@
 //! `null` means "do nothing", and is the answer whenever the operator has not
 //! switched agent auto-update on, the update channel is on hold, updates are
 //! not configured on this panel, or the calling agent is older than the
-//! signed-release series. The switch is enforced HERE rather than on the
-//! agent, because there is no panel→agent configuration push: an agent only
-//! ever learns things by asking.
+//! series that fetches its releases from this panel. The switch is enforced
+//! HERE rather than on the agent, because there is no panel→agent
+//! configuration push: an agent only ever learns things by asking.
 //!
 //! ## Feature 10: agents download from this panel
 //!
 //! `GET /api/agent/release/{tag}/{name}` serves the release files an agent
-//! needs (`checksums.txt`, its signature, the agent binaries) from this
-//! panel's verified cache, fetching them from GitHub on demand. The GitHub
-//! token stays here: an agent never sees it, and verifies the signature itself.
+//! needs (`checksums.txt` and the agent binaries) from this panel's verified
+//! cache, fetching them from GitHub on demand. The GitHub token stays here: an
+//! agent never sees it, and checks the SHA-256 of its binary against
+//! `checksums.txt` itself.
 
 use axum::{
     body::Body,
@@ -53,7 +54,7 @@ use uuid::Uuid;
 
 use crate::auth::{agent_rate_limit, authenticate_agent};
 use crate::error::{err_coded, internal_error, ApiError};
-use crate::services::panel_update::{agent_can_verify_signed, agent_target_is_upgrade};
+use crate::services::panel_update::{agent_fetches_from_panel, agent_target_is_upgrade};
 use crate::services::release_fetch::{self, FetchError};
 use crate::services::update_source;
 use crate::AppState;
@@ -76,7 +77,7 @@ pub async fn latest_version(
                 .await
                 .map_err(|e| internal_error("agent target", e))?
                 .flatten();
-        if agent_can_verify_signed(agent_version.as_deref()) {
+        if agent_fetches_from_panel(agent_version.as_deref()) {
             // Forward only: an agent already at or past the panel's release is
             // told nothing, never pointed back at an older one.
             resolve_agent_target(&state)
@@ -150,7 +151,7 @@ pub async fn release_file(
 
     let fetch = async {
         let p = release_fetch::prepare_full(&tag, &[]).await?;
-        if !matches!(name.as_str(), release_fetch::CHECKSUMS_NAME | release_fetch::MINISIG_NAME) {
+        if name != release_fetch::CHECKSUMS_NAME {
             if !p.manifest.contains(&name) {
                 return Err(FetchError::FileUnknown);
             }
@@ -257,13 +258,14 @@ mod tests {
     fn agents_get_only_their_own_files() {
         for ok in [
             "checksums.txt",
-            "checksums.txt.minisig",
             "cyberhunter-agent-linux-amd64",
             "cyberhunter-agent-linux-arm64",
         ] {
             assert!(agent_file_allowed(ok), "{ok}");
         }
         for no in [
+            // No signature any more (conception 12, D6).
+            "checksums.txt.minisig",
             "cyberhunter-api-linux-amd64",
             "cyberhunter-source.tar.gz",
             "cyberhunter-frontend.tar.gz",

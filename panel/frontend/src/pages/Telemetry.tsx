@@ -67,7 +67,7 @@ interface UpdateStateView {
   completed_at?: string;
   reason?: string;
   /// Feature 10: stable error code of a `failed` state (contract 2.6), when
-  /// the failure came from preparing the release (download, signature,
+  /// the failure came from preparing the release (download, manifest,
   /// checksum). `reason` is the message to show; this is only a marker.
   code?: string | null;
   at?: string;
@@ -77,10 +77,9 @@ interface UpdateStateView {
   /// Feature 10 (contract A-6.1). All optional: a missing `configured` reads
   /// as "not configured", so an older backend fails closed.
   configured?: boolean;
-  not_configured_reason?: "no_signing_key" | "no_source" | null;
+  not_configured_reason?: "no_source" | null;
   repo?: string | null;
   token_set?: boolean;
-  signing_key_id?: string | null;
   available_prerelease?: boolean;
   release_notes?: string | null;
   release_url?: string | null;
@@ -462,7 +461,7 @@ export default function Telemetry() {
   // Phase 4 W4: poll /update/status while an update runs, and while the
   // progress modal is open. Feature 10: `apply` answers 202 after its quick
   // checks and downloads and verifies the release in the background, so a
-  // signature or checksum refusal only ever shows up here, as `failed`. The
+  // manifest or checksum refusal only ever shows up here, as `failed`. The
   // poll therefore follows `in_flight` whether or not the modal is open (it
   // may have been closed, or the page reloaded mid-update).
   const updateInFlight = updateState?.state === "in_flight";
@@ -1039,11 +1038,12 @@ export default function Telemetry() {
             <div className="space-y-3">{updateVerdicts.map(v => v.el)}</div>
           )}
 
-          {/* Feature 10 (C-2, C-4): updates come only from a signed release of
-              the configured repository. Without a compiled signing key, or with
+          {/* Feature 10 (C-2, C-4): updates come only from a release of the
+              configured repository whose files match its checksums.txt. With
               an update.conf that exists but is invalid, nothing checks or
               installs. The token is optional (conception 12, D2): no
-              update.conf means the default public release repository. */}
+              update.conf means the default public release repository. There
+              is no release signature (conception 12, D6). */}
           {updateState && !updatesConfigured && (
             <div className="bg-dark-800 border border-warn-500/30 rounded-lg p-4">
               <div className="flex items-center justify-between gap-4 mb-2">
@@ -1054,9 +1054,7 @@ export default function Telemetry() {
                 </button>
               </div>
               <p className="text-xs text-dark-300">
-                {updateState.not_configured_reason === "no_signing_key"
-                  ? "This build has no update signing key. Install a signed CyberHunter release by hand to enable updates."
-                  : "The update configuration in /etc/dockpanel/update.conf is not valid. Delete it to use the default release repository, or save a token below to rewrite it."}
+                The update configuration in /etc/dockpanel/update.conf is not valid. Delete it to use the default release repository, or save a token below to rewrite it.
               </p>
               <div className="text-xs text-dark-400 mt-3">
                 Installed version: <span className="font-mono text-dark-200">{vTag(currentVersion)}</span>
@@ -1131,7 +1129,6 @@ export default function Telemetry() {
               source={{
                 repo: updateState.repo,
                 token_set: updateState.token_set,
-                signing_key_id: updateState.signing_key_id,
               }}
               onChanged={async () => { await Promise.all([loadConfig(), loadUpdateState()]); }}
               onMessage={flash}
@@ -1179,7 +1176,7 @@ export default function Telemetry() {
           </div>
 
           {/* Feature 10 (C-4): the install runs in the background after the
-              202. Its progress and a refusal (signature, checksum, download)
+              202. Its progress and a refusal (manifest, checksum, download)
               are shown here as well as in the modal, so closing the modal or
               reloading the page never hides why nothing was installed. */}
           {updateState?.state === "in_flight" && (
@@ -1237,7 +1234,7 @@ export default function Telemetry() {
               <div className="bg-dark-900 rounded-lg p-3 border border-dark-700 mb-3">
                 <div className="text-xs text-dark-400 mb-1">What will happen</div>
                 <ol className="text-xs text-dark-300 list-decimal list-inside space-y-0.5">
-                  <li>Download the release and verify its signature and checksums (nothing is installed if a check fails)</li>
+                  <li>Download the release and verify every file against its checksums (nothing is installed if a check fails)</li>
                   <li>Pre-update snapshot (binaries, database dump, /etc/dockpanel)</li>
                   <li>Swap binaries and restart services (about 5s of admin UI unavailability)</li>
                   <li>Health check; automatic rollback on failure within 5 min</li>

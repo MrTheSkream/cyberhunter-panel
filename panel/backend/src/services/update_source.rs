@@ -1,26 +1,23 @@
 //! Where panel updates come from, and whether they are allowed at all.
 //!
-//! Two things must both hold before this panel contacts GitHub or installs
-//! anything (the "configured" predicate, checked in this order):
-//!   1. a minisign public key was compiled into the binary
-//!      (`CYBERHUNTER_UPDATE_PUBKEY` at build time, see `build.rs`);
-//!   2. a valid source: `/etc/dockpanel/update.conf` when it exists, or the
-//!      default public release repository when it does not. An `update.conf`
-//!      that exists but is invalid gives `no_source`.
+//! The "configured" predicate: a valid source, which is
+//! `/etc/dockpanel/update.conf` when it exists, or the default public release
+//! repository when it does not. An `update.conf` that exists but is invalid
+//! gives `no_source`, and then nothing contacts GitHub or installs anything.
 //!
 //! The token is optional (conception 12, D2). Without one, GitHub is queried
 //! anonymously, which is enough for a public release repository; a private one
-//! needs a token. Either way, a release is installed only once its signature
-//! against the compiled key has been checked.
+//! needs a token. There is no release signature (conception 12, D6): a release
+//! is installed only once every file matched its SHA-256 and size against the
+//! release's `checksums.txt` (`release_fetch`).
 //!
 //! The token itself is never a field of a `Serialize` or `Debug` structure. It
 //! is read from disk right before a GitHub request, by
 //! `release_fetch::github_auth_header`, and only lives in a sensitive header.
 
 use std::path::{Path, PathBuf};
-use std::sync::{LazyLock, OnceLock};
+use std::sync::LazyLock;
 
-use base64::Engine;
 use serde::Serialize;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -39,10 +36,6 @@ const CONF_DIR: &str = "/etc/dockpanel/";
 const TOKEN_FILE_NAME: &str = "update-token";
 const CONF_HEADER: &str = "# Managed by CyberHunter - Panel (Telemetry, Updates)";
 
-/// The base64 line of the minisign `.pub` file, fixed at compile time.
-const COMPILED_PUBKEY: Option<&str> = option_env!("CYBERHUNTER_UPDATE_PUBKEY");
-
-pub const REASON_NO_SIGNING_KEY: &str = "no_signing_key";
 pub const REASON_NO_SOURCE: &str = "no_source";
 
 static REPO_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
@@ -242,52 +235,6 @@ pub fn read_token(path: &Path) -> Option<SecretToken> {
     Some(SecretToken(Zeroizing::new(t.to_string())))
 }
 
-// ── Signing key ──────────────────────────────────────────────────────────
-
-/// Parse the base64 line of a minisign public key and compute the ID minisign
-/// prints for it (`untrusted comment: minisign public key <ID>`).
-pub fn parse_public_key(b64: &str) -> Option<(minisign_verify::PublicKey, String)> {
-    let b64 = b64.trim();
-    if b64.is_empty() {
-        return None;
-    }
-    let key = minisign_verify::PublicKey::from_base64(b64).ok()?;
-    let raw = base64::engine::general_purpose::STANDARD.decode(b64).ok()?;
-    if raw.len() != 42 {
-        return None;
-    }
-    let mut id = [0u8; 8];
-    id.copy_from_slice(&raw[2..10]);
-    Some((key, format!("{:016X}", u64::from_le_bytes(id))))
-}
-
-static SIGNING_KEY: OnceLock<Option<(minisign_verify::PublicKey, String)>> = OnceLock::new();
-
-fn compiled_key() -> &'static Option<(minisign_verify::PublicKey, String)> {
-    SIGNING_KEY.get_or_init(|| COMPILED_PUBKEY.and_then(parse_public_key))
-}
-
-/// The compiled-in update key, or `None`: absent, empty or malformed.
-pub fn signing_key() -> Option<&'static minisign_verify::PublicKey> {
-    compiled_key().as_ref().map(|(k, _)| k)
-}
-
-/// The compiled-in key's ID, formatted like minisign does.
-pub fn signing_key_id() -> Option<String> {
-    compiled_key().as_ref().map(|(_, id)| id.clone())
-}
-
-/// Called once at start-up.
-pub fn log_signing_key_at_startup() {
-    match (COMPILED_PUBKEY.map(str::trim), signing_key_id()) {
-        (_, Some(id)) => tracing::info!("Update signing key {id} compiled in"),
-        (Some(v), None) if !v.is_empty() => {
-            tracing::error!("CYBERHUNTER_UPDATE_PUBKEY is not a valid minisign public key")
-        }
-        _ => tracing::warn!("No update signing key compiled in; updates are disabled"),
-    }
-}
-
 // ── The predicate ────────────────────────────────────────────────────────
 
 /// What `GET /api/update/status` and every gate need to know. No token here.
@@ -297,28 +244,21 @@ pub struct SourceStatus {
     pub reason: Option<&'static str>,
     pub repo: Option<String>,
     pub token_set: bool,
-    pub signing_key_id: Option<String>,
     /// The valid config, kept for the callers that go on to fetch. Not serialized.
     #[serde(skip)]
     pub source: Option<UpdateSource>,
 }
 
-/// The predicate, pure. Reasons in contract order: key, then source. The
-/// token is reported (`token_set`) but never required.
+/// The predicate, pure: configured exactly when there is a source. The token
+/// is reported (`token_set`) but never required.
 ///
 /// `conf` is the source already resolved: [`load_from`] turns a missing
 /// `update.conf` into the default source before calling this, so any `Err`
 /// here means no usable source.
-pub fn evaluate(
-    signing_key_id: Option<String>,
-    conf: Result<UpdateSource, ConfError>,
-    token_set: bool,
-) -> SourceStatus {
+pub fn evaluate(conf: Result<UpdateSource, ConfError>, token_set: bool) -> SourceStatus {
     let source = conf.ok();
     let token_set = source.is_some() && token_set;
-    let reason = if signing_key_id.is_none() {
-        Some(REASON_NO_SIGNING_KEY)
-    } else if source.is_none() {
+    let reason = if source.is_none() {
         Some(REASON_NO_SOURCE)
     } else {
         None
@@ -328,23 +268,22 @@ pub fn evaluate(
         reason,
         repo: source.as_ref().map(|s| s.repo.clone()),
         token_set,
-        signing_key_id,
         source,
     }
 }
 
 /// Read the config and token file from their real places.
 pub fn load() -> SourceStatus {
-    load_from(Path::new(UPDATE_CONF_PATH), signing_key_id())
+    load_from(Path::new(UPDATE_CONF_PATH))
 }
 
-pub fn load_from(conf_path: &Path, signing_key_id: Option<String>) -> SourceStatus {
+pub fn load_from(conf_path: &Path) -> SourceStatus {
     let conf = resolve_source(conf_path);
     let token_set = conf
         .as_ref()
         .map(|s| read_token(&s.token_file).is_some())
         .unwrap_or(false);
-    evaluate(signing_key_id, conf, token_set)
+    evaluate(conf, token_set)
 }
 
 // ── Writing ──────────────────────────────────────────────────────────────
@@ -532,13 +471,8 @@ pub async fn audit(
 pub(crate) mod tests {
     use super::*;
 
-    pub(crate) const TEST_PUB: &str = include_str!("testdata/release/test.pub");
     /// A token of the accepted shape, used to prove it never leaks.
     pub(crate) const KNOWN_TOKEN: &str = "github_pat_11AAAAAAA0leakcheckZZZZZZZZZZZZZZZZZZZZ_9";
-
-    pub(crate) fn test_key_line() -> &'static str {
-        TEST_PUB.lines().nth(1).unwrap()
-    }
 
     pub(crate) fn temp_dir() -> PathBuf {
         let d = std::env::temp_dir().join(format!("chp-update-{}", Uuid::new_v4()));
@@ -641,35 +575,29 @@ pub(crate) mod tests {
         }
     }
 
+    /// Configured means a valid source, nothing else: no compiled key, no
+    /// signature, no token (conception 12, D6).
     #[test]
-    fn the_predicate_reports_each_reason_in_order() {
-        let key = Some("531546B906DAE39E".to_string());
-        let conf = || read_conf(VALID);
-        let s = evaluate(key.clone(), conf(), true);
+    fn the_predicate_is_a_valid_source_and_nothing_else() {
+        let s = evaluate(read_conf(VALID), true);
         assert!(s.configured);
         assert_eq!(s.reason, None);
 
-        assert_eq!(
-            evaluate(key.clone(), Err(ConfError::Invalid("x")), true).reason,
-            Some(REASON_NO_SOURCE)
-        );
-        assert_eq!(evaluate(None, conf(), true).reason, Some(REASON_NO_SIGNING_KEY));
-
-        // Order: no key wins over no source.
-        assert_eq!(evaluate(None, Err(ConfError::Invalid("x")), false).reason, Some(REASON_NO_SIGNING_KEY));
         for s in [
-            evaluate(None, conf(), true),
-            evaluate(None, conf(), false),
-            evaluate(key, Err(ConfError::Invalid("x")), true),
+            evaluate(Err(ConfError::Invalid("x")), true),
+            evaluate(Err(ConfError::Invalid("x")), false),
         ] {
             assert!(!s.configured);
+            assert_eq!(s.reason, Some(REASON_NO_SOURCE));
+            assert!(!s.token_set, "no source, so no token is reported");
         }
+        let json = serde_json::to_value(evaluate(read_conf(VALID), false)).unwrap();
+        assert!(json.get("signing_key_id").is_none(), "{json}");
     }
 
     #[test]
     fn the_predicate_does_not_require_a_token() {
-        let key = Some("531546B906DAE39E".to_string());
-        let s = evaluate(key, read_conf(VALID), false);
+        let s = evaluate(read_conf(VALID), false);
         assert!(s.configured, "{s:?}");
         assert_eq!(s.reason, None);
         assert!(!s.token_set);
@@ -680,9 +608,8 @@ pub(crate) mod tests {
     fn a_missing_conf_means_the_default_public_repository() {
         let dir = temp_dir();
         let conf = dir.join("update.conf");
-        let key = Some("531546B906DAE39E".to_string());
 
-        let s = load_from(&conf, key.clone());
+        let s = load_from(&conf);
         assert!(s.configured, "{s:?}");
         assert_eq!(s.reason, None);
         assert_eq!(s.repo.as_deref(), Some(DEFAULT_UPDATE_REPO));
@@ -695,11 +622,8 @@ pub(crate) mod tests {
 
         // A token put in the default file is seen (and will be sent).
         std::fs::write(dir.join("update-token"), format!("{KNOWN_TOKEN}\n")).unwrap();
-        let s = load_from(&conf, key);
+        let s = load_from(&conf);
         assert!(s.configured && s.token_set, "{s:?}");
-
-        // Without a compiled key, still not configured.
-        assert_eq!(load_from(&conf, None).reason, Some(REASON_NO_SIGNING_KEY));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -708,7 +632,7 @@ pub(crate) mod tests {
         let dir = temp_dir();
         let conf = dir.join("update.conf");
         std::fs::write(&conf, "UPDATE_REPO=not a repo\n").unwrap();
-        let s = load_from(&conf, Some("531546B906DAE39E".to_string()));
+        let s = load_from(&conf);
         assert!(!s.configured);
         assert_eq!(s.reason, Some(REASON_NO_SOURCE));
         assert_eq!(s.repo, None);
@@ -717,47 +641,23 @@ pub(crate) mod tests {
 
         // A config that exists but cannot be read is not "missing".
         std::fs::write(&conf, [0xffu8, 0xfe, 0x00, 0x80]).unwrap();
-        assert_eq!(load_from(&conf, Some("ID".into())).reason, Some(REASON_NO_SOURCE));
+        assert_eq!(load_from(&conf).reason, Some(REASON_NO_SOURCE));
         std::fs::remove_file(&conf).unwrap();
         std::fs::create_dir(&conf).unwrap();
-        assert_eq!(load_from(&conf, Some("ID".into())).reason, Some(REASON_NO_SOURCE));
+        assert_eq!(load_from(&conf).reason, Some(REASON_NO_SOURCE));
         let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn the_key_id_matches_the_one_minisign_printed() {
-        let printed = TEST_PUB
-            .lines()
-            .next()
-            .unwrap()
-            .rsplit(' ')
-            .next()
-            .unwrap()
-            .to_string();
-        let (_, id) = parse_public_key(test_key_line()).expect("fixture key must parse");
-        assert_eq!(id, printed);
-        assert_eq!(id, "531546B906DAE39E");
-    }
-
-    #[test]
-    fn a_malformed_or_empty_key_is_no_key() {
-        assert!(parse_public_key("").is_none());
-        assert!(parse_public_key("   ").is_none());
-        assert!(parse_public_key("not base64 at all").is_none());
-        assert!(parse_public_key("RWQ=").is_none());
     }
 
     #[test]
     fn write_then_load_then_clear_round_trip() {
         let dir = temp_dir();
         let conf = dir.join("update.conf");
-        let key = Some("531546B906DAE39E".to_string());
-        let s = load_from(&conf, key.clone());
+        let s = load_from(&conf);
         assert!(s.configured, "no config: the default source, no token needed");
         assert_eq!(s.repo.as_deref(), Some(DEFAULT_UPDATE_REPO));
 
         write_source_at(&conf, "owner/name", KNOWN_TOKEN).unwrap();
-        let s = load_from(&conf, key.clone());
+        let s = load_from(&conf);
         assert!(s.configured, "{s:?}");
         assert_eq!(s.repo.as_deref(), Some("owner/name"));
         assert!(s.token_set);
@@ -780,7 +680,7 @@ pub(crate) mod tests {
         assert_eq!(current_or_default_repo_at(&conf), "owner/name");
 
         clear_token_at(&conf).unwrap();
-        let s = load_from(&conf, key);
+        let s = load_from(&conf);
         assert!(s.configured, "no token: still configured, anonymous requests");
         assert_eq!(s.reason, None);
         assert!(!s.token_set);
@@ -841,7 +741,7 @@ pub(crate) mod tests {
         let dir = temp_dir();
         let conf = dir.join("update.conf");
         write_source_at(&conf, "owner/name", KNOWN_TOKEN).unwrap();
-        let s = load_from(&conf, Some("ID".into()));
+        let s = load_from(&conf);
         assert!(s.configured);
         let json = serde_json::to_string(&s).unwrap();
         assert!(!json.contains(KNOWN_TOKEN));
