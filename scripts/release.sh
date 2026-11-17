@@ -216,7 +216,7 @@ tr -d '\r' < scripts/release.sh \
   | docker run --rm -i -v "${DIST_HOST}:/d" "$BUILD_IMAGE" bash -s -- --checksums-only /d
 grep -Evq '^[0-9a-f]{64}  [A-Za-z0-9._-]{1,128}$' "$DIST/checksums.txt" \
     && die "checksums.txt does not have the expected format"
-if grep -q $'\r' "$DIST/checksums.txt"; then die "checksums.txt contains CR"; fi
+if [ "$(tr -cd '\r' < "$DIST/checksums.txt" | wc -c)" -ne 0 ]; then die "checksums.txt contains CR"; fi
 [ "$(wc -l < "$DIST/checksums.txt" | tr -d ' ')" = "${#REQUIRED[@]}" ] \
     || die "checksums.txt does not list exactly the ${#REQUIRED[@]} release files"
 
