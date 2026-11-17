@@ -68,7 +68,7 @@ REQUIRED="$(printf '%s\n' "$VERSION_INFO" | awk '
         for (i = 1; i <= NF; i++) if ($i == "Name:") print $(i + 1)
     }' | sort -u)"
 
-if printf '%s\n' "$REQUIRED" | grep -qx 'GLIBC_PRIVATE'; then
+if printf '%s\n' "$REQUIRED" | grep -cx 'GLIBC_PRIVATE' >/dev/null; then
     echo "ERROR: $BIN requires GLIBC_PRIVATE" >&2
     exit 1
 fi

@@ -119,7 +119,7 @@ if [ "$VERSION" != "$V_BACKEND" ] || [ "$VERSION" != "$V_CLI" ] || [ "$VERSION" 
     die "version mismatch: agent=$VERSION backend=$V_BACKEND cli=$V_CLI mcp=$V_MCP frontend=$V_FRONTEND"
 fi
 TAG="v${VERSION}"
-echo "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$' \
+echo "$TAG" | grep -Ec '^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$' >/dev/null \
     || die "tag $TAG is not vX.Y.Z or vX.Y.Z-rc.N"
 
 if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
@@ -207,7 +207,7 @@ done
 # Nothing else may be published.
 for f in "$DIST"/*; do
     name="$(basename "$f")"
-    printf '%s\n' "${REQUIRED[@]}" | grep -qx "$name" || die "unexpected file in $DIST: $name"
+    printf '%s\n' "${REQUIRED[@]}" | grep -cx "$name" >/dev/null || die "unexpected file in $DIST: $name"
 done
 
 # 5b. checksums.txt, computed by Linux coreutils in a container, by the same

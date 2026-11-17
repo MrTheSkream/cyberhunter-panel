@@ -119,7 +119,7 @@ echo "── 2. update.sh's verification block, executed against a fake release 
 VBLOCK=$(awk '/^# ── Release mode: re-check every file against checksums.txt/ {on=1}
               on && /^# ── Backup database before upgrade/ {exit}
               on {print}' "$UPD")
-if [ -z "$VBLOCK" ] || ! printf '%s\n' "$VBLOCK" | grep -q 'verify_release_file'; then
+if [ -z "$VBLOCK" ] || ! printf '%s\n' "$VBLOCK" | grep -c 'verify_release_file' >/dev/null; then
     bad "could not extract the verification block from update.sh - section 2 is measuring nothing"
 else
     ok "the verification block was extracted from update.sh"
@@ -176,7 +176,7 @@ else
 fi
 
 echo "── 3. setup.sh installs a local release, SHA-256 mandatory ──"
-if grep -qF 'GITHUB_REPO' "$SETUP" || grep -qF 'dp_fetch' "$SETUP"; then
+if grep -qF 'GITHUB_REPO' "$SETUP" || grep -cF 'dp_fetch' "$SETUP" >/dev/null; then
     bad "setup.sh still carries GITHUB_REPO or dp_fetch"
 else
     ok "setup.sh carries neither GITHUB_REPO nor dp_fetch"
@@ -187,8 +187,8 @@ else
     ok "the 'Open an issue' line is gone"
 fi
 SFUNCS=$(awk '/^(check_release_dir|install_asset)\(\) \{/ {on=1} on {print} on && /^\}/ {on=0}' "$SETUP")
-if ! printf '%s\n' "$SFUNCS" | grep -q '^check_release_dir() {' \
-   || ! printf '%s\n' "$SFUNCS" | grep -q '^install_asset() {'; then
+if ! printf '%s\n' "$SFUNCS" | grep -c '^check_release_dir() {' >/dev/null \
+   || ! printf '%s\n' "$SFUNCS" | grep -c '^install_asset() {' >/dev/null; then
     bad "could not extract check_release_dir/install_asset from setup.sh"
 else
     ok "check_release_dir and install_asset were extracted from setup.sh"

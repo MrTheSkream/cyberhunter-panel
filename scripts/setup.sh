@@ -1059,7 +1059,7 @@ check_release_dir() {
     fi
     # One `<64 hex>  <name>` per line, LF only; any other line is a refusal.
     if [ "$(tr -cd '\r' < "$RELEASE_SUMS" | wc -c)" -ne 0 ] \
-       || grep -vqE '^[0-9a-f]{64}  [A-Za-z0-9._-]{1,128}$' "$RELEASE_SUMS"; then
+       || grep -vcE '^[0-9a-f]{64}  [A-Za-z0-9._-]{1,128}$' "$RELEASE_SUMS" >/dev/null; then
         error "checksums.txt in $RELEASE_DIR is malformed - refusing to install"
         exit 1
     fi

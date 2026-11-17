@@ -235,7 +235,7 @@ curl -fsSL -H "Authorization: Bearer $TOKEN" "$RELEASE_URL/$ASSET" -o "$AGENT_TM
 
 WANT=$(awk -v n="$ASSET" '$2 == n {print $1}' "$SUMS_TMP")
 if [ -z "$WANT" ] || [ "$(printf '%s\n' "$WANT" | wc -l)" -ne 1 ] \
-   || ! printf '%s' "$WANT" | grep -qE '^[0-9a-f]{64}$'; then
+   || ! printf '%s' "$WANT" | grep -cE '^[0-9a-f]{64}$' >/dev/null; then
     download_failed "checksums.txt has no valid entry for $ASSET"
 fi
 GOT=$(sha256sum "$AGENT_TMP" | awk '{print $1}')

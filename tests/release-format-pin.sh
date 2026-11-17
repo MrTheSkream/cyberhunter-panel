@@ -40,28 +40,28 @@ for name in cyberhunter-agent-linux-amd64 cyberhunter-api-linux-amd64 cyberhunte
             cyberhunter-mcp-linux-amd64 cyberhunter-agent-linux-arm64 cyberhunter-api-linux-arm64 \
             cyberhunter-cli-linux-arm64 cyberhunter-mcp-linux-arm64 cyberhunter-frontend.tar.gz \
             cyberhunter-source.tar.gz checksums.txt checksums.txt.minisig; do
-    if printf '%s\n' "$REL_CODE" | grep -qF "$name"; then ok "names $name"; else bad "does not name $name"; fi
+    if printf '%s\n' "$REL_CODE" | grep -cF "$name" >/dev/null; then ok "names $name"; else bad "does not name $name"; fi
 done
-if printf '%s\n' "$REL_CODE" | grep -qE 'dockpanel-[a-z]+-linux-|SHA256SUMS|spdx'; then
+if printf '%s\n' "$REL_CODE" | grep -cE 'dockpanel-[a-z]+-linux-|SHA256SUMS|spdx' >/dev/null; then
     bad "still produces an old asset name (dockpanel-*-linux-*, SHA256SUMS or an SBOM)"
 else
     ok "no old asset names, no SBOM"
 fi
 
 echo "── 2. signature, trusted comment, archives ──"
-if printf '%s\n' "$REL_CODE" | grep -q 'TRUSTED="cyberhunter-release ${TAG}"' \
-   && printf '%s\n' "$REL_CODE" | grep -q 'minisign -S .* -t "\$TRUSTED"'; then
+if printf '%s\n' "$REL_CODE" | grep -c 'TRUSTED="cyberhunter-release ${TAG}"' >/dev/null \
+   && printf '%s\n' "$REL_CODE" | grep -c 'minisign -S .* -t "\$TRUSTED"' >/dev/null; then
     ok "signs with trusted comment 'cyberhunter-release <tag>'"
 else
     bad "the signature is not made with the trusted comment cyberhunter-release <tag>"
 fi
-if printf '%s\n' "$REL_CODE" | grep -q 'minisign -V '; then ok "verifies its own signature"; else bad "never runs minisign -V"; fi
-if printf '%s\n' "$REL_CODE" | grep -q '\[ "\$SIG_ALG" = "ED" \]'; then
+if printf '%s\n' "$REL_CODE" | grep -c 'minisign -V ' >/dev/null; then ok "verifies its own signature"; else bad "never runs minisign -V"; fi
+if printf '%s\n' "$REL_CODE" | grep -c '\[ "\$SIG_ALG" = "ED" \]' >/dev/null; then
     ok "refuses a legacy (non pre-hashed) signature"
 else
     bad "does not check that the signature is pre-hashed (ED)"
 fi
-if printf '%s\n' "$REL_CODE" | grep -q 'git -c core.autocrlf=false archive --format=tar.gz --prefix=cyberhunter-source/ HEAD -- scripts panel'; then
+if printf '%s\n' "$REL_CODE" | grep -c 'git -c core.autocrlf=false archive --format=tar.gz --prefix=cyberhunter-source/ HEAD -- scripts panel' >/dev/null; then
     ok "source archive is the contract's git archive command"
 else
     bad "cyberhunter-source.tar.gz is not built with the contract's git archive command"
@@ -73,7 +73,7 @@ if [ "$N_ARCHIVE" -ge 1 ] && [ "$N_ARCHIVE" = "$N_SAFE" ]; then
 else
     bad "$((N_ARCHIVE - N_SAFE)) git archive call(s) without core.autocrlf=false"
 fi
-if printf '%s\n' "$REL_CODE" | grep -q 'Publish ${TAG}? \[y/N\]'; then ok "asks 'Publish <tag>? [y/N]'"; else bad "no publish confirmation"; fi
+if printf '%s\n' "$REL_CODE" | grep -c 'Publish ${TAG}? \[y/N\]' >/dev/null; then ok "asks 'Publish <tag>? [y/N]'"; else bad "no publish confirmation"; fi
 DRY_AT="$(printf '%s\n' "$REL_CODE" | grep -n 'Dry run: nothing tagged' | head -1 | cut -d: -f1)"
 TAG_AT="$(printf '%s\n' "$REL_CODE" | grep -n 'git tag -a ' | head -1 | cut -d: -f1)"
 GH_AT="$(printf '%s\n' "$REL_CODE" | grep -n 'gh release create ' | head -1 | cut -d: -f1)"
@@ -82,7 +82,7 @@ if [ -n "$DRY_AT" ] && [ -n "$TAG_AT" ] && [ -n "$GH_AT" ] && [ "$DRY_AT" -lt "$
 else
     bad "--dry-run does not stop before tagging and publishing"
 fi
-if printf '%s\n' "$REL_CODE" | grep -q 'gh release create "\$TAG" --repo "\$REPO" --verify-tag'; then
+if printf '%s\n' "$REL_CODE" | grep -c 'gh release create "\$TAG" --repo "\$REPO" --verify-tag' >/dev/null; then
     ok "gh release create uses --verify-tag"
 else
     bad "gh release create without --verify-tag"
@@ -95,19 +95,19 @@ if grep -qF "$RUST_BOOKWORM" "$REL"; then
 else
     ok "release.sh does not cite $RUST_BOOKWORM"
 fi
-if code_of "$DOCKERFILE" | grep -qE '^FROM ubuntu:22\.04@sha256:[0-9a-f]{64}$'; then
+if code_of "$DOCKERFILE" | grep -cE '^FROM ubuntu:22\.04@sha256:[0-9a-f]{64}$' >/dev/null; then
     ok "Dockerfile starts FROM ubuntu:22.04@sha256:<digest>"
 else
     bad "Dockerfile is not FROM ubuntu:22.04@sha256:<64 hex>"
 fi
 if [ "$(code_of "$DOCKERFILE" | grep -c '^FROM ')" = "1" ]; then ok "single FROM"; else bad "more than one FROM"; fi
-if code_of "$DOCKERFILE" | grep -qE '^ARG RUST_TOOLCHAIN=[0-9]+\.[0-9]+\.[0-9]+$' \
-   && code_of "$DOCKERFILE" | grep -q -- '--default-toolchain "\${RUST_TOOLCHAIN}"'; then
+if code_of "$DOCKERFILE" | grep -cE '^ARG RUST_TOOLCHAIN=[0-9]+\.[0-9]+\.[0-9]+$' >/dev/null \
+   && code_of "$DOCKERFILE" | grep -c -- '--default-toolchain "\${RUST_TOOLCHAIN}"' >/dev/null; then
     ok "toolchain pinned to an exact x.y.z"
 else
     bad "the Rust toolchain is not pinned to an exact x.y.z"
 fi
-if code_of "$DOCKERFILE" | grep -qE '^LABEL org\.cyberhunter\.release-build="[0-9]+"$'; then
+if code_of "$DOCKERFILE" | grep -cE '^LABEL org\.cyberhunter\.release-build="[0-9]+"$' >/dev/null; then
     ok "image carries a versioned org.cyberhunter.release-build label"
 else
     bad "no org.cyberhunter.release-build label"
@@ -184,7 +184,7 @@ printf '\177ELF\002\001\001\000fake' > "$ELF"
 run_check() { FAKE_GLIBC="$1" FAKE_NEEDED="$2" READELF="$FAKE" bash "$CHECK" "$ELF" 2>&1; }
 
 out="$(run_check GLIBC_2.34 libm.so.6)"; rc=$?
-if [ "$rc" = "0" ] && printf '%s' "$out" | grep -q 'max GLIBC_2.34 (limit 2.35)'; then
+if [ "$rc" = "0" ] && printf '%s' "$out" | grep -c 'max GLIBC_2.34 (limit 2.35)' >/dev/null; then
     ok "accepts GLIBC_2.34 and reports it"
 else
     bad "refused GLIBC_2.34 (rc $rc): $out"
@@ -192,7 +192,7 @@ fi
 out="$(run_check GLIBC_2.35 libm.so.6)"; rc=$?
 if [ "$rc" = "0" ]; then ok "accepts GLIBC_2.35 (the ceiling)"; else bad "refused GLIBC_2.35: $out"; fi
 out="$(run_check GLIBC_2.36 libm.so.6)"; rc=$?
-if [ "$rc" = "1" ] && printf '%s' "$out" | grep -qF "ERROR: $ELF requires GLIBC_2.36 (max 2.35)"; then
+if [ "$rc" = "1" ] && printf '%s' "$out" | grep -cF "ERROR: $ELF requires GLIBC_2.36 (max 2.35)" >/dev/null; then
     ok "refuses GLIBC_2.36 with the contract message"
 else
     bad "did not refuse GLIBC_2.36 correctly (rc $rc): $out"
@@ -202,7 +202,7 @@ if [ "$rc" = "0" ]; then ok "compares numerically (2.4 < 2.35)"; else bad "2.4 j
 out="$(run_check GLIBC_PRIVATE libm.so.6)"; rc=$?
 if [ "$rc" = "1" ]; then ok "refuses GLIBC_PRIVATE"; else bad "accepted GLIBC_PRIVATE"; fi
 out="$(run_check GLIBC_2.34 libssl.so.3)"; rc=$?
-if [ "$rc" = "1" ] && printf '%s' "$out" | grep -qF "ERROR: $ELF needs libssl.so.3"; then
+if [ "$rc" = "1" ] && printf '%s' "$out" | grep -cF "ERROR: $ELF needs libssl.so.3" >/dev/null; then
     ok "refuses NEEDED libssl.so.3 with the contract message"
 else
     bad "did not refuse libssl.so.3 correctly (rc $rc): $out"

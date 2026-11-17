@@ -245,7 +245,7 @@ if [ "$INSTALL_FROM_RELEASE" = "1" ]; then
     # The manifest format (one `<64 hex>  <name>` per line, LF only). A line
     # that does not match is a refusal, never a line to skip.
     if [ "$(tr -cd '\r' < "$CHECKSUMS" | wc -c)" -ne 0 ] \
-       || grep -vqE '^[0-9a-f]{64}  [A-Za-z0-9._-]{1,128}$' "$CHECKSUMS"; then
+       || grep -vcE '^[0-9a-f]{64}  [A-Za-z0-9._-]{1,128}$' "$CHECKSUMS" >/dev/null; then
         error "checksums.txt in $RELEASE_DIR is malformed - refusing to install"
         exit 1
     fi
