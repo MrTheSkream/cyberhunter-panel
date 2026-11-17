@@ -5,10 +5,14 @@
 //! 2. Stores error/warning events in the telemetry_events table
 //! 3. Sends unsent events to the configured remote endpoint (opt-in)
 //! 4. Cleans up old events based on retention settings
-//! 5. Checks GitHub Releases for CyberHunter - Panel updates
+//! 5. Checks the configured release repository for CyberHunter - Panel
+//!    updates (see `release_fetch` and `update_source`; nothing is requested
+//!    while updates are not configured)
 
 use crate::services::agent::{AgentClient, AgentRegistry};
 use crate::services::panel_update::semver_key;
+use crate::services::release_fetch::{self, FetchError, GithubApi, ReleaseApi};
+use crate::services::update_source::{self, Actor, SourceStatus};
 use sqlx::PgPool;
 use std::time::Duration;
 
@@ -16,10 +20,9 @@ const CHECK_INTERVAL: Duration = Duration::from_secs(3600); // 1 hour
 const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(21600); // 6 hours
 const RETENTION_DAYS: i64 = 30;
 const MAX_BATCH_SIZE: i64 = 50;
-const GITHUB_RELEASES_LATEST_URL: &str =
-    "https://api.github.com/repos/ovexro/dockpanel/releases/latest";
-const GITHUB_RELEASES_LIST_URL: &str =
-    "https://api.github.com/repos/ovexro/dockpanel/releases?per_page=20";
+/// How many releases one check lists (newest first on GitHub's side, but the
+/// choice is made by `release_key`, not by that order).
+const RELEASES_PER_CHECK: u8 = 30;
 
 /// Record a telemetry event (callable from anywhere in the backend).
 pub async fn record_event(
@@ -64,6 +67,14 @@ pub async fn run(
     // poll is UPDATE_CHECK_INTERVAL away. Reconcile it against the compiled-in
     // version now, off the network.
     reconcile_stored_update(&pool).await;
+    // Once per process, not on a supervised restart of this task: only at
+    // process start can nothing be preparing a release, which is what makes
+    // dropping partial downloads safe.
+    static STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if !STARTED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        update_source::log_signing_key_at_startup();
+        release_fetch::cleanup_cache(&pool, true).await;
+    }
 
     // Stagger start to avoid thundering herd with other background services
     tokio::time::sleep(Duration::from_secs(120)).await;
@@ -233,7 +244,7 @@ async fn send_pending_events(pool: &PgPool, endpoint: &str) {
         client
             .post(endpoint)
             .header("Content-Type", "application/json")
-            .header("User-Agent", format!("DockPanel/{}", env!("CARGO_PKG_VERSION")))
+            .header("User-Agent", format!("CyberHunter-Panel/{}", env!("CARGO_PKG_VERSION")))
             .json(&payload)
             .send(),
     )
@@ -326,167 +337,208 @@ async fn read_update_channel(pool: &PgPool) -> String {
     }
 }
 
-/// Check GitHub Releases for a newer version, honouring the
-/// `update_channel` setting:
-///   - `stable`    → /releases/latest (excludes prereleases, current default)
-///   - `candidate` → /releases?per_page=20, first by published_at desc
-///                   (includes prereleases - pre-W4 GA releases AND RC
-///                   builds when CI starts tagging `prerelease: true`)
+/// What one successful check found.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CheckOutcome {
+    pub checked_at: String,
+    /// Without the `v`, as stored in `update_available_version`.
+    pub available_version: Option<String>,
+    pub prerelease: bool,
+}
+
+/// The six-hourly poll, honouring the `update_channel` setting:
+///   - `stable`    → newest release that is not a pre-release
+///   - `candidate` → newest release, pre-releases included
 ///   - `hold`      → skip the poll entirely (operator pinned)
 ///
-/// Both "Check Now" routes bypass the `hold` skip by calling
-/// [`check_for_updates_manual`] instead - `hold` pins automatic polling, not
-/// an operator who has just asked to look.
+/// Both "Check Now" routes bypass the `hold` skip by calling [`check_now`]
+/// instead - `hold` pins automatic polling, not an operator who has just
+/// asked to look. Without a configuration the poll is skipped silently and
+/// the advertisement cleared, with no request.
 async fn check_for_updates(pool: &PgPool) {
     let channel = read_update_channel(pool).await;
     if channel == "hold" {
         tracing::debug!("Update poll skipped: channel=hold");
         return;
     }
-    check_for_updates_inner(pool, &channel).await;
+    let status = update_source::load();
+    if !status.configured {
+        tracing::debug!("Update poll skipped: updates are not configured");
+        clear_update_advertisement(pool).await;
+        return;
+    }
+    let _ = run_check(pool, &status, &channel, None).await;
 }
 
-/// Bypass the `hold` skip - operator manually clicked "Check now".
-/// Always polls regardless of channel; uses channel only to choose URL.
-pub async fn check_for_updates_manual(pool: &PgPool) {
+/// Operator clicked "Check now": polls whatever the channel (`hold` scans as
+/// `stable`), and journals the result under the operator's name.
+pub async fn check_now(pool: &PgPool, actor: &Actor) -> Result<CheckOutcome, FetchError> {
     let mut channel = read_update_channel(pool).await;
     if channel == "hold" {
         channel = "stable".into(); // manual check defaults to stable scan
     }
-    check_for_updates_inner(pool, &channel).await;
+    let status = update_source::load();
+    run_check(pool, &status, &channel, Some(actor)).await
 }
 
-async fn check_for_updates_inner(pool: &PgPool, channel: &str) {
-    let url = match channel {
-        "candidate" => GITHUB_RELEASES_LIST_URL,
-        _ => GITHUB_RELEASES_LATEST_URL,
+async fn run_check(
+    pool: &PgPool,
+    status: &SourceStatus,
+    channel: &str,
+    actor: Option<&Actor>,
+) -> Result<CheckOutcome, FetchError> {
+    if !status.configured {
+        clear_update_advertisement(pool).await;
+        return Err(FetchError::NotConfigured);
+    }
+    let token_file = status
+        .source
+        .as_ref()
+        .map(|s| s.token_file.clone())
+        .unwrap_or_default();
+    let result = match GithubApi::new(token_file) {
+        Ok(api) => check_for_updates_inner(pool, &api, status, channel).await,
+        Err(e) => Err(e),
     };
-
-    let client = reqwest::Client::new();
-    let result = tokio::time::timeout(
-        Duration::from_secs(15),
-        client
-            .get(url)
-            .header(
-                "User-Agent",
-                format!("DockPanel/{}", env!("CARGO_PKG_VERSION")),
-            )
-            .header("Accept", "application/vnd.github+json")
-            .send(),
+    let actor = actor.cloned().unwrap_or_else(Actor::system);
+    let target = result
+        .as_ref()
+        .ok()
+        .and_then(|o| o.available_version.as_deref())
+        .map(release_fetch::release_tag);
+    update_source::audit(
+        pool,
+        &actor,
+        "update.check",
+        target.as_deref(),
+        check_details(channel, matches!(actor, Actor::User { .. }), &result),
     )
     .await;
-
-    let resp = match result {
-        Ok(Ok(r)) if r.status().is_success() => r,
-        Ok(Ok(r)) => {
-            tracing::debug!("GitHub releases check returned {}", r.status());
-            return;
-        }
-        Ok(Err(e)) => {
-            tracing::debug!("GitHub releases check failed: {e}");
-            return;
-        }
-        Err(_) => {
-            tracing::debug!("GitHub releases check timed out");
-            return;
-        }
-    };
-
-    let body = match resp.text().await {
-        Ok(b) => b,
-        Err(_) => return,
-    };
-
-    // Candidate channel returns an ARRAY of releases; stable channel
-    // returns a SINGLE release object. Unify by always working on a
-    // single-release `serde_json::Value`.
-    let release: serde_json::Value = match serde_json::from_str::<serde_json::Value>(&body) {
-        Ok(v) => match channel {
-            "candidate" => {
-                // Take first by published_at desc. GitHub returns the
-                // list pre-sorted that way already.
-                match v.as_array().and_then(|arr| arr.first()) {
-                    Some(first) => first.clone(),
-                    None => return, // no releases yet (e.g. fresh repo)
-                }
-            }
-            _ => v,
-        },
-        Err(_) => return,
-    };
-
-    let tag = release
-        .get("tag_name")
-        .and_then(|t| t.as_str())
-        .unwrap_or("");
-    let latest_version = tag.trim_start_matches('v');
-    let current_version = env!("CARGO_PKG_VERSION");
-
-    // One decision covers every not-newer shape: an empty tag, a release
-    // older than what is installed (the operator upgraded past it by hand), the
-    // release already running, and anything unparseable. All of them CLEAR the
-    // advertisement. Until v2.53.0 only byte-equality cleared it, so a stored
-    // row that was merely older survived every poll for as long as it existed
-    // and the panel kept offering an update to a version behind itself (#98).
-    if advertisement_is_stale(latest_version, current_version) {
-        clear_update_advertisement(pool).await;
-        record_update_check_time(pool).await;
-        return;
-    }
-
-    let release_notes = release
-        .get("body")
-        .and_then(|b| b.as_str())
-        .unwrap_or("")
-        .chars()
-        .take(4000) // Limit stored release notes
-        .collect::<String>();
-
-    let release_url = release
-        .get("html_url")
-        .and_then(|u| u.as_str())
-        .unwrap_or("");
-
-    // Store update info in settings
-    let pairs = [
-        ("update_available_version", latest_version),
-        ("update_release_notes", &release_notes),
-        ("update_release_url", release_url),
-    ];
-
-    for (key, value) in &pairs {
-        let _ = sqlx::query(
-            "INSERT INTO settings (key, value) VALUES ($1, $2) \
-             ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
-        )
-        .bind(key)
-        .bind(value)
-        .execute(pool)
-        .await;
-    }
-
-    record_update_check_time(pool).await;
-
-    tracing::info!(
-        "CyberHunter - Panel update available ({channel} channel): v{current_version} -> v{latest_version}"
-    );
+    result
 }
 
-/// Drop an advertisement the running binary has already caught up with.
+/// `details` of an `update.check` journal entry.
+pub fn check_details(
+    channel: &str,
+    manual: bool,
+    result: &Result<CheckOutcome, FetchError>,
+) -> serde_json::Value {
+    let (outcome, version, error) = match result {
+        Ok(CheckOutcome {
+            available_version: Some(v),
+            ..
+        }) => ("available", Some(v.clone()), None),
+        Ok(_) => ("up_to_date", None, None),
+        Err(e) => ("error", None, Some(e.message())),
+    };
+    serde_json::json!({
+        "channel": channel,
+        "manual": manual,
+        "result": outcome,
+        "available_version": version,
+        "error": error,
+    })
+}
+
+/// The single check behind the poller and both "Check now" routes.
+///
+/// Without a configuration it makes no request at all: it clears the
+/// advertisement and returns `NotConfigured`. A GitHub failure is stored in
+/// `update_check_error` (the contract message, never a URL or a token) and
+/// leaves the previous advertisement as it was.
+pub async fn check_for_updates_inner<A: ReleaseApi>(
+    pool: &PgPool,
+    api: &A,
+    status: &SourceStatus,
+    channel: &str,
+) -> Result<CheckOutcome, FetchError> {
+    let repo = match (&status.repo, status.configured) {
+        (Some(r), true) => r.clone(),
+        _ => {
+            clear_update_advertisement(pool).await;
+            return Err(FetchError::NotConfigured);
+        }
+    };
+
+    let releases = match api.list_releases(&repo, RELEASES_PER_CHECK).await {
+        Ok(r) => r,
+        Err(e) => {
+            e.log("Update check");
+            set_setting(pool, "update_check_error", e.message()).await;
+            return Err(e);
+        }
+    };
+
+    let current_version = env!("CARGO_PKG_VERSION");
+    // One decision covers every not-newer shape: nothing published, a release
+    // older than what is installed (the operator upgraded past it by hand), the
+    // release already running. All of them CLEAR the advertisement. Until
+    // v2.53.0 only byte-equality cleared it, so a stored row that was merely
+    // older survived every poll and the panel kept offering an update to a
+    // version behind itself (#98).
+    let chosen = release_fetch::select_release(&releases, channel)
+        .filter(|r| is_newer_release(&r.tag_name, current_version));
+
+    let outcome = match chosen {
+        None => {
+            clear_update_advertisement(pool).await;
+            CheckOutcome {
+                checked_at: String::new(),
+                available_version: None,
+                prerelease: false,
+            }
+        }
+        Some(release) => {
+            let latest_version = release.tag_name.trim_start_matches('v').to_string();
+            let prerelease = release_fetch::is_prerelease(release);
+            set_setting(pool, "update_available_version", &latest_version).await;
+            set_setting(pool, "update_release_notes", &release.notes()).await;
+            set_setting(pool, "update_release_url", release.page_url().unwrap_or("")).await;
+            set_setting(
+                pool,
+                "update_available_prerelease",
+                if prerelease { "true" } else { "false" },
+            )
+            .await;
+            tracing::info!(
+                "CyberHunter - Panel update available ({channel} channel): v{current_version} -> v{latest_version}"
+            );
+            CheckOutcome {
+                checked_at: String::new(),
+                available_version: Some(latest_version),
+                prerelease,
+            }
+        }
+    };
+
+    let checked_at = record_update_check_time(pool).await;
+    delete_setting(pool, "update_check_error").await;
+    Ok(CheckOutcome {
+        checked_at,
+        ..outcome
+    })
+}
+
+/// Drop an advertisement the running binary has already caught up with, or
+/// any advertisement at all when updates are not configured.
 ///
 /// Runs once at service start. `update.sh` replaces the binaries but never
-/// writes to the settings table, and no migration touches these keys, so a
-/// panel that has just been upgraded boots with the row still advertising the
-/// version it is now running. Nothing else would clear it before the first
-/// poll, which is [`UPDATE_CHECK_INTERVAL`] plus the start stagger away - so
-/// every operator saw "vX is available (current: vX)" for six hours after
-/// every upgrade.
+/// writes to the settings table, so a panel that has just been upgraded boots
+/// with the row still advertising the version it is now running. Nothing else
+/// would clear it before the first poll, which is [`UPDATE_CHECK_INTERVAL`]
+/// plus the start stagger away - so every operator saw "vX is available
+/// (current: vX)" for six hours after every upgrade.
 ///
-/// A DB read and possibly a delete; no GitHub request, so it costs the API
-/// nothing and works on a box with no outbound network.
+/// A DB read and possibly a delete; no request, so it works on a box with no
+/// outbound network.
 async fn reconcile_stored_update(pool: &PgPool) {
     let advertised = get_setting(pool, "update_available_version").await;
     if advertised.is_empty() {
+        return;
+    }
+    if !update_source::load().configured {
+        tracing::info!("Clearing the stored update advertisement - updates are not configured");
+        clear_update_advertisement(pool).await;
         return;
     }
     let current_version = env!("CARGO_PKG_VERSION");
@@ -499,26 +551,41 @@ async fn reconcile_stored_update(pool: &PgPool) {
     clear_update_advertisement(pool).await;
 }
 
-/// Delete the three keys that make the UI offer an update. `update_checked_at`
+/// Delete the keys that make the UI offer an update. `update_checked_at`
 /// deliberately survives: the check still happened, and the UI shows when.
-async fn clear_update_advertisement(pool: &PgPool) {
+pub async fn clear_update_advertisement(pool: &PgPool) {
     let _ = sqlx::query(
-        "DELETE FROM settings WHERE key IN ('update_available_version', 'update_release_notes', 'update_release_url')",
+        "DELETE FROM settings WHERE key IN ('update_available_version', 'update_release_notes', \
+         'update_release_url', 'update_available_prerelease')",
     )
     .execute(pool)
     .await;
 }
 
-/// Record the check timestamp so the UI can show "checked Xs ago" - on polls
-/// that found nothing just as much as on polls that found a release.
-async fn record_update_check_time(pool: &PgPool) {
+async fn set_setting(pool: &PgPool, key: &str, value: &str) {
     let _ = sqlx::query(
-        "INSERT INTO settings (key, value) VALUES ('update_checked_at', $1) \
+        "INSERT INTO settings (key, value) VALUES ($1, $2) \
          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
     )
-    .bind(chrono::Utc::now().to_rfc3339())
+    .bind(key)
+    .bind(value)
     .execute(pool)
     .await;
+}
+
+pub async fn delete_setting(pool: &PgPool, key: &str) {
+    let _ = sqlx::query("DELETE FROM settings WHERE key = $1")
+        .bind(key)
+        .execute(pool)
+        .await;
+}
+
+/// Record the check timestamp so the UI can show "checked Xs ago" - on polls
+/// that found nothing just as much as on polls that found a release.
+async fn record_update_check_time(pool: &PgPool) -> String {
+    let now = chrono::Utc::now().to_rfc3339();
+    set_setting(pool, "update_checked_at", &now).await;
+    now
 }
 
 /// True when a stored `update_available_version` must be deleted rather than
@@ -551,7 +618,7 @@ pub fn is_newer_release(latest: &str, current: &str) -> bool {
 /// comes back as a second component. GA (no suffix) outranks every prerelease;
 /// `rc.N` orders by N; any other suffix ranks below rc.1 rather than being
 /// silently promoted to GA.
-fn release_key(v: &str) -> ((u8, u64, u64, u64), u64) {
+pub(crate) fn release_key(v: &str) -> ((u8, u64, u64, u64), u64) {
     let v = v.trim();
     let prerelease = match v.split_once('-') {
         Some((_, suffix)) => suffix
@@ -667,6 +734,79 @@ mod tests {
         assert!(!is_newer_release("2.53.0-rc.1", "2.53.0-rc.2"));
         // A suffix that is not `rc.N` ranks below rc.1, never above GA.
         assert!(!is_newer_release("2.53.0-beta", "2.53.0"));
+    }
+
+    /// A pool that never connects: every query fails fast. The update check
+    /// ignores write failures, so its decisions can be tested without a DB.
+    pub(crate) fn dead_pool() -> PgPool {
+        sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(Duration::from_millis(300))
+            .connect_lazy("postgres://u:p@127.0.0.1:1/none")
+            .unwrap()
+    }
+
+    fn configured_status() -> SourceStatus {
+        update_source::evaluate(
+            Some("531546B906DAE39E".into()),
+            update_source::read_conf(
+                "UPDATE_REPO=o/n\nUPDATE_TOKEN_FILE=/etc/dockpanel/update-token\n",
+            ),
+            true,
+        )
+    }
+
+    #[tokio::test]
+    async fn no_request_leaves_without_a_configuration() {
+        let api = crate::services::release_fetch::tests::FakeApi::fixture();
+        let pool = dead_pool();
+        for status in [
+            update_source::evaluate(None, update_source::read_conf("UPDATE_REPO=o/n\nUPDATE_TOKEN_FILE=/etc/dockpanel/t\n"), true),
+            update_source::evaluate(Some("ID".into()), Err(update_source::ConfError::Missing), true),
+            update_source::evaluate(Some("ID".into()), update_source::read_conf("UPDATE_REPO=o/n\nUPDATE_TOKEN_FILE=/etc/dockpanel/t\n"), false),
+        ] {
+            let r = check_for_updates_inner(&pool, &api, &status, "candidate").await;
+            assert_eq!(r.unwrap_err(), FetchError::NotConfigured);
+        }
+        assert_eq!(api.count(), 0, "not one request without a configuration");
+    }
+
+    #[tokio::test]
+    async fn a_configured_check_lists_once_and_selects_by_channel() {
+        let mut api = crate::services::release_fetch::tests::FakeApi::fixture();
+        // v9.9.9 (fixture) is far ahead of this panel; add a newer rc.
+        let mut rc = api.releases[0].clone();
+        rc.tag_name = "v9.9.10-rc.1".into();
+        api.releases.push(rc);
+        let pool = dead_pool();
+        let status = configured_status();
+        let o = check_for_updates_inner(&pool, &api, &status, "stable").await.unwrap();
+        assert_eq!(o.available_version.as_deref(), Some("9.9.9"));
+        assert!(!o.prerelease);
+        let o = check_for_updates_inner(&pool, &api, &status, "candidate").await.unwrap();
+        assert_eq!(o.available_version.as_deref(), Some("9.9.10-rc.1"));
+        assert!(o.prerelease);
+        assert_eq!(api.count(), 2);
+    }
+
+    #[test]
+    fn check_details_carry_the_message_and_never_a_token() {
+        let d = check_details("stable", true, &Err(FetchError::TokenInvalid));
+        assert_eq!(d["result"], "error");
+        assert_eq!(d["error"], "The update token is missing or expired");
+        assert_eq!(d["manual"], true);
+        let d = check_details(
+            "candidate",
+            false,
+            &Ok(CheckOutcome {
+                checked_at: "t".into(),
+                available_version: Some("3.0.0-rc.2".into()),
+                prerelease: true,
+            }),
+        );
+        assert_eq!(d["result"], "available");
+        assert_eq!(d["available_version"], "3.0.0-rc.2");
+        let token = crate::services::update_source::tests::KNOWN_TOKEN;
+        assert!(!d.to_string().contains(token));
     }
 
     #[test]

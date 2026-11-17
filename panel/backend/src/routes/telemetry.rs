@@ -1,6 +1,6 @@
 use axum::{
     extract::{Query, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     Json,
 };
 use serde::Deserialize;
@@ -191,15 +191,20 @@ pub async fn get_config(
             .map_err(|e| internal_error("get telemetry config", e))?;
 
     let current_version = env!("CARGO_PKG_VERSION");
+    let configured = crate::services::update_source::load().configured;
 
     let mut config = serde_json::Map::new();
     let mut update_available = false;
     for (key, value) in rows {
+        if !keep_update_key(configured, &key) {
+            continue;
+        }
         if key == "update_available_version" {
             update_available = crate::services::telemetry_collector::is_newer_release(&value, current_version);
         }
         config.insert(key, serde_json::Value::String(value));
     }
+    config.insert("configured".to_string(), serde_json::Value::Bool(configured));
 
     // Add current version
     config.insert(
@@ -524,12 +529,14 @@ pub async fn update_status(
             .map_err(|e| internal_error("get update status", e))?;
 
     let current_version = env!("CARGO_PKG_VERSION");
+    let configured = crate::services::update_source::load().configured;
 
     let mut result = serde_json::Map::new();
     result.insert(
         "current_version".to_string(),
         serde_json::Value::String(current_version.to_string()),
     );
+    result.insert("configured".to_string(), serde_json::Value::Bool(configured));
 
     // Belt to the collector's braces. The presence of a row proved only that a
     // check once found something; it is an update only while it names a release
@@ -538,6 +545,9 @@ pub async fn update_status(
     // at start-up and on every poll.
     let mut has_update = false;
     for (key, value) in rows {
+        if !keep_update_key(configured, &key) {
+            continue;
+        }
         if key == "update_available_version" {
             has_update = crate::services::telemetry_collector::is_newer_release(&value, current_version);
         }
@@ -560,20 +570,23 @@ pub async fn update_status(
 /// Now" is an explicit operator request, and `hold` suppresses *automatic*
 /// polling only, so this takes the same bypass the `/api/update/manual-check`
 /// button has always taken. Bounded by the collector's own 15s HTTP timeout.
+///
+/// Without an update configuration: 409 `updates_not_configured`, and no
+/// request leaves. A GitHub failure answers with its contract code.
 pub async fn check_updates(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
+    headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    crate::services::telemetry_collector::check_for_updates_manual(&state.db).await;
-
-    let available: Option<(String,)> =
-        sqlx::query_as("SELECT value FROM settings WHERE key = 'update_available_version'")
-            .fetch_optional(&state.db)
-            .await
-            .map_err(|e| internal_error("check updates", e))?;
-    let available = available.map(|r| r.0).filter(|v| {
-        crate::services::telemetry_collector::is_newer_release(v, env!("CARGO_PKG_VERSION"))
-    });
+    use crate::services::{release_fetch::FetchError, telemetry_collector, update_source};
+    if !update_source::load().configured {
+        return Err(FetchError::NotConfigured.api_error());
+    }
+    let actor = update_source::Actor::from_claims(&claims, &headers);
+    let outcome = telemetry_collector::check_now(&state.db, &actor)
+        .await
+        .map_err(|e| e.api_error())?;
+    let available = outcome.available_version;
 
     tracing::info!(user = %claims.email, "Manual update check triggered");
 
@@ -585,4 +598,26 @@ pub async fn check_updates(
         },
         "available_version": available,
     })))
+}
+
+/// Whether a settings key may appear in `/api/telemetry/config` and
+/// `/api/telemetry/update-status`: without an update configuration, every
+/// `update_*` key but `update_checked_at` is left out, so no banner shows.
+fn keep_update_key(configured: bool, key: &str) -> bool {
+    configured || !key.starts_with("update_") || key == "update_checked_at"
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn update_keys_are_hidden_without_a_configuration() {
+        for k in ["update_available_version", "update_release_notes", "update_release_url"] {
+            assert!(!keep_update_key(false, k), "{k}");
+            assert!(keep_update_key(true, k), "{k}");
+        }
+        assert!(keep_update_key(false, "update_checked_at"));
+        assert!(keep_update_key(false, "telemetry_enabled"));
+    }
 }

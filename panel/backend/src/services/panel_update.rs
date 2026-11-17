@@ -5,16 +5,20 @@
 //! `update.sh` (its binary-swap + `.bak` rollback path) and are battle-tested.
 //! The orchestrator's job is:
 //!
-//!   1. Create a persistent snapshot via [`super::panel_snapshot`].
-//!   2. Shell out to `update.sh` with `DOCKPANEL_NO_SELF_REFRESH=1` +
-//!      `DOCKPANEL_VERSION=$target` so a single subprocess invocation does
-//!      the work without mid-flight re-exec.
-//!   3. Track state in two places:
+//!   1. Fetch and verify the release (signature, tag, SHA-256) into the
+//!      release cache via [`super::release_fetch`]. Nothing else happens
+//!      unless that passed.
+//!   2. Create a persistent snapshot via [`super::panel_snapshot`].
+//!   3. Shell out to the `update.sh` **of that verified release**, with
+//!      `INSTALL_FROM_RELEASE=1`, `DOCKPANEL_VERSION=<tag>` and
+//!      `CYBERHUNTER_RELEASE_DIR=<release dir>`: the script installs files that
+//!      were already verified, and re-checks only their SHA-256.
+//!   4. Track state in two places:
 //!      - In-process `Arc<RwLock<UpdateState>>` for fast guards against
 //!        concurrent applies within one process lifetime.
 //!      - `panel_snapshots` rows in the DB for cross-restart truth (the
 //!        api process dies mid-swap when update.sh restarts services).
-//!   4. On the next process boot, [`finalize_pending_on_startup`] closes
+//!   5. On the next process boot, [`finalize_pending_on_startup`] closes
 //!      out any in-flight rows by writing `to_version =
 //!      CARGO_PKG_VERSION`. Equal `from_version`/`to_version` ⇒ rollback
 //!      happened.
@@ -40,10 +44,39 @@ use uuid::Uuid;
 
 use crate::models::PanelSnapshot;
 use crate::services::panel_snapshot::{self, SnapshotTrigger};
+use crate::services::release_fetch;
+use crate::services::update_source::{self, Actor};
 
-/// Path to `scripts/update.sh` on a panel install. setup.sh + update.sh
-/// both lay the source tree under `/opt/dockpanel`, so this is stable.
-const UPDATE_SCRIPT: &str = "/opt/dockpanel/scripts/update.sh";
+/// The oldest agent that verifies signed releases itself. An older agent would
+/// fetch its update from somewhere else on its own, so the fleet refuses it.
+pub const MIN_SIGNED_AGENT_VERSION: &str = "3.0.0-rc.1";
+
+/// `true` when an agent reporting `version` can verify signed releases.
+/// Unknown or unparseable versions cannot.
+pub fn agent_can_verify_signed(version: Option<&str>) -> bool {
+    match version.map(str::trim) {
+        Some(v) if validate_target_version(v) => {
+            crate::services::telemetry_collector::release_key(v.trim_start_matches('v'))
+                >= crate::services::telemetry_collector::release_key(MIN_SIGNED_AGENT_VERSION)
+        }
+        _ => false,
+    }
+}
+
+/// The per-server refusal for an agent too old to verify signed releases.
+pub fn legacy_agent_refusal(version: Option<&str>) -> Option<String> {
+    if agent_can_verify_signed(version) {
+        return None;
+    }
+    let running = match version {
+        Some(v) if !v.trim().is_empty() => format!("v{}", v.trim().trim_start_matches('v')),
+        _ => "an unknown version".to_string(),
+    };
+    Some(format!(
+        "This agent runs {running}, older than {MIN_SIGNED_AGENT_VERSION}, and cannot verify \
+         signed releases. Reinstall it with install-agent.sh."
+    ))
+}
 
 /// A snapshot row is considered "in flight" if it has `to_version IS NULL`
 /// and was created within this window. Older rows that never finalized are
@@ -155,11 +188,14 @@ pub enum UpdateState {
         snapshot_id: Uuid,
         completed_at: DateTime<Utc>,
     },
-    /// Orchestrator failed before `update.sh` could run (snapshot error,
-    /// validation, missing script, etc.).
+    /// Orchestrator failed before `update.sh` could run (download, signature,
+    /// checksum, snapshot error, missing script, etc.). `reason` is the
+    /// contract message for a release failure, and `code` its stable code.
     Failed {
         reason: String,
         at: DateTime<Utc>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        code: Option<String>,
     },
 }
 
@@ -335,30 +371,36 @@ pub async fn current_state(handle: &UpdateStateHandle, pool: &PgPool) -> UpdateS
     UpdateState::Idle
 }
 
+/// `last_log_line` while the release is fetched and verified.
+pub const PREPARING_LOG_LINE: &str = "Downloading and verifying release";
+
 /// Start the panel-self-update flow.
 ///
-/// 1. Validate target_version + in-flight guard.
-/// 2. Create snapshot with trigger=pre-update:<target>.
-/// 3. Spawn `update.sh` detached (process group of its own so SIGTERM to
-///    the api during binary swap doesn't propagate up).
-/// 4. Background task streams stdout into the state handle's
-///    `last_log_line` until the api dies or update.sh finishes.
+/// Synchronous part, so the operator gets a real 4xx now:
+///   1. validate `target_version`;
+///   2. reserve the in-flight slot (in-process and DB).
 ///
-/// Returns the InFlight state to the caller; the actual apply progress is
-/// observed via `current_state` polling.
+/// Then everything slow runs in a background task, because the panel vhost
+/// cuts `/api` at 300 s and a download plus the snapshot can exceed it:
+///   3. fetch and verify the release (`release_fetch::prepare`); on failure the
+///      state becomes `Failed { code }` and **no snapshot is taken**;
+///   4. snapshot with trigger=pre-update:<target>;
+///   5. spawn the `update.sh` of the verified release, detached (process group
+///      of its own so SIGTERM to the api during the binary swap does not
+///      propagate up), and stream its output into `last_log_line`.
+///
+/// Returns the reserved InFlight state; progress is observed via
+/// `current_state` polling.
 pub async fn start_panel_update(
     handle: UpdateStateHandle,
     pool: PgPool,
     target_version: String,
     operator: Option<String>,
+    actor: Actor,
 ) -> Result<UpdateState, OrchestratorError> {
     let target_version = target_version.trim().to_string();
     if !validate_target_version(&target_version) {
         return Err(OrchestratorError::InvalidTargetVersion(target_version));
-    }
-
-    if !std::path::Path::new(UPDATE_SCRIPT).exists() {
-        return Err(OrchestratorError::ScriptMissing(UPDATE_SCRIPT.into()));
     }
 
     // Concurrent-apply guard (in-process + DB).
@@ -370,39 +412,154 @@ pub async fn start_panel_update(
     // check and both spawned their own `create_snapshot` + detached `update.sh`.
     // Reserve InFlight atomically under ONE write-lock acquisition, before any
     // async work starts, so a second caller sees it immediately. The reservation
-    // uses a nil snapshot_id until the real snapshot exists; on snapshot failure
-    // the reservation is released back to Idle so a legitimate retry isn't locked
-    // out by this call's own failed attempt.
+    // uses a nil snapshot_id until the real snapshot exists; on any failure
+    // before update.sh runs the reservation is released (to `Failed`) so a
+    // legitimate retry isn't locked out by this call's own failed attempt.
     let reserved_at = Utc::now();
+    let reserved = UpdateState::InFlight {
+        target_version: target_version.clone(),
+        snapshot_id: Uuid::nil(),
+        started_at: reserved_at,
+        last_log_line: Some(PREPARING_LOG_LINE.to_string()),
+    };
     {
         let mut s = handle.write().await;
         if matches!(*s, UpdateState::InFlight { .. }) {
             return Err(OrchestratorError::AlreadyInFlight);
         }
-        *s = UpdateState::InFlight {
-            target_version: target_version.clone(),
-            snapshot_id: Uuid::nil(),
-            started_at: reserved_at,
-            last_log_line: None,
-        };
+        *s = reserved.clone();
     }
     let cutoff = Utc::now() - chrono::Duration::minutes(IN_FLIGHT_WINDOW_MIN);
     // Same exclusion as `current_state`: a manual snapshot is not an update, so
     // it must not lock out the one thing an operator does right after taking it.
-    let in_flight_count: (i64,) = sqlx::query_as(
+    let in_flight_count: Result<(i64,), sqlx::Error> = sqlx::query_as(
         "SELECT COUNT(*) FROM panel_snapshots \
          WHERE to_version IS NULL AND trigger <> 'manual' AND created_at > $1",
     )
     .bind(cutoff)
     .fetch_one(&pool)
-    .await?;
-    if in_flight_count.0 > 0 {
-        *handle.write().await = UpdateState::Idle;
-        return Err(OrchestratorError::AlreadyInFlight);
+    .await;
+    match in_flight_count {
+        Ok((n,)) if n > 0 => {
+            *handle.write().await = UpdateState::Idle;
+            return Err(OrchestratorError::AlreadyInFlight);
+        }
+        Ok(_) => {}
+        Err(e) => {
+            *handle.write().await = UpdateState::Idle;
+            return Err(OrchestratorError::Db(e));
+        }
     }
 
-    // Create the pre-update snapshot. If this fails, release the reservation -
-    // no update actually started, so nothing should stay locked.
+    tokio::spawn(run_panel_update(
+        handle,
+        pool,
+        target_version,
+        operator,
+        actor,
+        reserved_at,
+    ));
+    Ok(reserved)
+}
+
+/// Record a failure that happened before `update.sh` ran: state, log, journal.
+async fn fail_before_updater(
+    handle: &UpdateStateHandle,
+    pool: &PgPool,
+    actor: &Actor,
+    tag: &str,
+    stage: &str,
+    code: Option<&str>,
+    reason: String,
+) {
+    tracing::error!("Panel update to {tag} failed at stage '{stage}': {reason}");
+    *handle.write().await = UpdateState::Failed {
+        reason: reason.clone(),
+        at: Utc::now(),
+        code: code.map(str::to_string),
+    };
+    update_source::audit(
+        pool,
+        actor,
+        "update.apply_failed",
+        Some(tag),
+        apply_failed_details(tag, stage, code, &reason),
+    )
+    .await;
+}
+
+/// `details` of `update.apply_failed`.
+pub fn apply_failed_details(
+    tag: &str,
+    stage: &str,
+    code: Option<&str>,
+    reason: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "from_version": env!("CARGO_PKG_VERSION"),
+        "to_version": tag.trim_start_matches('v'),
+        "stage": stage,
+        "code": code,
+        "reason": reason,
+    })
+}
+
+/// The background half of [`start_panel_update`].
+async fn run_panel_update(
+    handle: UpdateStateHandle,
+    pool: PgPool,
+    target_version: String,
+    operator: Option<String>,
+    actor: Actor,
+    started_at: DateTime<Utc>,
+) {
+    let tag = release_fetch::release_tag(&target_version);
+
+    // 3. Fetch and verify. Nothing below runs unless every file passed.
+    let prepared = match release_fetch::panel_files() {
+        Ok(files) => {
+            let refs: Vec<&str> = files.iter().map(String::as_str).collect();
+            match tokio::time::timeout(
+                release_fetch::PREPARE_TIMEOUT,
+                release_fetch::prepare(&tag, &refs),
+            )
+            .await
+            {
+                Ok(r) => r,
+                Err(_) => Err(release_fetch::FetchError::DownloadFailed(
+                    "release preparation timed out".into(),
+                )),
+            }
+        }
+        Err(e) => Err(e),
+    };
+    let release_dir = match prepared {
+        Ok(dir) => dir,
+        Err(e) => {
+            e.log(&format!("Panel update to {tag}"));
+            fail_before_updater(
+                &handle,
+                &pool,
+                &actor,
+                &tag,
+                e.stage(),
+                Some(e.code()),
+                e.message().to_string(),
+            )
+            .await;
+            return;
+        }
+    };
+    release_fetch::cleanup_cache(&pool, false).await;
+
+    let script = release_fetch::update_script_path(&release_dir);
+    if !script.exists() {
+        let e = OrchestratorError::ScriptMissing(script.display().to_string());
+        fail_before_updater(&handle, &pool, &actor, &tag, "updater", None, e.to_string()).await;
+        return;
+    }
+
+    // 4. Snapshot, only now that the release is known good.
     let meta = match panel_snapshot::create_snapshot(
         &pool,
         SnapshotTrigger::PreUpdate {
@@ -414,35 +571,31 @@ pub async fn start_panel_update(
     {
         Ok(m) => m,
         Err(e) => {
-            *handle.write().await = UpdateState::Idle;
-            return Err(e.into());
+            let e = OrchestratorError::from(e);
+            fail_before_updater(&handle, &pool, &actor, &tag, "updater", None, e.to_string()).await;
+            return;
         }
     };
 
-    let started_at = reserved_at;
-    let in_flight = UpdateState::InFlight {
+    *handle.write().await = UpdateState::InFlight {
         target_version: target_version.clone(),
         snapshot_id: meta.id,
         started_at,
         last_log_line: None,
     };
-    *handle.write().await = in_flight.clone();
 
-    // Spawn update.sh. Detached process group so systemctl stop of
-    // dockpanel-api (issued by update.sh) doesn't propagate SIGTERM to
+    // 5. Spawn the verified update.sh. Detached process group so systemctl
+    // stop of dockpanel-api (issued by update.sh) doesn't propagate SIGTERM to
     // the script itself. PID1 reaps when complete.
     let mut cmd = Command::new("bash");
-    cmd.arg(UPDATE_SCRIPT)
+    cmd.arg(&script)
         .env("INSTALL_FROM_RELEASE", "1")
-        .env("DOCKPANEL_NO_SELF_REFRESH", "1")
-        // update.sh documents DOCKPANEL_VERSION as `vX.Y.Z` and concatenates it
-        // straight into the release download URL, but the poller stores the
-        // advertised version with the `v` stripped (telemetry_collector.rs) and
-        // apply_update validates against that stripped form. Passing it through
-        // verbatim built `releases/download/2.11.2/...`, which 404s - so every
-        // self-update died at the first `curl -sfL` with exit 22, before any
-        // binary was swapped. Re-add the prefix at this boundary.
-        .env("DOCKPANEL_VERSION", format!("v{}", target_version.trim_start_matches('v')))
+        // `vX.Y.Z`: the release tag, exactly the directory name below. The
+        // poller stores the advertised version with the `v` stripped, so it is
+        // re-added at this boundary (it was once passed bare, and every
+        // self-update aborted before any binary was swapped).
+        .env("DOCKPANEL_VERSION", &tag)
+        .env("CYBERHUNTER_RELEASE_DIR", &release_dir)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .stdin(Stdio::null());
@@ -451,110 +604,119 @@ pub async fn start_panel_update(
         cmd.process_group(0);
     }
 
-    let mut child = cmd.spawn().map_err(OrchestratorError::Spawn)?;
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            let reason = OrchestratorError::Spawn(e).to_string();
+            finalize_failed_update(&pool, &handle, meta.id).await;
+            fail_before_updater(&handle, &pool, &actor, &tag, "updater", None, reason).await;
+            return;
+        }
+    };
+    update_source::audit(
+        &pool,
+        &actor,
+        "update.apply_started",
+        Some(&tag),
+        serde_json::json!({
+            "from_version": env!("CARGO_PKG_VERSION"),
+            "to_version": tag.trim_start_matches('v'),
+            "snapshot_id": meta.id,
+        }),
+    )
+    .await;
+
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
-    let handle_clone = handle.clone();
-    let handle_for_exit = handle.clone();
-    let pool_for_exit = pool.clone();
-    let snapshot_id_for_exit = meta.id;
-    let target_clone = target_version.clone();
-    tokio::spawn(async move {
-        stream_update_output(handle_clone, stdout, stderr).await;
-        // We may not reach here - update.sh kills the api midway. If we
-        // do, log the exit status so the operator sees it in journals.
-        // A NON-zero exit here is still real information: the script (or PID1)
-        // refused outright, so nothing is running and the update definitively
-        // did not happen. A ZERO exit means only that the work was handed off -
-        // it is never "the work succeeded", because `exec systemd-run` without
-        // `--wait` returns the moment PID1 accepts the job (lesson #49).
-        let handed_off = match tokio::time::timeout(
-            Duration::from_secs(RESULT_WATCH_SECS),
-            child.wait(),
+    stream_update_output(handle.clone(), stdout, stderr).await;
+    // We may not reach here - update.sh kills the api midway. If we do, log
+    // the exit status so the operator sees it in journals. A NON-zero exit
+    // here is still real information: the script (or PID1) refused outright,
+    // so nothing is running and the update definitively did not happen. A
+    // ZERO exit means only that the work was handed off -
+    // it is never "the work succeeded", because `exec systemd-run` without
+    // `--wait` returns the moment PID1 accepts the job (lesson #49).
+    let handed_off = match tokio::time::timeout(
+        Duration::from_secs(RESULT_WATCH_SECS),
+        child.wait(),
+    )
+    .await
+    {
+        Ok(Ok(status)) => {
+            tracing::info!("update.sh (target {tag}) child exited with {status}");
+            if status.success() {
+                true
+            } else {
+                tracing::error!(
+                    "update.sh (target {tag}) could not start ({status}) - \
+                     panel left on the previous version"
+                );
+                false
+            }
+        }
+        Ok(Err(e)) => {
+            tracing::warn!("update.sh wait failed: {e}");
+            false
+        }
+        Err(_) => {
+            tracing::warn!("update.sh wait timed out after 15min");
+            false
+        }
+    };
+
+    // Ask the updater what happened, rather than the process that launched
+    // it. If the update SUCCEEDS this loop never finishes: update.sh stops
+    // dockpanel-api, which is the process running this task, and the next
+    // boot's `finalize_pending_on_startup` closes the row. The case being
+    // rescued is the opposite one - a failure BEFORE the api is stopped,
+    // where no restart will ever come to close anything.
+    let mut verdict = None;
+    if handed_off {
+        let deadline = std::time::Instant::now() + Duration::from_secs(RESULT_WATCH_SECS);
+        while std::time::Instant::now() < deadline {
+            if let Some(v) = panel_update_verdict_since(started_at).await {
+                verdict = Some(v);
+                break;
+            }
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        }
+    }
+
+    let failure = match &verdict {
+        // Recorded success while this process is somehow still alive. Leave
+        // the row alone: the restart is what proves a version change, and
+        // `finalize_pending_on_startup` reads it from the running binary.
+        Some((true, _, _)) => {
+            tracing::info!("update.sh (target {tag}) recorded success; awaiting restart");
+            None
+        }
+        Some((false, stage, detail)) => {
+            tracing::error!("update.sh (target {tag}) FAILED at stage '{stage}': {detail}");
+            Some(format!("update.sh failed at stage '{stage}': {detail}"))
+        }
+        // No verdict and no restart. Either PID1 refused the handoff, or the
+        // updater died so hard it could not even write its own result file.
+        // Both leave the panel on the version it started on, and both leave
+        // a row that nothing else will ever close.
+        None => {
+            tracing::error!(
+                "update.sh (target {tag}) left no verdict and this process \
+                 was never restarted - treating the update as failed"
+            );
+            Some("update.sh left no verdict".to_string())
+        }
+    };
+    if let Some(reason) = failure {
+        finalize_failed_update(&pool, &handle, meta.id).await;
+        update_source::audit(
+            &pool,
+            &actor,
+            "update.apply_failed",
+            Some(&tag),
+            apply_failed_details(&tag, "updater", None, &reason),
         )
-        .await
-        {
-            Ok(Ok(status)) => {
-                tracing::info!("update.sh (target {target_clone}) child exited with {status}");
-                if status.success() {
-                    true
-                } else {
-                    tracing::error!(
-                        "update.sh (target {target_clone}) could not start ({status}) - \
-                         panel left on the previous version"
-                    );
-                    false
-                }
-            }
-            Ok(Err(e)) => {
-                tracing::warn!("update.sh wait failed: {e}");
-                false
-            }
-            Err(_) => {
-                tracing::warn!("update.sh wait timed out after 15min");
-                false
-            }
-        };
-
-        // Ask the updater what happened, rather than the process that launched
-        // it. If the update SUCCEEDS this loop never finishes: update.sh stops
-        // dockpanel-api, which is the process running this task, and the next
-        // boot's `finalize_pending_on_startup` closes the row. The case being
-        // rescued is the opposite one - a failure BEFORE the api is stopped,
-        // where no restart will ever come to close anything.
-        let mut verdict = None;
-        if handed_off {
-            let deadline =
-                std::time::Instant::now() + Duration::from_secs(RESULT_WATCH_SECS);
-            while std::time::Instant::now() < deadline {
-                if let Some(v) = panel_update_verdict_since(started_at).await {
-                    verdict = Some(v);
-                    break;
-                }
-                tokio::time::sleep(Duration::from_secs(5)).await;
-            }
-        }
-
-        match &verdict {
-            // Recorded success while this process is somehow still alive. Leave
-            // the row alone: the restart is what proves a version change, and
-            // `finalize_pending_on_startup` reads it from the running binary.
-            Some((true, _, _)) => {
-                tracing::info!(
-                    "update.sh (target {target_clone}) recorded success; awaiting restart"
-                );
-            }
-            Some((false, stage, detail)) => {
-                tracing::error!(
-                    "update.sh (target {target_clone}) FAILED at stage '{stage}': {detail}"
-                );
-                finalize_failed_update(
-                    &pool_for_exit,
-                    &handle_for_exit,
-                    snapshot_id_for_exit,
-                )
-                .await;
-            }
-            // No verdict and no restart. Either PID1 refused the handoff, or the
-            // updater died so hard it could not even write its own result file.
-            // Both leave the panel on the version it started on, and both leave
-            // a row that nothing else will ever close.
-            None => {
-                tracing::error!(
-                    "update.sh (target {target_clone}) left no verdict and this process \
-                     was never restarted - treating the update as failed"
-                );
-                finalize_failed_update(
-                    &pool_for_exit,
-                    &handle_for_exit,
-                    snapshot_id_for_exit,
-                )
-                .await;
-            }
-        }
-    });
-
-    Ok(in_flight)
+        .await;
+    }
 }
 
 /// Close out an update that did not land: drop back to Idle and stamp the row
@@ -733,7 +895,8 @@ pub async fn finalize_pending_on_startup(pool: &PgPool) {
             .await;
         match result {
             Ok(_) => {
-                if current_version == snap.from_version {
+                let rolled_back = current_version == snap.from_version;
+                if rolled_back {
                     tracing::warn!(
                         "Snapshot {} finalized as rolled-back (process restarted on \
                          pre-update version {})",
@@ -748,10 +911,93 @@ pub async fn finalize_pending_on_startup(pool: &PgPool) {
                         current_version
                     );
                 }
+                // The result is observed here, after the restart, with no
+                // request behind it: journal it under the snapshot's operator.
+                if let Some(target) = parse_target_from_trigger(&snap.trigger) {
+                    let actor = Actor::System(
+                        snap.operator.clone().unwrap_or_else(|| "system".to_string()),
+                    );
+                    let tag = release_fetch::release_tag(&target);
+                    let (action, details) = if rolled_back {
+                        let reason = last_panel_update_result()
+                            .await
+                            .and_then(|v| v.get("detail").and_then(|d| d.as_str()).map(str::to_string))
+                            .unwrap_or_else(|| "the updater restored the previous version".into());
+                        (
+                            "update.rolled_back",
+                            serde_json::json!({
+                                "from_version": snap.from_version,
+                                "attempted_version": tag.trim_start_matches('v'),
+                                "reason": reason,
+                            }),
+                        )
+                    } else {
+                        (
+                            "update.apply_succeeded",
+                            serde_json::json!({
+                                "from_version": snap.from_version,
+                                "to_version": current_version,
+                            }),
+                        )
+                    };
+                    update_source::audit(pool, &actor, action, Some(&tag), details).await;
+                }
             }
             Err(e) => {
                 tracing::warn!("finalize_pending: row {} update failed: {e}", snap.id);
             }
+        }
+    }
+
+    // A new binary stamps its row "succeeded" as soon as it boots, which is
+    // before update.sh's health check: when that check then fails, update.sh
+    // restores the old binary and this boot finds a recent row naming a
+    // version it is not running. Restamp it (what `current_state` already
+    // reports at read time) and journal the rollback; the restamp is what
+    // keeps this from firing twice.
+    if let Ok(stamped) = sqlx::query_as::<_, PanelSnapshot>(
+        "SELECT * FROM panel_snapshots \
+         WHERE trigger LIKE 'pre-update:%' AND to_version IS NOT NULL \
+           AND to_version <> 'abandoned' AND from_version = $1 AND to_version <> $1 \
+           AND created_at > $2",
+    )
+    .bind(&current_version)
+    .bind(cutoff)
+    .fetch_all(pool)
+    .await
+    {
+        for snap in stamped {
+            if sqlx::query("UPDATE panel_snapshots SET to_version = $1 WHERE id = $2")
+                .bind(&current_version)
+                .bind(snap.id)
+                .execute(pool)
+                .await
+                .is_err()
+            {
+                continue;
+            }
+            let attempted = snap.to_version.clone().unwrap_or_default();
+            tracing::warn!(
+                "Snapshot {} re-finalized as rolled-back: {attempted} booted, then {current_version} was restored",
+                snap.id
+            );
+            let reason = last_panel_update_result()
+                .await
+                .and_then(|v| v.get("detail").and_then(|d| d.as_str()).map(str::to_string))
+                .unwrap_or_else(|| "the updater restored the previous version".into());
+            let actor = Actor::System(snap.operator.clone().unwrap_or_else(|| "system".to_string()));
+            update_source::audit(
+                pool,
+                &actor,
+                "update.rolled_back",
+                Some(&release_fetch::release_tag(&attempted)),
+                serde_json::json!({
+                    "from_version": snap.from_version,
+                    "attempted_version": attempted,
+                    "reason": reason,
+                }),
+            )
+            .await;
         }
     }
 
@@ -926,6 +1172,7 @@ pub async fn execute_fleet_plan(
     target_version: String,
     halt_on_failure: bool,
     include_panel: Option<UpdateStateHandle>,
+    actor: Actor,
 ) {
     let mut progress: Vec<FleetProgressRow> = plan
         .iter()
@@ -949,7 +1196,13 @@ pub async fn execute_fleet_plan(
         progress[idx].status = "updating".into();
         let _ = persist_progress(&pool, run_id, &progress).await;
 
-        let result = update_one_server(&agents, row.server_id, &target_version).await;
+        let result = update_one_server(
+            &agents,
+            row.server_id,
+            row.agent_version.as_deref(),
+            &target_version,
+        )
+        .await;
         let elapsed_ms = started.elapsed().as_millis() as i64;
         progress[idx].duration_ms = Some(elapsed_ms);
 
@@ -986,6 +1239,15 @@ pub async fn execute_fleet_plan(
     .await;
 
     tracing::info!("Fleet update run {run_id} completed with outcome {outcome}");
+    let tag = release_fetch::release_tag(&target_version);
+    update_source::audit(
+        &pool,
+        &actor,
+        "update.fleet_finished",
+        Some(&tag),
+        serde_json::json!({ "target_version": tag, "outcome": outcome }),
+    )
+    .await;
 
     // `include_panel` (design memo §3.D5: fleet rolls first, the panel itself
     // last) was stored on the run row and read by nothing - the operator's
@@ -1000,7 +1262,10 @@ pub async fn execute_fleet_plan(
             );
             return;
         }
-        match start_panel_update(handle, pool.clone(), target_version.clone(), None).await {
+        // The release was prepared for the agents already; the panel's own
+        // preparation reuses that cache and fetches only its own files.
+        let operator = Some(actor.email().to_string());
+        match start_panel_update(handle, pool.clone(), target_version.clone(), operator, actor).await {
             Ok(_) => tracing::info!(
                 "Fleet run {run_id}: fleet complete, panel self-update to {target_version} started"
             ),
@@ -1040,6 +1305,7 @@ async fn persist_progress(
 async fn update_one_server(
     agents: &crate::services::agent::AgentRegistry,
     server_id: Uuid,
+    agent_version: Option<&str>,
     target_version: &str,
 ) -> Result<(), String> {
     let handle = agents
@@ -1050,14 +1316,19 @@ async fn update_one_server(
     // Normalise to the `vX.Y.Z` release-tag spelling at this boundary, exactly
     // as `start_panel_update` does for the local path. The operator's input is
     // free text and `validate_target_version` accepts both spellings, so a bare
-    // `2.11.4` reached the remote agent verbatim, became DOCKPANEL_VERSION, and
-    // update.sh concatenated it into `releases/download/2.11.4/...` - a 404 and
-    // `curl -sfL` exit 22 before any swap. The local path was repaired in
-    // v2.11.3; this sibling call site was missed. update.sh's own bare-semver
-    // tolerance does not rescue it, because fleet targets are by definition
-    // servers on OLDER builds whose on-disk update.sh predates that heal.
+    // `2.11.4` once reached the remote agent verbatim and became a release
+    // address with no `v`, which does not exist - the update failed before
+    // any swap. The local path was repaired in v2.11.3; this sibling call site
+    // was missed. Release tags are always `v`-prefixed, so the prefix is
+    // re-added here whatever the operator typed.
     let normalized = format!("v{}", target_version.trim_start_matches('v'));
     let payload = Some(serde_json::json!({ "target_version": normalized }));
+    // An agent older than the signed-release series would not fetch its
+    // update from this panel but from elsewhere, unverified: refuse it here,
+    // before any request reaches it.
+    if let Some(refusal) = legacy_agent_refusal(agent_version) {
+        return Err(refusal);
+    }
     if let Err(e) = handle.post("/panel/update", payload).await {
         let raw = e.to_string();
         // Agents before 2.11.8 could only run the PANEL updater, which is not
@@ -1398,6 +1669,59 @@ mod tests {
             !body.contains("\"succeeded\" => return Ok(())"),
             "a self-reported state string is not evidence an update landed"
         );
+    }
+
+    #[test]
+    fn only_agents_from_the_signed_series_are_updated() {
+        assert!(agent_can_verify_signed(Some("3.0.0-rc.1")));
+        assert!(agent_can_verify_signed(Some("v3.0.0-rc.2")));
+        assert!(agent_can_verify_signed(Some("3.0.0")));
+        assert!(agent_can_verify_signed(Some("3.1.4")));
+        assert!(!agent_can_verify_signed(Some("2.242.1")));
+        assert!(!agent_can_verify_signed(Some("3.0.0-beta")));
+        assert!(!agent_can_verify_signed(Some("garbage")));
+        assert!(!agent_can_verify_signed(Some("")));
+        assert!(!agent_can_verify_signed(None));
+
+        assert_eq!(
+            legacy_agent_refusal(Some("2.242.1")).unwrap(),
+            "This agent runs v2.242.1, older than 3.0.0-rc.1, and cannot verify signed \
+             releases. Reinstall it with install-agent.sh."
+        );
+        assert!(legacy_agent_refusal(None).unwrap().contains("an unknown version"));
+        assert!(legacy_agent_refusal(Some("3.0.0-rc.1")).is_none());
+    }
+
+    /// The refusal of a legacy agent must come before any request to it.
+    #[test]
+    fn a_legacy_agent_is_refused_before_the_update_request() {
+        let src = include_str!("panel_update.rs");
+        let body = &src[src.find("async fn update_one_server").unwrap()..];
+        let refusal = body.find("legacy_agent_refusal(agent_version)").unwrap();
+        let post = body.find("handle.post(\"/panel/update\"").unwrap();
+        assert!(refusal < post);
+    }
+
+    #[test]
+    fn a_failed_state_carries_its_code() {
+        let s = UpdateState::Failed {
+            reason: "Signature check failed, nothing was installed".into(),
+            at: Utc::now(),
+            code: Some("signature_failed".into()),
+        };
+        let v = serde_json::to_value(&s).unwrap();
+        assert_eq!(v["state"], "failed");
+        assert_eq!(v["code"], "signature_failed");
+        let s = UpdateState::Failed { reason: "x".into(), at: Utc::now(), code: None };
+        assert!(serde_json::to_value(&s).unwrap().get("code").is_none());
+    }
+
+    #[test]
+    fn apply_failed_details_hold_no_url() {
+        let d = apply_failed_details("v3.0.0-rc.2", "verify", Some("signature_failed"), "Signature check failed, nothing was installed");
+        assert_eq!(d["to_version"], "3.0.0-rc.2");
+        assert_eq!(d["stage"], "verify");
+        assert!(!d.to_string().contains("https://"));
     }
 
     #[tokio::test]
