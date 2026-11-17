@@ -28,6 +28,8 @@ pub const DEFAULT_TOKEN_FILE: &str = "/etc/dockpanel/update-token";
 pub const DEFAULT_UPDATE_REPO: &str = "MrTheSkream/cyberhunter-panel";
 /// Every path the config may name lives under this directory.
 const CONF_DIR: &str = "/etc/dockpanel/";
+/// The only accepted name of the token file, inside the config directory.
+const TOKEN_FILE_NAME: &str = "update-token";
 const CONF_HEADER: &str = "# Managed by CyberHunter - Panel (Telemetry, Updates)";
 
 /// The base64 line of the minisign `.pub` file, fixed at compile time.
@@ -73,18 +75,13 @@ pub fn validate_token(token: &str) -> bool {
     TOKEN_RE.is_match(token)
 }
 
-/// An absolute path strictly under `dir` (`/etc/dockpanel/` for the real
-/// config), with no `..` and no empty component, so a config cannot point the
-/// token anywhere else.
+/// Exactly `<dir>update-token` (`/etc/dockpanel/update-token` for the real
+/// config). A fixed name rather than "any file under the directory": a config
+/// that could name another file under `/etc/dockpanel` could point the token
+/// reader (and `clear_token`, which deletes it) at a file it has no business
+/// with.
 fn validate_token_path(p: &str, dir: &str) -> bool {
-    let Some(rest) = p.strip_prefix(dir) else {
-        return false;
-    };
-    !rest.is_empty()
-        && !p.contains('\0')
-        && rest
-            .split('/')
-            .all(|c| !c.is_empty() && c != "." && c != "..")
+    !p.contains('\0') && p.strip_prefix(dir) == Some(TOKEN_FILE_NAME)
 }
 
 /// Parse the text of `update.conf`. Pure: no file access.
@@ -127,7 +124,7 @@ fn read_conf_in(text: &str, dir: &str) -> Result<UpdateSource, ConfError> {
     let token_file = token_file.ok_or(ConfError::Invalid("UPDATE_TOKEN_FILE is missing"))?;
     if !validate_token_path(&token_file, dir) {
         return Err(ConfError::Invalid(
-            "UPDATE_TOKEN_FILE is not an absolute path under /etc/dockpanel",
+            "UPDATE_TOKEN_FILE is not /etc/dockpanel/update-token",
         ));
     }
     Ok(UpdateSource {
@@ -184,8 +181,30 @@ impl std::fmt::Debug for SecretToken {
 }
 
 /// The token in `path`, spaces around it removed; `None` when absent or empty.
+///
+/// A symbolic link (or anything but a regular file) is refused, and the file
+/// opened must be the one that was checked (same device and inode), so the
+/// token cannot be redirected to another file's contents.
 pub fn read_token(path: &Path) -> Option<SecretToken> {
-    let raw = Zeroizing::new(std::fs::read_to_string(path).ok()?);
+    use std::io::Read;
+    let meta = std::fs::symlink_metadata(path).ok()?;
+    if !meta.file_type().is_file() {
+        if meta.file_type().is_symlink() {
+            tracing::warn!("The update token file is a symbolic link; it is ignored");
+        }
+        return None;
+    }
+    let mut f = std::fs::File::open(path).ok()?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let opened = f.metadata().ok()?;
+        if opened.dev() != meta.dev() || opened.ino() != meta.ino() || !opened.is_file() {
+            return None;
+        }
+    }
+    let mut raw = Zeroizing::new(String::new());
+    f.read_to_string(&mut raw).ok()?;
     let t = raw.trim();
     if t.is_empty() {
         return None;
@@ -502,7 +521,7 @@ pub(crate) mod tests {
     #[test]
     fn comments_blank_lines_and_unknown_keys_are_ignored() {
         let text = "\n# a comment\n   # indented comment\nFUTURE_KEY=whatever\n\n\
-                    UPDATE_REPO=owner/name\nUPDATE_TOKEN_FILE=/etc/dockpanel/tok\n";
+                    UPDATE_REPO=owner/name\nUPDATE_TOKEN_FILE=/etc/dockpanel/update-token\n";
         let s = read_conf(text).unwrap();
         assert_eq!(s.repo, "owner/name");
     }
@@ -526,7 +545,7 @@ pub(crate) mod tests {
             "\"owner/name\"",
             "owner/na me",
         ] {
-            let text = format!("UPDATE_REPO={repo}\nUPDATE_TOKEN_FILE=/etc/dockpanel/t\n");
+            let text = format!("UPDATE_REPO={repo}\nUPDATE_TOKEN_FILE=/etc/dockpanel/update-token\n");
             assert!(read_conf(&text).is_err(), "{repo} must be refused");
             assert!(!validate_repo(repo), "{repo} must be refused");
         }
@@ -543,6 +562,10 @@ pub(crate) mod tests {
             "/etc/dockpanelx/token",
             "/var/lib/dockpanel/token",
             "/etc/dockpanel//token",
+            "/etc/dockpanel/tok",
+            "/etc/dockpanel/update.conf",
+            "/etc/dockpanel/sub/update-token",
+            "/etc/dockpanel/update-token/",
         ] {
             let text = format!("UPDATE_REPO=owner/name\nUPDATE_TOKEN_FILE={p}\n");
             assert!(
@@ -555,7 +578,7 @@ pub(crate) mod tests {
     #[test]
     fn missing_or_repeated_keys_and_stray_lines_are_refused() {
         assert!(read_conf("UPDATE_REPO=owner/name\n").is_err());
-        assert!(read_conf("UPDATE_TOKEN_FILE=/etc/dockpanel/t\n").is_err());
+        assert!(read_conf("UPDATE_TOKEN_FILE=/etc/dockpanel/update-token\n").is_err());
         assert!(read_conf(&format!("{VALID}UPDATE_REPO=other/name\n")).is_err());
         assert!(read_conf(&format!("{VALID}not a key value line\n")).is_err());
     }
@@ -724,6 +747,22 @@ pub(crate) mod tests {
         let json = serde_json::to_string(&s).unwrap();
         assert!(!json.contains(KNOWN_TOKEN));
         assert!(!format!("{s:?}").contains(KNOWN_TOKEN));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_token_file_is_ignored() {
+        let dir = temp_dir();
+        let real = dir.join("elsewhere");
+        std::fs::write(&real, "github_pat_ABCDEFGHIJKLMNOPQRSTUV
+").unwrap();
+        let link = dir.join("update-token");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        assert!(read_token(&link).is_none(), "a symbolic link must not be followed");
+        std::fs::remove_file(&link).unwrap();
+        std::fs::copy(&real, &link).unwrap();
+        assert_eq!(read_token(&link).unwrap().expose(), "github_pat_ABCDEFGHIJKLMNOPQRSTUV");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
