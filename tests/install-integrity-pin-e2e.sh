@@ -172,19 +172,24 @@ done
 # output. Reduce to ASCII first, then cut.
 snippet() { printf '%s' "$1" | head -1 | tr -cd '\11\40-\176' | cut -c1-70; }
 
-verifies_its_download() { has_code "$1" 'checksums\.txt' && has_code "$1" 'sha256sum'; }
+# agent-self-update.sh compares against the SHA-256 the agent took from the
+# SIGNED checksums.txt (feature 10) and hands over in DOCKPANEL_AGENT_STAGED_SHA256.
+verifies_its_download() {
+  has_code "$1" 'sha256sum' \
+    && { has_code "$1" 'checksums\.txt' || has_code "$1" 'DOCKPANEL_AGENT_STAGED_SHA256'; }
+}
 
 live_bin_writes() { # -o targets directly under the live bin dir whose basename is not a dotfile
   code_lines "$1" | grep -nE -- '-o[[:space:]]+"?/usr/local/bin/[^.]' || true
 }
 
 assets_declaration() { code_lines "$1" | grep -n '^ASSETS=(' || true; }
-assets_count()       { code_lines "$1" | sed -n 's/^ASSETS=(\(.*\))/\1/p' | tr ' ' '\n' | grep -c 'dockpanel-'; }
+assets_count()       { code_lines "$1" | sed -n 's/^ASSETS=(\(.*\))/\1/p' | tr ' ' '\n' | grep -c 'cyberhunter-'; }
 first_asset()        { code_lines "$1" | sed -n 's/^ASSETS=(\([^ )]*\).*/\1/p' | head -1; }
 
 stray_single_asset_lines() { # an ACTION line that spells one asset instead of iterating
   code_lines "$1" | grep -nE '(readelf|^file |[^a-z]file |install -m|curl)' \
-                  | grep -E 'dockpanel-(agent|api|cli)-linux-' || true
+                  | grep -E 'cyberhunter-(agent|api|cli)-linux-' || true
 }
 
 step_iterates() { [ "$(code_count "$1" -F "$2")" -gt 0 ]; }
@@ -684,7 +689,14 @@ rm -rf "$M_TMP"
 # back. dp_fetch's own curl names `"$url"`, never the release base, so a line
 # holding both `curl` and a release base variable is by construction a download
 # that bypassed it.
-RELEASE_CONSUMERS="scripts/setup.sh scripts/update.sh scripts/agent-self-update.sh scripts/deploy-demo.sh"
+#
+# 10 (mises a jour): only deploy-demo.sh still downloads release assets from a
+# release page. setup.sh installs from a release directory the operator
+# downloaded, update.sh from the one the panel prepared and verified, and
+# agent-self-update.sh from the binary the agent staged after checking its
+# signature. Those three must not download a release at all: no retry helper,
+# and no curl line naming a release base, a release asset or a release host.
+RELEASE_CONSUMERS="scripts/deploy-demo.sh"
 for consumer in $RELEASE_CONSUMERS; do
   if [ ! -f "$consumer" ]; then
     bad "S9 $consumer is missing - refusing to report a clean sweep"
@@ -700,6 +712,20 @@ for consumer in $RELEASE_CONSUMERS; do
     ok "S9 $consumer has no bare curl fetching a release asset"
   else
     bad "S9 $consumer has $BARE bare curl download(s) of a release asset - they bypass dp_fetch's retry"
+  fi
+done
+for local_only in scripts/setup.sh scripts/update.sh scripts/agent-self-update.sh; do
+  if grep -qE '^dp_fetch\(\) \{' "$local_only"; then
+    bad "S9 $local_only still carries dp_fetch - nothing in it may download a release"
+  else
+    ok "S9 $local_only carries no release download helper"
+  fi
+  REMOTE=$(code_lines "$local_only" | grep -E 'curl' \
+           | grep -E '\$\{?(BASE|BASE_URL|DOWNLOAD_URL)\}?|releases/|github\.com|githubusercontent|(dockpanel|cyberhunter)-(agent|api|cli|mcp)-linux-|checksums\.txt' || true)
+  if [ -z "$REMOTE" ]; then
+    ok "S9 $local_only has no curl fetching a release asset"
+  else
+    bad "S9 $local_only still downloads a release asset: $(snippet "$REMOTE")"
   fi
 done
 

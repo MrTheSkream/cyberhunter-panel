@@ -22,16 +22,17 @@
 # mirrors in the tree. The out-of-repo copy is the one that rots silently.
 #
 # Usage:
-#   DEMO_HOST=panel.example.com bash scripts/deploy-demo.sh v2.44.1
+#   GITHUB_REPO=owner/name DEMO_HOST=panel.example.com bash scripts/deploy-demo.sh v3.0.0
 #
-# DEMO_HOST is required and has no default: the public hostname is a property of
-# the box you are deploying, not of this repository.
+# DEMO_HOST and GITHUB_REPO are required and have no default: the public
+# hostname is a property of the box you are deploying, and the repository that
+# publishes its releases is the operator's choice, not this file's.
 #
 set -euo pipefail
 
 TAG="${1:?usage: DEMO_HOST=<panel-host> deploy-demo.sh vX.Y.Z}"
 DEMO_HOST="${DEMO_HOST:?DEMO_HOST must name the public hostname of the panel being deployed (no default)}"
-GITHUB_REPO="${GITHUB_REPO:-ovexro/dockpanel}"
+GITHUB_REPO="${GITHUB_REPO:?GITHUB_REPO is required}"
 BASE="https://github.com/$GITHUB_REPO/releases/download/$TAG"
 
 # The published assets, named ONCE. The download loop, the checksum check, the
@@ -39,11 +40,11 @@ BASE="https://github.com/$GITHUB_REPO/releases/download/$TAG"
 # added and silently skip a check. That is exactly how the linkage guard came to
 # cover one binary of three: it named `dockpanel-api-linux-amd64` literally while
 # the loop above it fetched three and the swap below it installed three (s336).
-ASSETS=(dockpanel-agent-linux-amd64 dockpanel-api-linux-amd64 dockpanel-cli-linux-amd64)
+ASSETS=(cyberhunter-agent-linux-amd64 cyberhunter-api-linux-amd64 cyberhunter-cli-linux-amd64)
 declare -A ASSET_DEST=(
-    [dockpanel-agent-linux-amd64]=/usr/local/bin/dockpanel-agent
-    [dockpanel-api-linux-amd64]=/usr/local/bin/dockpanel-api
-    [dockpanel-cli-linux-amd64]=/usr/local/bin/dockpanel
+    [cyberhunter-agent-linux-amd64]=/usr/local/bin/dockpanel-agent
+    [cyberhunter-api-linux-amd64]=/usr/local/bin/dockpanel-api
+    [cyberhunter-cli-linux-amd64]=/usr/local/bin/dockpanel
 )
 
 # ── Resolve repo root - same idiom as setup.sh/update.sh ─────────────────

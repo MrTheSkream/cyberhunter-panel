@@ -41,7 +41,7 @@ note() { printf '    \033[0;90m%s\033[0m\n' "$1"; }
 
 SITE=${SITE:-https://dockpanel.dev}
 DOCS=${DOCS:-https://docs.dockpanel.dev}
-REPO=${REPO:-ovexro/dockpanel}
+REPO=${REPO:-MrTheSkream/cyberhunter-panel}
 CURL=(curl -fsS --max-time 30 --retry 2 --retry-delay 3)
 
 # Two arms below call the GitHub API. Unauthenticated it allows 60 requests an
@@ -374,9 +374,9 @@ elif rel=$("${GH_API[@]}" "https://api.github.com/repos/$REPO/releases/latest" 2
     fi
   }
 
-  check_asset "API binary"   dockpanel-api-linux-amd64
-  check_asset "Agent binary" dockpanel-agent-linux-amd64
-  check_asset "CLI binary"   dockpanel-cli-linux-amd64
+  check_asset "API binary"   cyberhunter-api-linux-amd64
+  check_asset "Agent binary" cyberhunter-agent-linux-amd64
+  check_asset "CLI binary"   cyberhunter-cli-linux-amd64
 else
   bad "could not read the latest release of $REPO"
 fi

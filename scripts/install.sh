@@ -1,15 +1,25 @@
 #!/usr/bin/env bash
 #
 # CyberHunter - Panel Quick Installer
-# Usage: curl -sL https://dockpanel.dev/install.sh | bash
+# Usage: CYBERHUNTER_REPO_URL=<git clone URL> [DOCKPANEL_VERSION=vX.Y.Z] #          [CYBERHUNTER_RELEASE_DIR=<downloaded release>] sudo -E bash install.sh
+#
+# The repository is private: CYBERHUNTER_REPO_URL is required and has no
+# default, and git authentication (deploy key, credential helper, token in
+# the URL) is the operator's business.
 #
 # Modes:
-#   Default:              Clone repo, download pre-built binaries (fast, no Rust needed)
-#   BUILD_FROM_SOURCE=1:  Clone repo, build from source (requires Rust, ~3GB RAM)
+#   Default:                    Clone repo, build from source (requires Rust, ~3GB RAM)
+#   CYBERHUNTER_RELEASE_DIR=…:  Clone repo, install the binaries of a release
+#                               downloaded by hand into that directory; setup.sh
+#                               checks every file against its checksums.txt
+#
+# Nothing is downloaded from a release page by this script or by setup.sh.
+# Once installed, the panel updates itself from Telemetry, Updates.
 #
 set -euo pipefail
 
 VERSION="${DOCKPANEL_VERSION:-main}"
+REPO_URL="${CYBERHUNTER_REPO_URL:?CYBERHUNTER_REPO_URL is required (the git URL of the CyberHunter - Panel repository)}"
 INSTALL_DIR="/opt/dockpanel"
 
 RED='\033[0;31m'
@@ -60,12 +70,16 @@ if [ -d "$INSTALL_DIR/.git" ]; then
 else
     echo -e "${GREEN}[+]${NC} Downloading CyberHunter - Panel..."
     rm -rf "$INSTALL_DIR"
-    git clone --quiet --depth 1 -b "$VERSION" https://github.com/ovexro/dockpanel.git "$INSTALL_DIR"
+    git clone --quiet --depth 1 -b "$VERSION" "$REPO_URL" "$INSTALL_DIR"
 fi
 
-# Default to pre-built binaries unless BUILD_FROM_SOURCE=1
-if [ "${BUILD_FROM_SOURCE:-0}" != "1" ]; then
+# Pre-built binaries only from a release the operator downloaded by hand
+# (setup.sh verifies it); otherwise build the cloned tree.
+if [ -n "${CYBERHUNTER_RELEASE_DIR:-}" ] && [ "${BUILD_FROM_SOURCE:-0}" != "1" ]; then
     export INSTALL_FROM_RELEASE=1
+    export CYBERHUNTER_RELEASE_DIR
+else
+    export INSTALL_FROM_RELEASE=0
 fi
 
 # Run setup

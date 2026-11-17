@@ -203,56 +203,51 @@ DOCKPANEL_CENTRAL_URL=$PANEL_URL
 ENVEOF
 chmod 600 /etc/dockpanel/agent.env
 
-# Download agent binary (naming matches GitHub release assets)
+# Download the agent binary FROM THE PANEL, not from a release page.
 #
-# Until s336 this was the ONE path that put a CyberHunter - Panel binary on a machine
-# without checking it: no checksum, no signature, and the bytes went straight
-# onto /usr/local/bin/dockpanel-agent. Its three siblings all verify sha256
-# against the release's checksums.txt and all quarantine first - setup.sh's own
-# comment states the contract, "so the live executable path never holds
-# unverified bytes". This is the installer the Add-Server dialog tells an
-# operator to pipe into `sudo bash`, so it was the least verified path and the
-# most exposed one.
+# The panel serves the release it runs itself (`current`) through
+# /api/agent/release/<tag>/<name>, authenticated with this server's token: it
+# has already checked the minisign signature of checksums.txt and the SHA-256
+# of the binary. The trust anchor of this script is the panel itself (the
+# operator runs the script the panel served), so there is no signature check in
+# shell; the installed agent verifies every later update on its own.
 #
-# Writing to the live path also meant that on a box where the agent is already
-# running the kernel refuses the open with ETXTBSY, curl reports a write failure,
-# and the branch below blamed the network. Quarantine + rename fixes that too:
-# rename over a running executable is allowed, writing to it is not.
-ASSET="dockpanel-agent-linux-${ARCH_LABEL}"
-BASE_URL="https://github.com/ovexro/dockpanel/releases/latest/download"
-DOWNLOAD_URL="$BASE_URL/$ASSET"
+# The SHA-256 is MANDATORY: no manifest, no entry, or a mismatch stops the
+# install. The binary is written to a quarantine file and renamed into place
+# only after it verifies, so the live path never holds unverified bytes (and a
+# rename over a running executable is allowed where writing to it fails
+# ETXTBSY).
+ASSET="cyberhunter-agent-linux-${ARCH_LABEL}"
+RELEASE_URL="${PANEL_URL%/}/api/agent/release/current"
 AGENT_TMP="/usr/local/bin/.dockpanel-agent.dl.$$"
-echo "[5/7] Downloading agent binary..."
-if ! curl -fsSL "$DOWNLOAD_URL" -o "$AGENT_TMP"; then
-    rm -f "$AGENT_TMP"
-    echo "Error: Could not download the agent binary from $DOWNLOAD_URL"
-    echo "  Check connectivity to github.com and that a release asset exists for arch '${ARCH_LABEL}'."
+SUMS_TMP="$(umask 077; mktemp /tmp/dockpanel-agent-sums.XXXXXX)"
+download_failed() {
+    rm -f "$AGENT_TMP" "$SUMS_TMP"
+    echo "Error: $1"
+    echo "Could not download the agent from the panel. Check that updates are configured on the panel (Telemetry, Updates) and that the token is valid."
+    exit 1
+}
+echo "[5/7] Downloading agent binary from the panel..."
+curl -fsSL -H "Authorization: Bearer $TOKEN" "$RELEASE_URL/checksums.txt" -o "$SUMS_TMP" \
+    || download_failed "checksums.txt could not be fetched from $RELEASE_URL"
+curl -fsSL -H "Authorization: Bearer $TOKEN" "$RELEASE_URL/$ASSET" -o "$AGENT_TMP" \
+    || download_failed "$ASSET could not be fetched from $RELEASE_URL"
+
+WANT=$(awk -v n="$ASSET" '$2 == n {print $1}' "$SUMS_TMP")
+if [ -z "$WANT" ] || [ "$(printf '%s\n' "$WANT" | wc -l)" -ne 1 ] \
+   || ! printf '%s' "$WANT" | grep -qE '^[0-9a-f]{64}$'; then
+    download_failed "checksums.txt has no valid entry for $ASSET"
+fi
+GOT=$(sha256sum "$AGENT_TMP" | awk '{print $1}')
+if [ "$WANT" != "$GOT" ]; then
+    rm -f "$AGENT_TMP" "$SUMS_TMP"
+    echo "Error: sha256 mismatch for $ASSET - refusing to install."
+    echo "  expected $WANT"
+    echo "  got      $GOT"
     exit 1
 fi
-
-# Integrity: a MISMATCH is fatal, a missing manifest only warns. That is
-# setup.sh's policy for a fresh install rather than update.sh's fail-closed one,
-# and deliberately so - availability must not brick a first install, but a
-# corrupt or substituted binary must never be installed.
-if curl -fsSL "$BASE_URL/checksums.txt" -o "$AGENT_TMP.sums" 2>/dev/null; then
-    WANT=$(awk -v n="$ASSET" '$2 == n {print $1; exit}' "$AGENT_TMP.sums")
-    if [ -n "$WANT" ]; then
-        GOT=$(sha256sum "$AGENT_TMP" | awk '{print $1}')
-        if [ "$WANT" != "$GOT" ]; then
-            rm -f "$AGENT_TMP" "$AGENT_TMP.sums"
-            echo "Error: sha256 mismatch for $ASSET - refusing to install."
-            echo "  expected $WANT"
-            echo "  got      $GOT"
-            exit 1
-        fi
-        echo "  sha256 verified against the release checksums.txt"
-    else
-        echo "  WARNING: checksums.txt has no entry for $ASSET - installing unverified"
-    fi
-else
-    echo "  WARNING: could not fetch checksums.txt - installing unverified"
-fi
-rm -f "$AGENT_TMP.sums"
+rm -f "$SUMS_TMP"
+echo "  sha256 verified against the release checksums.txt"
 
 chmod +x "$AGENT_TMP"
 mv -f "$AGENT_TMP" /usr/local/bin/dockpanel-agent
@@ -279,7 +274,7 @@ fi
 #
 # The panel's own installers (setup.sh, update.sh) deploy
 # panel/agent/dockpanel-agent.service by copying that file. This script has no
-# repo tree - it is fetched from the panel and downloads a release binary - so
+# repo tree - it is fetched from the panel and downloads the panel's release binary - so
 # it asks the binary it just downloaded, which carries the unit via include_str!
 # for exactly the reason agent-self-update.sh does: it cannot then drift from
 # the binary that runs it. One unit, three installers, no mirrors.

@@ -30,8 +30,13 @@
 //!    every box in a fleet (lesson #50).
 //!
 //! So: agent boxes get an agent-only update (`scripts/agent-self-update.sh`,
-//! embedded below), full panel installs keep `update.sh`, and success is
-//! never inferred from a child's exit status.
+//! embedded below), and success is never inferred from a child's exit status.
+//!
+//! Feature 10: the binary is fetched from this agent's PANEL (never from the
+//! release host), verified here against the minisign key compiled into this
+//! binary (`services::release_verify`), and only then handed to the shell
+//! updater, which re-checks its SHA-256. A box that carries a panel is updated
+//! by that panel and refuses here.
 
 use axum::{routing::{get, post}, Json, Router};
 use serde::{Deserialize, Serialize};
@@ -43,10 +48,15 @@ use tokio::process::Command;
 
 use super::AppState;
 
-/// The panel updater, present only on full CyberHunter - Panel installs.
-const UPDATE_SCRIPT: &str = "/opt/dockpanel/scripts/update.sh";
 /// Present on a full install only; used to tell a panel box from an agent box.
+/// A box that carries a panel is updated BY that panel (feature 10): the
+/// agent no longer drives the panel updater, so it refuses instead.
 const API_BIN: &str = "/usr/local/bin/dockpanel-api";
+
+/// Refusal texts, plain text as before (contract B-2).
+const MSG_FULL_PANEL: &str = "This server is a full panel install, update it from its own panel";
+const MSG_NO_PANEL_URL: &str = "This agent has no panel URL (DOCKPANEL_CENTRAL_URL)";
+const MSG_NO_SIGNING_KEY: &str = "This agent build has no update signing key";
 
 /// The agent-only updater. Compiled in rather than read from disk for the same
 /// reason the restore procedure is (lessons #35/#38): a remote agent box has no
@@ -149,6 +159,12 @@ async fn apply_panel_update(
 pub(crate) enum StartUpdateError {
     Invalid(String),
     InFlight,
+    /// This box runs a panel; its own panel updates it.
+    FullPanel,
+    /// No `DOCKPANEL_CENTRAL_URL` / `DOCKPANEL_SERVER_TOKEN`: nowhere to fetch from.
+    NoPanelUrl,
+    /// Built without `CYBERHUNTER_UPDATE_PUBKEY`: nothing could be verified.
+    NoSigningKey,
     Internal(String),
 }
 
@@ -156,7 +172,8 @@ impl StartUpdateError {
     fn status_code(&self) -> axum::http::StatusCode {
         match self {
             Self::Invalid(_) => axum::http::StatusCode::BAD_REQUEST,
-            Self::InFlight => axum::http::StatusCode::CONFLICT,
+            Self::InFlight | Self::FullPanel => axum::http::StatusCode::CONFLICT,
+            Self::NoPanelUrl | Self::NoSigningKey => axum::http::StatusCode::PRECONDITION_FAILED,
             Self::Internal(_) => axum::http::StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -167,9 +184,56 @@ impl std::fmt::Display for StartUpdateError {
         match self {
             Self::Invalid(v) => write!(f, "invalid target_version: {v}"),
             Self::InFlight => write!(f, "an update is already in flight"),
+            Self::FullPanel => write!(f, "{MSG_FULL_PANEL}"),
+            Self::NoPanelUrl => write!(f, "{MSG_NO_PANEL_URL}"),
+            Self::NoSigningKey => write!(f, "{MSG_NO_SIGNING_KEY}"),
             Self::Internal(m) => write!(f, "{m}"),
         }
     }
+}
+
+/// Where this agent fetches releases from: its panel, with its own credential.
+#[derive(Clone)]
+struct ReleaseSource {
+    central_url: String,
+    server_token: String,
+}
+
+impl ReleaseSource {
+    fn from_env() -> Option<Self> {
+        let url = std::env::var("DOCKPANEL_CENTRAL_URL").ok()?;
+        let token = std::env::var("DOCKPANEL_SERVER_TOKEN").ok()?;
+        let url = url.trim().trim_end_matches('/').to_string();
+        let token = token.trim().to_string();
+        if url.is_empty() || token.is_empty() {
+            return None;
+        }
+        Some(Self { central_url: url, server_token: token })
+    }
+}
+
+/// The synchronous refusals, in order, as a pure function of what the box
+/// has. Decided BEFORE the in-flight slot is claimed, so a refusal never
+/// leaves the state `InFlight`.
+fn preflight(
+    target: &str,
+    is_full_panel: bool,
+    has_panel_url: bool,
+    has_signing_key: bool,
+) -> Result<(), StartUpdateError> {
+    if !validate_target_version(target) {
+        return Err(StartUpdateError::Invalid(target.to_string()));
+    }
+    if is_full_panel {
+        return Err(StartUpdateError::FullPanel);
+    }
+    if !has_panel_url {
+        return Err(StartUpdateError::NoPanelUrl);
+    }
+    if !has_signing_key {
+        return Err(StartUpdateError::NoSigningKey);
+    }
+    Ok(())
 }
 
 /// Start an update of this box to `target`, and return as soon as the work has
@@ -183,20 +247,23 @@ impl std::fmt::Display for StartUpdateError {
 /// updater.
 pub(crate) async fn start_agent_self_update(target: &str) -> Result<(), StartUpdateError> {
     let target = target.trim().to_string();
-    if !validate_target_version(&target) {
-        return Err(StartUpdateError::Invalid(target));
-    }
-    // A full panel install keeps the panel updater (it has an API, a frontend
-    // and a database to move). Everything else - i.e. every box added with
-    // install-agent.sh, which is the entire fleet population - gets the
-    // agent-only updater, which needs nothing from /opt.
-    let mode = if std::path::Path::new(UPDATE_SCRIPT).exists()
-        && std::path::Path::new(API_BIN).exists()
-    {
-        UpdateMode::FullPanel
-    } else {
-        UpdateMode::AgentOnly
+    // A box that carries a panel is updated by that panel, from a release it
+    // verified itself; this agent does not drive the panel updater any more.
+    // Every other box - every box added with install-agent.sh, the entire
+    // fleet population - gets the agent-only updater, fed with a binary this
+    // process fetched from its panel and verified against the compiled key.
+    let source = ReleaseSource::from_env();
+    let key = crate::services::release_verify::signing_key();
+    preflight(
+        &target,
+        std::path::Path::new(API_BIN).exists(),
+        source.is_some(),
+        key.is_some(),
+    )?;
+    let (Some(source), Some(key)) = (source, key) else {
+        return Err(StartUpdateError::Internal("preflight passed without a source or key".into()));
     };
+    let target = crate::services::release_verify::normalize_tag(&target);
 
     // Already-in-flight guard. It has to ask whether the in-flight run is
     // actually still running: an updater that fails inside its own transient
@@ -233,29 +300,43 @@ pub(crate) async fn start_agent_self_update(target: &str) -> Result<(), StartUpd
 
     // Materialise the embedded updater before returning, so a box that cannot
     // even write it gets a real error instead of a silent no-op.
-    if matches!(mode, UpdateMode::AgentOnly) {
-        if let Err(e) = write_agent_update_script().await {
-            let mut s = STATE.lock().unwrap();
-            *s = AgentUpdateState::Idle;
-            return Err(StartUpdateError::Internal(format!(
-                "could not stage the agent updater: {e}"
-            )));
-        }
+    if let Err(e) = write_agent_update_script().await {
+        let mut s = STATE.lock().unwrap();
+        *s = AgentUpdateState::Idle;
+        return Err(StartUpdateError::Internal(format!(
+            "could not stage the agent updater: {e}"
+        )));
     }
 
     tokio::spawn(async move {
-        run_update_subprocess(target, mode).await;
+        // Fetch from the panel, verify signature, trusted comment, SHA-256
+        // and ELF magic, and stage - all before the shell updater exists.
+        match crate::services::release_verify::download_and_stage(
+            &source.central_url,
+            &source.server_token,
+            &target,
+            key,
+        )
+        .await
+        {
+            Ok(staged) => run_update_subprocess(target, staged).await,
+            Err(e) => {
+                tracing::warn!(
+                    target: "panel_update",
+                    "agent update to {target} refused: {} ({})",
+                    e,
+                    e.detail()
+                );
+                let mut s = STATE.lock().unwrap();
+                *s = AgentUpdateState::Failed {
+                    reason: e.to_string(),
+                    at: chrono::Utc::now(),
+                };
+            }
+        }
     });
 
     Ok(())
-}
-
-#[derive(Debug, Clone, Copy)]
-enum UpdateMode {
-    /// Box has an API binary and the panel updater - update the whole panel.
-    FullPanel,
-    /// Agent-only box (install-agent.sh). Update just the agent binary.
-    AgentOnly,
 }
 
 async fn write_agent_update_script() -> std::io::Result<()> {
@@ -272,13 +353,14 @@ async fn write_agent_update_script() -> std::io::Result<()> {
     Ok(())
 }
 
-async fn run_update_subprocess(target: String, mode: UpdateMode) {
-    // Both updaters restart dockpanel-agent.service, and that unit is
+async fn run_update_subprocess(
+    target: String,
+    staged: crate::services::release_verify::StagedAgent,
+) {
+    // The updater restarts dockpanel-agent.service, and that unit is
     // KillMode=control-group - so anything still in this process's cgroup when
     // that happens is SIGTERMed mid-update. PID1 has to own the work
-    // (lesson #47). `update.sh` self-detaches the same way; doing it here too
-    // means the agent path does not depend on the remote box's copy of a script
-    // being new enough to protect itself.
+    // (lesson #47).
     let unit = format!(
         "dockpanel-agent-update-{}",
         std::time::SystemTime::now()
@@ -291,22 +373,15 @@ async fn run_update_subprocess(target: String, mode: UpdateMode) {
     cmd.arg("--quiet")
         .arg("--collect")
         .arg(format!("--unit={unit}"))
-        .arg(format!("--setenv=DOCKPANEL_VERSION={target}"));
-
-    match mode {
-        UpdateMode::FullPanel => {
-            cmd.arg("--setenv=INSTALL_FROM_RELEASE=1")
-                .arg("--setenv=DOCKPANEL_NO_SELF_REFRESH=1")
-                .arg("--setenv=DOCKPANEL_UPDATE_DETACHED=1")
-                .arg("bash")
-                .arg(UPDATE_SCRIPT);
-        }
-        UpdateMode::AgentOnly => {
-            cmd.arg("--setenv=DOCKPANEL_AGENT_UPDATE_DETACHED=1")
-                .arg("bash")
-                .arg(AGENT_UPDATE_SCRIPT_PATH);
-        }
-    }
+        .arg(format!("--setenv=DOCKPANEL_VERSION={target}"))
+        .arg(format!(
+            "--setenv=DOCKPANEL_AGENT_STAGED_BIN={}",
+            staged.path.display()
+        ))
+        .arg(format!("--setenv=DOCKPANEL_AGENT_STAGED_SHA256={}", staged.sha256))
+        .arg("--setenv=DOCKPANEL_AGENT_UPDATE_DETACHED=1")
+        .arg("bash")
+        .arg(AGENT_UPDATE_SCRIPT_PATH);
 
     cmd.stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -315,6 +390,8 @@ async fn run_update_subprocess(target: String, mode: UpdateMode) {
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => {
+            // Nothing will ever consume the staged binary now.
+            let _ = std::fs::remove_file(&staged.path);
             let mut s = STATE.lock().unwrap();
             *s = AgentUpdateState::Failed {
                 reason: format!("spawn failed: {e}"),
@@ -365,6 +442,9 @@ async fn run_update_subprocess(target: String, mode: UpdateMode) {
     match tokio::time::timeout(Duration::from_secs(900), child.wait()).await {
         Ok(Ok(status)) => {
             if !status.success() {
+                // PID1 refused the job: the updater never ran, so it will not
+                // delete the staged binary either.
+                let _ = std::fs::remove_file(&staged.path);
                 let mut s = STATE.lock().unwrap();
                 *s = AgentUpdateState::Failed {
                     reason: format!("could not start the update unit ({status})"),
@@ -614,24 +694,80 @@ mod tests {
         assert!(AGENT_UPDATE_SCRIPT.contains("mv -f \"$STAGED\" \"$AGENT_BIN\""));
     }
 
-    /// Download, then verify, then install - in that order and as three
-    /// separate steps. Once bytes have been streamed into the consumer there is
-    /// no verification window left (lesson #25).
+    /// The agent verified the signed manifest and staged the binary; the shell
+    /// re-checks the SHA-256 it was handed, on the copy it is about to install,
+    /// before the swap - and refuses to run without a staged binary at all.
     #[test]
-    fn agent_updater_verifies_the_download_before_installing_it() {
+    fn agent_updater_rechecks_the_staged_binary_before_installing_it() {
         let s = AGENT_UPDATE_SCRIPT;
-        assert!(s.contains("sha256sum"), "must checksum the download");
-        assert!(s.contains("checksums.txt"), "must fetch the release checksums");
+        assert!(s.contains("sha256sum"), "must re-checksum the staged binary");
+        for var in ["DOCKPANEL_AGENT_STAGED_BIN", "DOCKPANEL_AGENT_STAGED_SHA256"] {
+            assert!(s.contains(&format!("${{{var}:-}}")), "{var} must be read");
+        }
+        assert!(
+            s.contains("no verified agent binary was staged; start the update from the panel"),
+            "the staged-binary inputs are mandatory"
+        );
         let verify_at = s.find("sha256 mismatch").expect("mismatch guard missing");
         let install_at = s.find("could not move the new binary into place").unwrap();
-        assert!(
-            verify_at < install_at,
-            "the checksum guard must come before the install"
-        );
-        assert!(
-            !s.contains("curl -fsSL --max-time 600 \"${BASE}/${ASSET}\" |"),
-            "the binary must be materialised to a file, never piped into a consumer"
-        );
+        assert!(verify_at < install_at, "the checksum guard must come before the install");
+        let mismatch_line = s.lines().find(|l| l.contains("sha256 mismatch")).unwrap();
+        assert!(mismatch_line.trim_end().ends_with(" 99"), "a mismatch exits 99: {mismatch_line}");
+        assert!(s.contains("7f454c46"), "ELF magic check");
+        assert!(s.contains("-gt 1000000"), "size floor");
+    }
+
+    /// No network from the shell: the only `curl` left talks to the local
+    /// agent over its unix socket. Every download is the agent's job, and the
+    /// agent only talks to its panel.
+    #[test]
+    fn agent_updater_never_downloads_anything() {
+        for line in AGENT_UPDATE_SCRIPT.lines() {
+            let l = line.trim();
+            if l.starts_with('#') || !l.contains("curl") {
+                continue;
+            }
+            assert!(l.contains("--unix-socket"), "only the local socket: {l}");
+        }
+        for gone in [concat!("dp_", "fetch"), concat!("DOCKPANEL_", "GITHUB_REPO"), "wget "] {
+            assert!(!AGENT_UPDATE_SCRIPT.contains(gone), "{gone} must be gone");
+        }
+    }
+
+    /// The re-exec forwards the staged inputs, and the staged file is removed
+    /// on every exit path.
+    #[test]
+    fn agent_updater_forwards_and_always_removes_the_staged_binary() {
+        let s = AGENT_UPDATE_SCRIPT;
+        let reexec = &s[s.find("exec systemd-run").expect("re-exec block")..];
+        let reexec = &reexec[..reexec.find("bash \"$0\"").unwrap()];
+        for var in [
+            "DOCKPANEL_VERSION",
+            "DOCKPANEL_AGENT_STAGED_BIN",
+            "DOCKPANEL_AGENT_STAGED_SHA256",
+        ] {
+            assert!(reexec.contains(&format!("--setenv={var}=")), "re-exec must forward {var}");
+        }
+        let trap = &s[s.find("on_exit() {").unwrap()..];
+        let trap = &trap[..trap.find("\n}").unwrap()];
+        assert!(trap.contains("rm -f \"$INPUT_BIN\""), "the staged file goes on every exit");
+    }
+
+    /// The launcher passes exactly what the updater reads.
+    #[test]
+    fn the_launcher_hands_the_verified_binary_to_the_updater() {
+        let src = include_str!("panel_update.rs");
+        let f = &src[src.find("async fn run_update_subprocess").unwrap()..];
+        let f = &f[..f.find("cmd.stdout").unwrap()];
+        for want in [
+            "--setenv=DOCKPANEL_VERSION=",
+            "--setenv=DOCKPANEL_AGENT_STAGED_BIN=",
+            "--setenv=DOCKPANEL_AGENT_STAGED_SHA256=",
+            "--setenv=DOCKPANEL_AGENT_UPDATE_DETACHED=1",
+        ] {
+            assert!(f.contains(want), "missing {want}");
+        }
+        assert!(!src.contains(concat!("/opt/dockpanel/scripts/", "update.sh\"")));
     }
 
     /// It restarts the unit it runs under, so PID1 has to own it (lesson #47),
@@ -844,16 +980,45 @@ mod tests {
         );
     }
 
-    /// A full panel install keeps the panel updater; everything else - the
-    /// entire fleet population - gets the agent-only one.
+    /// A full panel install is refused (its own panel updates it); a box
+    /// without a panel URL or without a compiled key is refused too, each
+    /// with its contract status and text, before anything is claimed.
     #[test]
-    fn update_mode_is_decided_by_what_the_box_actually_has() {
+    fn the_synchronous_refusals_come_in_contract_order() {
+        use axum::http::StatusCode;
+        let r = |t, full, url, key| preflight(t, full, url, key).map_err(|e| (e.status_code(), e.to_string()));
+        assert!(r("v3.0.0", false, true, true).is_ok());
+        assert_eq!(r("latest", true, false, false).unwrap_err().0, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            r("v3.0.0", true, true, true).unwrap_err(),
+            (StatusCode::CONFLICT, MSG_FULL_PANEL.to_string())
+        );
+        assert_eq!(
+            r("v3.0.0", false, false, true).unwrap_err(),
+            (StatusCode::PRECONDITION_FAILED, MSG_NO_PANEL_URL.to_string())
+        );
+        assert_eq!(
+            r("v3.0.0", false, true, false).unwrap_err(),
+            (StatusCode::PRECONDITION_FAILED, MSG_NO_SIGNING_KEY.to_string())
+        );
+        assert_eq!(MSG_FULL_PANEL, "This server is a full panel install, update it from its own panel");
+        assert_eq!(MSG_NO_PANEL_URL, "This agent has no panel URL (DOCKPANEL_CENTRAL_URL)");
+        assert_eq!(MSG_NO_SIGNING_KEY, "This agent build has no update signing key");
+    }
+
+    /// The refusals are decided before the in-flight slot is claimed, so a
+    /// refused request can never wedge the box at 409.
+    #[test]
+    fn refusals_happen_before_the_slot_is_claimed() {
         let src = include_str!("panel_update.rs");
-        assert!(src.contains("UpdateMode::FullPanel"));
-        assert!(src.contains("UpdateMode::AgentOnly"));
+        let f = &src[src.find("pub(crate) async fn start_agent_self_update").unwrap()..];
+        let pre = f.find("preflight(").expect("launcher must run the preflight");
+        let claim = f.find("*s = AgentUpdateState::InFlight").unwrap();
+        assert!(pre < claim);
         assert!(
             src.contains("std::path::Path::new(API_BIN).exists()"),
             "an agent-only box has no API binary - that is the discriminator"
         );
+        assert!(!src.contains(concat!("UpdateMode::", "FullPanel")), "the FullPanel mode is gone");
     }
 }

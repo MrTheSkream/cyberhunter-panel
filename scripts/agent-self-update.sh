@@ -29,8 +29,17 @@
 #      server as **succeeded**. Fixing only (1) would have turned a loud, safe
 #      500 into a silent false success on every box in the fleet - lesson #50.
 #
-#   An agent-only box needs an agent-only update: fetch one binary, verify it,
-#   swap it, restart the unit, and prove the running version changed.
+#   An agent-only box needs an agent-only update: take one verified binary,
+#   re-check it, swap it, restart the unit, and prove the running version
+#   changed.
+#
+# WHERE THE BINARY COMES FROM (feature 10):
+#   This script downloads nothing. The agent fetched the binary from its panel,
+#   verified the minisign signature of the release's checksums.txt with the key
+#   compiled into the agent, checked the trusted comment names this tag, checked
+#   the SHA-256 and the ELF magic, and staged the file under
+#   /var/lib/dockpanel/agent-release (root, 0700). This script only re-checks
+#   that SHA-256 on the copy it installs. The staged file is removed on exit.
 #
 # WHY A PID1-OWNED TRANSIENT UNIT:
 #   This script restarts dockpanel-agent.service, and that unit is
@@ -46,8 +55,9 @@
 #
 # Env:
 #   DOCKPANEL_VERSION                   required, `vX.Y.Z` release tag
+#   DOCKPANEL_AGENT_STAGED_BIN          required, the verified binary staged by the agent
+#   DOCKPANEL_AGENT_STAGED_SHA256       required, its SHA-256 (lowercase hex)
 #   DOCKPANEL_AGENT_UPDATE_DETACHED     set by the caller once detached
-#   DOCKPANEL_GITHUB_REPO               optional override (default ovexro/dockpanel)
 #   DOCKPANEL_AGENT_BIN                 optional override of the binary path
 #
 # The result is ALWAYS written to /var/lib/dockpanel/last-agent-update.json,
@@ -60,7 +70,8 @@
 set -euo pipefail
 
 TARGET="${DOCKPANEL_VERSION:?DOCKPANEL_VERSION is required (vX.Y.Z)}"
-GITHUB_REPO="${DOCKPANEL_GITHUB_REPO:-ovexro/dockpanel}"
+INPUT_BIN="${DOCKPANEL_AGENT_STAGED_BIN:-}"
+INPUT_SHA256="${DOCKPANEL_AGENT_STAGED_SHA256:-}"
 AGENT_BIN="${DOCKPANEL_AGENT_BIN:-/usr/local/bin/dockpanel-agent}"
 SOCKET="${DOCKPANEL_AGENT_SOCKET:-/var/run/dockpanel/agent.sock}"
 
@@ -76,7 +87,8 @@ if [ -z "${DOCKPANEL_AGENT_UPDATE_DETACHED:-}" ] && command -v systemd-run >/dev
             --unit="dockpanel-agent-update-manual-$$" \
             --setenv=DOCKPANEL_AGENT_UPDATE_DETACHED=1 \
             --setenv=DOCKPANEL_VERSION="$TARGET" \
-            --setenv=DOCKPANEL_GITHUB_REPO="$GITHUB_REPO" \
+            --setenv=DOCKPANEL_AGENT_STAGED_BIN="$INPUT_BIN" \
+            --setenv=DOCKPANEL_AGENT_STAGED_SHA256="$INPUT_SHA256" \
             bash "$0"
     fi
 fi
@@ -92,39 +104,6 @@ STAGED=""
 log() {
     echo "[agent-update] $*"
     command -v systemd-cat >/dev/null 2>&1 && echo "[agent-update] $*" | systemd-cat -t "$LOG_TAG" || true
-}
-
-# dp_fetch <url> <out> [max-time] - download, retrying the failures curl's own
-# --retry does not. Same shape as setup.sh's dp_fetch, deliberately: four
-# programs in this repo perform the identical operation against the identical
-# host, and until s354 only the installer retried it at all.
-#
-# `--retry` covers connection refusals, timeouts and some HTTP codes. It does
-# NOT cover a connection dropped MID-TRANSFER, which exits 56 - the error that
-# has aborted real installs against the release CDN. curl grew
-# `--retry-all-errors` for exactly this, but it landed in 7.71 and the installer
-# supports Ubuntu 20.04, which ships 7.68 - so the loop lives in shell, and the
-# four copies stay identical rather than drifting apart.
-#
-# The per-attempt `--max-time` is the caller's, not a new policy: this is the
-# one consumer that already bounded its downloads, and those bounds are kept.
-#
-# ⚠ `rc=$?` on the line after a bare `if` reads 0, because a false `if` with no
-# `else` is itself a success. Capture with `|| rc=$?` on the command itself.
-# ⚠ Written as explicit `if` blocks, not `[ … ] && …`: under `set -e` a false
-# test at statement level aborts the script.
-dp_fetch() {
-    local url="$1" out="$2" maxtime="${3:-600}" attempt=1 rc=0
-    while [ "$attempt" -le 3 ]; do
-        rc=0
-        curl --retry 3 --retry-delay 2 -fsSL --max-time "$maxtime" "$url" -o "$out" || rc=$?
-        if [ "$rc" -eq 0 ]; then return 0; fi
-        log "fetch attempt ${attempt}/3 exited ${rc} - $url"
-        rm -f "$out"
-        attempt=$((attempt + 1))
-        if [ "$attempt" -le 3 ]; then sleep 3; fi
-    done
-    return "$rc"
 }
 
 # Written by every exit path. `ok` is the only field a caller should trust:
@@ -158,6 +137,8 @@ on_exit() {
     # A staged binary is 21MB sitting next to the real one; if we died between
     # staging and installing it, nothing else would ever clean it up.
     [ -n "${STAGED:-}" ] && [ -e "${STAGED:-}" ] && rm -f "$STAGED"
+    # The verified binary the agent staged is single-use, whatever happened.
+    [ -n "${INPUT_BIN:-}" ] && rm -f "$INPUT_BIN"
     if [ "$finished" != "1" ]; then
         write_result false "aborted at stage '$stage' (exit $rc)"
         log "FAILED at stage '$stage' (exit $rc)"
@@ -186,47 +167,33 @@ if [ -n "$from_version" ] && [ "$from_version" = "$TARGET_CLEAN" ]; then
     exit 0
 fi
 
-# ── 1. Architecture ──────────────────────────────────────────────────────
-stage="arch"
-case "$(uname -m)" in
-    x86_64)          ARCH_LABEL=amd64 ;;
-    aarch64|arm64)   ARCH_LABEL=arm64 ;;
-    *) fail arch "unsupported architecture $(uname -m)" ;;
+# ── 1. Re-check the binary the agent verified and staged ─────────────────
+# The agent already checked the release signature, the trusted comment and
+# this SHA-256. This is a second look at the bytes actually being installed,
+# on a private copy, so nothing can change them between the check and the swap.
+stage="verify"
+if [ -z "$INPUT_BIN" ] || [ -z "$INPUT_SHA256" ] || [ ! -f "$INPUT_BIN" ]; then
+    fail verify "no verified agent binary was staged; start the update from the panel"
+fi
+case "$INPUT_SHA256" in
+    *[!0-9a-f]*) fail verify "DOCKPANEL_AGENT_STAGED_SHA256 is not a lowercase sha256" ;;
 esac
-ASSET="dockpanel-agent-linux-${ARCH_LABEL}"
-BASE="https://github.com/${GITHUB_REPO}/releases/download/${TARGET}"
+[ "${#INPUT_SHA256}" -eq 64 ] || fail verify "DOCKPANEL_AGENT_STAGED_SHA256 is not a lowercase sha256"
 
-# ── 2. Download to a file, then verify, then install ─────────────────────
-# Never `curl | install`: once the bytes have been streamed into the consumer
-# there is no verification window left (lesson #25). And never take the status
-# of a pipeline whose last stage is not the fallible one (lesson #51) - each
-# curl below writes a file and is status-checked on its own.
-stage="download"
 WORK="$(mktemp -d "${STATE_DIR}/agent-update-XXXXXX")"
-
-dp_fetch "${BASE}/${ASSET}" "$WORK/agent" 600 \
-    || fail download "could not download ${BASE}/${ASSET} (does the release exist?)"
+cp -- "$INPUT_BIN" "$WORK/agent" || fail verify "could not copy the staged binary"
 
 SIZE=$(stat -c %s "$WORK/agent" 2>/dev/null || echo 0)
-[ "$SIZE" -gt 1000000 ] || fail download "downloaded agent is only ${SIZE} bytes"
+[ "$SIZE" -gt 1000000 ] || fail verify "staged agent is only ${SIZE} bytes"
 
-stage="verify"
-if dp_fetch "${BASE}/checksums.txt" "$WORK/checksums.txt" 60; then
-    EXPECT=$(awk -v a="$ASSET" '$2 == a {print $1}' "$WORK/checksums.txt" | head -1)
-    if [ -z "$EXPECT" ]; then
-        fail verify "checksums.txt for $TARGET has no entry for $ASSET"
-    fi
-    ACTUAL=$(sha256sum "$WORK/agent" | awk '{print $1}')
-    # A mismatch is NOT a retryable failure - distinct exit code so an operator
-    # (or a caller's retry loop) can tell "network hiccup" from "wrong bytes".
-    [ "$ACTUAL" = "$EXPECT" ] || fail verify "sha256 mismatch for $ASSET: got $ACTUAL, expected $EXPECT" 99
-    log "sha256 verified against the release's checksums.txt"
-else
-    fail verify "could not download ${BASE}/checksums.txt - refusing to install an unverified binary"
-fi
+ACTUAL=$(sha256sum "$WORK/agent" | awk '{print $1}')
+# A mismatch is NOT a retryable failure - distinct exit code so an operator
+# (or a caller's retry loop) can tell "network hiccup" from "wrong bytes".
+[ "$ACTUAL" = "$INPUT_SHA256" ] || fail verify "sha256 mismatch for the staged agent: got $ACTUAL, expected $INPUT_SHA256" 99
+log "sha256 of the staged agent re-checked"
 
 MAGIC=$(head -c 4 "$WORK/agent" | od -An -tx1 | tr -d ' \n')
-[ "$MAGIC" = "7f454c46" ] || fail verify "downloaded agent is not an ELF executable (magic $MAGIC)"
+[ "$MAGIC" = "7f454c46" ] || fail verify "staged agent is not an ELF executable (magic $MAGIC)"
 chmod 0755 "$WORK/agent"
 
 # ── 3. Swap ──────────────────────────────────────────────────────────────
@@ -250,7 +217,7 @@ swapped=1
 # SELinux: relabel after the swap, or this update is the last one this agent
 # ever performs.
 #
-# $WORK lives under the state dir, so the downloaded binary carries `var_lib_t`,
+# $WORK lives under the state dir, so the staged binary carries `var_lib_t`,
 # and BOTH moves above are renames within one filesystem - which PRESERVE the
 # label rather than taking the destination's. On an Enforcing box systemd then
 # cannot exec it (`status=203/EXEC`, "Permission denied"), and because this
