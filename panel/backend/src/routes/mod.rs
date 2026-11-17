@@ -1561,6 +1561,9 @@ pub fn router() -> Router<AppState> {
         //        inlined rate limiter. A change to the shared helper does NOT
         //        reach it.
         .route("/api/agent/version", get(agent_updates::latest_version))
+        // Feature 10: release files for agents, same authentication as
+        // /api/agent/version (authenticate_agent + agent_rate_limit).
+        .route("/api/agent/release/{tag}/{name}", get(agent_updates::release_file))
         .route("/api/agent/checkin", post(agent_checkin::checkin))
         // API Keys
         .route("/api/api-keys", get(api_keys::list).post(api_keys::create))
@@ -1614,6 +1617,8 @@ pub fn router() -> Router<AppState> {
         .route("/api/update/status", get(update::get_status))
         .route("/api/update/apply", post(update::apply_update))
         .route("/api/update/manual-check", post(update::manual_check))
+        .route("/api/update/source", put(update::put_source))
+        .route("/api/update/source/token", delete(update::delete_token))
         .route("/api/update/rollback", post(update::rollback))
         .route("/api/update/channel", get(update::get_channel).put(update::put_channel))
         .route("/api/snapshots", get(update::list_snapshots_route).post(update::create_snapshot_route))

@@ -41,6 +41,9 @@ pub mod status_notices;
 pub mod uptime;
 pub mod security_hardening;
 pub mod telemetry_collector;
+// --- feature 10: updates from the UI ---
+pub mod release_fetch;
+pub mod update_source;
 // --- import-hestia (05) ---
 pub mod import_types; // W5
 pub mod import_site; // W5

@@ -58,3 +58,5 @@ hkdf = "0.12"
 zeroize = { version = "1", features = ["derive"] }
 # Phase 4 W2: render runbook markdown into HTML for email payloads.
 pulldown-cmark = { version = "0.10", default-features = false, features = ["html"] }
+# Feature 10: verification of the minisign signature on release checksums.
+minisign-verify = "0.3.0"
