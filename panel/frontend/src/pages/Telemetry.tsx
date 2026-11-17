@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, Fragment } from "react";
+import { useState, useEffect, useCallback, useRef, Fragment } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api, ApiError } from "../api";
 import { formatDate } from "../utils/format";
@@ -476,15 +476,19 @@ export default function Telemetry() {
     return () => clearInterval(interval);
   }, [showApplyProgress, updateInFlight]);
 
-  // Feature 10 (C-5): the fleet target starts as this panel's version, once.
-  // Later polls must not overwrite what the operator typed.
-  const [fleetPrefilled, setFleetPrefilled] = useState(false);
+  // Feature 10 (C-5): the fleet target defaults to this panel's version, and
+  // follows it when a self-update lands (the status poll then reports the new
+  // version). Only the default moves: what the operator typed is left alone.
+  const fleetDefault = useRef("");
   useEffect(() => {
     const current = updateState?.current_version;
-    if (fleetPrefilled || !current) return;
-    setFleetPrefilled(true);
-    setFleetVersion(prev => prev || vTag(current));
-  }, [fleetPrefilled, updateState?.current_version]);
+    if (!current) return;
+    const next = vTag(current);
+    const prevDefault = fleetDefault.current;
+    if (next === prevDefault) return;
+    fleetDefault.current = next;
+    setFleetVersion(prev => (!prev || prev === prevDefault ? next : prev));
+  }, [updateState?.current_version]);
 
   const flash = (text: string, type: string) => {
     setMessage({ text, type });
@@ -814,7 +818,7 @@ export default function Telemetry() {
         <div>
           <h1 className="page-header-title">Telemetry & Updates</h1>
           <p className="text-xs text-dark-400 mt-0.5">
-            Diagnostic reporting and version management{config.current_version ? ` - v${config.current_version}` : ""}
+            Diagnostic reporting and version management{currentVersion ? ` - ${vTag(currentVersion)}` : ""}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -1134,7 +1138,7 @@ export default function Telemetry() {
                 <h3 className="text-sm font-medium text-dark-100">Agent Auto-Update</h3>
                 <p className="text-xs text-dark-400 mt-1 max-w-xl">
                   Remote agents update <span className="text-dark-200">themselves</span> to this
-                  panel&apos;s release (v{config.current_version || updateState?.current_version || "-"}),
+                  panel&apos;s release ({currentVersion ? vTag(currentVersion) : "-"}),
                   unattended, within 6 hours of it changing. Each box verifies the download against
                   the release checksums, confirms the new agent answers <code>/health</code>, and
                   rolls back if it does not. Leave this off to update the fleet only when you choose
