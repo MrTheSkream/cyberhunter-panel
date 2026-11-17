@@ -63,6 +63,46 @@ pub fn agent_can_verify_signed(version: Option<&str>) -> bool {
     }
 }
 
+/// `true` only when an agent reporting `agent_version` would move FORWARD to
+/// `target`. Agents are never walked back (or re-sent the same release)
+/// through the panel: going back is a reinstall by hand with install-agent.sh.
+/// An unknown version is not an upgrade either.
+pub fn agent_target_is_upgrade(agent_version: Option<&str>, target: &str) -> bool {
+    use crate::services::telemetry_collector::release_key;
+    match agent_version.map(str::trim) {
+        Some(v) if validate_target_version(v) && validate_target_version(target.trim()) => {
+            release_key(target.trim().trim_start_matches('v')) > release_key(v.trim_start_matches('v'))
+        }
+        _ => false,
+    }
+}
+
+/// Whether a server belongs in a fleet plan for `target`: unknown or
+/// unparseable versions stay in (the per-server refusal then names them),
+/// a known version stays in only when `target` is newer.
+pub fn fleet_plan_includes(agent_version: Option<&str>, target: &str) -> bool {
+    match agent_version.map(str::trim) {
+        Some(v) if validate_target_version(v) => agent_target_is_upgrade(Some(v), target),
+        _ => true,
+    }
+}
+
+/// The per-server refusal for an agent that is already at or past `target`.
+pub fn non_upgrade_refusal(agent_version: Option<&str>, target: &str) -> Option<String> {
+    if agent_target_is_upgrade(agent_version, target) {
+        return None;
+    }
+    let running = match agent_version {
+        Some(v) if !v.trim().is_empty() => format!("v{}", v.trim().trim_start_matches('v')),
+        _ => "an unknown version".to_string(),
+    };
+    Some(format!(
+        "This agent runs {running}; v{} is not newer, so it is not sent. To go back to an older \
+         release, reinstall the agent with install-agent.sh.",
+        target.trim().trim_start_matches('v')
+    ))
+}
+
 /// The per-server refusal for an agent too old to verify signed releases.
 pub fn legacy_agent_refusal(version: Option<&str>) -> Option<String> {
     if agent_can_verify_signed(version) {
@@ -1083,11 +1123,9 @@ pub async fn build_fleet_plan(
 
     let mut plan: Vec<FleetPlanRow> = rows
         .into_iter()
-        .filter(|(_, _, v)| {
-            v.as_deref()
-                .map(|cur| cur.trim_start_matches('v') != target_clean)
-                .unwrap_or(true)
-        })
+        // Already at the target, or past it: nothing to do, and never a
+        // downgrade (`fleet_plan_includes`).
+        .filter(|(_, _, v)| fleet_plan_includes(v.as_deref(), &target_clean))
         .map(|(server_id, name, agent_version)| FleetPlanRow {
             server_id,
             name,
@@ -1327,6 +1365,11 @@ async fn update_one_server(
     // update from this panel but from elsewhere, unverified: refuse it here,
     // before any request reaches it.
     if let Some(refusal) = legacy_agent_refusal(agent_version) {
+        return Err(refusal);
+    }
+    // Forward only: the agent refuses a non-upgrade itself, and the panel does
+    // not even ask.
+    if let Some(refusal) = non_upgrade_refusal(agent_version, &normalized) {
         return Err(refusal);
     }
     if let Err(e) = handle.post("/panel/update", payload).await {
@@ -1690,6 +1733,38 @@ mod tests {
         );
         assert!(legacy_agent_refusal(None).unwrap().contains("an unknown version"));
         assert!(legacy_agent_refusal(Some("3.0.0-rc.1")).is_none());
+    }
+
+    /// Agents only move forward through the panel: older or equal targets
+    /// are neither planned, nor sent, nor advertised.
+    #[test]
+    fn agents_are_never_sent_backwards() {
+        assert!(agent_target_is_upgrade(Some("3.0.0-rc.1"), "v3.0.0-rc.2"));
+        assert!(agent_target_is_upgrade(Some("v3.0.0-rc.9"), "3.0.0"));
+        assert!(!agent_target_is_upgrade(Some("3.0.0-rc.2"), "v3.0.0-rc.2"));
+        assert!(!agent_target_is_upgrade(Some("3.0.0"), "v3.0.0-rc.5"));
+        assert!(!agent_target_is_upgrade(Some("3.1.0"), "v3.0.9"));
+        assert!(!agent_target_is_upgrade(None, "v3.0.0"));
+        assert!(!agent_target_is_upgrade(Some("garbage"), "v3.0.0"));
+        assert!(!agent_target_is_upgrade(Some("3.0.0"), "latest"));
+
+        assert!(fleet_plan_includes(None, "3.0.0"));
+        assert!(fleet_plan_includes(Some("garbage"), "3.0.0"));
+        assert!(fleet_plan_includes(Some("2.242.1"), "3.0.0"));
+        assert!(!fleet_plan_includes(Some("3.0.0"), "3.0.0"));
+        assert!(!fleet_plan_includes(Some("v3.0.1"), "3.0.0"));
+
+        let r = non_upgrade_refusal(Some("3.0.1"), "v3.0.0").unwrap();
+        assert!(r.contains("v3.0.1") && r.contains("v3.0.0") && r.contains("install-agent.sh"), "{r}");
+        assert!(non_upgrade_refusal(Some("3.0.0-rc.1"), "v3.0.0").is_none());
+
+        let src = include_str!("panel_update.rs");
+        let body = &src[src.find("async fn update_one_server").unwrap()..];
+        let guard = body.find("non_upgrade_refusal(agent_version").unwrap();
+        let post = body.find("handle.post(\"/panel/update\"").unwrap();
+        assert!(guard < post, "the downgrade refusal must come before the request");
+        let agents = include_str!("../routes/agent_updates.rs");
+        assert!(agents.contains(".filter(|t| agent_target_is_upgrade(agent_version.as_deref(), t))"));
     }
 
     /// The refusal of a legacy agent must come before any request to it.

@@ -133,6 +133,56 @@ fn validate_target_version(v: &str) -> bool {
     true
 }
 
+/// Ordering key of a `vX.Y.Z[-rc.N]` tag, the same rule as the panel's
+/// `release_key`: a GA release outranks every `rc.N` of the same version, and
+/// `rc.N` orders by N. `None` for anything `validate_target_version` refuses.
+pub(crate) fn release_order(v: &str) -> Option<(u64, u64, u64, u64)> {
+    let v = v.trim();
+    if !validate_target_version(v) {
+        return None;
+    }
+    let v = v.trim_start_matches('v');
+    let (core, suffix) = match v.split_once('-') {
+        Some((c, s)) => (c, Some(s)),
+        None => (v, None),
+    };
+    let mut parts = core.split('.').map(|p| p.parse::<u64>().ok());
+    let (Some(Some(a)), Some(Some(b)), Some(Some(c))) = (parts.next(), parts.next(), parts.next())
+    else {
+        return None;
+    };
+    let pre = match suffix {
+        None => u64::MAX,
+        Some(s) => s.strip_prefix("rc.")?.parse::<u64>().ok()?,
+    };
+    Some((a, b, c, pre))
+}
+
+/// `true` only when `target` is strictly newer than `current`. An unparseable
+/// side is never an upgrade: this channel only ever moves an agent forward.
+pub(crate) fn is_upgrade(target: &str, current: &str) -> bool {
+    match (release_order(target), release_order(current)) {
+        (Some(t), Some(c)) => t > c,
+        _ => false,
+    }
+}
+
+/// The downgrade refusal. A signed but OLDER release (or the same one again)
+/// must never be installed through the panel channel: whoever controls the
+/// panel, or replays an old fleet target, could otherwise walk an agent back
+/// to a release with a known flaw. Going back is a manual reinstall with
+/// install-agent.sh.
+fn refuse_non_upgrade(target: &str, current: &str) -> Result<(), StartUpdateError> {
+    if is_upgrade(target, current) {
+        Ok(())
+    } else {
+        Err(StartUpdateError::NotNewer {
+            target: crate::services::release_verify::normalize_tag(target),
+            current: format!("v{}", current.trim_start_matches('v')),
+        })
+    }
+}
+
 /// POST /panel/update - kick off the update with the target version.
 /// Returns 202 with the accepted target. Caller polls /panel/update/status.
 ///
@@ -159,6 +209,8 @@ async fn apply_panel_update(
 pub(crate) enum StartUpdateError {
     Invalid(String),
     InFlight,
+    /// The target is not strictly newer than the running agent.
+    NotNewer { target: String, current: String },
     /// This box runs a panel; its own panel updates it.
     FullPanel,
     /// No `DOCKPANEL_CENTRAL_URL` / `DOCKPANEL_SERVER_TOKEN`: nowhere to fetch from.
@@ -172,7 +224,9 @@ impl StartUpdateError {
     fn status_code(&self) -> axum::http::StatusCode {
         match self {
             Self::Invalid(_) => axum::http::StatusCode::BAD_REQUEST,
-            Self::InFlight | Self::FullPanel => axum::http::StatusCode::CONFLICT,
+            Self::InFlight | Self::FullPanel | Self::NotNewer { .. } => {
+                axum::http::StatusCode::CONFLICT
+            }
             Self::NoPanelUrl | Self::NoSigningKey => axum::http::StatusCode::PRECONDITION_FAILED,
             Self::Internal(_) => axum::http::StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -184,6 +238,11 @@ impl std::fmt::Display for StartUpdateError {
         match self {
             Self::Invalid(v) => write!(f, "invalid target_version: {v}"),
             Self::InFlight => write!(f, "an update is already in flight"),
+            Self::NotNewer { target, current } => write!(
+                f,
+                "This agent runs {current}; {target} is not newer, so it is not installed. \
+                 To go back to an older release, reinstall the agent with install-agent.sh."
+            ),
             Self::FullPanel => write!(f, "{MSG_FULL_PANEL}"),
             Self::NoPanelUrl => write!(f, "{MSG_NO_PANEL_URL}"),
             Self::NoSigningKey => write!(f, "{MSG_NO_SIGNING_KEY}"),
@@ -260,6 +319,7 @@ pub(crate) async fn start_agent_self_update(target: &str) -> Result<(), StartUpd
         source.is_some(),
         key.is_some(),
     )?;
+    refuse_non_upgrade(&target, env!("CARGO_PKG_VERSION"))?;
     let (Some(source), Some(key)) = (source, key) else {
         return Err(StartUpdateError::Internal("preflight passed without a source or key".into()));
     };
@@ -1020,5 +1080,47 @@ mod tests {
             "an agent-only box has no API binary - that is the discriminator"
         );
         assert!(!src.contains(concat!("UpdateMode::", "FullPanel")), "the FullPanel mode is gone");
+        let downgrade = f.find("refuse_non_upgrade(").expect("launcher must refuse a non-upgrade");
+        assert!(downgrade < claim, "the downgrade refusal must come before the claim");
+    }
+
+    #[test]
+    fn release_order_follows_the_panel_rule() {
+        assert!(release_order("v3.0.0").unwrap() > release_order("3.0.0-rc.2").unwrap());
+        assert!(release_order("v3.0.0-rc.10").unwrap() > release_order("v3.0.0-rc.9").unwrap());
+        assert!(release_order("v3.0.0-rc.1").unwrap() > release_order("2.242.1").unwrap());
+        assert!(release_order("v2.10.0").unwrap() > release_order("v2.9.9").unwrap());
+        for bad in ["latest", "v3.0", "v3.0.0-beta.1", "v3.0.0-rc.", ""] {
+            assert!(release_order(bad).is_none(), "{bad} must not parse");
+        }
+    }
+
+    /// Only a strictly newer release moves an agent: an older one, the same
+    /// one, or anything unparseable is refused 409 with the reinstall hint.
+    #[test]
+    fn an_agent_never_moves_backwards_or_sideways() {
+        use axum::http::StatusCode;
+        assert!(refuse_non_upgrade("v3.0.0-rc.2", "3.0.0-rc.1").is_ok());
+        assert!(refuse_non_upgrade("v3.0.0", "3.0.0-rc.9").is_ok());
+        for (target, current) in [
+            ("v3.0.0-rc.1", "3.0.0-rc.2"),
+            ("v3.0.0-rc.2", "3.0.0-rc.2"),
+            ("v3.0.0-rc.9", "3.0.0"),
+            ("v2.242.1", "3.0.0-rc.1"),
+            ("garbage", "3.0.0"),
+            ("v3.0.1", "not-a-version"),
+        ] {
+            let e = refuse_non_upgrade(target, current).unwrap_err();
+            assert_eq!(e.status_code(), StatusCode::CONFLICT, "{target} over {current}");
+            assert!(e.to_string().contains("install-agent.sh"), "{e}");
+        }
+    }
+
+    /// The periodic check asks the same question before it starts anything.
+    #[test]
+    fn the_timer_only_starts_an_upgrade() {
+        let src = include_str!("../services/phone_home.rs");
+        assert!(src.contains("crate::routes::panel_update::is_upgrade(&target, current_version)"));
+        assert!(!src.contains("target.trim_start_matches('v') != current_version"));
     }
 }

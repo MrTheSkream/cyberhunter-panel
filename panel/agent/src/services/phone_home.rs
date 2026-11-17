@@ -191,7 +191,11 @@ async fn auto_update_loop(config: PhoneHomeConfig) {
 
     loop {
         match fetch_target(&client, &version_url, &config.server_token).await {
-            Ok(Some(target)) if target.trim_start_matches('v') != current_version => {
+            // Strictly newer only: an older or equal target is never installed
+            // through this channel (going back is a reinstall by hand).
+            Ok(Some(target))
+                if crate::routes::panel_update::is_upgrade(&target, current_version) =>
+            {
                 // A failed update leaves this agent's version unchanged, so the
                 // comparison above stays true for ever. Without this check, a
                 // target that cannot come up on this box would make the timer
@@ -222,8 +226,10 @@ async fn auto_update_loop(config: PhoneHomeConfig) {
                     }
                 }
             }
-            Ok(Some(_)) => {
-                tracing::info!("Agent auto-update: already at the panel's target (v{current_version})");
+            Ok(Some(target)) => {
+                tracing::info!(
+                    "Agent auto-update: panel target {target} is not newer than v{current_version}; nothing to do"
+                );
             }
             Ok(None) => {
                 tracing::info!("Agent auto-update: not enabled by the panel");

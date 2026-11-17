@@ -53,7 +53,7 @@ use uuid::Uuid;
 
 use crate::auth::{agent_rate_limit, authenticate_agent};
 use crate::error::{err_coded, internal_error, ApiError};
-use crate::services::panel_update::agent_can_verify_signed;
+use crate::services::panel_update::{agent_can_verify_signed, agent_target_is_upgrade};
 use crate::services::release_fetch::{self, FetchError};
 use crate::services::update_source;
 use crate::AppState;
@@ -77,7 +77,11 @@ pub async fn latest_version(
                 .map_err(|e| internal_error("agent target", e))?
                 .flatten();
         if agent_can_verify_signed(agent_version.as_deref()) {
-            resolve_agent_target(&state).await?
+            // Forward only: an agent already at or past the panel's release is
+            // told nothing, never pointed back at an older one.
+            resolve_agent_target(&state)
+                .await?
+                .filter(|t| agent_target_is_upgrade(agent_version.as_deref(), t))
         } else {
             None
         }
