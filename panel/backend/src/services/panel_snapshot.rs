@@ -3,7 +3,7 @@
 //! Builds tar.gz triplets containing:
 //!   binaries/   - agent + api + cli binary copies
 //!   db/         - gzipped pg_dump of the CyberHunter - Panel database
-//!   etc/        - copy of /etc/dockpanel
+//!   etc/        - copy of /etc/dockpanel, minus the update token
 //!   metadata.json - provenance (from_version, trigger, operator)
 //!
 //! Stored in `/var/backups/dockpanel/snapshots/`. The orchestrator creates
@@ -294,6 +294,9 @@ async fn build_snapshot_inner(
             stderr: format!("exit status {etc_status}"),
         });
     }
+    // The update token is a secret, and restore-snapshot.sh never restores the
+    // update source anyway: do not copy it into /var/backups.
+    strip_update_token(&staging_dir.join("etc"))?;
 
     let from_version = env!("CARGO_PKG_VERSION").to_string();
     let metadata = serde_json::json!({
@@ -649,6 +652,33 @@ fn shell_escape(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
+/// Remove the update token file (and any leftover temporary copy of it, see
+/// `update_source::write_private_atomic`) from a staged copy of /etc/dockpanel.
+/// Whatever the entry is - file, symlink (the link, never its target) or
+/// directory - it goes. Absent is fine.
+fn strip_update_token(etc_staging: &Path) -> std::io::Result<()> {
+    let entries = match std::fs::read_dir(etc_staging) {
+        Ok(e) => e,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e),
+    };
+    for entry in entries {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name != "update-token" && !name.starts_with(".update-token.tmp-") {
+            continue;
+        }
+        let path = entry.path();
+        if std::fs::symlink_metadata(&path)?.is_dir() {
+            std::fs::remove_dir_all(&path)?;
+        } else {
+            std::fs::remove_file(&path)?;
+        }
+    }
+    Ok(())
+}
+
 // ── Tests ────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -677,6 +707,45 @@ mod tests {
         assert_eq!(shell_escape("plain"), "'plain'");
         assert_eq!(shell_escape("with space"), "'with space'");
         assert_eq!(shell_escape("o'brien"), "'o'\\''brien'");
+    }
+
+    #[test]
+    fn strip_update_token_drops_the_token_and_keeps_the_rest() {
+        let dir = std::env::temp_dir().join(format!("dp-snap-etc-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join("ssl")).unwrap();
+        std::fs::write(dir.join("api.env"), b"JWT_SECRET=x\n").unwrap();
+        std::fs::write(dir.join("update.conf"), b"UPDATE_REPO=o/n\n").unwrap();
+        std::fs::write(dir.join("update-token"), b"ghp_secret\n").unwrap();
+        std::fs::write(dir.join(".update-token.tmp-1234"), b"ghp_secret\n").unwrap();
+        std::fs::write(dir.join("update-token.keep"), b"not the token\n").unwrap();
+
+        strip_update_token(&dir).unwrap();
+
+        assert!(!dir.join("update-token").exists());
+        assert!(!dir.join(".update-token.tmp-1234").exists());
+        for kept in ["api.env", "update.conf", "update-token.keep", "ssl"] {
+            assert!(dir.join(kept).exists(), "{kept} must be kept");
+        }
+        // Idempotent, and an absent staging dir is not an error.
+        strip_update_token(&dir).unwrap();
+        strip_update_token(&dir.join("missing")).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn strip_update_token_removes_a_symlink_not_its_target() {
+        let dir = std::env::temp_dir().join(format!("dp-snap-etc-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("target");
+        std::fs::write(&target, b"elsewhere\n").unwrap();
+        std::os::unix::fs::symlink(&target, dir.join("update-token")).unwrap();
+
+        strip_update_token(&dir).unwrap();
+
+        assert!(std::fs::symlink_metadata(dir.join("update-token")).is_err());
+        assert_eq!(std::fs::read(&target).unwrap(), b"elsewhere\n");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]

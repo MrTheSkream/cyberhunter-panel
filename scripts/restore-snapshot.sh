@@ -250,7 +250,23 @@ stage="extract"
 rm -rf "$WORK"
 mkdir -p "$WORK"
 chmod 0700 "$WORK"
-tar -C "$WORK" -xzf "$TARBALL" || fail "tar extraction failed"
+# The update source (update.conf + the token file) is NOT part of the panel's
+# point-in-time state: a restore must leave whatever is configured right now
+# untouched. Otherwise an admin who cleared a leaked token sees it come back
+# with any older snapshot. Excluded at extraction, so the snapshot's copy of the
+# token (and any leftover temporary file of it) is never written to disk here,
+# and step 7 has nothing of the update source to copy over $ETC_DIR.
+tar -C "$WORK" -xzf "$TARBALL" \
+    --exclude='etc/update-token' \
+    --exclude='etc/.update-token.tmp-*' \
+    --exclude='etc/update.conf' \
+    --exclude='etc/.update.conf.tmp-*' \
+    || fail "tar extraction failed"
+# Belt and braces against an entry tar's patterns did not match (any file type,
+# symlinks included: rm -rf removes the link, never its target).
+rm -rf "$WORK/etc/update-token" "$WORK/etc/update.conf" \
+    "$WORK"/etc/.update-token.tmp-* "$WORK"/etc/.update.conf.tmp-* \
+    || fail "could not drop the update source from the extracted snapshot"
 
 DUMP_GZ="$WORK/db/dump.sql.gz"
 DUMP_SQL="$WORK/db/dump.sql"
@@ -499,6 +515,9 @@ done
 stage="etc"
 if [ -d "$WORK/etc" ]; then
     cp -a "$ETC_DIR" "$ETC_DIR.prerestore.$SNAP_ID" 2>/dev/null || true
+    # The restore never touches the update token, so the safety copy needs none:
+    # a token cleared later must not survive in it.
+    rm -rf "$ETC_DIR.prerestore.$SNAP_ID/update-token" "$ETC_DIR.prerestore.$SNAP_ID"/.update-token.tmp-* 2>/dev/null || true
     cp -a "$WORK/etc/." "$ETC_DIR/" || fail "restoring $ETC_DIR failed"
     log "restored $ETC_DIR"
 fi

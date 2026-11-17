@@ -221,6 +221,12 @@ make_snapshot() {
     printf 'OLD-CLI\n'   > "$dir/src/binaries/dockpanel"
     [ "$with_api" = "yes" ] || rm -f "$dir/src/binaries/dockpanel-api"
     printf 'OLD-ENV\n' > "$dir/src/etc/api.env"
+    # The update source as it was when the snapshot was taken (S7).
+    if [ -n "${SNAP_UPDATE_SOURCE:-}" ]; then
+        printf 'OLD-TOKEN\n' > "$dir/src/etc/update-token"
+        printf 'OLD-TOKEN\n' > "$dir/src/etc/.update-token.tmp-1"
+        printf 'UPDATE_REPO=old/repo\n' > "$dir/src/etc/update.conf"
+    fi
 
     {
         echo "CREATE TABLE a (id int);"
@@ -257,6 +263,19 @@ run_restore() {
     printf 'NEW-API\n'   > "$base/bin/dockpanel-api"
     printf 'NEW-AGENT\n' > "$base/bin/dockpanel-agent"
     printf 'NEW-CLI\n'   > "$base/bin/dockpanel"
+    # The update source as configured right now (S7): update.conf unless
+    # NO_CUR_CONF is set, the token only when CUR_TOKEN is set - unset models
+    # "the admin cleared it".
+    if [ -n "${SNAP_UPDATE_SOURCE:-}" ]; then
+        if [ -z "${NO_CUR_CONF:-}" ]; then
+            printf 'UPDATE_REPO=new/repo\n' > "$base/etc/update.conf"
+            chmod 0600 "$base/etc/update.conf"
+        fi
+        if [ -n "${CUR_TOKEN:-}" ]; then
+            printf '%s\n' "$CUR_TOKEN" > "$base/etc/update-token"
+            chmod 0600 "$base/etc/update-token"
+        fi
+    fi
     printf 'NEW-ENV\n'   > "$base/etc/api.env"
 
     ACTIONS="$base/actions.log"; : > "$ACTIONS"
@@ -367,6 +386,40 @@ assert_has  "the detail says nothing changed"   'nothing changed'               
 assert_has  "dockpanel-api WAS restarted - nothing was lost, so nothing is held" \
             'systemctl start dockpanel-api' "$A"
 assert_lacks "and it is NOT reported as left down" 'LEFT STOPPED'                "$J"
+
+echo
+echo "S7 · a restore leaves the CURRENT update source alone (token + update.conf)"
+# The admin cleared a leaked token, then restored a snapshot taken while it was
+# set: the token must stay gone. And a token set now must not be rewound.
+SNAP_UPDATE_SOURCE=yes run_restore token_cleared yes
+E="$SCRATCH/token_cleared/etc"
+chk "$([ "$RC" = "0" ] && echo 0 || echo 1)" "exits 0"
+chk "$([ "$(cat "$E/api.env")" = "OLD-ENV" ] && echo 0 || echo 1)" \
+    "the rest of /etc/dockpanel IS still restored"
+chk "$([ ! -e "$E/update-token" ] && [ ! -L "$E/update-token" ] && echo 0 || echo 1)" \
+    "a cleared token is NOT resurrected by the restore"
+chk "$([ ! -e "$E/.update-token.tmp-1" ] && echo 0 || echo 1)" \
+    "nor a leftover temporary copy of it"
+chk "$([ "$(cat "$E/update.conf")" = "UPDATE_REPO=new/repo" ] && echo 0 || echo 1)" \
+    "update.conf keeps its current content"
+chk "$([ "$(stat -c %a "$E/update.conf")" = "600" ] && echo 0 || echo 1)" \
+    "update.conf keeps mode 0600"
+
+SNAP_UPDATE_SOURCE=yes NO_CUR_CONF=1 run_restore source_absent yes
+E="$SCRATCH/source_absent/etc"
+chk "$([ "$RC" = "0" ] && echo 0 || echo 1)" "exits 0"
+chk "$([ ! -e "$E/update.conf" ] && [ ! -e "$E/update-token" ] && echo 0 || echo 1)" \
+    "no update source now - still none after the restore"
+
+SNAP_UPDATE_SOURCE=yes CUR_TOKEN=NEW-TOKEN run_restore token_current yes
+E="$SCRATCH/token_current/etc"
+chk "$([ "$RC" = "0" ] && echo 0 || echo 1)" "exits 0"
+chk "$([ "$(cat "$E/update-token")" = "NEW-TOKEN" ] && echo 0 || echo 1)" \
+    "a token set now keeps its current bytes"
+chk "$([ "$(stat -c %a "$E/update-token")" = "600" ] && echo 0 || echo 1)" \
+    "and its mode 0600"
+chk "$([ "$(cat "$E/update.conf")" = "UPDATE_REPO=new/repo" ] && echo 0 || echo 1)" \
+    "update.conf keeps its current content"
 
 echo
 echo "══ Part 2 · the update path, by source ══════════════════════════════════"

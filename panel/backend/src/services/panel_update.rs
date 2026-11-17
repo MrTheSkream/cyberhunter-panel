@@ -27,7 +27,7 @@
 //!   - In-flight rollback is `update.sh`'s `.bak` restore - orchestrator
 //!     doesn't touch it.
 //!   - Operator-triggered rollback from a snapshot is
-//!     [`rollback_to_snapshot`] - restores binaries + DB + /etc/dockpanel
+//!     [`rollback_to_snapshot`] - restores binaries + DB + /etc/dockpanel (never the update source)
 //!     and bounces services. Routes/UI gate this behind a destructive
 //!     confirm.
 
