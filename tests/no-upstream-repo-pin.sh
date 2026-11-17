@@ -10,7 +10,9 @@
 # clone URL, a "check for updates" constant) is enough for an update to come
 # from outside the signed chain. The panel binary now reaches GitHub itself,
 # with an operator-supplied token, and verifies minisign + SHA-256 before
-# anything runs; the scripts only receive verified files.
+# anything runs; the scripts only receive verified files. One exception since
+# 12 (D4): install.sh downloads a release, from the public release repository
+# only, and verifies its signature first (section 2b).
 #
 # Run from anywhere inside the repository, with git available (it reads the
 # TRACKED files only, so an untracked scratch file cannot make it pass or fail).
@@ -49,7 +51,6 @@ CLOSED_LIST=(
     scripts/update.sh
     scripts/agent-self-update.sh
     scripts/install-agent.sh
-    scripts/install.sh
     scripts/setup.sh
     panel/backend/src/services/telemetry_collector.rs
     panel/backend/src/services/panel_update.rs
@@ -70,6 +71,36 @@ for f in "${CLOSED_LIST[@]}"; do
         printf '%s\n' "$H" | cut -c1-160 | sed 's/^/      /'
     fi
 done
+
+echo "── 2b. install.sh downloads only from the release repository, signature first ──"
+# 12 (D4): install.sh's release mode is the one script that downloads a
+# release, from the public release repository and nowhere else, and only
+# after minisign has verified checksums.txt against the key stamped into it.
+INST=scripts/install.sh
+if git ls-files --error-unmatch -- "$INST" >/dev/null 2>&1; then
+    H=$(git grep -n -e "api.github.com" -e "raw.githubusercontent" -- "$INST" 2>/dev/null || true)
+    if [ -z "$H" ]; then ok "$INST names no API or raw host"; else bad "$INST names another host: $H"; fi
+    URLS=$(git grep -h -o -E 'https://github\.com/[^ "]*' -- "$INST" 2>/dev/null | sort -u)
+    OTHER=$(printf '%s\n' "$URLS" | grep -v -E '^https://github\.com/(\$\{(RELEASE_REPO|DEFAULT_RELEASE_REPO)\}|<repo>)/releases/' \
+            | grep -v -E '^https://github\.com/MrTheSkream/cyberhunter-releases/releases/' | grep . || true)
+    if [ -n "$URLS" ] && [ -z "$OTHER" ]; then
+        ok "every github.com URL in $INST is a /releases/ URL of the release repository"
+    else
+        bad "$INST reaches github.com elsewhere: $OTHER"
+    fi
+    if git grep -q -e 'DEFAULT_RELEASE_REPO="MrTheSkream/cyberhunter-releases"' -- "$INST"; then
+        ok "$INST defaults to MrTheSkream/cyberhunter-releases"
+    else
+        bad "$INST does not default to the public release repository"
+    fi
+    if git grep -q -e 'minisign -Q -V -m "\$STAGE/checksums.txt"' -- "$INST"; then
+        ok "$INST verifies checksums.txt with minisign"
+    else
+        bad "$INST does not verify checksums.txt with minisign"
+    fi
+else
+    bad "$INST is not tracked"
+fi
 
 echo "── 3. negative control: the search is not blind ──"
 # The same pathspec machinery must find a word that is known to be there, or a

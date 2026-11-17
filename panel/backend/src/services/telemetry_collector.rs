@@ -761,8 +761,10 @@ mod tests {
         let pool = dead_pool();
         for status in [
             update_source::evaluate(None, update_source::read_conf("UPDATE_REPO=o/n\nUPDATE_TOKEN_FILE=/etc/dockpanel/t\n"), true),
-            update_source::evaluate(Some("ID".into()), Err(update_source::ConfError::Missing), true),
-            update_source::evaluate(Some("ID".into()), update_source::read_conf("UPDATE_REPO=o/n\nUPDATE_TOKEN_FILE=/etc/dockpanel/t\n"), false),
+            // An update.conf that exists but is invalid (here: a token path
+            // other than /etc/dockpanel/update-token), with or without a token.
+            update_source::evaluate(Some("ID".into()), update_source::read_conf("UPDATE_REPO=o/n\nUPDATE_TOKEN_FILE=/etc/dockpanel/t\n"), true),
+            update_source::evaluate(Some("ID".into()), Err(update_source::ConfError::Invalid("x")), false),
         ] {
             let r = check_for_updates_inner(&pool, &api, &status, "candidate").await;
             assert_eq!(r.unwrap_err(), FetchError::NotConfigured);

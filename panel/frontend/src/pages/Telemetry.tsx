@@ -77,7 +77,7 @@ interface UpdateStateView {
   /// Feature 10 (contract A-6.1). All optional: a missing `configured` reads
   /// as "not configured", so an older backend fails closed.
   configured?: boolean;
-  not_configured_reason?: "no_signing_key" | "no_source" | "no_token" | null;
+  not_configured_reason?: "no_signing_key" | "no_source" | null;
   repo?: string | null;
   token_set?: boolean;
   signing_key_id?: string | null;
@@ -1040,8 +1040,10 @@ export default function Telemetry() {
           )}
 
           {/* Feature 10 (C-2, C-4): updates come only from a signed release of
-              the configured repository. Without a compiled signing key, a valid
-              update.conf and a token, nothing checks or installs. */}
+              the configured repository. Without a compiled signing key, or with
+              an update.conf that exists but is invalid, nothing checks or
+              installs. The token is optional (conception 12, D2): no
+              update.conf means the default public release repository. */}
           {updateState && !updatesConfigured && (
             <div className="bg-dark-800 border border-warn-500/30 rounded-lg p-4">
               <div className="flex items-center justify-between gap-4 mb-2">
@@ -1054,7 +1056,7 @@ export default function Telemetry() {
               <p className="text-xs text-dark-300">
                 {updateState.not_configured_reason === "no_signing_key"
                   ? "This build has no update signing key. Install a signed CyberHunter release by hand to enable updates."
-                  : "Add a GitHub fine-grained token with read-only access to Contents of the release repository."}
+                  : "The update configuration in /etc/dockpanel/update.conf is not valid. Delete it to use the default release repository, or save a token below to rewrite it."}
               </p>
               <div className="text-xs text-dark-400 mt-3">
                 Installed version: <span className="font-mono text-dark-200">{vTag(currentVersion)}</span>

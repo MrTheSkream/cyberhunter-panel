@@ -10,12 +10,17 @@
 #
 #   --arm64        also build the four aarch64 binaries
 #   --dry-run      build, check and sign, then stop before tagging/publishing
+#                  (prints the repository it would publish to)
 #   --notes-file   release notes for `gh release create` (default: a one-liner)
 #
 # Environment:
 #   CYBERHUNTER_MINISIGN_KEY   secret key  (default $HOME/.minisign/cyberhunter.key)
 #   CYBERHUNTER_MINISIGN_PUB   public key  (default $HOME/.minisign/cyberhunter.pub)
-#   CYBERHUNTER_RELEASE_REPO   GitHub repo (default MrTheSkream/cyberhunter-panel)
+#   CYBERHUNTER_RELEASE_REPO   GitHub repo the release is published on
+#                              (default MrTheSkream/cyberhunter-releases, the
+#                              public release repository; the tag itself is
+#                              still created and pushed in this private source
+#                              repository, origin)
 #   CYBERHUNTER_SIGN_INLINE    set to 1 to run a native minisign inline under
 #                              Git Bash too (see "Signing" below)
 #   Test releases use the same variables pointed at a test key pair kept
@@ -34,16 +39,26 @@
 #   cyberhunter-cli-linux-amd64    cyberhunter-mcp-linux-amd64
 #   (with --arm64: the same four names ending in -linux-arm64)
 #   cyberhunter-frontend.tar.gz    cyberhunter-source.tar.gz
+#   install.sh                     (with the signing public key stamped in)
 #   checksums.txt                  checksums.txt.minisig
 #
-# checksums.txt is `sha256sum --text cyberhunter-* | LC_ALL=C sort -k2`, produced in
-# a Linux container, LF only. It is signed byte for byte with the trusted
-# comment "cyberhunter-release <tag>", which servers check against the tag
-# they asked for.
+# cyberhunter-source.tar.gz is `git archive HEAD -- scripts panel LICENSE`
+# (the AGPL source of the release). checksums.txt is
+# `sha256sum --text cyberhunter-* install.sh | LC_ALL=C sort -k2`, produced in
+# a Linux container, LF only, so install.sh is covered by the signature too.
+# It is signed byte for byte with the trusted comment "cyberhunter-release
+# <tag>", which servers and install.sh check against the tag they asked for.
 #
-# Internal entry point used by tests/release-format-pin.sh:
+# Publishing (step 9): the tag is created and pushed here (origin, private),
+# then the release is created on CYBERHUNTER_RELEASE_REPO with --target main:
+# the tag does not exist there, GitHub creates it on that repository's main.
+#
+# Internal entry points used by tests/release-format-pin.sh and
+# tests/install-release-mode-pin.sh:
 #   bash scripts/release.sh --checksums-only <dir>
 # runs only the checksum step (step 5b) on <dir>, locally, and exits.
+#   bash scripts/release.sh --stamp-install-only <install.sh> <pubkey> <out>
+# runs only the install.sh stamping (step 5) and exits.
 set -euo pipefail
 
 RED='\033[0;31m'
@@ -68,7 +83,25 @@ GLIBC_MAX="2.35"
 # the readers refuse; on Linux both modes hash the same bytes.
 write_checksums() {
     local dir="$1"
-    ( cd "$dir" && sha256sum --text cyberhunter-* | LC_ALL=C sort -k2 > checksums.txt )
+    ( cd "$dir" && files=(cyberhunter-*) && { [ ! -f install.sh ] || files+=(install.sh); } \
+        && sha256sum --text "${files[@]}" | LC_ALL=C sort -k2 > checksums.txt )
+}
+
+# stamp_install <src> <pubkey> <out>: <src> (scripts/install.sh) with its one
+# empty CYBERHUNTER_STAMPED_PUBKEY="" line set to <pubkey>. Refuses anything
+# but exactly one placeholder line, a CR, or a key that is not RW + base64.
+stamp_install() {
+    local src="$1" key="$2" out="$3"
+    printf '%s' "$key" | grep -Eqx 'RW[A-Za-z0-9+/]{54}' || die "not a minisign public key: $key"
+    [ "$(grep -c '^CYBERHUNTER_STAMPED_PUBKEY=' "$src" || true)" = "1" ] \
+        && [ "$(grep -cx 'CYBERHUNTER_STAMPED_PUBKEY=""' "$src" || true)" = "1" ] \
+        || die "$src must hold exactly one CYBERHUNTER_STAMPED_PUBKEY=\"\" line"
+    [ "$(tr -cd '\r' < "$src" | wc -c)" -eq 0 ] || die "$src contains CR"
+    sed "s|^CYBERHUNTER_STAMPED_PUBKEY=\"\"\$|CYBERHUNTER_STAMPED_PUBKEY=\"$key\"|" "$src" > "$out"
+    [ "$(grep -cx "CYBERHUNTER_STAMPED_PUBKEY=\"$key\"" "$out" || true)" = "1" ] \
+        || die "install.sh was not stamped with the signing key"
+    [ "$(wc -l < "$src")" = "$(wc -l < "$out")" ] || die "stamping changed the line count of install.sh"
+    [ "$(tr -cd '\r' < "$out" | wc -c)" -eq 0 ] || die "the stamped install.sh contains CR"
 }
 
 # ps_quote <s>: <s> as a PowerShell single-quoted string ('' escapes ').
@@ -102,6 +135,11 @@ sign_native() {
     minisign -V -p "$M_PUB" -m "$M_SUMS" -x "$M_SIG"
 }
 
+if [ "${1:-}" = "--stamp-install-only" ]; then
+    [ $# -eq 4 ] && [ -f "$2" ] || die "usage: release.sh --stamp-install-only <install.sh> <pubkey> <out>"
+    stamp_install "$2" "$3" "$4"
+    exit 0
+fi
 if [ "${1:-}" = "--checksums-only" ]; then
     [ -n "${2:-}" ] && [ -d "$2" ] || die "usage: release.sh --checksums-only <dir>"
     write_checksums "$2"
@@ -116,7 +154,7 @@ while [ $# -gt 0 ]; do
         --arm64) ARM64=1 ;;
         --dry-run) DRY_RUN=1 ;;
         --notes-file) shift; NOTES_FILE="${1:-}"; [ -n "$NOTES_FILE" ] || die "--notes-file needs a file" ;;
-        -h|--help) sed -n '2,46p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,61p' "$0"; exit 0 ;;
         *) die "unknown argument: $1 (usage: release.sh [--arm64] [--dry-run] [--notes-file <file>])" ;;
     esac
     shift
@@ -124,7 +162,7 @@ done
 
 MINISIGN_KEY="${CYBERHUNTER_MINISIGN_KEY:-$HOME/.minisign/cyberhunter.key}"
 MINISIGN_PUB="${CYBERHUNTER_MINISIGN_PUB:-$HOME/.minisign/cyberhunter.pub}"
-REPO="${CYBERHUNTER_RELEASE_REPO:-MrTheSkream/cyberhunter-panel}"
+REPO="${CYBERHUNTER_RELEASE_REPO:-MrTheSkream/cyberhunter-releases}"
 
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
@@ -171,6 +209,16 @@ if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; the
 fi
 if [ "$DRY_RUN" = "0" ] && gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
     die "a release $TAG already exists on $REPO"
+fi
+# --target main only creates the tag when it is not there: an existing tag on
+# the release repository would be used as is, whatever commit it names.
+if [ "$DRY_RUN" = "0" ] && gh api "repos/$REPO/git/ref/tags/$TAG" >/dev/null 2>&1; then
+    die "tag $TAG already exists on $REPO"
+fi
+# ...and needs a main branch there (the README commit), checked before the tag
+# is pushed to origin rather than after.
+if [ "$DRY_RUN" = "0" ] && ! gh api "repos/$REPO/branches/main" >/dev/null 2>&1; then
+    die "$REPO has no main branch (or is not reachable with gh): push its README first"
 fi
 
 DIRTY="$(git status --porcelain | grep -v ' panel/frontend/tsconfig.tsbuildinfo$' || true)"
@@ -233,11 +281,16 @@ git -c core.autocrlf=false archive --format=tar HEAD panel/frontend scripts \
 
 # ── 5. Source archive and checksums ──────────────────────────────────────
 step "5. Assembling $DIST"
-git -c core.autocrlf=false archive --format=tar.gz --prefix=cyberhunter-source/ HEAD -- scripts panel \
+git -c core.autocrlf=false archive --format=tar.gz --prefix=cyberhunter-source/ HEAD -- scripts panel LICENSE \
     > "$DIST/cyberhunter-source.tar.gz"
+# install.sh from the committed blob (LF, whatever the Windows working copy
+# holds), with the signing key stamped in. It is listed in checksums.txt.
+git -c core.autocrlf=false show HEAD:scripts/install.sh > "$DIST.install.sh.src"
+stamp_install "$DIST.install.sh.src" "$PUBKEY" "$DIST/install.sh"
+rm -f "$DIST.install.sh.src"
 
 REQUIRED=(cyberhunter-agent-linux-amd64 cyberhunter-api-linux-amd64 cyberhunter-cli-linux-amd64
-          cyberhunter-mcp-linux-amd64 cyberhunter-frontend.tar.gz cyberhunter-source.tar.gz)
+          cyberhunter-mcp-linux-amd64 cyberhunter-frontend.tar.gz cyberhunter-source.tar.gz install.sh)
 if [ "$ARM64" = "1" ]; then
     REQUIRED+=(cyberhunter-agent-linux-arm64 cyberhunter-api-linux-arm64 cyberhunter-cli-linux-arm64
                cyberhunter-mcp-linux-arm64)
@@ -332,6 +385,7 @@ echo ""
 
 if [ "$DRY_RUN" = "1" ]; then
     echo "Dry run: nothing tagged, nothing published."
+    echo "  would tag $TAG on origin and publish it on $REPO (release created with --target main)"
     exit 0
 fi
 
@@ -353,6 +407,6 @@ PRE_FLAG=()
 [ "$PRERELEASE" = "1" ] && PRE_FLAG=(--prerelease)
 FILES=()
 for f in "${REQUIRED[@]}" checksums.txt checksums.txt.minisig; do FILES+=("$DIST/$f"); done
-gh release create "$TAG" --repo "$REPO" --verify-tag --title "CyberHunter $TAG" "${PRE_FLAG[@]}" \
+gh release create "$TAG" --repo "$REPO" --target main --title "CyberHunter $TAG" "${PRE_FLAG[@]}" \
     --notes-file "$NOTES_FILE" "${FILES[@]}"
 echo -e "${GREEN}Published $TAG on $REPO${NC}"

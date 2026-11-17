@@ -1,11 +1,17 @@
 //! Where panel updates come from, and whether they are allowed at all.
 //!
-//! Three things must all hold before this panel contacts GitHub or installs
+//! Two things must both hold before this panel contacts GitHub or installs
 //! anything (the "configured" predicate, checked in this order):
 //!   1. a minisign public key was compiled into the binary
 //!      (`CYBERHUNTER_UPDATE_PUBKEY` at build time, see `build.rs`);
-//!   2. `/etc/dockpanel/update.conf` exists and is valid;
-//!   3. the token file it names holds a non-empty token.
+//!   2. a valid source: `/etc/dockpanel/update.conf` when it exists, or the
+//!      default public release repository when it does not. An `update.conf`
+//!      that exists but is invalid gives `no_source`.
+//!
+//! The token is optional (conception 12, D2). Without one, GitHub is queried
+//! anonymously, which is enough for a public release repository; a private one
+//! needs a token. Either way, a release is installed only once its signature
+//! against the compiled key has been checked.
 //!
 //! The token itself is never a field of a `Serialize` or `Debug` structure. It
 //! is read from disk right before a GitHub request, by
@@ -24,8 +30,9 @@ use zeroize::Zeroizing;
 pub const UPDATE_CONF_PATH: &str = "/etc/dockpanel/update.conf";
 /// Where `PUT /api/update/source` puts the token when no valid config names a file.
 pub const DEFAULT_TOKEN_FILE: &str = "/etc/dockpanel/update-token";
-/// Release repository used when the operator does not name one.
-pub const DEFAULT_UPDATE_REPO: &str = "MrTheSkream/cyberhunter-panel";
+/// Release repository used when the operator does not name one: the public
+/// releases repository, readable without a token.
+pub const DEFAULT_UPDATE_REPO: &str = "MrTheSkream/cyberhunter-releases";
 /// Every path the config may name lives under this directory.
 const CONF_DIR: &str = "/etc/dockpanel/";
 /// The only accepted name of the token file, inside the config directory.
@@ -37,7 +44,6 @@ const COMPILED_PUBKEY: Option<&str> = option_env!("CYBERHUNTER_UPDATE_PUBKEY");
 
 pub const REASON_NO_SIGNING_KEY: &str = "no_signing_key";
 pub const REASON_NO_SOURCE: &str = "no_source";
-pub const REASON_NO_TOKEN: &str = "no_token";
 
 static REPO_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
     regex::Regex::new(r"^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}$").unwrap()
@@ -56,7 +62,7 @@ pub struct UpdateSource {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfError {
-    /// The file does not exist (or cannot be read).
+    /// The file does not exist. The default source is then used.
     Missing,
     /// The file exists but is not acceptable; the text says why (never a value).
     Invalid(&'static str),
@@ -154,7 +160,31 @@ fn read_conf_file(path: &Path) -> Result<UpdateSource, ConfError> {
     match std::fs::read_to_string(path) {
         Ok(text) if path == Path::new(UPDATE_CONF_PATH) => read_conf(&text),
         Ok(text) => read_conf_in(&text, &conf_dir_of(path)),
-        Err(_) => Err(ConfError::Missing),
+        // Only an absent file means "use the default source": a config that
+        // exists but cannot be read (permissions, not UTF-8, a directory) is
+        // invalid, never silently replaced by the default.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(ConfError::Missing),
+        Err(_) => Err(ConfError::Invalid("update.conf cannot be read")),
+    }
+}
+
+/// The source used when no `update.conf` exists: the default public
+/// repository, and the default token file next to the config (read only if
+/// the operator put a token there).
+fn default_source_for(conf_path: &Path) -> UpdateSource {
+    UpdateSource {
+        repo: DEFAULT_UPDATE_REPO.to_string(),
+        token_file: default_token_file_for(conf_path),
+    }
+}
+
+/// The source in effect: the config when it is valid, the default one when it
+/// is missing, and the error when it exists but is invalid. The only place
+/// where a missing config turns into the default source.
+fn resolve_source(conf_path: &Path) -> Result<UpdateSource, ConfError> {
+    match read_conf_file(conf_path) {
+        Err(ConfError::Missing) => Ok(default_source_for(conf_path)),
+        other => other,
     }
 }
 
@@ -273,7 +303,12 @@ pub struct SourceStatus {
     pub source: Option<UpdateSource>,
 }
 
-/// The predicate, pure. Reasons in contract order: key, then source, then token.
+/// The predicate, pure. Reasons in contract order: key, then source. The
+/// token is reported (`token_set`) but never required.
+///
+/// `conf` is the source already resolved: [`load_from`] turns a missing
+/// `update.conf` into the default source before calling this, so any `Err`
+/// here means no usable source.
 pub fn evaluate(
     signing_key_id: Option<String>,
     conf: Result<UpdateSource, ConfError>,
@@ -285,8 +320,6 @@ pub fn evaluate(
         Some(REASON_NO_SIGNING_KEY)
     } else if source.is_none() {
         Some(REASON_NO_SOURCE)
-    } else if !token_set {
-        Some(REASON_NO_TOKEN)
     } else {
         None
     };
@@ -306,7 +339,7 @@ pub fn load() -> SourceStatus {
 }
 
 pub fn load_from(conf_path: &Path, signing_key_id: Option<String>) -> SourceStatus {
-    let conf = read_conf_file(conf_path);
+    let conf = resolve_source(conf_path);
     let token_set = conf
         .as_ref()
         .map(|s| read_token(&s.token_file).is_some())
@@ -393,9 +426,15 @@ pub fn clear_token_at(conf_path: &Path) -> std::io::Result<()> {
     }
 }
 
-/// The repository `PUT /api/update/source` uses when the body names none.
+/// The repository `PUT /api/update/source` uses when the body names none: the
+/// one in effect (a missing config means the default), or the default when
+/// the config is invalid.
 pub fn current_or_default_repo() -> String {
-    read_conf_file(Path::new(UPDATE_CONF_PATH))
+    current_or_default_repo_at(Path::new(UPDATE_CONF_PATH))
+}
+
+fn current_or_default_repo_at(conf_path: &Path) -> String {
+    resolve_source(conf_path)
         .map(|s| s.repo)
         .unwrap_or_else(|_| DEFAULT_UPDATE_REPO.to_string())
 }
@@ -610,24 +649,79 @@ pub(crate) mod tests {
         assert!(s.configured);
         assert_eq!(s.reason, None);
 
-        assert_eq!(evaluate(key.clone(), conf(), false).reason, Some(REASON_NO_TOKEN));
-        assert_eq!(evaluate(key.clone(), Err(ConfError::Missing), true).reason, Some(REASON_NO_SOURCE));
         assert_eq!(
             evaluate(key.clone(), Err(ConfError::Invalid("x")), true).reason,
             Some(REASON_NO_SOURCE)
         );
         assert_eq!(evaluate(None, conf(), true).reason, Some(REASON_NO_SIGNING_KEY));
 
-        // Order: no key wins over no source, no source wins over no token.
-        assert_eq!(evaluate(None, Err(ConfError::Missing), false).reason, Some(REASON_NO_SIGNING_KEY));
-        assert_eq!(evaluate(key.clone(), Err(ConfError::Missing), false).reason, Some(REASON_NO_SOURCE));
+        // Order: no key wins over no source.
+        assert_eq!(evaluate(None, Err(ConfError::Invalid("x")), false).reason, Some(REASON_NO_SIGNING_KEY));
         for s in [
             evaluate(None, conf(), true),
-            evaluate(key.clone(), Err(ConfError::Missing), true),
-            evaluate(key, conf(), false),
+            evaluate(None, conf(), false),
+            evaluate(key, Err(ConfError::Invalid("x")), true),
         ] {
             assert!(!s.configured);
         }
+    }
+
+    #[test]
+    fn the_predicate_does_not_require_a_token() {
+        let key = Some("531546B906DAE39E".to_string());
+        let s = evaluate(key, read_conf(VALID), false);
+        assert!(s.configured, "{s:?}");
+        assert_eq!(s.reason, None);
+        assert!(!s.token_set);
+        assert_eq!(s.repo.as_deref(), Some("MrTheSkream/cyberhunter-panel"));
+    }
+
+    #[test]
+    fn a_missing_conf_means_the_default_public_repository() {
+        let dir = temp_dir();
+        let conf = dir.join("update.conf");
+        let key = Some("531546B906DAE39E".to_string());
+
+        let s = load_from(&conf, key.clone());
+        assert!(s.configured, "{s:?}");
+        assert_eq!(s.reason, None);
+        assert_eq!(s.repo.as_deref(), Some(DEFAULT_UPDATE_REPO));
+        assert_eq!(DEFAULT_UPDATE_REPO, "MrTheSkream/cyberhunter-releases");
+        assert!(!s.token_set);
+        let src = s.source.as_ref().unwrap();
+        assert_eq!(src.token_file, dir.join("update-token"), "default token file next to the config");
+        assert_eq!(current_or_default_repo_at(&conf), DEFAULT_UPDATE_REPO);
+        assert!(!conf.exists(), "loading writes nothing");
+
+        // A token put in the default file is seen (and will be sent).
+        std::fs::write(dir.join("update-token"), format!("{KNOWN_TOKEN}\n")).unwrap();
+        let s = load_from(&conf, key);
+        assert!(s.configured && s.token_set, "{s:?}");
+
+        // Without a compiled key, still not configured.
+        assert_eq!(load_from(&conf, None).reason, Some(REASON_NO_SIGNING_KEY));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_invalid_conf_is_still_no_source() {
+        let dir = temp_dir();
+        let conf = dir.join("update.conf");
+        std::fs::write(&conf, "UPDATE_REPO=not a repo\n").unwrap();
+        let s = load_from(&conf, Some("531546B906DAE39E".to_string()));
+        assert!(!s.configured);
+        assert_eq!(s.reason, Some(REASON_NO_SOURCE));
+        assert_eq!(s.repo, None);
+        assert!(s.source.is_none());
+        assert_eq!(current_or_default_repo_at(&conf), DEFAULT_UPDATE_REPO);
+
+        // A config that exists but cannot be read is not "missing".
+        std::fs::write(&conf, [0xffu8, 0xfe, 0x00, 0x80]).unwrap();
+        assert_eq!(load_from(&conf, Some("ID".into())).reason, Some(REASON_NO_SOURCE));
+        std::fs::remove_file(&conf).unwrap();
+        std::fs::create_dir(&conf).unwrap();
+        assert_eq!(load_from(&conf, Some("ID".into())).reason, Some(REASON_NO_SOURCE));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -658,7 +752,9 @@ pub(crate) mod tests {
         let dir = temp_dir();
         let conf = dir.join("update.conf");
         let key = Some("531546B906DAE39E".to_string());
-        assert_eq!(load_from(&conf, key.clone()).reason, Some(REASON_NO_SOURCE));
+        let s = load_from(&conf, key.clone());
+        assert!(s.configured, "no config: the default source, no token needed");
+        assert_eq!(s.repo.as_deref(), Some(DEFAULT_UPDATE_REPO));
 
         write_source_at(&conf, "owner/name", KNOWN_TOKEN).unwrap();
         let s = load_from(&conf, key.clone());
@@ -681,9 +777,12 @@ pub(crate) mod tests {
             }
         }
 
+        assert_eq!(current_or_default_repo_at(&conf), "owner/name");
+
         clear_token_at(&conf).unwrap();
         let s = load_from(&conf, key);
-        assert_eq!(s.reason, Some(REASON_NO_TOKEN));
+        assert!(s.configured, "no token: still configured, anonymous requests");
+        assert_eq!(s.reason, None);
         assert!(!s.token_set);
         assert_eq!(s.repo.as_deref(), Some("owner/name"), "the config is kept");
         clear_token_at(&conf).unwrap(); // idempotent

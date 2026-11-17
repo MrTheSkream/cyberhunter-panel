@@ -39,7 +39,7 @@ REL_CODE="$(code_of "$REL")"
 for name in cyberhunter-agent-linux-amd64 cyberhunter-api-linux-amd64 cyberhunter-cli-linux-amd64 \
             cyberhunter-mcp-linux-amd64 cyberhunter-agent-linux-arm64 cyberhunter-api-linux-arm64 \
             cyberhunter-cli-linux-arm64 cyberhunter-mcp-linux-arm64 cyberhunter-frontend.tar.gz \
-            cyberhunter-source.tar.gz checksums.txt checksums.txt.minisig; do
+            cyberhunter-source.tar.gz install.sh checksums.txt checksums.txt.minisig; do
     if printf '%s\n' "$REL_CODE" | grep -cF "$name" >/dev/null; then ok "names $name"; else bad "does not name $name"; fi
 done
 if printf '%s\n' "$REL_CODE" | grep -cE 'dockpanel-[a-z]+-linux-|SHA256SUMS|spdx' >/dev/null; then
@@ -61,10 +61,10 @@ if printf '%s\n' "$REL_CODE" | grep -c '\[ "\$SIG_ALG" = "ED" \]' >/dev/null; th
 else
     bad "does not check that the signature is pre-hashed (ED)"
 fi
-if printf '%s\n' "$REL_CODE" | grep -c 'git -c core.autocrlf=false archive --format=tar.gz --prefix=cyberhunter-source/ HEAD -- scripts panel' >/dev/null; then
-    ok "source archive is the contract's git archive command"
+if printf '%s\n' "$REL_CODE" | grep -c 'git -c core.autocrlf=false archive --format=tar.gz --prefix=cyberhunter-source/ HEAD -- scripts panel LICENSE' >/dev/null; then
+    ok "source archive is the contract's git archive command, LICENSE included (AGPL)"
 else
-    bad "cyberhunter-source.tar.gz is not built with the contract's git archive command"
+    bad "cyberhunter-source.tar.gz is not built with git archive ... HEAD -- scripts panel LICENSE"
 fi
 N_ARCHIVE="$(printf '%s\n' "$REL_CODE" | grep -c 'git .*archive' || true)"
 N_SAFE="$(printf '%s\n' "$REL_CODE" | grep -c 'git -c core.autocrlf=false archive' || true)"
@@ -82,10 +82,48 @@ if [ -n "$DRY_AT" ] && [ -n "$TAG_AT" ] && [ -n "$GH_AT" ] && [ "$DRY_AT" -lt "$
 else
     bad "--dry-run does not stop before tagging and publishing"
 fi
-if printf '%s\n' "$REL_CODE" | grep -c 'gh release create "\$TAG" --repo "\$REPO" --verify-tag' >/dev/null; then
-    ok "gh release create uses --verify-tag"
+# 12 (D3): the release goes to the public release repository, where the tag
+# does not exist; GitHub creates it on that repository's main.
+if printf '%s\n' "$REL_CODE" | grep -c 'gh release create "\$TAG" --repo "\$REPO" --target main' >/dev/null; then
+    ok "gh release create uses --target main"
 else
-    bad "gh release create without --verify-tag"
+    bad "gh release create without --target main"
+fi
+if printf '%s\n' "$REL_CODE" | grep -c -- '--verify-tag' >/dev/null; then
+    bad "release.sh still uses --verify-tag (the tag is not in the release repository)"
+else
+    ok "no --verify-tag"
+fi
+if printf '%s\n' "$REL_CODE" | grep -cx 'REPO="${CYBERHUNTER_RELEASE_REPO:-MrTheSkream/cyberhunter-releases}"' >/dev/null; then
+    ok "default release repository is MrTheSkream/cyberhunter-releases"
+else
+    bad "the default release repository is not MrTheSkream/cyberhunter-releases"
+fi
+if printf '%s\n' "$REL_CODE" | grep -c 'git ls-remote --exit-code --tags origin "refs/tags/\$TAG"' >/dev/null \
+   && printf '%s\n' "$REL_CODE" | grep -c '^git push origin "\$TAG"$' >/dev/null; then
+    ok "the tag is still checked against and pushed to origin (the source repository)"
+else
+    bad "the tag is no longer checked against or pushed to origin"
+fi
+DRY_REPO_AT="$(printf '%s\n' "$REL_CODE" | grep -n 'would tag \$TAG on origin and publish it on \$REPO' | head -1 | cut -d: -f1)"
+EXIT_AT="$(printf '%s\n' "$REL_CODE" | awk -v d="$DRY_AT" 'NR > d && /exit 0/ {print NR; exit}')"
+if [ -n "$DRY_REPO_AT" ] && [ -n "$DRY_AT" ] && [ "$DRY_REPO_AT" -gt "$DRY_AT" ] && [ "$DRY_REPO_AT" -lt "${EXIT_AT:-0}" ]; then
+    ok "--dry-run names the repository it would publish to, then exits"
+else
+    bad "--dry-run does not print the target repository before exiting"
+fi
+if printf '%s\n' "$REL_CODE" | grep -c 'git -c core.autocrlf=false show HEAD:scripts/install.sh' >/dev/null \
+   && printf '%s\n' "$REL_CODE" | grep -c 'stamp_install "\$DIST.install.sh.src" "\$PUBKEY" "\$DIST/install.sh"' >/dev/null; then
+    ok "install.sh is stamped from the committed blob with the compiled key"
+else
+    bad "install.sh is not stamped from HEAD:scripts/install.sh with \$PUBKEY"
+fi
+STAMP_AT="$(printf '%s\n' "$REL_CODE" | grep -n 'stamp_install "\$DIST' | head -1 | cut -d: -f1)"
+SUMS_AT="$(printf '%s\n' "$REL_CODE" | grep -n -- '--checksums-only /d' | head -1 | cut -d: -f1)"
+if [ -n "$STAMP_AT" ] && [ -n "$SUMS_AT" ] && [ "$STAMP_AT" -lt "$SUMS_AT" ]; then
+    ok "install.sh is stamped before checksums.txt is computed"
+else
+    bad "install.sh is not stamped before the checksum step"
 fi
 
 echo "── 2b. signing step: Git Bash hands the command to PowerShell ──"
@@ -180,6 +218,15 @@ if bash "$REL" --checksums-only "$D" && [ -f "$D/checksums.txt" ]; then
     if grep -q $'\r' "$SUMS"; then bad "checksums.txt contains CR"; else ok "LF only"; fi
     if [ "$(head -c 3 "$SUMS" | od -An -tx1 | tr -d ' \n')" = "efbbbf" ]; then bad "UTF-8 BOM"; else ok "no BOM"; fi
     if [ "$(wc -l < "$SUMS" | tr -d ' ')" = "6" ]; then ok "one line per file (6)"; else bad "expected 6 lines"; fi
+    printf '#!/usr/bin/env bash\n' > "$D/install.sh"
+    if bash "$REL" --checksums-only "$D" && [ "$(wc -l < "$SUMS" | tr -d ' ')" = "7" ] \
+       && [ "$(tail -1 "$SUMS" | awk '{print $2}')" = "install.sh" ] \
+       && grep -qx "$(cd "$D" && sha256sum install.sh | awk '{print $1}')  install.sh" "$SUMS"; then
+        ok "install.sh, when present, is listed too (7 lines, sorted last)"
+    else
+        bad "install.sh is not listed in checksums.txt"
+    fi
+    rm -f "$D/install.sh"; bash "$REL" --checksums-only "$D"
     if grep -q 'checksums.txt' "$SUMS"; then bad "lists itself"; else ok "does not list checksums.txt"; fi
     if awk '{print $2}' "$SUMS" | LC_ALL=C sort -c 2>/dev/null; then ok "sorted by name (C order)"; else bad "not sorted by name"; fi
     if [ "$(tail -c 1 "$SUMS" | od -An -tx1 | tr -d ' \n')" = "0a" ]; then ok "ends with LF"; else bad "no final LF"; fi

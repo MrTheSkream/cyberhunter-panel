@@ -12,10 +12,12 @@
 //! there has passed its check: it is written under a temporary name and only
 //! renamed once its digest matched.
 //!
-//! The GitHub token is read from its file right before the first request of a
-//! call ([`github_auth_header`]) and only travels in a header marked sensitive,
-//! on that first request. Redirects are followed by hand, to a closed list of
-//! hosts, and never carry it. A redirect target (a signed URL) is never logged:
+//! The GitHub token is optional. When its file holds one, it is read right
+//! before the first request of a call ([`github_auth_header`]) and only travels
+//! in a header marked sensitive, on that first request. When the file is absent
+//! or empty, the request is anonymous: no `Authorization` header at all.
+//! Redirects are followed by hand, to a closed list of hosts, and never carry
+//! it. A redirect target (a signed URL) is never logged:
 //! only its host.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -99,6 +101,8 @@ pub enum FetchError {
     NotConfigured,
     TokenInvalid,
     RepoUnreadable,
+    /// 404 from api.github.com on a request sent without a token.
+    RepoNotFoundAnonymous,
     RateLimited,
     ReleaseNotFound,
     ReleaseIncomplete(String),
@@ -114,6 +118,7 @@ impl FetchError {
             FetchError::NotConfigured => "updates_not_configured",
             FetchError::TokenInvalid => "token_invalid",
             FetchError::RepoUnreadable => "repo_unreadable",
+            FetchError::RepoNotFoundAnonymous => "repo_not_found",
             FetchError::RateLimited => "github_rate_limited",
             FetchError::ReleaseNotFound => "release_not_found",
             FetchError::ReleaseIncomplete(_) => "release_incomplete",
@@ -129,6 +134,9 @@ impl FetchError {
             FetchError::NotConfigured => "Updates are not configured",
             FetchError::TokenInvalid => "The update token is missing or expired",
             FetchError::RepoUnreadable => "The update token cannot read this repository",
+            FetchError::RepoNotFoundAnonymous => {
+                "Repository not found or private. Add a token if the release repository is private."
+            }
             FetchError::RateLimited => "GitHub rate limit reached, try again later",
             FetchError::ReleaseNotFound => "Release not found",
             FetchError::ReleaseIncomplete(_) => {
@@ -143,9 +151,10 @@ impl FetchError {
 
     pub fn status(&self) -> StatusCode {
         match self {
-            FetchError::NotConfigured | FetchError::TokenInvalid | FetchError::RepoUnreadable => {
-                StatusCode::CONFLICT
-            }
+            FetchError::NotConfigured
+            | FetchError::TokenInvalid
+            | FetchError::RepoUnreadable
+            | FetchError::RepoNotFoundAnonymous => StatusCode::CONFLICT,
             FetchError::RateLimited => StatusCode::SERVICE_UNAVAILABLE,
             FetchError::ReleaseNotFound | FetchError::FileUnknown => StatusCode::NOT_FOUND,
             FetchError::ReleaseIncomplete(_)
@@ -471,10 +480,14 @@ pub fn bearer_header(token: &SecretToken) -> Result<HeaderValue, FetchError> {
     Ok(v)
 }
 
-/// Read the token from its file, right before a request.
-pub fn github_auth_header(token_file: &Path) -> Result<HeaderValue, FetchError> {
-    let token = update_source::read_token(token_file).ok_or(FetchError::TokenInvalid)?;
-    bearer_header(&token)
+/// Read the token from its file, right before a request. `None` when the file
+/// is absent or empty: the request then goes out anonymously. A file that holds
+/// a token is always used.
+pub fn github_auth_header(token_file: &Path) -> Result<Option<HeaderValue>, FetchError> {
+    match update_source::read_token(token_file) {
+        Some(token) => bearer_header(&token).map(Some),
+        None => Ok(None),
+    }
 }
 
 // ── Size limits ──────────────────────────────────────────────────────────
@@ -611,10 +624,19 @@ enum CallKind {
 }
 
 /// GitHub status to contract error. `rate_exhausted` is
-/// `x-ratelimit-remaining: 0`.
-fn map_status(status: u16, rate_exhausted: bool, kind: CallKind, host: &str) -> Result<(), FetchError> {
+/// `x-ratelimit-remaining: 0`. `anonymous_api` is true for an answer of
+/// api.github.com itself to a request sent without a token: GitHub answers 404
+/// for a private repository then, which deserves its own message.
+fn map_status(
+    status: u16,
+    rate_exhausted: bool,
+    kind: CallKind,
+    host: &str,
+    anonymous_api: bool,
+) -> Result<(), FetchError> {
     match status {
         200..=299 => Ok(()),
+        404 if anonymous_api => Err(FetchError::RepoNotFoundAnonymous),
         401 => Err(FetchError::TokenInvalid),
         429 => Err(FetchError::RateLimited),
         403 if rate_exhausted => Err(FetchError::RateLimited),
@@ -635,7 +657,8 @@ impl GithubApi {
             .map_err(|_| FetchError::DownloadFailed("could not build the HTTP client".into()))
     }
 
-    /// Reads the token from `token_file` before each call.
+    /// Reads the token from `token_file` before each call; anonymous when the
+    /// file is absent or empty.
     pub fn new(token_file: PathBuf) -> Result<Self, FetchError> {
         Ok(GithubApi {
             client: Self::build_client()?,
@@ -652,10 +675,10 @@ impl GithubApi {
         })
     }
 
-    fn auth_header(&self) -> Result<HeaderValue, FetchError> {
+    fn auth_header(&self) -> Result<Option<HeaderValue>, FetchError> {
         match &self.auth {
             Auth::File(p) => github_auth_header(p),
-            Auth::Header(h) => Ok(h.clone()),
+            Auth::Header(h) => Ok(Some(h.clone())),
         }
     }
 
@@ -669,8 +692,12 @@ impl GithubApi {
         host_allowed(&start, &[GITHUB_API_HOST])?;
         let mut current = start;
         let mut hop: u8 = 0;
+        let mut anonymous = false;
         loop {
-            let auth = if hop == 0 { Some(self.auth_header()?) } else { None };
+            let auth = if hop == 0 { self.auth_header()? } else { None };
+            if hop == 0 {
+                anonymous = auth.is_none();
+            }
             let mut headers = request_headers(hop, auth);
             headers.insert(ACCEPT, HeaderValue::from_static(accept));
             let host = current.host_str().unwrap_or("").to_string();
@@ -700,7 +727,8 @@ impl GithubApi {
                 .get("x-ratelimit-remaining")
                 .and_then(|v| v.to_str().ok())
                 .is_some_and(|v| v.trim() == "0");
-            map_status(status, exhausted, kind, &host)?;
+            let anonymous_api = anonymous && hop == 0 && host == GITHUB_API_HOST;
+            map_status(status, exhausted, kind, &host, anonymous_api)?;
             return Ok((resp, host));
         }
     }
@@ -1421,6 +1449,25 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn no_authorization_header_without_a_token() {
+        let dir = temp_dir();
+        let absent = dir.join("update-token");
+        let empty = dir.join("empty");
+        std::fs::write(&empty, " \n").unwrap();
+        for p in [&absent, &empty] {
+            let auth = github_auth_header(p).unwrap();
+            assert!(auth.is_none(), "{}", p.display());
+            for hop in 0..=2 {
+                let h = request_headers(hop, auth.clone());
+                assert!(!h.contains_key(AUTHORIZATION), "hop {hop}");
+                assert!(h.contains_key(USER_AGENT));
+            }
+            assert!(request_headers(0, None).contains_key("x-github-api-version"));
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn redirect_targets_are_checked() {
         let cur = Url::parse("https://api.github.com/repos/o/n/releases/assets/1").unwrap();
         let ok = next_hop(&cur, "https://objects.githubusercontent.com/x?sig=1", 1, &ALLOWED_DOWNLOAD_HOSTS).unwrap();
@@ -1454,8 +1501,8 @@ pub(crate) mod tests {
 
     #[test]
     fn github_statuses_map_to_contract_codes() {
-        let c = |s, ex, k| map_status(s, ex, k, "api.github.com").unwrap_err().code();
-        assert!(map_status(200, false, CallKind::List, "h").is_ok());
+        let c = |s, ex, k| map_status(s, ex, k, "api.github.com", false).unwrap_err().code();
+        assert!(map_status(200, false, CallKind::List, "h", false).is_ok());
         assert_eq!(c(401, false, CallKind::List), "token_invalid");
         assert_eq!(c(403, true, CallKind::List), "github_rate_limited");
         assert_eq!(c(429, false, CallKind::Tag), "github_rate_limited");
@@ -1467,11 +1514,43 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn an_anonymous_404_says_the_repository_may_be_private() {
+        for kind in [CallKind::List, CallKind::Tag, CallKind::Asset] {
+            let e = map_status(404, false, kind, "api.github.com", true).unwrap_err();
+            assert_eq!(e, FetchError::RepoNotFoundAnonymous, "{kind:?}");
+            assert_eq!(e.code(), "repo_not_found");
+            assert_eq!(
+                e.to_string(),
+                "Repository not found or private. Add a token if the release repository is private."
+            );
+            assert_eq!(e.status().as_u16(), 409);
+            assert_eq!(e.stage(), "download");
+        }
+        // Anonymous, other statuses keep their mapping.
+        assert!(map_status(200, false, CallKind::List, "api.github.com", true).is_ok());
+        assert_eq!(
+            map_status(403, true, CallKind::List, "api.github.com", true).unwrap_err(),
+            FetchError::RateLimited
+        );
+        // With a token, a 404 is unchanged.
+        assert_eq!(
+            map_status(404, false, CallKind::List, "api.github.com", false).unwrap_err(),
+            FetchError::RepoUnreadable
+        );
+    }
+
+    #[test]
     fn every_error_carries_its_exact_message_and_status() {
         let table = [
             (FetchError::NotConfigured, 409, "updates_not_configured", "Updates are not configured"),
             (FetchError::TokenInvalid, 409, "token_invalid", "The update token is missing or expired"),
             (FetchError::RepoUnreadable, 409, "repo_unreadable", "The update token cannot read this repository"),
+            (
+                FetchError::RepoNotFoundAnonymous,
+                409,
+                "repo_not_found",
+                "Repository not found or private. Add a token if the release repository is private.",
+            ),
             (FetchError::RateLimited, 503, "github_rate_limited", "GitHub rate limit reached, try again later"),
             (FetchError::ReleaseNotFound, 404, "release_not_found", "Release not found"),
             (FetchError::ReleaseIncomplete("x".into()), 422, "release_incomplete", "The release is missing required files, nothing was installed"),
@@ -1865,9 +1944,9 @@ pub(crate) mod tests {
     fn github_api_debug_free_and_auth_reads_from_file() {
         let dir = temp_dir();
         let p = dir.join("tok");
-        assert_eq!(github_auth_header(&p).unwrap_err(), FetchError::TokenInvalid);
+        assert_eq!(github_auth_header(&p).unwrap(), None, "no file: anonymous");
         std::fs::write(&p, format!("{KNOWN_TOKEN}\n")).unwrap();
-        let h = github_auth_header(&p).unwrap();
+        let h = github_auth_header(&p).unwrap().expect("a token file is always used");
         assert!(h.is_sensitive());
         assert_eq!(h.to_str().unwrap(), format!("Bearer {KNOWN_TOKEN}"));
         let _ = std::fs::remove_dir_all(&dir);

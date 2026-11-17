@@ -100,6 +100,33 @@ toutes les mises à jour sont vérifiées par le panel lui-même.
 - Clé de production : à générer comme prévu en section 2 de `11-mise-en-production.md`. Elle sera
   compilée dans le panel **et** écrite dans `install.sh`.
 
+### D6. Suppression de la signature minisign (décision du 17/11/2026)
+
+Constat de l'implémentation : le paquet `minisign` n'existe pas sur Ubuntu 22.04 (il existe sur 24.04).
+Décision de l'utilisateur, prise **en connaissance du risque** : supprimer la signature **partout** et
+revenir au modèle de DockPanel. Cette décision remplace la vérification par minisign décrite dans D2 à D5
+et dans la fonctionnalité 10.
+
+Ce qui disparaît :
+- la clé minisign (plus de `CYBERHUNTER_UPDATE_PUBKEY` à la compilation, plus de clé dans `install.sh`) ;
+- `checksums.txt.minisig` et l'étape de signature de `release.sh` (et donc l'invite PowerShell) ;
+- le trusted comment `cyberhunter-release <tag>` ;
+- la raison `no_signing_key` et l'affichage « Signing key ID » ;
+- la même vérification dans la mise à jour des agents distants.
+
+Ce qui reste :
+- `checksums.txt` produit par `release.sh` ; chaque fichier est contrôlé (SHA-256 et taille) contre ce
+  manifeste, dont le format est vérifié strictement ; tout écart ou fichier manquant interrompt
+  l'opération (fail closed) ;
+- HTTPS seulement, liste fermée d'hôtes, redirections suivies à la main ;
+- validation du tag et de la version, limites de taille ;
+- non-fuite du jeton (facultatif), refus d'un panel en http pour l'agent ;
+- prédicat « configuré » = source valide (`update.conf` valide ou absent).
+
+Risque accepté : les sommes viennent de la même release que les binaires. Quelqu'un qui prend le contrôle
+du compte GitHub `MrTheSkream` (ou du dépôt de releases) peut publier une mise à jour piégée, que chaque
+panel installera en root. Protection restante : la sécurité du compte GitHub (2FA, clés, jetons limités).
+
 ## Tests prévus
 
 Unitaires (backend) :

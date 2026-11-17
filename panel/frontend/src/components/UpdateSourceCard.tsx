@@ -11,6 +11,9 @@ import ConfirmDialog from "./ConfirmDialog";
  * a flash message or the console. The backend never sends it back either: the
  * card only learns `token_set`.
  *
+ * The token is optional (conception 12, D2): without one the panel reads a
+ * public release repository anonymously. It is only needed for a private one.
+ *
  * No <form> element on purpose: a native submit of a password field is what
  * makes browsers offer to save it.
  */
@@ -115,7 +118,7 @@ export default function UpdateSourceCard({
         <div>
           <div className="flex items-center justify-between mb-1">
             <label htmlFor="update-source-token" className="text-xs text-dark-400">
-              GitHub token
+              Token (only for a private repository)
             </label>
             <span className={`text-xs ${source.token_set ? "text-rust-400" : "text-dark-400"}`}>
               {source.token_set ? "Token set" : "No token"}
@@ -138,6 +141,10 @@ export default function UpdateSourceCard({
             }}
             className="w-full bg-dark-900 border border-dark-600 rounded-lg px-3 py-1.5 text-sm font-mono text-dark-200 placeholder:text-dark-500 focus:outline-none focus:border-rust-500"
           />
+          <p className="mt-1 text-xs text-dark-500">
+            Optional. A public release repository is read without a token. For a private one, use a
+            fine-grained token with read-only access to Contents.
+          </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button
@@ -174,7 +181,7 @@ export default function UpdateSourceCard({
       </div>
       {confirmClear && (
         <ConfirmDialog
-          label="Clear the update token? Updates will be disabled until a new token is saved."
+          label="Clear the update token? Updates will then be checked without a token, which only works with a public release repository."
           confirmLabel="Clear token"
           tone="danger"
           onConfirm={() => void clearToken()}
