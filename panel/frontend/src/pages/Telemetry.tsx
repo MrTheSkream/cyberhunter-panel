@@ -756,9 +756,16 @@ export default function Telemetry() {
             : "bg-danger-500/10 border-danger-500/30 text-danger-400"
         }`}>
           <div className="font-medium">
-            {updateState.last_panel_update.ok
-              ? `Last update completed${updateState.last_panel_update.target_version ? ` (${updateState.last_panel_update.target_version})` : ""}`
-              : `Last update FAILED at stage "${updateState.last_panel_update.stage}"`}
+            {(() => {
+              const u = updateState.last_panel_update;
+              const to = u.target_version ? ` to ${u.target_version}` : "";
+              if (u.ok) return `Last update completed${u.target_version ? ` (${u.target_version})` : ""}`;
+              // "rollback" means update.sh restored the previous binaries and
+              // the panel is running again; "rollback_incomplete" means it did not.
+              if (u.stage === "rollback") return `Last update${to} failed its health check and was rolled back`;
+              if (u.stage === "rollback_incomplete") return `Last update${to} failed and the rollback did NOT complete`;
+              return `Last update${to} FAILED at stage "${u.stage}"`;
+            })()}
           </div>
           <div className="mt-1 text-dark-300 break-words">{updateState.last_panel_update.detail}</div>
           <div className="mt-1 font-mono text-[10px] text-dark-400">

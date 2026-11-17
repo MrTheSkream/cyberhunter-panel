@@ -1176,7 +1176,8 @@ rollback() {
         error "ROLLBACK INCOMPLETE - the panel may still be running the failed build."
         error "Inspect /usr/local/bin/dockpanel-{api,agent} and restore manually."
         _dockpanel_finished=1
-        _dockpanel_write_result false "rollback" \
+        # Its own stage: the UI reads "rollback" as "rolled back, panel back up".
+        _dockpanel_write_result false "rollback_incomplete" \
             "health check failed after the swap AND the rollback did not complete - the panel may still be running the failed build; inspect /usr/local/bin/dockpanel-{api,agent}"
         exit 1
     fi
