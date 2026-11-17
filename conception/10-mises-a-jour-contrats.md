@@ -552,13 +552,17 @@ DELETE FROM settings WHERE key IN
      **jamais `rust:1-bookworm`** (glibc 2.36) ;
   4. frontend dans `node:22-bookworm` (`npm ci && npm run build`) ;
   5. assemblage des noms de §2.1, `cyberhunter-source.tar.gz` (§2.1), puis `checksums.txt` (§2.2), le
-     tout dans `dist/release-<version>/` ;
+     tout dans `dist/release-<version>/` (`/dist/` est dans `.gitignore`, un second lancement reste possible) ;
   6. contrôles : `check-glibc.sh` sur chacun des binaires (§B-5bis, arrêt au premier refus) ; la clé
      base64 figure dans les binaires api et agent (`grep -c`) ; le résumé affiche l'ID de clé et, par
      binaire, la plus haute version `GLIBC_` requise ;
   7. signature : `minisign -S -s <key> -m checksums.txt -x checksums.txt.minisig -t "cyberhunter-release <tag>"`
      (phrase de passe demandée, jamais stockée) ; `minisign` natif s'il existe, sinon conteneur avec `-it`
-     (`winpty` sous MSYS) ; puis `minisign -V` avec la clé publique ; puis contrôle que la signature est
+     (`winpty` sous MSYS). **Sous Git Bash (MSYS) avec un `minisign` Windows natif**, le script ne le lance
+     pas lui-même : la console ne lui transmet pas la phrase de passe (constaté en VM le 17/11/2026). Il
+     affiche la ligne PowerShell exacte à lancer dans un autre terminal, puis attend Entrée jusqu'à ce que
+     `checksums.txt.minisig` existe ; `CYBERHUNTER_SIGN_INLINE=1` force la signature directe. Dans tous les
+     cas, puis `minisign -V` avec la clé publique ; puis contrôle que la signature est
      pré-hachée (les deux premiers octets du base64 décodé de la 2ᵉ ligne du `.minisig` valent `ED`, pas
      `Ed`), sinon arrêt : un minisign trop ancien publierait une release que tous les serveurs refusent ;
   8. résumé, puis `Publish <tag>? [y/N]` ; `--dry-run` s'arrête avant ;
