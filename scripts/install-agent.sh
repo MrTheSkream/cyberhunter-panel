@@ -50,6 +50,17 @@ if [[ "$PANEL_URL" == --* || "$TOKEN" == --* || "$SERVER_ID" == --* ]]; then
     echo "  --server-id '$SERVER_ID'). One of the values is probably missing."
     exit 1
 fi
+# The server token goes to this URL on every request, and the agent binary
+# comes from it: never over plain http. The agent itself refuses a non-https
+# panel URL for its updates, so an http install would never update either.
+case "$PANEL_URL" in
+    https://?*) ;;
+    *)
+        echo "Error: --panel-url must start with https:// (got '$PANEL_URL')."
+        echo "  The server token and the agent binary must not travel in the clear."
+        exit 1
+        ;;
+esac
 
 echo "======================================"
 echo "  CyberHunter - Panel Agent Installer (Remote)"
@@ -228,9 +239,9 @@ download_failed() {
     exit 1
 }
 echo "[5/7] Downloading agent binary from the panel..."
-curl -fsSL -H "Authorization: Bearer $TOKEN" "$RELEASE_URL/checksums.txt" -o "$SUMS_TMP" \
+curl -fsSL -H "Authorization: Bearer $TOKEN" --proto =https --proto-redir =https "$RELEASE_URL/checksums.txt" -o "$SUMS_TMP" \
     || download_failed "checksums.txt could not be fetched from $RELEASE_URL"
-curl -fsSL -H "Authorization: Bearer $TOKEN" "$RELEASE_URL/$ASSET" -o "$AGENT_TMP" \
+curl -fsSL -H "Authorization: Bearer $TOKEN" --proto =https --proto-redir =https "$RELEASE_URL/$ASSET" -o "$AGENT_TMP" \
     || download_failed "$ASSET could not be fetched from $RELEASE_URL"
 
 WANT=$(awk -v n="$ASSET" '$2 == n {print $1}' "$SUMS_TMP")

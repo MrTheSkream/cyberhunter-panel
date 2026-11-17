@@ -277,6 +277,26 @@ pub fn agent_asset_name() -> Option<String> {
 }
 
 /// `{central}/api/agent/release/{tag}/{name}`.
+/// Whether this agent may send its server token to `central`: `https://`, or
+/// plain `http://` only to the loopback (`127.0.0.1`, `::1`, `localhost`).
+/// Anything else would put the Bearer credential, and the release it fetches,
+/// in the clear on the network.
+pub fn panel_url_is_secure(central: &str) -> bool {
+    let Ok(u) = url::Url::parse(central.trim()) else {
+        return false;
+    };
+    match u.scheme() {
+        "https" => u.host().is_some(),
+        "http" => match u.host() {
+            Some(url::Host::Domain(d)) => d.eq_ignore_ascii_case("localhost"),
+            Some(url::Host::Ipv4(ip)) => ip == std::net::Ipv4Addr::LOCALHOST,
+            Some(url::Host::Ipv6(ip)) => ip == std::net::Ipv6Addr::LOCALHOST,
+            None => false,
+        },
+        _ => false,
+    }
+}
+
 pub fn release_url(central: &str, tag: &str, name: &str) -> String {
     format!(
         "{}/api/agent/release/{}/{name}",
@@ -389,6 +409,9 @@ pub async fn download_and_stage(
     tag: &str,
     key: &PublicKey,
 ) -> Result<StagedAgent, ReleaseError> {
+    if !panel_url_is_secure(central) {
+        return Err(ReleaseError::Download("the panel URL is not https".into()));
+    }
     let asset = agent_asset_name().ok_or_else(|| {
         ReleaseError::Download(format!("unsupported architecture {}", std::env::consts::ARCH))
     })?;
@@ -693,5 +716,32 @@ mod tests {
         for host in [concat!("github", ".com"), concat!("githubuser", "content")] {
             assert!(!src.contains(host), "no release host in the agent: {host}");
         }
+    }
+
+    #[test]
+    fn the_token_only_goes_to_https_or_the_loopback() {
+        for ok in [
+            "https://panel.example.com",
+            "https://panel.example.com:8443/",
+            "http://127.0.0.1:3080",
+            "http://localhost:3080",
+            "http://[::1]:3080",
+        ] {
+            assert!(panel_url_is_secure(ok), "{ok}");
+        }
+        for bad in [
+            "http://panel.example.com",
+            "http://10.0.0.5:3080",
+            "http://127.0.0.2",
+            "http://localhost.example.com",
+            "ftp://panel.example.com",
+            "panel.example.com",
+            "",
+        ] {
+            assert!(!panel_url_is_secure(bad), "{bad}");
+        }
+        let src = include_str!("release_verify.rs");
+        let f = &src[src.find("pub async fn download_and_stage").unwrap()..];
+        assert!(f.find("panel_url_is_secure(central)").unwrap() < f.find("fetch(").unwrap());
     }
 }

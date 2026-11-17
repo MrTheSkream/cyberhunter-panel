@@ -57,6 +57,8 @@ const API_BIN: &str = "/usr/local/bin/dockpanel-api";
 const MSG_FULL_PANEL: &str = "This server is a full panel install, update it from its own panel";
 const MSG_NO_PANEL_URL: &str = "This agent has no panel URL (DOCKPANEL_CENTRAL_URL)";
 const MSG_NO_SIGNING_KEY: &str = "This agent build has no update signing key";
+const MSG_INSECURE_PANEL_URL: &str =
+    "This agent's panel URL (DOCKPANEL_CENTRAL_URL) is not https, so it does not send its token there";
 
 /// The agent-only updater. Compiled in rather than read from disk for the same
 /// reason the restore procedure is (lessons #35/#38): a remote agent box has no
@@ -217,6 +219,9 @@ pub(crate) enum StartUpdateError {
     NoPanelUrl,
     /// Built without `CYBERHUNTER_UPDATE_PUBKEY`: nothing could be verified.
     NoSigningKey,
+    /// `DOCKPANEL_CENTRAL_URL` is plain http to another host: the server
+    /// token would travel in the clear.
+    InsecurePanelUrl,
     Internal(String),
 }
 
@@ -227,7 +232,9 @@ impl StartUpdateError {
             Self::InFlight | Self::FullPanel | Self::NotNewer { .. } => {
                 axum::http::StatusCode::CONFLICT
             }
-            Self::NoPanelUrl | Self::NoSigningKey => axum::http::StatusCode::PRECONDITION_FAILED,
+            Self::NoPanelUrl | Self::NoSigningKey | Self::InsecurePanelUrl => {
+                axum::http::StatusCode::PRECONDITION_FAILED
+            }
             Self::Internal(_) => axum::http::StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -246,6 +253,7 @@ impl std::fmt::Display for StartUpdateError {
             Self::FullPanel => write!(f, "{MSG_FULL_PANEL}"),
             Self::NoPanelUrl => write!(f, "{MSG_NO_PANEL_URL}"),
             Self::NoSigningKey => write!(f, "{MSG_NO_SIGNING_KEY}"),
+            Self::InsecurePanelUrl => write!(f, "{MSG_INSECURE_PANEL_URL}"),
             Self::Internal(m) => write!(f, "{m}"),
         }
     }
@@ -323,6 +331,9 @@ pub(crate) async fn start_agent_self_update(target: &str) -> Result<(), StartUpd
     let (Some(source), Some(key)) = (source, key) else {
         return Err(StartUpdateError::Internal("preflight passed without a source or key".into()));
     };
+    if !crate::services::release_verify::panel_url_is_secure(&source.central_url) {
+        return Err(StartUpdateError::InsecurePanelUrl);
+    }
     let target = crate::services::release_verify::normalize_tag(&target);
 
     // Already-in-flight guard. It has to ask whether the in-flight run is
