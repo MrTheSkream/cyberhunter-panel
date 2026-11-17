@@ -777,6 +777,25 @@ pub fn add_to_registry(path: &Path, login: &str) -> std::io::Result<()> {
     std::fs::rename(&tmp, path)
 }
 
+/// Brings the managed host files up to date with this agent's version.
+/// `is_prepared` only checks that they exist, so without this a fix to
+/// tmux.conf or to the scripts never reaches a host prepared by an older
+/// agent. A no-op when the bytes already match. The systemd unit is left
+/// to `prepare`, since a changed unit also needs a daemon-reload per user.
+/// tmux.conf takes effect when the tmux server next starts.
+async fn refresh_host_files() {
+    for (path, content, mode) in host_files() {
+        if path == TMUX_UNIT_PATH {
+            continue;
+        }
+        match install_file(path, content, mode).await {
+            Ok(true) => tracing::info!("user terminal: refreshed {path}"),
+            Ok(false) => {}
+            Err(e) => tracing::warn!("user terminal: cannot refresh {path}: {e}"),
+        }
+    }
+}
+
 /// Every host file present and the login prepared by this agent.
 fn is_prepared(login: &str) -> bool {
     host_files().iter().all(|(p, _, _)| Path::new(p).exists())
@@ -1316,6 +1335,7 @@ pub async fn handle(
     if !is_prepared(&login) {
         return refuse(StatusCode::PRECONDITION_FAILED, "User terminal is not prepared for this account");
     }
+    refresh_host_files().await;
     let unit = unit_name(&login, rand::random::<u32>());
     let Some(conn) = ConnGuard::reserve(&login, &unit) else {
         return refuse(StatusCode::CONFLICT, "Too many connections for this account");
