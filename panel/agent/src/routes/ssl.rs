@@ -309,6 +309,65 @@ struct CustomCertRequest {
     private_key: String,
 }
 
+/// What an upload is about to replace, so that a failed one can put it back.
+struct UploadRollback {
+    domain: String,
+    cert_path: String,
+    key_path: String,
+    vhost_path: String,
+    cert: Option<String>,
+    key: Option<String>,
+    vhost: Option<String>,
+}
+
+impl UploadRollback {
+    async fn capture(domain: &str, cert_path: &str, key_path: &str) -> Self {
+        let vhost_path = crate::services::nginx::vhost_target(domain).path().to_string();
+        Self {
+            domain: domain.to_string(),
+            cert_path: cert_path.to_string(),
+            key_path: key_path.to_string(),
+            cert: tokio::fs::read_to_string(cert_path).await.ok(),
+            key: tokio::fs::read_to_string(key_path).await.ok(),
+            vhost: tokio::fs::read_to_string(&vhost_path).await.ok(),
+            vhost_path,
+        }
+    }
+
+    async fn restore(self) {
+        let _guard = crate::site_lock::lock_site(&self.domain).await;
+        let cert: Result<(), String> = match &self.cert {
+            Some(previous) => tokio::fs::write(&self.cert_path, previous).await.map_err(|e| e.to_string()),
+            None => { let _ = tokio::fs::remove_file(&self.cert_path).await; Ok(()) }
+        };
+        let key: Result<(), String> = match &self.key {
+            Some(previous) => ssl::write_key_file(&self.key_path, previous).await,
+            None => { let _ = tokio::fs::remove_file(&self.key_path).await; Ok(()) }
+        };
+        let vhost: Result<(), String> = match &self.vhost {
+            Some(previous) => tokio::fs::write(&self.vhost_path, previous).await.map_err(|e| e.to_string()),
+            None => Ok(()),
+        };
+        if let Err(e) = cert.and(key).and(vhost) {
+            tracing::error!("Could not restore {} after a failed certificate upload: {e}", self.domain);
+            return;
+        }
+        match crate::services::nginx::test_config().await {
+            Ok(test) if test.success => {
+                if let Err(e) = crate::services::nginx::reload().await {
+                    tracing::error!("nginx reload failed after restoring {}: {e}", self.domain);
+                }
+            }
+            Ok(test) => tracing::error!(
+                "nginx refuses the restored configuration of {}: {}",
+                self.domain,
+                test.stderr
+            ),
+            Err(e) => tracing::error!("nginx test failed after restoring {}: {e}", self.domain),
+        }
+    }
+}
+
 /// POST /ssl/upload - Upload a custom SSL certificate.
 async fn upload_cert(
     State(state): State<AppState>,
@@ -360,6 +419,14 @@ async fn upload_cert(
         }
     };
 
+    // Same rule for the key: refused here, the site stays byte-identical.
+    if let Err(reason) = ssl::private_key_matches_cert(&body.certificate, &body.private_key) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": reason })),
+        ));
+    }
+
     let ssl_dir = format!("/etc/dockpanel/ssl/{}", body.domain);
     tokio::fs::create_dir_all(&ssl_dir).await
         .map_err(|e| (
@@ -370,64 +437,78 @@ async fn upload_cert(
     let cert_path = format!("{ssl_dir}/fullchain.pem");
     let key_path = format!("{ssl_dir}/privkey.pem");
 
-    tokio::fs::write(&cert_path, &body.certificate).await
-        .map_err(|e| (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": format!("Failed to write cert: {e}") })),
-        ))?;
-    // Write the private key 0600-at-creation. The previous write-then-async-chmod
-    // left the key world/group-readable (0644) for the duration of a chmod
-    // subprocess - a local disclosure race on a shared box.
-    ssl::write_key_file(&key_path, &body.private_key).await
-        .map_err(|e| (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e })),
-        ))?;
+    // From the first write on, a failure puts the site back as it was: the
+    // fallback inside `enable_ssl_for_site` is a plain-HTTP vhost, which is no
+    // place to leave a site that was serving HTTPS a moment ago.
+    let before = UploadRollback::capture(&body.domain, &cert_path, &key_path).await;
+    let installed: Result<_, (StatusCode, Json<serde_json::Value>)> = async {
+        tokio::fs::write(&cert_path, &body.certificate).await
+            .map_err(|e| (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": format!("Failed to write cert: {e}") })),
+            ))?;
+        // Write the private key 0600-at-creation. The previous write-then-async-chmod
+        // left the key world/group-readable (0644) for the duration of a chmod
+        // subprocess - a local disclosure race on a shared box.
+        ssl::write_key_file(&key_path, &body.private_key).await
+            .map_err(|e| (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e })),
+            ))?;
 
-    // Enable SSL in nginx - read existing config to determine runtime
-    let site_conf = format!("{}/{}.conf", crate::services::nginx::sites_dir(), body.domain);
-    let content = tokio::fs::read_to_string(&site_conf).await.unwrap_or_default();
-    let is_proxy = content.contains("proxy_pass");
+        // Enable SSL in nginx - read existing config to determine runtime
+        let site_conf = format!("{}/{}.conf", crate::services::nginx::sites_dir(), body.domain);
+        let content = tokio::fs::read_to_string(&site_conf).await.unwrap_or_default();
+        let is_proxy = content.contains("proxy_pass");
 
-    let site_config = SiteConfig {
-        runtime: if is_proxy { "proxy".to_string() } else { "php".to_string() },
-        root: Some("/var/www".to_string()),
-        proxy_port: if is_proxy {
-            content.lines().find(|l| l.contains("proxy_pass"))
-                .and_then(|l| l.split(':').last())
-                .and_then(|s| s.trim_end_matches(';').trim().parse().ok())
-        } else { None },
-        php_socket: None,
-        ssl: None, ssl_cert: None, ssl_key: None,
-        rate_limit: None, max_upload_mb: None,
-        php_memory_mb: None, php_max_workers: None,
-        custom_nginx: None, php_preset: None, app_command: None,
-        fastcgi_cache: None,
-        redis_cache: None,
-        redis_db: None,
-        waf_enabled: None,
-        waf_mode: None,
-        csp_policy: None,
-        permissions_policy: None,
-        bot_protection: None,
-        pool_user: None,
-        pool_group: None,
-        bind_ip: None,
-        php_pool: None,
-        web_server: None,
-        aliases: None,
-        canonical_host: None,
-        php_no_exec_dirs: None,
-        force_ssl: None,
-        hsts: None, proxy_streaming: None, proxy_strict_client_ip: None,
+        let site_config = SiteConfig {
+            runtime: if is_proxy { "proxy".to_string() } else { "php".to_string() },
+            root: Some("/var/www".to_string()),
+            proxy_port: if is_proxy {
+                content.lines().find(|l| l.contains("proxy_pass"))
+                    .and_then(|l| l.split(':').last())
+                    .and_then(|s| s.trim_end_matches(';').trim().parse().ok())
+            } else { None },
+            php_socket: None,
+            ssl: None, ssl_cert: None, ssl_key: None,
+            rate_limit: None, max_upload_mb: None,
+            php_memory_mb: None, php_max_workers: None,
+            custom_nginx: None, php_preset: None, app_command: None,
+            fastcgi_cache: None,
+            redis_cache: None,
+            redis_db: None,
+            waf_enabled: None,
+            waf_mode: None,
+            csp_policy: None,
+            permissions_policy: None,
+            bot_protection: None,
+            pool_user: None,
+            pool_group: None,
+            bind_ip: None,
+            php_pool: None,
+            web_server: None,
+            aliases: None,
+            canonical_host: None,
+            php_no_exec_dirs: None,
+            force_ssl: None,
+            hsts: None, proxy_streaming: None, proxy_strict_client_ip: None,
+        };
+
+        ssl::enable_ssl_for_site(&state.templates, &body.domain, &site_config)
+            .await
+            .map_err(|e| (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": format!("Failed to enable SSL: {e}") })),
+            ))
+    }
+    .await;
+    let canonical = match installed {
+        Ok(canonical) => canonical,
+        Err(failure) => {
+            before.restore().await;
+            return Err(failure);
+        }
     };
-
-    let canonical = ssl::enable_ssl_for_site(&state.templates, &body.domain, &site_config)
-        .await
-        .map_err(|e| (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": format!("Failed to enable SSL: {e}") })),
-        ))?;
 
     // Hand back the expiry of the certificate just written. The panel records it
     // so an uploaded certificate is visible to the countdown, the expiry ladder

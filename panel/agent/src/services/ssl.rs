@@ -1037,6 +1037,41 @@ pub async fn list_cert_status() -> Vec<CertStatus> {
 }
 
 /// Regenerate nginx config with SSL enabled and reload.
+/// Does `key_pem` hold the private key of the first certificate in `cert_pem`?
+///
+/// nginx pairs the key with the FIRST certificate of the file, so that is the one
+/// compared. Answered from the public keys alone, before anything reaches the
+/// disk: `nginx -t` would notice the mismatch too, but only once the site's files
+/// have been replaced. The sentences never quote the key.
+pub fn private_key_matches_cert(cert_pem: &str, key_pem: &str) -> Result<(), String> {
+    let block = x509_parser::pem::Pem::iter_from_buffer(cert_pem.as_bytes())
+        .filter_map(Result::ok)
+        .find(|b| b.label == "CERTIFICATE")
+        .ok_or_else(|| "the certificate could not be read: no PEM certificate found".to_string())?;
+    let cert = block
+        .parse_x509()
+        .map_err(|e| format!("the certificate could not be read: {e}"))?;
+
+    let key = rustls_pemfile::private_key(&mut key_pem.as_bytes())
+        .ok()
+        .flatten()
+        .ok_or_else(|| {
+            "the private key could not be read: paste an unencrypted PEM private key".to_string()
+        })?;
+    let signing_key = rustls::crypto::aws_lc_rs::sign::any_supported_type(&key)
+        .map_err(|_| "the private key could not be read: this key type is not supported".to_string())?;
+    let public_key = signing_key
+        .public_key()
+        .ok_or_else(|| "the private key could not be read: this key type is not supported".to_string())?;
+
+    if public_key.as_ref() != cert.public_key().raw {
+        return Err(
+            "this private key does not belong to this certificate: nothing was changed".to_string(),
+        );
+    }
+    Ok(())
+}
+
 /// Switch a site's vhost to the HTTPS template and, if it is a WordPress site
 /// still advertising plain HTTP, move its canonical URL across with it.
 ///
@@ -1820,5 +1855,54 @@ mod foreign_issuer_tests {
         assert!(msg.starts_with(FOREIGN_CERT_REFUSED), "refusal lost its marker: {msg}");
         assert!(msg.contains("DigiCert Inc"), "refusal does not name the issuer: {msg}");
         assert!(msg.contains("example.com"), "refusal does not name the domain: {msg}");
+    }
+}
+
+#[cfg(test)]
+mod private_key_match_tests {
+    use super::private_key_matches_cert;
+    use rcgen::{CertificateParams, KeyPair};
+
+    fn issued(domain: &str) -> (String, String) {
+        let key = KeyPair::generate().unwrap();
+        let cert = CertificateParams::new(vec![domain.to_string()])
+            .unwrap()
+            .self_signed(&key)
+            .unwrap();
+        (cert.pem(), key.serialize_pem())
+    }
+
+    #[test]
+    fn the_certificates_own_key_is_accepted() {
+        let (cert, key) = issued("a.example.test");
+        assert_eq!(private_key_matches_cert(&cert, &key), Ok(()));
+    }
+
+    #[test]
+    fn the_leaf_of_a_chain_is_the_certificate_compared() {
+        let (leaf, leaf_key) = issued("a.example.test");
+        let (issuer, issuer_key) = issued("ca.example.test");
+        let chain = format!("{leaf}{issuer}");
+        assert_eq!(private_key_matches_cert(&chain, &leaf_key), Ok(()));
+        assert!(private_key_matches_cert(&chain, &issuer_key).is_err());
+    }
+
+    #[test]
+    fn another_certificates_key_is_refused_without_quoting_it() {
+        let (cert, _) = issued("a.example.test");
+        let (_, other_key) = issued("b.example.test");
+        let refusal = private_key_matches_cert(&cert, &other_key).unwrap_err();
+        assert!(refusal.contains("does not belong"), "{refusal}");
+        assert!(!refusal.contains("PRIVATE KEY"), "{refusal}");
+    }
+
+    #[test]
+    fn an_unreadable_key_is_refused() {
+        let (cert, _) = issued("a.example.test");
+        let junk = "-----BEGIN PRIVATE KEY-----\nnot base64 at all\n-----END PRIVATE KEY-----\n";
+        for key in [junk, "BEGIN", ""] {
+            let refusal = private_key_matches_cert(&cert, key).unwrap_err();
+            assert!(refusal.contains("could not be read"), "{refusal}");
+        }
     }
 }
