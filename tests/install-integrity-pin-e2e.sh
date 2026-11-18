@@ -193,7 +193,7 @@ stray_single_asset_lines() { # an ACTION line that spells one asset instead of i
 }
 
 step_iterates() { [ "$(code_count "$1" -F "$2")" -gt 0 ]; }
-guard_source()  { code_lines "$1" | sed -n '/^require_static_musl() {/,/^}/p'; }
+guard_source()  { code_lines "$1" | sed -n '/^require_runnable_here() {/,/^}/p'; }
 
 # The new-branch arm's patch source, both halves. `git diff <bare sha>` compares
 # that commit with the WORKING TREE, so a clean tree makes it empty; the absence
@@ -310,7 +310,7 @@ for what in 'download' 'checksum' 'linkage' 'swap'; do
     # names actually exists here and that nothing fetches around it.
     download) NEED='dp_fetch "$BASE/$a" "$TMP/$a"' ;;
     checksum) NEED='sha256sum "$TMP/$a"' ;;
-    linkage)  NEED='require_static_musl "$TMP/$a"' ;;
+    linkage)  NEED='require_runnable_here "$TMP/$a"' ;;
     swap)     NEED='install -m 0755 "$TMP/$a"' ;;
   esac
   if step_iterates "$DEMO" "$NEED"; then
@@ -328,8 +328,8 @@ echo "── 4. the linkage guard, EXECUTED against a stubbed readelf ──"
 # same lines it always did - code_lines blanks, it does not renumber.
 GUARD_SRC=$(guard_source "$DEMO")
 if [ -z "$GUARD_SRC" ]; then
-  bad "deploy-demo.sh has no require_static_musl function to exercise - the linkage check is inline and unverifiable"
-  bad "  (skipping the five behavioural cases: dynamic, static, readelf-error, readelf-absent, zero-byte)"
+  bad "deploy-demo.sh has no require_runnable_here function to exercise - the linkage check is inline and unverifiable"
+  bad "  (skipping the behavioural cases: glibc ok, glibc too new, no GLIBC_ version, host unknown, static, readelf-error, readelf-absent, zero-byte)"
 else
   ok "the linkage guard is a function, so it can be exercised rather than read"
   G_TMP=$(mktemp -d)
@@ -338,23 +338,31 @@ else
   : > "$G_TMP/empty"
   mkdir -p "$G_TMP/stub"
 
-  drive() { # drive <stub-body> <file> ; echoes PASS or REFUSE
+  drive() { # drive <stub-body> <file> <host glibc> ; echoes PASS or REFUSE
     printf '#!/bin/sh\n%s\n' "$1" > "$G_TMP/stub/readelf"
     chmod +x "$G_TMP/stub/readelf"
-    if PATH="$G_TMP/stub:$PATH" bash -c ". '$G_TMP/guard.sh'; require_static_musl '$2'" >/dev/null 2>&1; then
+    if PATH="$G_TMP/stub:$PATH" HOST_GLIBC="$3" bash -c ". '$G_TMP/guard.sh'; require_runnable_here '$2'" >/dev/null 2>&1; then
       echo PASS
     else
       echo REFUSE
     fi
   }
   # The guard exits rather than returning, so each case runs in its own bash.
-  case_check() { # case_check <label> <expect> <stub> <file>
-    local got; got=$(drive "$3" "$4")
+  case_check() { # case_check <label> <expect> <stub> <file> [host glibc, default 2.35]
+    local got; got=$(drive "$3" "$4" "${5-2.35}")
     if [ "$got" = "$2" ]; then ok "$1 → $got"; else bad "$1 → got $got, expected $2"; fi
   }
-  case_check "a dynamically linked binary is refused" REFUSE \
+  # 3.0.0: the release binaries are glibc builds. A dynamic binary is accepted
+  # when this host provides the highest GLIBC_ version it names, never otherwise.
+  case_check "a glibc binary this host can run is accepted" PASS \
+    'echo " 0x0001 (NEEDED) Shared library: [libc.so.6]"; echo "  Name: GLIBC_2.17"; echo "  Name: GLIBC_2.34"; exit 0' "$G_TMP/subject"
+  case_check "a glibc binary newer than this host is refused (issue #70, s271)" REFUSE \
+    'echo " 0x0001 (NEEDED) Shared library: [libc.so.6]"; echo "  Name: GLIBC_2.36"; exit 0' "$G_TMP/subject"
+  case_check "a dynamic binary naming no GLIBC_ version is refused" REFUSE \
     'echo " 0x0001 (NEEDED) Shared library: [libc.so.6]"; exit 0' "$G_TMP/subject"
-  case_check "a static musl binary is accepted" PASS \
+  case_check "an unreadable host glibc version is refused, not believed" REFUSE \
+    'echo " 0x0001 (NEEDED) Shared library: [libc.so.6]"; echo "  Name: GLIBC_2.17"; exit 0' "$G_TMP/subject" "unknown"
+  case_check "a static binary is accepted" PASS \
     'echo "There is no dynamic section in this file."; exit 0' "$G_TMP/subject"
   case_check "readelf failing on a non-ELF file is refused, not believed" REFUSE \
     'echo "readelf: Error: Failed to read file header" >&2; exit 1' "$G_TMP/subject"
@@ -546,7 +554,7 @@ mutation_arm() { # <label> <repo-relative subject> <ere> <predicate>
 
 p_verifies()      { verifies_its_download "$1"; }
 p_assets_decl()   { [ -n "$(assets_declaration "$1")" ]; }
-p_linkage_step()  { step_iterates "$1" 'require_static_musl "$TMP/$a"'; }
+p_linkage_step()  { step_iterates "$1" 'require_runnable_here "$TMP/$a"'; }
 p_guard_extract() { [ -n "$(guard_source "$1")" ]; }
 p_newbranch()     { newbranch_asks_for_commits "$1"; }
 p_failclosed()    { unresolvable_range_fails_closed "$1"; }
@@ -554,11 +562,11 @@ p_failclosed()    { unresolvable_range_fails_closed "$1"; }
 mutation_arm "mutation: §1 notices install-agent.sh's hash compare being commented out" \
   "$IAGENT" 'sha256sum' p_verifies
 mutation_arm "mutation: §3 notices deploy-demo.sh's per-asset linkage call being commented out" \
-  "$DEMO" 'require_static_musl "' p_linkage_step
+  "$DEMO" 'require_runnable_here "' p_linkage_step
 mutation_arm "mutation: §3 notices the shared asset declaration being commented out" \
   "$DEMO" '^ASSETS=' p_assets_decl
 mutation_arm "mutation: §4 notices the linkage guard's definition being commented out" \
-  "$DEMO" '^require_static_musl' p_guard_extract
+  "$DEMO" '^require_runnable_here' p_guard_extract
 mutation_arm "mutation: §6 notices the new-branch patch call being commented out" \
   "$PREPUSH" 'git log -p' p_newbranch
 mutation_arm "mutation: §6 notices the fail-closed branch being commented out" \

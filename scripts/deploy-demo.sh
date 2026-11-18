@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Deploy THIS box to a published release, from the PUBLISHED static-musl assets.
+# Deploy THIS box to a published release, from the PUBLISHED binary assets.
 #
 # This is the third path that installs CyberHunter - Panel onto a running machine. The
 # other two are scripts/setup.sh (fresh install) and scripts/update.sh (upgrade
@@ -24,14 +24,13 @@
 # Usage:
 #   GITHUB_REPO=owner/name DEMO_HOST=panel.example.com bash scripts/deploy-demo.sh v3.0.0
 #
-# ⚠ NOT FOR 3.0.0 RELEASES, ON PURPOSE. Since 3.0.0 the published binaries are
-# glibc builds (compiled on Ubuntu 22.04, scripts/release-build), so
-# require_static_musl below refuses every one of them, and this script stops
-# before touching the box. That refusal is kept rather than "aligned" with
-# check-glibc.sh: this script downloads from a release page on its own, outside
-# the checks the panel and install.sh make (tag validation, closed host list,
-# size limits, strict manifest format, archive checks). Deploy a 3.0.0 box with
-# install.sh or from the panel (Telemetry, Updates).
+# 3.0.0 and later: the published binaries are glibc builds (compiled on Ubuntu
+# 22.04, scripts/release-build), not static musl. The linkage guard below
+# therefore accepts a static binary or a dynamic one whose highest GLIBC_
+# symbol version this host provides, and refuses anything else. The download is
+# checked like install.sh checks it, as far as this script goes: tag format,
+# strict checksums.txt format, SHA-256 of every asset. install.sh and the panel
+# (Telemetry, Updates) remain the supported ways to install and update a box.
 #
 # DEMO_HOST and GITHUB_REPO are required and have no default: the public
 # hostname is a property of the box you are deploying, and the repository that
@@ -42,6 +41,12 @@ set -euo pipefail
 TAG="${1:?usage: DEMO_HOST=<panel-host> deploy-demo.sh vX.Y.Z}"
 DEMO_HOST="${DEMO_HOST:?DEMO_HOST must name the public hostname of the panel being deployed (no default)}"
 GITHUB_REPO="${GITHUB_REPO:?GITHUB_REPO is required}"
+if ! printf '%s\n' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$'; then
+    echo "REFUSING: tag '$TAG' is not vX.Y.Z or vX.Y.Z-rc.N"; exit 1
+fi
+if ! printf '%s\n' "$GITHUB_REPO" | grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'; then
+    echo "REFUSING: GITHUB_REPO '$GITHUB_REPO' is not owner/name"; exit 1
+fi
 BASE="https://github.com/$GITHUB_REPO/releases/download/$TAG"
 
 # The published assets, named ONCE. The download loop, the checksum check, the
@@ -129,6 +134,11 @@ CHECKSUMS="$TMP/checksums.txt"
 if ! dp_fetch "$BASE/checksums.txt" "$CHECKSUMS"; then
     echo "REFUSING: could not fetch $BASE/checksums.txt after 3 attempts - will not install unverified binaries"; exit 1
 fi
+# Same manifest format install.sh accepts: one "<64 hex>  <file name>" per line,
+# nothing else. A line that does not fit means this is not a release manifest.
+if grep -vqE '^[0-9a-f]{64}  [A-Za-z0-9._-]{1,128}$' "$CHECKSUMS"; then
+    echo "REFUSING: checksums.txt for $TAG has a line that is not '<sha256>  <file>'"; exit 1
+fi
 for a in "${ASSETS[@]}"; do
     want=$(awk -v n="$a" '$2 == n {print $1; exit}' "$CHECKSUMS")
     if [ -z "$want" ]; then
@@ -141,20 +151,20 @@ for a in "${ASSETS[@]}"; do
     echo "  $a: sha256 verified"
 done
 
-# Prove they are the static musl binaries users get, not something else. A
-# dev-built gnu binary reproduced issue #70's exact GLIBC failure at s228, and
-# this refusal is why a hand deploy - not this script - is what put a stale
-# glibc agent on the demo at s271.
+# Prove each binary can run HERE before anything is stopped. A binary built
+# against a newer glibc than the host's fails at start with "GLIBC_x.y not
+# found" - issue #70, reproduced at s228, and how a stale glibc agent reached
+# the demo at s271 through a hand deploy. Since 3.0.0 the published binaries
+# are glibc builds, so this guard no longer demands a static binary: it accepts
+# a static one, or a dynamic one whose highest GLIBC_ version the host provides.
 #
-# Until s336 this checked the API asset ALONE - so the guard whose reason for
-# existing is the s271 stale-glibc incident skipped the agent, the binary that
-# incident was about. It also read any readelf failure as proof of static
-# linkage: the old form ended in a grep, and under `pipefail` a pipeline keeps
-# the RIGHTMOST non-zero status, so readelf's 127 was overwritten by grep's
-# no-match 1 and a missing binutils, a non-ELF file or a zero-byte download all
-# printed "confirmed: no DT_NEEDED (static)". Measured, all three.
-require_static_musl() {
-    local path="$1" name dyn
+# Every failure to PROVE is a refusal, never a pass: a missing or empty file, a
+# missing readelf, readelf failing (non-ELF), a dynamic binary naming no GLIBC_
+# version, or a host whose glibc version cannot be read. (Until s336 a readelf
+# failure printed "static" because pipefail kept grep's status, not readelf's.)
+# HOST_GLIBC overrides the detected version, for tests/install-integrity-pin.
+require_runnable_here() {
+    local path="$1" name info need host top
     name=$(basename "$path")
     if [ ! -s "$path" ]; then
         echo "REFUSING: $name is missing or zero bytes"; exit 1
@@ -162,17 +172,30 @@ require_static_musl() {
     if ! command -v readelf >/dev/null 2>&1; then
         echo "REFUSING: readelf is not installed, so $name's linkage cannot be proven (apt-get install binutils)"; exit 1
     fi
-    if ! dyn=$(readelf -d "$path" 2>&1); then
-        echo "REFUSING: readelf could not read $name - ${dyn%%$'\n'*}"; exit 1
+    if ! info=$(readelf -d -V -W "$path" 2>&1); then
+        echo "REFUSING: readelf could not read $name - ${info%%$'\n'*}"; exit 1
     fi
-    case "$dyn" in
-        *NEEDED*) echo "REFUSING: $name is dynamically linked"; exit 1 ;;
+    case "$info" in
+        *NEEDED*) ;;
+        *) echo "  $name: no DT_NEEDED (static)"; return 0 ;;
     esac
-    echo "  $name: confirmed no DT_NEEDED (static)"
+    need=$(printf '%s\n' "$info" | grep -oE 'GLIBC_[0-9]+(\.[0-9]+)+' | sed 's/^GLIBC_//' | sort -V | tail -1 || true)
+    if [ -z "$need" ]; then
+        echo "REFUSING: $name is dynamically linked but names no GLIBC_ version"; exit 1
+    fi
+    host="${HOST_GLIBC:-$(getconf GNU_LIBC_VERSION 2>/dev/null | awk '{print $2}' || true)}"
+    if ! printf '%s\n' "$host" | grep -Eq '^[0-9]+(\.[0-9]+)+$'; then
+        echo "REFUSING: cannot read this host's glibc version, so $name (GLIBC_$need) cannot be proven runnable"; exit 1
+    fi
+    top=$(printf '%s\n%s\n' "$need" "$host" | sort -V | tail -1)
+    if [ "$top" != "$host" ]; then
+        echo "REFUSING: $name needs GLIBC_$need, this host has glibc $host"; exit 1
+    fi
+    echo "  $name: needs GLIBC_$need, host has $host"
 }
 for a in "${ASSETS[@]}"; do
     file "$TMP/$a" | cut -c1-100
-    require_static_musl "$TMP/$a"
+    require_runnable_here "$TMP/$a"
 done
 
 echo "=== refresh the agent systemd unit ==="
