@@ -220,6 +220,12 @@ make_snapshot() {
     printf 'OLD-AGENT\n' > "$dir/src/binaries/dockpanel-agent"
     printf 'OLD-CLI\n'   > "$dir/src/binaries/dockpanel"
     [ "$with_api" = "yes" ] || rm -f "$dir/src/binaries/dockpanel-api"
+    # Older snapshots carry neither of these (SNAP_LEGACY).
+    if [ -z "${SNAP_LEGACY:-}" ]; then
+        printf 'OLD-MCP\n' > "$dir/src/binaries/dockpanel-mcp"
+        mkdir -p "$dir/src/frontend/dist"
+        printf 'OLD-UI\n' > "$dir/src/frontend/dist/index.html"
+    fi
     printf 'OLD-ENV\n' > "$dir/src/etc/api.env"
     # The update source as it was when the snapshot was taken (S7).
     if [ -n "${SNAP_UPDATE_SOURCE:-}" ]; then
@@ -263,6 +269,10 @@ run_restore() {
     printf 'NEW-API\n'   > "$base/bin/dockpanel-api"
     printf 'NEW-AGENT\n' > "$base/bin/dockpanel-agent"
     printf 'NEW-CLI\n'   > "$base/bin/dockpanel"
+    printf 'NEW-MCP\n'   > "$base/bin/dockpanel-mcp"
+    mkdir -p "$base/frontend/dist"
+    printf 'NEW-UI\n'    > "$base/frontend/dist/index.html"
+    printf 'stale\n'     > "$base/frontend/dist/only-in-new.js"
     # The update source as configured right now (S7): update.conf unless
     # NO_CUR_CONF is set, the token only when CUR_TOKEN is set - unset models
     # "the admin cleared it".
@@ -298,6 +308,7 @@ run_restore() {
         DOCKPANEL_STATE_DIR="$base/state" \
         DOCKPANEL_BIN_DIR="${BIN_DIR_OVERRIDE:-$base/bin}" \
         DOCKPANEL_ETC_DIR="$base/etc" \
+        DOCKPANEL_FRONTEND_DIR="$base/frontend" \
         DOCKPANEL_HEALTH_URL="http://127.0.0.1:1/api/health" \
         "$@" \
         bash "$RESTORE_SH" > "$base/out.log" 2>&1
@@ -316,6 +327,26 @@ assert_has "stage is complete"                   '"stage":"complete"'     "$J"
 assert_has "dockpanel-api was started"           'systemctl start dockpanel-api' "$A"
 chk "$([ "$(cat "$BIN_DIR_OUT/dockpanel-api")" = "OLD-API" ] && echo 0 || echo 1)" \
     "the api binary was actually reverted to the snapshot's"
+
+echo
+echo "S1b · the MCP binary and the frontend go back with the rest"
+run_restore full_set yes
+chk "$([ "$RC" = "0" ] && echo 0 || echo 1)" "exits 0"
+chk "$([ "$(cat "$BIN_DIR_OUT/dockpanel-mcp")" = "OLD-MCP" ] && echo 0 || echo 1)" \
+    "dockpanel-mcp was reverted to the snapshot's"
+chk "$([ "$(cat "$SCRATCH/full_set/frontend/dist/index.html")" = "OLD-UI" ] && echo 0 || echo 1)" \
+    "the frontend was reverted to the snapshot's"
+chk "$([ ! -e "$SCRATCH/full_set/frontend/dist/only-in-new.js" ] && echo 0 || echo 1)" \
+    "a file only the newer frontend had is gone from the served directory"
+assert_has "a running MCP service is restarted" 'systemctl try-restart dockpanel-mcp' "$(cat "$ACTIONS")"
+
+SNAP_LEGACY=1 run_restore legacy_set yes
+chk "$([ "$RC" = "0" ] && echo 0 || echo 1)" "a snapshot without them still restores"
+assert_has "and its verdict is ok=true" '"ok":true' "$(cat "$RES_JSON")"
+chk "$([ "$(cat "$BIN_DIR_OUT/dockpanel-mcp")" = "NEW-MCP" ] && echo 0 || echo 1)" \
+    "the installed dockpanel-mcp is left alone when the snapshot has none"
+chk "$([ "$(cat "$SCRATCH/legacy_set/frontend/dist/index.html")" = "NEW-UI" ] && echo 0 || echo 1)" \
+    "the installed frontend is left alone when the snapshot has none"
 
 echo
 echo "S2 · the bookkeeping INSERT fails - the box must still end CONSISTENT"

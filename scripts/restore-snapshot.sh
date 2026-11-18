@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# CyberHunter - Panel - restore a panel snapshot (binaries + /etc/dockpanel + database).
+# CyberHunter - Panel - restore a panel snapshot (binaries + frontend + /etc/dockpanel + database).
 #
 # This script is the ONLY thing that mutates state during a rollback. It is
 # compiled into dockpanel-api (`include_str!`) and written to
@@ -25,8 +25,8 @@
 #   status-checked (lesson #45).
 #
 # WHAT A ROLLBACK DOES AND DOES NOT DO (verified on a lab box, not assumed):
-#   It restores what the snapshot CONTAINS - the three binaries, /etc/dockpanel,
-#   and the database. The database is a true point-in-time revert: the `public`
+#   It restores what the snapshot CONTAINS - the binaries, the frontend,
+#   /etc/dockpanel and the database. The database is a true point-in-time revert: the `public`
 #   schema is dropped and rebuilt from the dump inside one transaction, so an
 #   object created after the snapshot does NOT survive.
 #
@@ -87,16 +87,17 @@ PG_DB="${DOCKPANEL_PG_DB:-dockpanel}"
 STATE_DIR="${DOCKPANEL_STATE_DIR:-/var/lib/dockpanel}"
 BIN_DIR="${DOCKPANEL_BIN_DIR:-/usr/local/bin}"
 ETC_DIR="${DOCKPANEL_ETC_DIR:-/etc/dockpanel}"
+FRONTEND_DIR="${DOCKPANEL_FRONTEND_DIR:-/opt/dockpanel/frontend}"
 HEALTH_URL="${DOCKPANEL_HEALTH_URL:-http://127.0.0.1:3080/api/health}"
 RESULT="$STATE_DIR/last-restore.json"
 WORK="$STATE_DIR/restore-$SNAP_ID"
 LOG_TAG=dockpanel-restore
-# dockpanel-api FIRST, deliberately. It is the only one of the three that runs
+# dockpanel-api FIRST, deliberately. It is the only one of these that runs
 # migrations against the database, so the window in which the database has been
 # reverted while a NEWER api is still installed is exactly the span between the
 # database commit and this binary being replaced. Restoring it first makes that
 # window as short as the script can make it.
-BINS=(dockpanel-api dockpanel-agent dockpanel)
+BINS=(dockpanel-api dockpanel-agent dockpanel dockpanel-mcp)
 
 mkdir -p "$STATE_DIR"
 chmod 0700 "$STATE_DIR" 2>/dev/null || true
@@ -508,6 +509,37 @@ for bin in "${BINS[@]}"; do
     log "restored $dst"
 done
 
+# ── 6b. Frontend ─────────────────────────────────────────────────────────────
+# Prepared beside the live directory, then swapped by rename. Not fatal: the api
+# and the database already agree, and stopping here would strand the box. A
+# snapshot taken before the frontend was archived simply has none to restore.
+stage="frontend"
+if [ -f "$WORK/frontend/dist/index.html" ]; then
+    if rm -rf "$FRONTEND_DIR/dist.restoring" "$FRONTEND_DIR/dist.prerestore" \
+        && mkdir -p "$FRONTEND_DIR" \
+        && cp -a "$WORK/frontend/dist" "$FRONTEND_DIR/dist.restoring"; then
+        had_frontend=0
+        if [ -d "$FRONTEND_DIR/dist" ]; then
+            had_frontend=1
+        fi
+        if [ "$had_frontend" = "1" ] && ! mv "$FRONTEND_DIR/dist" "$FRONTEND_DIR/dist.prerestore"; then
+            degrade "the frontend could not be restored: the installed one is still served"
+        elif mv "$FRONTEND_DIR/dist.restoring" "$FRONTEND_DIR/dist"; then
+            log "restored $FRONTEND_DIR/dist"
+        else
+            if [ "$had_frontend" = "1" ] && ! mv "$FRONTEND_DIR/dist.prerestore" "$FRONTEND_DIR/dist"; then
+                degrade "the frontend could not be put back: the previous one is in $FRONTEND_DIR/dist.prerestore"
+            else
+                degrade "the frontend could not be restored: the installed one is still served"
+            fi
+        fi
+    else
+        degrade "the frontend could not be staged: the installed one is still served"
+    fi
+else
+    log "snapshot has no frontend - leaving the installed one in place"
+fi
+
 # ── 7. /etc/dockpanel ────────────────────────────────────────────────────────
 # Treated as fatal, not best-effort: api.env carries JWT_SECRET and the database
 # password, so a half-applied /etc against a fully-restored database is a broken
@@ -545,6 +577,11 @@ fi
 
 systemctl start dockpanel-api || fail "dockpanel-api failed to start after restore"
 services_stopped=0
+
+# Opt-in service: restarted only if it was running, so it runs the restored binary.
+if ! systemctl try-restart dockpanel-mcp 2>/dev/null; then
+    degrade "dockpanel-mcp could not be restarted on the restored binary"
+fi
 
 stage="health"
 HEALTH=""

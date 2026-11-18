@@ -1,7 +1,8 @@
 //! Phase 4 W4: persistent panel snapshots.
 //!
 //! Builds tar.gz triplets containing:
-//!   binaries/   - agent + api + cli binary copies
+//!   binaries/   - agent + api + cli + mcp binary copies
+//!   frontend/   - the served frontend (`dist/`)
 //!   db/         - gzipped pg_dump of the CyberHunter - Panel database
 //!   etc/        - copy of /etc/dockpanel, minus the update token
 //!   metadata.json - provenance (from_version, trigger, operator)
@@ -117,7 +118,10 @@ impl From<sqlx::Error> for SnapshotError {
     }
 }
 
-/// Build a snapshot of the current panel state (binaries + DB dump + etc).
+/// Where nginx serves the panel's frontend from.
+const FRONTEND_DIST: &str = "/opt/dockpanel/frontend/dist";
+
+/// Build a snapshot of the current panel state (binaries + frontend + DB dump + etc).
 /// Writes to a `.tmp` file first, computes sha256, renames to final, then
 /// inserts the DB row. The DB row + file are consistent: if any earlier
 /// step fails, no row is written and the .tmp file is cleaned up.
@@ -215,7 +219,7 @@ async fn build_snapshot_inner(
 
     // Copy binaries. cp is fine; size + perms aren't security-critical
     // inside the tar (extraction restores from the tar entries).
-    for bin in &["dockpanel-agent", "dockpanel-api", "dockpanel"] {
+    for bin in &["dockpanel-agent", "dockpanel-api", "dockpanel", "dockpanel-mcp"] {
         let src = format!("/usr/local/bin/{bin}");
         let dst = staging_dir.join("binaries").join(bin);
         if Path::new(&src).exists() {
@@ -223,6 +227,27 @@ async fn build_snapshot_inner(
         } else {
             tracing::warn!("snapshot: binary {src} not found, skipping");
         }
+    }
+
+    // The frontend belongs to the version as much as the binaries do: an update
+    // replaces it, so a rollback that left it behind would serve the newer pages
+    // against the older api.
+    if Path::new(FRONTEND_DIST).join("index.html").exists() {
+        tokio::fs::create_dir_all(staging_dir.join("frontend")).await?;
+        let frontend_status = Command::new("cp")
+            .arg("-a")
+            .arg(FRONTEND_DIST)
+            .arg(staging_dir.join("frontend").join("dist"))
+            .status()
+            .await?;
+        if !frontend_status.success() {
+            return Err(SnapshotError::Subprocess {
+                cmd: "cp frontend".into(),
+                stderr: format!("exit status {frontend_status}"),
+            });
+        }
+    } else {
+        tracing::warn!("snapshot: frontend {FRONTEND_DIST} not found, skipping");
     }
 
     // Dump DB via docker exec.
