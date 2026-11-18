@@ -1266,7 +1266,7 @@ echo ""
 echo -e "  Agent: $(systemctl is-active dockpanel-agent)"
 echo -e "  API:   $(systemctl is-active dockpanel-api)"
 if systemctl list-unit-files dockpanel-mcp.service > /dev/null 2>&1; then
-    echo -e "  MCP:   $(systemctl is-active dockpanel-mcp) $([ "$MCP_WAS_ACTIVE" = "0" ] && echo '(not enabled - see docs.dockpanel.dev)')"
+    echo -e "  MCP:   $(systemctl is-active dockpanel-mcp) $([ "$MCP_WAS_ACTIVE" = "0" ] && echo '(not enabled - see the README)')"
 fi
 echo -e "  Version: $($CLI_BIN --version 2>/dev/null || echo 'unknown')"
 echo ""

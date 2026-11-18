@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Github, Mail } from 'lucide-react';
+import { Github } from 'lucide-react';
 import { DocSection, DocShell, DocTitle, docLink } from '../components/DocChrome';
 
 /**
@@ -112,19 +112,13 @@ const AUDIT_HISTORY = [
 
 const SUPPLY_CHAIN = [
   {
-    title: 'Signed releases (Sigstore + cosign)',
-    since: 'v2.7.10+',
+    title: 'Checksummed releases (not signed)',
+    since: 'v3.0.0+',
     text:
-      'Every binary and SBOM in every GitHub release is signed in CI with cosign keyless. ' +
-      'No long-lived signing key exists - the certificate is bound to the release workflow’s ' +
-      'GitHub Actions OIDC identity and recorded in the public Rekor transparency log.',
-  },
-  {
-    title: 'Per-binary SBOMs',
-    since: 'v2.7.10+',
-    text:
-      'cargo-sbom emits SPDX 2.3 documents for the agent, API, and CLI crates alongside ' +
-      'every release. Each SBOM is also signed and verifiable with the same cosign command.',
+      'Every release ships a checksums.txt with the SHA-256 and size of each file. install.sh ' +
+      'and the panel updater check every file against it and stop on any mismatch. The ' +
+      'releases are not signed: checksums.txt comes from the same release, so it catches a ' +
+      'corrupted download, not a release replaced by someone who controls the GitHub account.',
   },
   {
     title: 'Per-image SBOM generation',
@@ -142,16 +136,10 @@ const SUPPLY_CHAIN = [
   },
 ];
 
-const VERIFY_CMD = `cosign verify-blob \\
-  --certificate dockpanel-agent-linux-amd64.pem \\
-  --signature  dockpanel-agent-linux-amd64.sig \\
-  --certificate-identity-regexp '^https://github\\.com/ovexro/dockpanel/\\.github/workflows/release\\.yml@refs/tags/v.+$' \\
-  --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \\
-  dockpanel-agent-linux-amd64`;
+const VERIFY_CMD = `sha256sum -c --ignore-missing checksums.txt`;
 
 const RECENT_ADVISORIES = [
   { ver: '2.7.11', date: '2026-04-15', text: 'Per-image SBOM generation (syft) shipped - supply-chain transparency for every deployed container.' },
-  { ver: '2.7.10', date: '2026-04-15', text: 'Signed releases via cosign keyless + per-binary SPDX SBOMs in CI.' },
   { ver: '2.7.9',  date: '2026-04-15', text: 'Per-image CVE scanning (grype) shipped; agent sandbox gap (/var/lib/dockpanel missing from ReadWritePaths) closed.' },
   { ver: '2.7.8',  date: '2026-04-15', text: 'Audit Round 7 fixes: tar --no-dereference, terminal denylist, agent unit hardening, URL guards, alert-pileup fix.' },
   { ver: '2.7.x',  date: '2026-03',    text: 'Audit Round 6: 30 findings closed including MySQL SQL injection, deploy RCE, CSRF, Compose YAML AST validation, HKDF.' },
@@ -171,8 +159,8 @@ const DEFAULTS: [string, string][] = [
   ['No telemetry, ever', 'Self-hosted means self-hosted.'],
 ];
 
-const SECURITY_MD = 'https://github.com/ovexro/dockpanel/blob/main/SECURITY.md';
-const CHANGELOG_MD = 'https://github.com/ovexro/dockpanel/blob/main/CHANGELOG.md';
+const SECURITY_MD = 'https://github.com/MrTheSkream/cyberhunter-panel/blob/main/SECURITY.md';
+const CHANGELOG_MD = 'https://github.com/MrTheSkream/cyberhunter-panel/blob/main/CHANGELOG.md';
 
 /** Section headings. Sized as sections rather than clauses - these are units. */
 const h2 =
@@ -187,7 +175,7 @@ export default function Security() {
   const [latestRelease, setLatestRelease] = useState<string | null>(null);
   useEffect(() => {
     let live = true;
-    fetch('https://api.github.com/repos/ovexro/dockpanel/releases/latest')
+    fetch('https://api.github.com/repos/MrTheSkream/cyberhunter-panel/releases/latest')
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => { if (live && d?.tag_name) setLatestRelease(d.tag_name); })
       .catch(() => {});
@@ -210,7 +198,7 @@ export default function Security() {
           <>
             Every other panel that skipped this page eventually wrote a postmortem instead.
             CyberHunter - Panel takes the opposite approach: continuous internal audits, supply-chain
-            transparency, signed releases, and a public response SLA. Here&apos;s the receipts.
+            transparency, checksummed releases, and a public response SLA. Here&apos;s the receipts.
           </>
         }
       />
@@ -242,7 +230,7 @@ export default function Security() {
       <DocSection id="supply-chain" label="Provenance" contentClassName="max-w-3xl">
         <h2 className={h2}>Supply chain</h2>
         <p className={standfirst}>
-          What we ship, signed. What you run, scannable. EU CRA compliance lands September 2026 -
+          What we ship, checksummed. What you run, scannable. EU CRA compliance lands September 2026 -
           CyberHunter - Panel is ready today.
         </p>
 
@@ -264,7 +252,7 @@ export default function Security() {
           <figcaption className="flex items-center justify-between gap-4 border-b border-[#1e1e22] px-4 py-2.5">
             <span className="eyebrow">Verify a downloaded binary</span>
             <a
-              href={`${SECURITY_MD}#verifying-release-signatures`}
+              href={`${SECURITY_MD}#release-integrity`}
               className="mono text-[11px] text-[#6b6b74] transition-colors hover:text-[#f4f4f5]"
               target="_blank"
               rel="noopener noreferrer"
@@ -397,19 +385,13 @@ export default function Security() {
       <DocSection id="disclosure" label="Disclosure" contentClassName="max-w-2xl">
         <h2 className={h2}>Report a vulnerability</h2>
         <p className="mt-3 text-[15px] leading-relaxed text-[#a3a3ad]">
-          Please don&apos;t open a public GitHub issue for security vulnerabilities. Email us
-          with reproduction steps, impact, and any PoC. We acknowledge within 48 hours and
+          Please don&apos;t open a public GitHub issue for security vulnerabilities. Report it
+          privately through GitHub with reproduction steps, impact, and any PoC. We acknowledge within 48 hours and
           credit researchers (with permission) who follow responsible disclosure.
         </p>
         <div className="mt-7 flex flex-wrap items-center gap-x-6 gap-y-3">
           <a
-            href="mailto:security@dockpanel.dev"
-            className="mono inline-flex items-center gap-2 text-[13px] text-[#f4f4f5] underline decoration-[#3f3f46] underline-offset-4 transition-colors hover:decoration-[#f4f4f5]"
-          >
-            <Mail className="h-3.5 w-3.5" /> security@dockpanel.dev
-          </a>
-          <a
-            href="https://github.com/ovexro/dockpanel/security/advisories/new"
+            href="https://github.com/MrTheSkream/cyberhunter-panel/security/advisories/new"
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-2 text-[13px] font-medium text-[#a3a3ad] transition-colors hover:text-[#f4f4f5]"

@@ -67,7 +67,7 @@ function AnimatedTerminal() {
   const [typing, setTyping] = useState('');
   const [phase, setPhase] = useState<'idle' | 'typing' | 'running' | 'done'>('idle');
 
-  const command = 'curl -sL dockpanel.dev/install.sh | sudo bash';
+  const command = 'curl -fsSLO https://github.com/MrTheSkream/cyberhunter-panel/releases/latest/download/install.sh && sudo bash install.sh';
 
   useEffect(() => {
     if (!inView || started.current) return;
@@ -231,7 +231,7 @@ const allFeatures = [
   { name: 'Uptime Monitoring', desc: 'HTTP, TCP, ping probes with incident management', icon: Activity },
   { name: 'WAF (ModSecurity)', desc: 'OWASP CRS v4 - per-site detection or prevention', icon: ShieldCheck },
   { name: 'Image CVE Scanning', desc: 'Per-app grype scans, deploy gate, scheduled rescan', icon: ScanSearch },
-  { name: 'Signed Releases + SBOM', desc: 'cosign keyless via Sigstore, SPDX 2.3 SBOMs, Rekor transparency log', icon: BadgeCheck },
+  { name: 'Checksummed Releases', desc: 'SHA-256 and size of every file in checksums.txt, checked by install.sh and the updater', icon: BadgeCheck },
   { name: 'Per-Image SBOM', desc: 'On-demand SPDX 2.3 download per deployed container (syft)', icon: Package },
   { name: 'Backup Orchestrator', desc: 'Scheduled, encrypted, verified, with S3 support', icon: HardDriveDownload },
   { name: 'Smart Diagnostics', desc: '6 check categories with one-click auto-fix', icon: Stethoscope },
@@ -307,14 +307,14 @@ export default function Landing() {
   }, []);
 
   useEffect(() => {
-    fetch('https://api.github.com/repos/ovexro/dockpanel')
+    fetch('https://api.github.com/repos/MrTheSkream/cyberhunter-panel')
       .then(r => r.json())
       .then(d => { if (d.stargazers_count) setStars(d.stargazers_count); })
       .catch(() => {});
   }, []);
 
   const handleCopy = () => {
-    navigator.clipboard.writeText('curl -sL https://dockpanel.dev/install.sh | sudo bash');
+    navigator.clipboard.writeText('curl -fsSLO https://github.com/MrTheSkream/cyberhunter-panel/releases/latest/download/install.sh && sudo bash install.sh');
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -358,7 +358,7 @@ export default function Landing() {
             <NavLink href="#faq" label="FAQ" active={activeSection === 'faq'} />
           </div>
           <div className="flex items-center gap-3">
-            <a href="https://github.com/ovexro/dockpanel" className="hidden sm:flex items-center gap-1.5 text-[13px] text-zinc-500 hover:text-white transition-colors">
+            <a href="https://github.com/MrTheSkream/cyberhunter-panel" className="hidden sm:flex items-center gap-1.5 text-[13px] text-zinc-500 hover:text-white transition-colors">
               <Github className="w-4 h-4" />
               {stars !== null && (
                 <span className="flex items-center gap-1 text-xs">
@@ -367,7 +367,7 @@ export default function Landing() {
                 </span>
               )}
             </a>
-            <a href="https://docs.dockpanel.dev" className="hidden sm:block text-[13px] font-semibold px-4 py-1.5 rounded-md bg-white text-zinc-900 hover:bg-zinc-200 transition-colors">
+            <a href="https://github.com/MrTheSkream/cyberhunter-panel#readme" className="hidden sm:block text-[13px] font-semibold px-4 py-1.5 rounded-md bg-white text-zinc-900 hover:bg-zinc-200 transition-colors">
               Docs
             </a>
             <button onClick={() => setMobileMenu(true)} className="md:hidden p-1 text-zinc-400 hover:text-white transition-colors">
@@ -400,10 +400,10 @@ export default function Landing() {
                 <a href="#pricing" onClick={() => setMobileMenu(false)} className="text-zinc-300 hover:text-white transition-colors">Pricing</a>
                 <a href="#faq" onClick={() => setMobileMenu(false)} className="text-zinc-300 hover:text-white transition-colors">FAQ</a>
                 <hr className="border-zinc-800" />
-                <a href="https://github.com/ovexro/dockpanel" className="flex items-center gap-2 text-zinc-300 hover:text-white transition-colors">
+                <a href="https://github.com/MrTheSkream/cyberhunter-panel" className="flex items-center gap-2 text-zinc-300 hover:text-white transition-colors">
                   <Github className="w-4 h-4" /> GitHub
                 </a>
-                <a href="https://docs.dockpanel.dev" className="flex items-center gap-2 text-zinc-300 hover:text-white transition-colors">
+                <a href="https://github.com/MrTheSkream/cyberhunter-panel#readme" className="flex items-center gap-2 text-zinc-300 hover:text-white transition-colors">
                   Docs
                 </a>
               </div>
@@ -507,7 +507,7 @@ export default function Landing() {
             <div className="flex items-stretch border border-[#1e1e22] bg-[#101012] hover:border-[#2a2a30] transition-colors">
               <span className="mono select-none px-4 sm:px-5 flex items-center text-[#3f3f46] border-r border-[#1e1e22]">$</span>
               <code className="mono flex-1 min-w-0 overflow-x-auto whitespace-nowrap px-4 sm:px-5 py-4 text-[13px] sm:text-[15px] text-[#f4f4f5]">
-                curl -sL dockpanel.dev/install.sh | sudo bash
+                curl -fsSLO https://github.com/MrTheSkream/cyberhunter-panel/releases/latest/download/install.sh && sudo bash install.sh
               </code>
               <button
                 onClick={handleCopy}
@@ -520,10 +520,10 @@ export default function Landing() {
             </div>
 
             <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-3">
-              <a href="https://docs.dockpanel.dev" className="text-sm font-medium text-[#f4f4f5] underline decoration-[#3f3f46] hover:decoration-[#f4f4f5] underline-offset-4 transition-colors">
+              <a href="https://github.com/MrTheSkream/cyberhunter-panel#readme" className="text-sm font-medium text-[#f4f4f5] underline decoration-[#3f3f46] hover:decoration-[#f4f4f5] underline-offset-4 transition-colors">
                 Read the docs
               </a>
-              <a href="https://github.com/ovexro/dockpanel" className="text-sm font-medium text-[#a3a3ad] hover:text-[#f4f4f5] transition-colors inline-flex items-center gap-1.5">
+              <a href="https://github.com/MrTheSkream/cyberhunter-panel" className="text-sm font-medium text-[#a3a3ad] hover:text-[#f4f4f5] transition-colors inline-flex items-center gap-1.5">
                 <Github className="w-3.5 h-3.5" /> Source
               </a>
               <p className="mono text-[11px] text-[#3f3f46] ml-auto">
@@ -782,14 +782,14 @@ export default function Landing() {
               </dl>
 
               <div className="mt-9 max-w-2xl flex flex-wrap items-center gap-x-6 gap-y-3">
-                <a href="https://github.com/ovexro/dockpanel" className="inline-flex items-center gap-2 text-sm font-medium text-[#f4f4f5] underline decoration-[#3f3f46] hover:decoration-[#f4f4f5] underline-offset-4 transition-colors">
+                <a href="https://github.com/MrTheSkream/cyberhunter-panel" className="inline-flex items-center gap-2 text-sm font-medium text-[#f4f4f5] underline decoration-[#3f3f46] hover:decoration-[#f4f4f5] underline-offset-4 transition-colors">
                   <Github className="w-3.5 h-3.5" /> View on GitHub
                 </a>
-                <a href="https://docs.dockpanel.dev" className="text-sm font-medium text-[#a3a3ad] hover:text-[#f4f4f5] transition-colors">
+                <a href="https://github.com/MrTheSkream/cyberhunter-panel#readme" className="text-sm font-medium text-[#a3a3ad] hover:text-[#f4f4f5] transition-colors">
                   Read the docs
                 </a>
                 <p className="mono text-[11px] text-[#3f3f46] ml-auto">
-                  stuck? <a href="mailto:hello@dockpanel.dev" className="text-[#6b6b74] hover:text-[#f4f4f5] underline underline-offset-4 decoration-[#3f3f46] transition-colors">hello@dockpanel.dev</a>
+                  stuck? <a href="https://github.com/MrTheSkream/cyberhunter-panel/issues" className="text-[#6b6b74] hover:text-[#f4f4f5] underline underline-offset-4 decoration-[#3f3f46] transition-colors">open an issue</a>
                 </p>
               </div>
 
@@ -880,8 +880,8 @@ export default function Landing() {
                 <div className="flex flex-col gap-2.5 text-[13px] text-zinc-600">
                   <a href="#features" className="hover:text-zinc-300 transition-colors">Features</a>
                   <Link to="/security" className="hover:text-zinc-300 transition-colors">Security</Link>
-                  <a href="https://docs.dockpanel.dev" className="hover:text-zinc-300 transition-colors">Docs</a>
-                  <a href="https://github.com/ovexro/dockpanel" className="hover:text-zinc-300 transition-colors">GitHub</a>
+                  <a href="https://github.com/MrTheSkream/cyberhunter-panel#readme" className="hover:text-zinc-300 transition-colors">Docs</a>
+                  <a href="https://github.com/MrTheSkream/cyberhunter-panel" className="hover:text-zinc-300 transition-colors">GitHub</a>
                 </div>
               </div>
               <div>

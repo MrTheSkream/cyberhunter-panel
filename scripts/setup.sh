@@ -161,7 +161,7 @@ on_exit() {
     fi
     echo ""
     echo -e "  Re-running the installer is safe - it picks up where it left off:"
-    echo -e "    ${BOLD}curl -sL https://dockpanel.dev/install.sh | sudo bash${NC}"
+    echo -e "    ${BOLD}sudo bash install.sh${NC}   (the same install.sh, with the same DOCKPANEL_VERSION)"
     echo ""
 }
 trap on_exit EXIT
@@ -429,7 +429,7 @@ print_banner() {
 BANNER
     echo -e "${NC}"
     echo -e "  ${BOLD}Your server. Your rules. Your panel.${NC}"
-    echo -e "  Free & open source - https://dockpanel.dev"
+    echo -e "  Free & open source (AGPL v3) - https://github.com/MrTheSkream/cyberhunter-panel"
     echo ""
 }
 
@@ -2248,8 +2248,8 @@ print_summary() {
     echo -e "    3. Provision SSL (click the lock icon on any site)"
     echo -e "    4. Run diagnostics (Diagnostics → Run Scan)"
     echo ""
-    echo -e "  ${BOLD}Docs:${NC}     https://docs.dockpanel.dev"
-    echo -e "  ${YELLOW}Update:${NC}   Run: bash /opt/dockpanel/scripts/update.sh"
+    echo -e "  ${BOLD}Docs:${NC}     https://github.com/MrTheSkream/cyberhunter-panel#readme"
+    echo -e "  ${YELLOW}Update:${NC}   Telemetry, Updates in the panel (checks this project's releases)"
     echo ""
 }
 
