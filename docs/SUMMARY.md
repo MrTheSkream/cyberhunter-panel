@@ -12,6 +12,7 @@
   - [Email](guides/email.md)
   - [Multi-Server](guides/multi-server.md)
   - [MCP Server](guides/mcp.md)
+  - [Déployer par l'API avec une clé dp_](guides/deploiement-claude.md)
   - [Backups](guides/backups.md)
   - [Backup Manager](guides/backup-orchestrator.md)
   - [Monitoring & Alerting](guides/monitoring.md)
