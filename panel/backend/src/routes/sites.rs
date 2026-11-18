@@ -5026,9 +5026,10 @@ pub async fn optimize_images(
 /// into internal services AND lets the auto-firewall `ufw deny <port>/tcp`
 /// clobber a global allow rule (e.g. deny 443 → box-wide HTTPS outage).
 fn is_safe_proxy_port(port: i32) -> bool {
-    const RESERVED: [i32; 20] = [
+    // 3081: MCP server. 5450: the panel's PostgreSQL. 8091, 8092: internal Apache.
+    const RESERVED: [i32; 24] = [
         22, 25, 53, 80, 110, 143, 443, 465, 587, 993, 995, 3306, 5432, 6379,
-        27017, 11211, 3080, 8443, 9443, 2019,
+        27017, 11211, 3080, 3081, 5450, 8091, 8092, 8443, 9443, 2019,
     ];
     (1024..=65535).contains(&port) && !RESERVED.contains(&port)
 }
@@ -6553,7 +6554,7 @@ mod tests {
     fn proxy_port_rejects_reserved_and_out_of_range() {
         // Reserved / system / panel ports are rejected (would enable loopback
         // SSRF and let the auto-firewall `ufw deny` clobber a global allow).
-        for p in [22, 25, 80, 443, 3306, 5432, 6379, 3080, 8443, 9443] {
+        for p in [22, 25, 80, 443, 3306, 5432, 6379, 3080, 3081, 5450, 8091, 8092, 8443, 9443] {
             assert!(!is_safe_proxy_port(p), "port {p} must be rejected");
         }
         // Out-of-range rejected.
