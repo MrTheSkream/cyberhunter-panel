@@ -1078,18 +1078,31 @@ pub fn served_aliases(domain: &str) -> Vec<String> {
 /// (05-import-hestia W3-V): this is where they are read, from the file the
 /// render will replace (the parked body of a disabled site). `None` back when
 /// the description already carries its aliases or the vhost has none.
+///
+/// The two proxy options follow the same rule, so a partial description (a
+/// certificate door, a Docker app redeploy) never drops them.
 pub fn with_aliases_from_disk(domain: &str, config: &SiteConfig) -> Option<SiteConfig> {
-    if config.aliases.is_some() {
+    if config.aliases.is_some()
+        && config.proxy_streaming.is_some()
+        && config.proxy_strict_client_ip.is_some()
+    {
         return None;
     }
     let existing = std::fs::read_to_string(vhost_target(domain).path()).ok()?;
-    let aliases = crate::services::apache::aliases_in_nginx_config(&existing, domain);
-    if aliases.is_empty() {
-        return None;
-    }
     let mut c = config.clone();
-    c.aliases = Some(aliases);
-    Some(c)
+    if c.aliases.is_none() {
+        let aliases = crate::services::apache::aliases_in_nginx_config(&existing, domain);
+        if !aliases.is_empty() {
+            c.aliases = Some(aliases);
+        }
+    }
+    let r = crate::services::vhost_extras::recover_from_vhost(&existing, domain);
+    c.proxy_streaming = c.proxy_streaming.or(r.proxy_streaming);
+    c.proxy_strict_client_ip = c.proxy_strict_client_ip.or(r.proxy_strict_client_ip);
+    let changed = c.aliases != config.aliases
+        || c.proxy_streaming != config.proxy_streaming
+        || c.proxy_strict_client_ip != config.proxy_strict_client_ip;
+    changed.then_some(c)
 }
 
 /// [`render_site_config_with`] with the per-site includes given rather than
@@ -1232,6 +1245,24 @@ pub fn render_site_config_including(
         .map_err(tera::Error::msg)?;
     let no_exec_block = if config.runtime == "php" { vx::no_exec_block(&no_exec) } else { String::new() };
     ctx.insert("no_exec_block", &no_exec_block);
+    let proxied = matches!(config.runtime.as_str(), "proxy" | "node" | "python");
+    ctx.insert(
+        "upstream_header_maps",
+        &if proxied { vx::upstream_header_maps(domain, &perms_safe) } else { String::new() },
+    );
+    ctx.insert("permissions_variable", &vx::permissions_variable(domain));
+    ctx.insert(
+        "proxy_streaming_block",
+        if config.proxy_streaming.unwrap_or(false) { vx::PROXY_STREAMING_LINES } else { "" },
+    );
+    ctx.insert(
+        "proxy_forwarded_for",
+        if config.proxy_strict_client_ip.unwrap_or(false) {
+            vx::STRICT_FORWARDED_FOR
+        } else {
+            vx::APPENDED_FORWARDED_FOR
+        },
+    );
 
     if ssl {
         ctx.insert(
@@ -2445,13 +2476,71 @@ server {").unwrap();
         }
     }
 
+    fn proxied(ssl: bool) -> SiteConfig {
+        serde_json::from_value(serde_json::json!({
+            "runtime": "proxy", "proxy_port": 5001, "ssl": ssl, "bind_ip": "192.0.2.10",
+            "ssl_cert": "/etc/dockpanel/ssl/my-app.example.com/fullchain.pem",
+            "ssl_key": "/etc/dockpanel/ssl/my-app.example.com/privkey.pem",
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn proxy_options_are_off_by_default_and_render_when_asked() {
+        let t = init_templates();
+        for ssl in [false, true] {
+            let base = render_site_config_including(&t, "my-app.example.com", &proxied(ssl), None, SiteIncludes::default()).unwrap();
+            assert!(!base.contains("proxy_buffering"), "ssl={ssl}");
+            assert!(base.contains("proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;"), "ssl={ssl}");
+            let on = with(proxied(ssl), |c| {
+                c.proxy_streaming = Some(true);
+                c.proxy_strict_client_ip = Some(true);
+            });
+            let out = render_site_config_including(&t, "my-app.example.com", &on, None, SiteIncludes::default()).unwrap();
+            assert!(out.contains("proxy_read_timeout 86400;\n        proxy_buffering off;\n        proxy_request_buffering off;\n    }"), "ssl={ssl}\n{out}");
+            assert!(out.contains("proxy_set_header X-Forwarded-For $remote_addr;"), "ssl={ssl}");
+            assert!(!out.contains("$proxy_add_x_forwarded_for"), "ssl={ssl}");
+            let r = crate::services::vhost_extras::recover_from_vhost(&out, "my-app.example.com");
+            assert_eq!((r.proxy_streaming, r.proxy_strict_client_ip), (Some(true), Some(true)));
+        }
+    }
+
+    #[test]
+    fn a_proxied_site_never_doubles_a_header_the_app_sent() {
+        let t = init_templates();
+        let out = render_site_config_including(&t, "my-app.example.com", &proxied(true), None, SiteIncludes::default()).unwrap();
+        for (upstream, var) in [
+            ("strict_transport_security", "ch_sec_hsts"),
+            ("x_content_type_options", "ch_sec_nosniff"),
+            ("x_frame_options", "ch_sec_frame"),
+            ("referrer_policy", "ch_sec_referrer"),
+            ("permissions_policy", "ch_sec_pp_my_app_example_com"),
+        ] {
+            assert!(out.contains(&format!("map $upstream_http_{upstream} ${var} {{")), "{var}");
+            assert!(out.contains(&format!(" ${var} always;")), "{var}");
+        }
+        assert!(!out.contains("add_header X-Frame-Options \"SAMEORIGIN\""));
+        // Every other runtime keeps its literal headers and no map.
+        for (name, c) in every_branch(true) {
+            if c.runtime == "php" || c.runtime == "static" {
+                let o = render(&t, &c);
+                assert!(!o.contains("$upstream_http_"), "{name}");
+                assert!(o.contains("add_header X-Frame-Options \"SAMEORIGIN\" always;"), "{name}");
+            }
+        }
+    }
+
     #[test]
     fn hsts_off_drops_only_the_header() {
         let t = init_templates();
         for (name, c) in every_branch(true) {
             let on = render(&t, &c);
             let off = render(&t, &with(c, |c| c.hsts = Some(false)));
-            let line = "    add_header Strict-Transport-Security \"max-age=31536000; includeSubDomains\" always;\n";
+            let line = if on.contains("$ch_sec_hsts always") {
+                "    add_header Strict-Transport-Security $ch_sec_hsts always;\n"
+            } else {
+                "    add_header Strict-Transport-Security \"max-age=31536000; includeSubDomains\" always;\n"
+            };
             assert!(on.contains(line), "{name}");
             assert_eq!(off, on.replace(line, ""), "{name}");
         }

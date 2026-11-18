@@ -168,7 +168,7 @@ fn proxy_site_config(port: u16) -> SiteConfig {
         canonical_host: None,
         php_no_exec_dirs: None,
         force_ssl: None,
-        hsts: None,
+        hsts: None, proxy_streaming: None, proxy_strict_client_ip: None,
     }
 }
 

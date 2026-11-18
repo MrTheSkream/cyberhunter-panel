@@ -170,6 +170,41 @@ pub fn acme_block() -> &'static str {
     "    # ACME challenge for Let's Encrypt\n    location /.well-known/acme-challenge/ {\n        root /var/www/acme;\n    }\n\n"
 }
 
+/// Directives of a proxied site that streams: nginx neither holds the response
+/// nor spools the request body. Also how a vhost on disk is read back.
+pub const PROXY_STREAMING_LINES: &str =
+    "        proxy_buffering off;\n        proxy_request_buffering off;\n";
+/// `X-Forwarded-For` value of a site whose app trusts it: the connecting address
+/// only, so a client cannot prepend a forged entry.
+pub const STRICT_FORWARDED_FOR: &str = "$remote_addr";
+/// Historical value: the client's own header, extended.
+pub const APPENDED_FORWARDED_FOR: &str = "$proxy_add_x_forwarded_for";
+
+/// The name of the per-site Permissions-Policy variable (a domain's dots and
+/// hyphens are not valid in an nginx variable name).
+pub fn permissions_variable(domain: &str) -> String {
+    format!("ch_sec_pp_{}", domain.replace(['.', '-'], "_"))
+}
+
+/// `map` blocks giving each default security header of a proxied site an empty
+/// value (nginx then omits it) when the application already sent that header.
+/// `add_header` alone would send both, and for `Referrer-Policy` the browser
+/// keeps the last one: the panel's default would overrule a stricter app.
+pub fn upstream_header_maps(domain: &str, permissions_policy: &str) -> String {
+    let one = |upstream: &str, var: &str, value: &str| {
+        format!("map $upstream_http_{upstream} ${var} {{\n    \"\" \"{value}\";\n    default \"\";\n}}\n")
+    };
+    [
+        one("strict_transport_security", "ch_sec_hsts", "max-age=31536000; includeSubDomains"),
+        one("x_content_type_options", "ch_sec_nosniff", "nosniff"),
+        one("x_frame_options", "ch_sec_frame", "SAMEORIGIN"),
+        one("referrer_policy", "ch_sec_referrer", "strict-origin-when-cross-origin"),
+        one("permissions_policy", &permissions_variable(domain), permissions_policy),
+    ]
+    .concat()
+        + "\n"
+}
+
 /// `server_name` lines of `vhost` that name `domain` first, rewritten to
 /// `server_name <domain> <aliases...>;`. `None` when no line names the domain.
 pub fn rewrite_server_names(vhost: &str, domain: &str, aliases: &[String]) -> Option<String> {
@@ -211,6 +246,10 @@ pub struct Recovered {
     pub force_ssl: Option<bool>,
     /// `Some(false)` only for a TLS vhost without the HSTS header.
     pub hsts: Option<bool>,
+    /// `Some(true)` only when the vhost streams.
+    pub proxy_streaming: Option<bool>,
+    /// `Some(true)` only when the vhost replaces `X-Forwarded-For`.
+    pub proxy_strict_client_ip: Option<bool>,
 }
 
 /// Read the settings back from a vhost on disk, for a re-render that comes
@@ -246,6 +285,10 @@ pub fn recover_from_vhost(vhost: &str, domain: &str) -> Recovered {
         php_no_exec_dirs,
         force_ssl: vhost.contains(NOT_FORCED_MARKER).then_some(false),
         hsts: (tls && !vhost.contains("Strict-Transport-Security")).then_some(false),
+        proxy_streaming: vhost.contains(PROXY_STREAMING_LINES).then_some(true),
+        proxy_strict_client_ip: vhost
+            .contains(&format!("proxy_set_header X-Forwarded-For {STRICT_FORWARDED_FOR};"))
+            .then_some(true),
     }
 }
 

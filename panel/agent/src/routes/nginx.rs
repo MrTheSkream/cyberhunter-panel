@@ -110,6 +110,14 @@ pub struct SiteConfig {
     /// Absent = true (`Strict-Transport-Security` sent, as always).
     #[serde(default)]
     pub hsts: Option<bool>,
+    /// Proxied sites: no response or request buffering (streaming apps).
+    /// Absent = keep what the vhost on disk says.
+    #[serde(default)]
+    pub proxy_streaming: Option<bool>,
+    /// Proxied sites: `X-Forwarded-For` is replaced by the connecting address
+    /// instead of extending what the client sent. Absent = keep the vhost's.
+    #[serde(default)]
+    pub proxy_strict_client_ip: Option<bool>,
 }
 
 struct NginxResponse {

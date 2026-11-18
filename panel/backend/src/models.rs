@@ -205,6 +205,14 @@ pub struct Site {
     /// Per-site Strict-Transport-Security header (D3). Same rule as `force_ssl`.
     #[serde(default = "default_true")]
     pub hsts: bool,
+    /// Proxied sites: nginx buffers neither the response nor the request body.
+    #[sqlx(default)]
+    #[serde(default)]
+    pub proxy_streaming: bool,
+    /// Proxied sites: `X-Forwarded-For` carries the connecting address only.
+    #[sqlx(default)]
+    #[serde(default)]
+    pub proxy_strict_client_ip: bool,
     /// Custom SFTP account name (D6). `None` = the default `sftp<uid>`; read it
     /// through [`crate::routes::sites::sftp_account_name`], never directly.
     #[sqlx(default)]

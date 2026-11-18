@@ -1123,6 +1123,8 @@ pub async fn enable_ssl_for_site(
         php_no_exec_dirs: site_config.php_no_exec_dirs.clone(),
         force_ssl: site_config.force_ssl,
         hsts: site_config.hsts,
+        proxy_streaming: site_config.proxy_streaming,
+        proxy_strict_client_ip: site_config.proxy_strict_client_ip,
     };
 
     // Without a pool in the description, an Apache site keeps the timeout

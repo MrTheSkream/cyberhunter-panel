@@ -524,27 +524,45 @@ pub async fn create(
         }
     }
 
+    // What the host itself holds in the automatic range: the panel's own rows
+    // know nothing of a container or service it did not create.
+    let auto_port = (runtime == "node" || runtime == "python") && body.proxy_port.is_none();
+    let host_ports: Vec<i32> = if auto_port {
+        let reply = agent
+            .get("/system/ports-in-use?from=5000&to=5999")
+            .await
+            .map_err(|e| agent_error("Port allocation", e))?;
+        reply["ports"]
+            .as_array()
+            .ok_or_else(|| err(StatusCode::BAD_GATEWAY, "The server did not report its ports in use"))?
+            .iter()
+            .filter_map(|p| p.as_i64().map(|p| p as i32))
+            .collect()
+    } else {
+        Vec::new()
+    };
+
     // Insert site with status "creating" inside a transaction
     let mut tx = state.db.begin().await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &format!("Transaction start failed: {e}")))?;
 
     // Auto-allocate port for node/python runtimes
-    let effective_proxy_port = if (runtime == "node" || runtime == "python") && body.proxy_port.is_none() {
+    let effective_proxy_port = if auto_port {
         // Find the first free port in the 5000-5999 range, on THIS server. The
         // uniqueness index behind it is `idx_sites_proxy_port_server`, scoped the
         // same way; while it was global, this first-fit picked 5000 on every
         // server whose own set was empty and the INSERT below rejected it as a
         // duplicate domain.
-        let row: Option<(i32,)> = sqlx::query_as(
-            "SELECT s.port FROM generate_series(5000, 5999) AS s(port) \
-             WHERE s.port NOT IN (SELECT proxy_port FROM sites WHERE proxy_port IS NOT NULL AND server_id = $1) \
-             LIMIT 1"
+        let site_ports: Vec<i32> = sqlx::query_scalar(
+            "SELECT proxy_port FROM sites WHERE proxy_port BETWEEN 5000 AND 5999 AND server_id = $1",
         )
         .bind(server_id)
-        .fetch_optional(&mut *tx)
+        .fetch_all(&mut *tx)
         .await
         .map_err(|e| internal_error("create sites", e))?;
-        row.map(|(p,)| p)
+        Some(first_free_site_port(&site_ports, &host_ports).ok_or_else(|| {
+            err(StatusCode::CONFLICT, "No free port is left between 5000 and 5999 on this server")
+        })?)
     } else {
         body.proxy_port
     };
@@ -5133,6 +5151,16 @@ pub(crate) fn apply_vhost_extras(body: &mut serde_json::Value, site: &Site) {
     }
     body["force_ssl"] = serde_json::json!(site.force_ssl);
     body["hsts"] = serde_json::json!(site.hsts);
+    body["proxy_streaming"] = serde_json::json!(site.proxy_streaming);
+    body["proxy_strict_client_ip"] = serde_json::json!(site.proxy_strict_client_ip);
+}
+
+/// First port of the automatic range that no site row, listener or container
+/// holds, and that a user could not be refused as a proxy target.
+fn first_free_site_port(site_ports: &[i32], host_ports: &[i32]) -> Option<i32> {
+    (5000..=5999).find(|p| {
+        is_safe_proxy_port(*p) && !site_ports.contains(p) && !host_ports.contains(p)
+    })
 }
 
 /// The Linux account that owns the site's SFTP chroot and PHP-FPM pool: the
@@ -6157,9 +6185,78 @@ pub async fn set_ssl_options(
 }
 // --- end import-hestia (05) ---
 
+/// PUT /api/sites/{id}/proxy-options - `{proxy_streaming: bool,
+/// proxy_strict_client_ip: bool}`. Either key may be omitted to keep its value.
+pub async fn set_proxy_options(
+    State(state): State<AppState>,
+    AuthUser(claims): AuthUser,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    fn flag(body: &serde_json::Value, key: &str) -> Result<Option<bool>, ApiError> {
+        match body.get(key) {
+            None | Some(serde_json::Value::Null) => Ok(None),
+            Some(serde_json::Value::Bool(b)) => Ok(Some(*b)),
+            Some(_) => Err(err(StatusCode::BAD_REQUEST, &format!("'{key}' must be a boolean"))),
+        }
+    }
+    let streaming = flag(&body, "proxy_streaming")?;
+    let strict_ip = flag(&body, "proxy_strict_client_ip")?;
+    if streaming.is_none() && strict_ip.is_none() {
+        return Err(err(StatusCode::BAD_REQUEST, "Send 'proxy_streaming' and/or 'proxy_strict_client_ip'"));
+    }
+
+    let (site, agent) = site_and_agent_for_caller(&state, id, &claims, "set proxy options").await?;
+    if !["proxy", "node", "python"].contains(&site.runtime.as_str()) {
+        return Err(err(StatusCode::BAD_REQUEST, "Proxy options apply to proxy, node and python sites"));
+    }
+    let streaming = streaming.unwrap_or(site.proxy_streaming);
+    let strict_ip = strict_ip.unwrap_or(site.proxy_strict_client_ip);
+
+    let mut tx = state.db.begin().await.map_err(|e| internal_error("set proxy options", e))?;
+    let updated: Site = sqlx::query_as(
+        "UPDATE sites SET proxy_streaming = $1, proxy_strict_client_ip = $2, updated_at = NOW() \
+         WHERE id = $3 RETURNING *",
+    )
+    .bind(streaming)
+    .bind(strict_ip)
+    .bind(id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| internal_error("set proxy options", e))?;
+    rebuild_then_commit(&state, &agent, tx, &updated, "Proxy options").await?;
+
+    let ip = crate::routes::client_ip(&headers);
+    let details = format!("proxy_streaming={streaming}, proxy_strict_client_ip={strict_ip}");
+    activity::log_activity(
+        &state.db, claims.sub, &claims.email, "site.proxy_options",
+        Some("site"), Some(&site.domain), Some(&details), ip.as_deref(),
+        claims.key_id,
+    ).await;
+
+    Ok(Json(serde_json::json!({
+        "ok": true, "proxy_streaming": streaming, "proxy_strict_client_ip": strict_ip,
+    })))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn automatic_ports_skip_what_the_host_holds() {
+        assert_eq!(first_free_site_port(&[], &[]), Some(5000));
+        assert_eq!(first_free_site_port(&[5000], &[5001]), Some(5002));
+        // 5439 and 5440 are published by database containers.
+        let sites: Vec<i32> = (5000..5439).filter(|p| *p != 5432).collect();
+        assert_eq!(first_free_site_port(&sites, &[5439, 5440]), Some(5441));
+        // 5432 is a reserved port, never handed out.
+        let sites: Vec<i32> = (5000..5432).collect();
+        assert_eq!(first_free_site_port(&sites, &[]), Some(5433));
+        let all: Vec<i32> = (5000..=5999).collect();
+        assert_eq!(first_free_site_port(&all, &[]), None);
+    }
 
     // ── feature 6: disk quota rights and values ──────────────────────────
 

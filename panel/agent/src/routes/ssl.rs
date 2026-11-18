@@ -246,7 +246,7 @@ async fn provision(
         canonical_host: None,
         php_no_exec_dirs: None,
         force_ssl: None,
-        hsts: None,
+        hsts: None, proxy_streaming: None, proxy_strict_client_ip: None,
     };
     body.names.apply(&mut site_config);
 
@@ -419,7 +419,7 @@ async fn upload_cert(
         canonical_host: None,
         php_no_exec_dirs: None,
         force_ssl: None,
-        hsts: None,
+        hsts: None, proxy_streaming: None, proxy_strict_client_ip: None,
     };
 
     let canonical = ssl::enable_ssl_for_site(&state.templates, &body.domain, &site_config)
@@ -613,7 +613,7 @@ async fn renew(
                 canonical_host: None,
                 php_no_exec_dirs: None,
                 force_ssl: None,
-                hsts: None,
+                hsts: None, proxy_streaming: None, proxy_strict_client_ip: None,
             };
             body.names.apply(&mut site_config);
             match ssl::enable_ssl_for_site(&state.templates, &domain, &site_config).await {
@@ -849,7 +849,7 @@ async fn provision_dns01(
                 waf_enabled: None, waf_mode: None,
                 csp_policy: None, permissions_policy: None, bot_protection: None,
                 pool_user: None, pool_group: None, bind_ip: None, php_pool: None, web_server: None,
-                aliases: None, canonical_host: None, php_no_exec_dirs: None, force_ssl: None, hsts: None,
+                aliases: None, canonical_host: None, php_no_exec_dirs: None, force_ssl: None, hsts: None, proxy_streaming: None, proxy_strict_client_ip: None,
             };
 
             canonical = Some(

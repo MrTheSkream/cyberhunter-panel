@@ -335,6 +335,81 @@ async fn port_check(
     Ok(Json(serde_json::json!({ "port": port, "free": free })))
 }
 
+/// TCP ports in LISTEN state in the text of `/proc/net/tcp` or `/proc/net/tcp6`.
+fn listening_ports(proc_net_tcp: &str) -> Vec<u16> {
+    proc_net_tcp
+        .lines()
+        .skip(1)
+        .filter_map(|l| {
+            let mut f = l.split_whitespace();
+            let local = f.nth(1)?;
+            let state = f.nth(1)?;
+            if state != "0A" {
+                return None;
+            }
+            u16::from_str_radix(local.rsplit(':').next()?, 16).ok()
+        })
+        .collect()
+}
+
+/// Host ports published by every container, stopped ones included: a stopped
+/// container holds no socket, yet it takes its port back when it starts.
+async fn docker_published_ports() -> Result<Vec<u16>, String> {
+    if !std::path::Path::new("/var/run/docker.sock").exists() {
+        return Ok(Vec::new());
+    }
+    let docker = bollard::Docker::connect_with_local_defaults().map_err(|e| e.to_string())?;
+    let containers = docker
+        .list_containers(Some(bollard::container::ListContainersOptions::<String> {
+            all: true,
+            ..Default::default()
+        }))
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut ports = Vec::new();
+    for c in containers {
+        let Some(id) = c.id else { continue };
+        // Gone between the list and the inspect: it holds nothing any more.
+        let Ok(detail) = docker.inspect_container(&id, None).await else { continue };
+        let bindings = detail.host_config.and_then(|h| h.port_bindings).unwrap_or_default();
+        for binding in bindings.into_values().flatten().flatten() {
+            if let Some(p) = binding.host_port.and_then(|p| p.parse().ok()) {
+                ports.push(p);
+            }
+        }
+    }
+    Ok(ports)
+}
+
+/// GET /system/ports-in-use?from=5000&to=5999 - Host ports of that range that
+/// are listening or published by a container, sorted. 503 when Docker cannot be
+/// asked: an allocator must not take "unknown" for "free".
+async fn ports_in_use(
+    axum::extract::Query(q): axum::extract::Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, Json<serde_json::Value>)> {
+    let bound = |k: &str| q.get(k).and_then(|p| p.parse::<u16>().ok()).filter(|p| *p > 0);
+    let (Some(from), Some(to)) = (bound("from"), bound("to")) else {
+        return Err((
+            axum::http::StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "from and to must be ports"})),
+        ));
+    };
+    let mut ports = docker_published_ports().await.map_err(|e| {
+        tracing::warn!("Published ports could not be read: {e}");
+        (
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "Docker could not be asked which ports are published"})),
+        )
+    })?;
+    for file in ["/proc/net/tcp", "/proc/net/tcp6"] {
+        ports.extend(listening_ports(&std::fs::read_to_string(file).unwrap_or_default()));
+    }
+    ports.retain(|p| (from..=to).contains(p));
+    ports.sort_unstable();
+    ports.dedup();
+    Ok(Json(serde_json::json!({ "ports": ports })))
+}
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/system/info", get(system_info))
@@ -342,6 +417,23 @@ pub fn router() -> Router<AppState> {
         .route("/system/network", get(network))
         .route("/system/disk-io", get(disk_io))
         .route("/system/port-check", get(port_check))
+        .route("/system/ports-in-use", get(ports_in_use))
         .route("/system/cleanup", axum::routing::post(disk_cleanup))
         .route("/system/hostname", axum::routing::post(change_hostname))
+}
+
+#[cfg(test)]
+mod ports_tests {
+    use super::listening_ports;
+
+    #[test]
+    fn only_listening_sockets_count() {
+        let text = "  sl  local_address rem_address   st tx_queue\n\
+           0: 0100007F:1537 00000000:0000 0A 00000000:00000000\n\
+           1: 00000000:1538 00000000:0000 0A 00000000:00000000\n\
+           2: 0100007F:1389 0100007F:9C40 01 00000000:00000000\n";
+        assert_eq!(listening_ports(text), vec![5431, 5432]);
+        let v6 = "  sl  local\n   0: 00000000000000000000000000000000:1F90 00000000000000000000000000000000:0000 0A 0\n";
+        assert_eq!(listening_ports(v6), vec![8080]);
+    }
 }

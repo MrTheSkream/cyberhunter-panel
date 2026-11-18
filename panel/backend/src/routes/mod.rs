@@ -1841,5 +1841,6 @@ pub fn router() -> Router<AppState> {
         .route("/api/sites/{id}/canonical-host", put(sites::set_canonical_host)) // W3
         .route("/api/sites/{id}/php-no-exec", put(sites::set_php_no_exec)) // W3
         .route("/api/sites/{id}/ssl-options", put(sites::set_ssl_options)) // W3
+        .route("/api/sites/{id}/proxy-options", put(sites::set_proxy_options))
         // --- end import-hestia (05) ---
 }
