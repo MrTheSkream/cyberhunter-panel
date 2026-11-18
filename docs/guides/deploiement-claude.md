@@ -2,7 +2,7 @@
 
 Ce guide s'adresse à un agent (Claude ou un script) qui pilote CyberHunter - Panel avec une clé API `dp_` d'un compte administrateur. Les blocs `bash` s'exécutent dans l'ordre, du début à la fin.
 
-**Portée des tests.** Tous les blocs `bash` et les erreurs marquées « observée » ont été exécutés sur la version 3.0.0-rc.3, dans une VM Ubuntu 24.04. L'émission d'un vrai certificat Let's Encrypt n'a pas pu être testée, car les domaines du labo n'ont pas de DNS public : seuls son refus (412) et le téléversement d'un certificat l'ont été.
+**Portée des tests.** Tous les blocs `bash` et les erreurs marquées « observée » ont été exécutés sur la version 3.0.0-rc.3, dans une VM Ubuntu 24.04. L'émission d'un vrai certificat Let's Encrypt n'a pas pu être testée, car les domaines du labo n'ont pas de DNS public : seuls son refus (412) et le téléversement d'un certificat l'ont été. Pour le déploiement Git, le dépôt de test est public et le second commit provenait d'un dépôt local à la VM, car le panel refuse les adresses privées et aucun commit ne pouvait être poussé sur ce dépôt. Les dépôts privés par clé SSH n'ont pas été testés.
 
 ## Règles pour l'agent
 
@@ -235,11 +235,19 @@ api GET "/apps/$CONTAINER_ID/logs" | jq -r '.logs' | tail -n 5
 
 Résultat attendu : `status` à `running` et un code `200`.
 
-Pour supprimer l'application, relisez d'abord son nom :
+Pour supprimer l'application, relisez d'abord son nom. **Supprimez aussi son moniteur** : le panel en crée un pour chaque application déployée sur un domaine et il survit à l'application. Un moniteur en échec ouvre un incident `major`, et un incident `major` ou `critical` ouvert bloque tous les déploiements Git.
 
 ```bash
 api GET /apps | jq -r --arg id "$CONTAINER_ID" '.[] | select(.container_id == $id) | .name'
 api DELETE "/apps/$CONTAINER_ID"
+for id in $(api GET /monitors | jq -r '.[] | select(.name | startswith("guide-adminer")) | .id'); do
+  api DELETE "/monitors/$id"
+done
+# Clôture uniquement les incidents ouverts par cette application.
+for id in $(api GET /incidents | jq -r '.[] | select(.status != "resolved" and .status != "postmortem")
+    | select(.title | startswith("guide-adminer")) | .id'); do
+  api PUT "/incidents/$id" -d '{"status": "resolved"}' | jq '{title, status}'
+done
 ```
 
 ## 7. Lister, modifier et supprimer un site
@@ -289,7 +297,257 @@ api DELETE "/sites/$SITE_ID"
 api GET "/sites/$SITE_ID"                      # doit répondre HTTP 404
 ```
 
-## 8. Erreurs possibles
+## 8. Choisir comment déployer une application maison
+
+| Votre situation | À utiliser | Pourquoi |
+|---|---|---|
+| Le code est dans un dépôt Git et doit être construit sur le serveur | `/api/git-deploys` | Construction, historique, rollback, domaine et SSL intégrés |
+| Vous voulez revenir en arrière en un appel | `/api/git-deploys` | Seul mode avec un historique et un rollback |
+| Une seule application web, avec ou sans `Dockerfile` | `/api/git-deploys` | Remplacement sans coupure quand aucun volume n'est déclaré |
+| Plusieurs services liés, à partir d'images déjà publiées (web, Redis, worker) | `/api/apps/compose/deploy` | Réseau interne commun et volumes nommés |
+| Une image déjà construite par votre CI | `/api/apps/compose/deploy` | Rien à construire sur le serveur |
+| Un logiciel courant du catalogue | `/api/apps/deploy` (section 6) | Modèle prêt à l'emploi |
+
+Limites à connaître avant de choisir :
+
+- **Compose** n'a ni historique, ni rollback, ni construction (`build:` est refusé). La mise à jour coupe le service quelques secondes. Le domaine se branche avec un site proxy séparé.
+- **Git** ne gère qu'un conteneur par déploiement. Ne placez pas de `docker-compose.yml` à la racine du contexte de construction : le déploiement passerait par le moteur compose et perdrait le domaine et le rollback.
+
+## 9. Déployer avec Compose
+
+### Exposition des ports : résultat du test
+
+**Un compose ne peut pas publier un port sur `0.0.0.0`.** L'agent ignore l'adresse demandée et force `127.0.0.1` pour chaque port, ce qui empêche Docker de contourner ufw. Le test a déployé chaque écriture sur la version 3.0.0-rc.3, puis a sondé les ports depuis le serveur et depuis une autre machine. Le port 80 du serveur servait de témoin et répondait bien depuis cette autre machine.
+
+| Écriture dans `ports:` | Publication réelle | Depuis le serveur | Depuis une autre machine |
+|---|---|---|---|
+| `0.0.0.0:18091:80` | `127.0.0.1:18091` | 200 | refusé |
+| `18092:80` | `127.0.0.1:18092` | 200 | refusé |
+| Forme longue avec `host_ip: 0.0.0.0` | `127.0.0.1:18093` | 200 | refusé |
+| `192.168.250.10:18094:80` (IP du serveur) | `127.0.0.1:18094` | 200 | refusé |
+| `18096:80/udp` | `127.0.0.1:18096/udp` | non sondé | non sondé |
+| `network_mode: bridge` avec `18099:80` | `127.0.0.1:18099` | 200 | refusé |
+| `[::]:18095:80` | **aucune** | fermé | refusé |
+| `18097-18098:80` | **aucune** | fermé | refusé |
+
+**Attention : ces réécritures sont silencieuses.** `validate` répond `valid: true` sans avertissement. Les formes IPv6 et les plages de ports ne publient rien, alors que le déploiement répond `201` et que le service est `running`. Écrivez donc toujours `127.0.0.1:PORT_HOTE:PORT_CONTENEUR` et vérifiez le port après le déploiement. Pour rendre le service public, passez par un site proxy.
+
+Pour reproduire le test, lancez ce bloc depuis le serveur. `HostIp` doit valoir `127.0.0.1` :
+
+```bash
+printf 'services:\n  test-ports:\n    image: nginx:1.27-alpine\n    ports: ["0.0.0.0:18120:80"]\n' > /tmp/test-ports.yml
+TEST_ID=$(jq -Rs '{yaml: .}' < /tmp/test-ports.yml | api POST /apps/compose/deploy -d @- | jq -r '.services[0].container_id')
+sleep 3
+sudo docker inspect -f '{{json .HostConfig.PortBindings}}' "$TEST_ID"
+sudo ss -ltn | grep ':18120 '
+curl -s -m 4 -o /dev/null -w 'adresse publique -> %{http_code}\n' "http://$SERVER_IP:18120/" || true
+api DELETE "/apps/$TEST_ID"
+```
+
+Résultat obtenu :
+
+```text
+{"80/tcp":[{"HostIp":"127.0.0.1","HostPort":"18120"}]}
+LISTEN 0 4096 127.0.0.1:18120 0.0.0.0:*
+adresse publique -> 000
+```
+
+### Écrire le fichier
+
+Tous les fichiers envoyés à cette route partagent le même espace : réseau `dockpanel-stack-adhoc`, conteneurs `dockpanel-compose-adhoc-<service>` et volumes `adhoc_<volume>`. **Préfixez donc chaque service et chaque volume par le nom de l'application**, sinon deux applications entrent en collision ou partagent leurs données.
+
+```bash
+export COMPOSE_DOMAIN="${COMPOSE_DOMAIN:-maison.example.com}"
+cat > /tmp/monapp.yml <<'YAML'
+services:
+  monapp-web:
+    image: nginx:1.26-alpine
+    restart: unless-stopped
+    environment:
+      APP_VERSION: "1"
+    ports:
+      - "127.0.0.1:18110:80"
+    volumes:
+      - monapp-data:/usr/share/nginx/html
+  monapp-cache:
+    image: redis:7-alpine
+    restart: unless-stopped
+YAML
+```
+
+Les services se joignent par leur nom : ici `monapp-cache`. Les directives `user:`, `healthcheck:` et `entrypoint:` sont ignorées, et `validate` le signale.
+
+### Valider
+
+`valid` doit valoir `true`. Lisez aussi `warnings`.
+
+```bash
+jq -Rs '{yaml: .}' < /tmp/monapp.yml | api POST /apps/compose/validate -d @- | jq '{valid, errors, warnings}'
+```
+
+### Déployer
+
+**Un `HTTP 201` ne prouve pas le succès.** L'état réel de chaque service est dans `.services[].status`.
+
+```bash
+jq -Rs '{yaml: .}' < /tmp/monapp.yml | api POST /apps/compose/deploy -d @- > /tmp/monapp-deploy.json
+jq '{services: [.services[] | {name, status, error}]}' /tmp/monapp-deploy.json
+jq -e 'all(.services[]; .status == "running")' /tmp/monapp-deploy.json
+```
+
+### Publier sur un domaine et vérifier
+
+Le domaine passe par un site proxy vers le port local. Ajoutez ensuite le SSL comme en section 3.
+
+```bash
+COMPOSE_SITE_ID=$(api POST /sites -d "$(jq -n --arg d "$COMPOSE_DOMAIN" '{domain: $d, runtime: "proxy", proxy_port: 18110}')" | jq -r .id)
+sleep 3
+api GET /apps | jq '.[] | select(.name | startswith("dockpanel-compose-adhoc-monapp-")) | {name, status, image, port}'
+curl -sS -o /dev/null -D - --max-time 15 --resolve "$COMPOSE_DOMAIN:80:$SERVER_IP" "http://$COMPOSE_DOMAIN/" | grep -iE '^(HTTP|server)'
+```
+
+### Lire les logs
+
+```bash
+WEB_ID=$(api GET /apps | jq -r '.[] | select(.name == "dockpanel-compose-adhoc-monapp-web") | .container_id')
+api GET "/apps/$WEB_ID/logs" | jq -r .logs | tail -n 5
+```
+
+### Mettre à jour
+
+Redéployer sans supprimer échoue : chaque service répond `status: failed` avec un conflit de nom, tandis que l'ancienne version continue de tourner. **N'utilisez pas non plus `PUT /apps/{id}/image` ni `PUT /apps/{id}/env` sur un service compose** : le conteneur recréé quitte le réseau interne et ne joint plus les autres services.
+
+La méthode fiable est de supprimer les conteneurs puis de redéployer. Les volumes nommés sont conservés. Le service est coupé pendant l'opération.
+
+```bash
+sed -i 's/nginx:1.26-alpine/nginx:1.27-alpine/; s/APP_VERSION: "1"/APP_VERSION: "2"/' /tmp/monapp.yml
+jq -Rs '{yaml: .}' < /tmp/monapp.yml | api POST /apps/compose/validate -d @- | jq -e .valid
+for id in $(api GET /apps | jq -r '.[] | select(.name | startswith("dockpanel-compose-adhoc-monapp-")) | .container_id'); do
+  api DELETE "/apps/$id"
+done
+jq -Rs '{yaml: .}' < /tmp/monapp.yml | api POST /apps/compose/deploy -d @- > /tmp/monapp-deploy.json
+jq -e 'all(.services[]; .status == "running")' /tmp/monapp-deploy.json
+sleep 3
+api GET /apps | jq -r '.[] | select(.name == "dockpanel-compose-adhoc-monapp-web") | .image'
+curl -sS -o /dev/null --max-time 15 --resolve "$COMPOSE_DOMAIN:80:$SERVER_IP" -w "$COMPOSE_DOMAIN -> %{http_code}\n" "http://$COMPOSE_DOMAIN/"
+```
+
+Résultat attendu : `nginx:1.27-alpine` et un code `200`.
+
+### Supprimer
+
+```bash
+api DELETE "/sites/$COMPOSE_SITE_ID"
+for id in $(api GET /apps | jq -r '.[] | select(.name | startswith("dockpanel-compose-adhoc-monapp-")) | .container_id'); do
+  api DELETE "/apps/$id"
+done
+api GET /apps | jq '[.[] | select(.name | startswith("dockpanel-compose-adhoc-monapp-"))] | length'
+```
+
+Le dernier appel doit afficher `0`. **Le volume reste sur le serveur** : l'API ne le supprime pas. Pour effacer définitivement les données, un administrateur lance `sudo docker volume rm adhoc_monapp-data` sur le serveur.
+
+## 10. Déployer depuis un dépôt Git
+
+### Contrôler les incidents ouverts
+
+Un incident `major` ou `critical` ouvert refuse tout déploiement Git avec un `409`. Cette liste doit être vide. Sinon, arrêtez-vous et prévenez un humain : un incident que vous n'avez pas causé peut signaler une vraie panne.
+
+```bash
+api GET /incidents | jq '[.[] | select(.status != "resolved" and .status != "postmortem")
+  | select(.severity == "major" or .severity == "critical") | {id, severity, title}]'
+```
+
+### Créer le déploiement
+
+Le panel attribue un port local entre 7000 et 7999, toujours lié à `127.0.0.1`. Le dépôt doit être joignable depuis Internet : les adresses privées et `file://` sont refusées. Pour un dépôt privé, utilisez une URL SSH et `POST /git-deploys/{id}/keygen`.
+
+**Nixpacks passe avant votre `Dockerfile`.** S'il sait construire le projet, votre `Dockerfile` est ignoré. Le seul moyen testé de forcer le `Dockerfile` est de renseigner `pre_build_cmd` avec une commande autorisée, comme ci-dessous. Le journal affiche alors une étape `pre_build` en `error` : c'est normal, la commande n'est pas exécutée. Avec Nixpacks, les variables d'environnement sont aussi intégrées à l'image : n'y mettez pas de secret.
+
+**Choisissez la bonne branche et la bonne URL dès la création.** Après le premier déploiement, les modifier avec `PUT` fait échouer les déploiements suivants, car le dépôt déjà cloné n'est pas mis à jour. Il faut alors supprimer et recréer le déploiement, ce qui efface l'historique.
+
+```bash
+export GIT_REPO="${GIT_REPO:-https://github.com/votre-compte/votre-app.git}"
+export GIT_BRANCH="${GIT_BRANCH:-main}"
+export GIT_CONTEXT="${GIT_CONTEXT:-.}"
+export GIT_PORT="${GIT_PORT:-3000}"
+export GIT_DOMAIN="${GIT_DOMAIN:-git.example.com}"
+
+GIT_ID=$(api POST /git-deploys -d "$(jq -n --arg r "$GIT_REPO" --arg b "$GIT_BRANCH" --arg c "$GIT_CONTEXT" \
+  --argjson p "$GIT_PORT" --arg d "$GIT_DOMAIN" '{
+    name: "monapp-git", repo_url: $r, branch: $b, build_context: $c, dockerfile: "Dockerfile",
+    container_port: $p, domain: $d, tls_mode: "none", memory_mb: 256,
+    pre_build_cmd: "npm ci", env_vars: {APP_MODE: "production"}}')" | jq -r .id)
+echo "GIT_ID=$GIT_ID"
+```
+
+Réponse attendue : `HTTP 201` et le statut `pending`. Mettez `tls_mode` à `acme` avec `ssl_email` pour obtenir un certificat, une fois le DNS en place.
+
+### Déployer
+
+`HTTP 202` signifie que le déploiement a démarré. Le journal se ferme à la fin. Vérifiez ensuite `status`.
+
+```bash
+git_deploy() {
+  local deploy_id
+  deploy_id=$(api POST "/git-deploys/$GIT_ID/deploy" | jq -r .deploy_id)
+  curl -sSN --max-time 600 ${PANEL_CURL_OPTS:-} "$PANEL_URL/api/git-deploys/deploy/$deploy_id/log" \
+    -H "Authorization: Bearer $DP_KEY" | grep '^data:' | tail -n 4
+  sleep 3
+  api GET "/git-deploys/$GIT_ID" | jq '{status, last_commit, image_tag, build_method}'
+}
+git_deploy
+curl -sS -o /dev/null --max-time 15 --resolve "$GIT_DOMAIN:80:$SERVER_IP" -w "$GIT_DOMAIN -> %{http_code}\n" "http://$GIT_DOMAIN/"
+api GET "/git-deploys/$GIT_ID/logs" | jq -r .logs | tail -n 3
+```
+
+Résultat attendu : `status` à `running`, `build_method` à `dockerfile` et un code `200`.
+
+### Déployer une nouvelle version
+
+Poussez d'abord votre commit sur la branche, puis relancez le déploiement. En cas d'échec, l'ancienne version continue de servir et `status` passe à `failed`.
+
+```bash
+# GIT_V2 : un nouveau commit vient d'être poussé sur la branche
+git_deploy
+```
+
+### Consulter l'historique
+
+```bash
+api GET "/git-deploys/$GIT_ID/history" | jq '[.[] | {id, commit_hash, status, triggered_by, image_tag}]'
+```
+
+### Revenir à la version précédente
+
+Le rollback relance l'image déjà construite, sans cloner ni reconstruire. Il prend l'identifiant d'une entrée `success` de l'historique. **Il ne restaure pas les variables d'environnement** : l'ancienne image démarre avec la configuration actuelle.
+
+```bash
+TARGET=$(api GET "/git-deploys/$GIT_ID/history" | jq -c '[.[] | select(.status == "success")][1]')
+ROLLBACK_ID=$(api POST "/git-deploys/$GIT_ID/rollback/$(jq -r .id <<< "$TARGET")" | jq -r .deploy_id)
+curl -sSN --max-time 170 ${PANEL_CURL_OPTS:-} "$PANEL_URL/api/git-deploys/deploy/$ROLLBACK_ID/log" \
+  -H "Authorization: Bearer $DP_KEY" | grep '^data:' | tail -n 2
+sleep 3
+echo "commit attendu : $(jq -r .commit_hash <<< "$TARGET")"
+api GET "/git-deploys/$GIT_ID" | jq '{status, last_commit, image_tag}'
+curl -sS -o /dev/null --max-time 15 --resolve "$GIT_DOMAIN:80:$SERVER_IP" -w "$GIT_DOMAIN -> %{http_code}\n" "http://$GIT_DOMAIN/"
+```
+
+`last_commit` doit correspondre au commit attendu.
+
+### Supprimer
+
+La suppression retire le conteneur, le vhost et le dépôt cloné, mais **laisse les images Docker**. Supprimez-les ensuite pour libérer le disque.
+
+```bash
+api GET "/git-deploys/$GIT_ID" | jq -r .name
+api DELETE "/git-deploys/$GIT_ID"
+for image in $(api GET /apps/images | jq -r '.images[] | select(.repository == "dockpanel-git-monapp-git") | "\(.repository):\(.tag)"'); do
+  api DELETE "/apps/images/$image"
+done
+api GET /apps/images | jq '[.images[] | select(.repository == "dockpanel-git-monapp-git")] | length'
+```
+
+## 11. Erreurs possibles
 
 Le corps d'une erreur est de la forme `{"error": "message"}`. Lisez le message : il indique le plus souvent la correction.
 
@@ -307,6 +565,24 @@ Le corps d'une erreur est de la forme `{"error": "message"}`. Lisez le message :
 | 400 | `Type must be 301 or 302` | Corriger `redirect_type` | observée |
 | 400 | `Invalid app name`, `memory_mb must be between 4 and 65536` | Corriger le champ | observée |
 | 400 | `Invalid container ID` | Utiliser `container_id`, pas le nom | observée |
+| 200 | Compose : `valid: false` avec `Invalid YAML` ou `No 'services' key found` | Corriger le fichier | observée |
+| 201 | Compose : `status: failed` et `The container name ... is already in use` | Supprimer les conteneurs, puis redéployer | observée |
+| 400 | `Compose: privileged mode is not allowed` | Retirer `privileged` | observée |
+| 400 | `Compose: host namespace sharing is not allowed` | Retirer `network_mode`, `pid` ou `ipc: host` | observée |
+| 400 | `Compose: dangerous capability not allowed` | Retirer la capacité de `cap_add` | observée |
+| 400 | `Compose: Docker socket mount is not allowed` ou `sensitive host path mount is not allowed` | Utiliser un volume nommé | observée |
+| 400 | `Compose: host device passthrough is not allowed` ou `disabling security profiles is not allowed` | Retirer `devices` ou `security_opt` | observée |
+| 400 | `No deployable services found` | Donner une `image:` à chaque service, `build:` n'est pas pris en charge | observée |
+| 400 | `Missing 'yaml' field` | Envoyer `{"yaml": "..."}` | observée |
+| 400 | `Invalid deploy name`, `Repository URL is required` | Corriger le champ | observée |
+| 400 | `Invalid repository URL: Host points to a private/internal address` | Utiliser un dépôt joignable depuis Internet | observée |
+| 400 | `Repository URL must use https, http, ssh, or git@host:path` | Corriger le protocole | observée |
+| 400 | `Invalid volume path` | Donner un chemin absolu dans le conteneur | observée |
+| 404 | `Git deploy not found`, `History entry not found` | Relire la liste ou l'historique | observée |
+| 409 | `A deploy with this name already exists` | Choisir un autre nom | observée |
+| 409 | `Deploy already in progress` | Attendre la fin du déploiement en cours | observée |
+| 409 | `Deploy blocked: active critical/major incident in progress` | Lire `GET /api/incidents`. Ne clôturer un incident que si vous en êtes la cause ou avec l'accord d'un humain | observée |
+| Journal | `git reset failed: ... unknown revision` après un `PUT` de branche ou d'URL | Recréer le déploiement | observée |
 | 401 | `Invalid or expired token` | Clé erronée ou révoquée : en demander une nouvelle | observée |
 | 401 | `Authentication required` | Ajouter l'en-tête `Authorization` | observée |
 | 403 | `Not a dockpanel-managed container` | Conteneur absent ou non géré par le panel : relire `GET /apps` | observée |
@@ -323,7 +599,7 @@ Le corps d'une erreur est de la forme `{"error": "message"}`. Lisez le message :
 | 502 | Agent injoignable ou erreur interne de l'agent | Vérifier le service agent sur le serveur | d'après le code |
 | 503 | `System is in lockdown mode` | Le panel est verrouillé : prévenir un administrateur | d'après le code |
 
-## 9. Liste de contrôle finale
+## 12. Liste de contrôle finale
 
 - [ ] `GET /sites/{id}` affiche `status: active`, `enabled: true` et les options voulues.
 - [ ] Le site répond `200` en HTTPS et le certificat est validé sans `-k`.
@@ -331,3 +607,6 @@ Le corps d'une erreur est de la forme `{"error": "message"}`. Lisez le message :
 - [ ] Les en-têtes de sécurité sont présents.
 - [ ] L'application reçoit la bonne IP client et les WebSockets fonctionnent, si elle en utilise.
 - [ ] Toute application Docker est à l'état `running` et répond sur son domaine.
+- [ ] Chaque service compose est `running` dans la réponse du déploiement, et son port est lié à `127.0.0.1`.
+- [ ] Un déploiement Git affiche `status: running` et le commit attendu dans `last_commit`.
+- [ ] Aucun moniteur ni incident de test ne reste ouvert.
