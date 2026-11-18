@@ -136,10 +136,16 @@ pub fn validate_ini_content(content: &str) -> Result<Option<String>, String> {
 /// so the raw editor could drop or misspell an extension unnoticed; a warning
 /// the server already had does not block an unrelated edit.
 pub fn new_startup_failures(before: &str, after: &str) -> Vec<String> {
+    // Compared from the message on: php-fpm prefixes each line with a
+    // `[18-Nov-2026 15:22:56] NOTICE:` timestamp (seen on 22.04), which would
+    // make a warning the server already had look new on every run.
+    const NEEDLE: &str = "unable to load dynamic library";
     let pick = |s: &str| -> Vec<String> {
         s.lines()
-            .filter(|l| l.to_ascii_lowercase().contains("unable to load dynamic library"))
-            .map(|l| l.trim().to_string())
+            .filter_map(|l| {
+                let at = l.to_ascii_lowercase().find(NEEDLE)?;
+                Some(l[at..].trim().to_string())
+            })
             .collect()
     };
     let old = pick(before);
@@ -459,5 +465,9 @@ max_input_time = 5\n";
         assert_eq!(new_startup_failures(ok, &format!("{warn}\n{ok}")).len(), 1);
         // Already broken before this edit: not this edit's fault.
         assert!(new_startup_failures(&format!("{warn}\n{ok}"), &format!("{warn}\n{ok}")).is_empty());
+        // Same warning, different timestamp prefix (php-fpm8.1 -t on 22.04).
+        let at = |t: &str| format!("[18-Nov-2026 {t}] NOTICE: PHP message: {warn}");
+        assert!(new_startup_failures(&at("15:22:56"), &at("15:23:10")).is_empty());
+        assert_eq!(new_startup_failures(ok, &at("15:23:10")).len(), 1);
     }
 }
