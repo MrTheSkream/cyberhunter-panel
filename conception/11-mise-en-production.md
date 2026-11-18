@@ -47,7 +47,7 @@ entièrement sur la sécurité du compte GitHub.
 - [x] `bash scripts/release.sh --dry-run` depuis Git Bash : bon dépôt cible, `GLIBC_` ≤ 2.35 pour chaque
       binaire.
 - [x] `bash scripts/release.sh` : publication de la pre-release sur `MrTheSkream/cyberhunter-panel`.
-- [ ] Révoquer le jeton de test du 17/11/2026 s'il ne l'est pas déjà (plus aucun jeton n'est nécessaire).
+- [x] Révoquer le jeton de test du 17/11/2026 s'il ne l'est pas déjà (plus aucun jeton n'est nécessaire).
 
 ## 3. Recette sur une VM Ubuntu 22.04 vierge (bloquant)
 
