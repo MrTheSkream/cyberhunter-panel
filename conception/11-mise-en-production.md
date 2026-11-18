@@ -12,10 +12,13 @@ Validé dans la VM de lab (Ubuntu 24.04, panel installé depuis DockPanel puis b
   une vraie archive, ClamAV, FTP et quotas, stats web, terminal utilisateur) ;
 - fonctionnalité 10 (mises à jour depuis l'interface, alors signées ; signature retirée depuis, voir `12`) : scénarios 1 à 6 et 9 de `10-mises-a-jour-contrats.md` §V.
 
+Fait le 18/11/2026 (VM `cyberhunter-2204`, Ubuntu 22.04.5, glibc 2.35) : releases `v3.0.0-rc.1` et
+`v3.0.0-rc.2` publiées sur le dépôt public ; installation à neuf de rc.1 par la commande du README,
+sans jeton ; somme fausse refusée par `install.sh` ; mise à jour rc.1 vers rc.2 depuis l'interface,
+puis « Roll back » vers rc.1. Le refus d'une somme fausse par le panel n'est couvert que par les tests
+unitaires.
+
 Jamais fait :
-- installation à neuf par `scripts/install.sh` ;
-- exécution sur Ubuntu 22.04 (cible de production) ;
-- release publiée sur le dépôt public `MrTheSkream/cyberhunter-panel` ;
 - agent distant (scénarios 7, 8, 10 de la fonctionnalité 10) ;
 - import HestiaCP suivi d'une vraie bascule (DNS, mail entrant).
 
@@ -39,27 +42,27 @@ entièrement sur la sécurité du compte GitHub.
 
 - [ ] Compte GitHub `MrTheSkream` : 2FA active (clé de sécurité ou application), e-mail de récupération
       à jour, jetons et clés SSH inutiles révoqués.
-- [ ] Dépôt `MrTheSkream/cyberhunter-panel` passé en public après audit de tout l'historique (`12`, D7), signalement privé des vulnérabilités activé (Settings, Security).
-- [ ] Version `3.0.0-rc.N` cohérente dans les 4 `Cargo.toml`, `Cargo.lock` et `package.json`.
-- [ ] `bash scripts/release.sh --dry-run` depuis Git Bash : bon dépôt cible, `GLIBC_` ≤ 2.35 pour chaque
+- [x] Dépôt `MrTheSkream/cyberhunter-panel` passé en public après audit de tout l'historique (`12`, D7), signalement privé des vulnérabilités activé (Settings, Security).
+- [x] Version `3.0.0-rc.N` cohérente dans les 4 `Cargo.toml`, `Cargo.lock` et `package.json`.
+- [x] `bash scripts/release.sh --dry-run` depuis Git Bash : bon dépôt cible, `GLIBC_` ≤ 2.35 pour chaque
       binaire.
-- [ ] `bash scripts/release.sh` : publication de la pre-release sur `MrTheSkream/cyberhunter-panel`.
+- [x] `bash scripts/release.sh` : publication de la pre-release sur `MrTheSkream/cyberhunter-panel`.
 - [ ] Révoquer le jeton de test du 17/11/2026 s'il ne l'est pas déjà (plus aucun jeton n'est nécessaire).
 
 ## 3. Recette sur une VM Ubuntu 22.04 vierge (bloquant)
 
 Instantané Hyper-V avant chaque étape.
 
-- [ ] VM Ubuntu 22.04 à jour, aucune installation préalable.
-- [ ] Installation par la commande du README du dépôt (forme par tag tant qu'il n'y a que
+- [x] VM Ubuntu 22.04 à jour, aucune installation préalable.
+- [x] Installation par la commande du README du dépôt (forme par tag tant qu'il n'y a que
       des pre-releases) : `curl -fsSLO .../releases/download/v3.0.0-rc.N/install.sh` puis
       `sudo DOCKPANEL_VERSION=v3.0.0-rc.N bash install.sh` ; fin sans erreur, chaque fichier vérifié
       contre `checksums.txt`, sans jeton ni accès au dépôt privé.
-- [ ] `systemctl is-active dockpanel-api dockpanel-agent` ; `ldd /usr/local/bin/dockpanel-agent` sans
+- [x] `systemctl is-active dockpanel-api dockpanel-agent` ; `ldd /usr/local/bin/dockpanel-agent` sans
       version manquante ; `/api/health` renvoie la bonne version.
 - [ ] Compte admin créé, 2FA activée, codes de secours rangés.
-- [ ] Telemetry, Updates : source `MrTheSkream/cyberhunter-panel`, « No token », vérification OK.
-- [ ] Mise à jour depuis l'interface : publier `rc.N+1`, l'installer (canal Beta), vérifier la version
+- [x] Telemetry, Updates : source `MrTheSkream/cyberhunter-panel`, « No token », vérification OK.
+- [x] Mise à jour depuis l'interface : publier `rc.N+1`, l'installer (canal Beta), vérifier la version
       et le journal ; puis un « Roll back » vers l'instantané.
 - [ ] Test rapide par fonctionnalité :
   - [ ] 1. multi-IP : IP par site, IP d'envoi mail ;
