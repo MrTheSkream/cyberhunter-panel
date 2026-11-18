@@ -83,16 +83,16 @@ if git ls-files --error-unmatch -- "$INST" >/dev/null 2>&1; then
     if [ -z "$H" ]; then ok "$INST names no API or raw host"; else bad "$INST names another host: $H"; fi
     URLS=$(git grep -h -o -E 'https://github\.com/[^ "]*' -- "$INST" 2>/dev/null | sort -u)
     OTHER=$(printf '%s\n' "$URLS" | grep -v -E '^https://github\.com/(\$\{(RELEASE_REPO|DEFAULT_RELEASE_REPO)\}|<repo>)/releases/' \
-            | grep -v -E '^https://github\.com/MrTheSkream/cyberhunter-releases/releases/' | grep . || true)
+            | grep -v -E '^https://github\.com/MrTheSkream/cyberhunter-panel/releases/' | grep . || true)
     if [ -n "$URLS" ] && [ -z "$OTHER" ]; then
         ok "every github.com URL in $INST is a /releases/ URL of the release repository"
     else
         bad "$INST reaches github.com elsewhere: $OTHER"
     fi
-    if git grep -q -e 'DEFAULT_RELEASE_REPO="MrTheSkream/cyberhunter-releases"' -- "$INST"; then
-        ok "$INST defaults to MrTheSkream/cyberhunter-releases"
+    if git grep -q -e 'DEFAULT_RELEASE_REPO="MrTheSkream/cyberhunter-panel"' -- "$INST"; then
+        ok "$INST defaults to MrTheSkream/cyberhunter-panel"
     else
-        bad "$INST does not default to the public release repository"
+        bad "$INST does not default to this project's public repository"
     fi
     if git grep -q -e 'fetch "\$BASE_URL/checksums.txt" "\$STAGE/checksums.txt"' -- "$INST" \
        && git grep -q -e 'sha256 mismatch for \$a' -- "$INST"; then

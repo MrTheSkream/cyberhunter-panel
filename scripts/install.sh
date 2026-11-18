@@ -3,17 +3,17 @@
 # CyberHunter - Panel Quick Installer
 #
 # Usage (release mode, the default: no git, no token):
-#   curl -fsSLO https://github.com/MrTheSkream/cyberhunter-releases/releases/latest/download/install.sh
+#   curl -fsSLO https://github.com/MrTheSkream/cyberhunter-panel/releases/latest/download/install.sh
 #   sudo bash install.sh
 #   sudo DOCKPANEL_VERSION=v3.0.0-rc.5 bash install.sh     # a given release
 #
 #   releases/latest never points at a pre-release: while only vX.Y.Z-rc.N
 #   releases exist, take install.sh from the tag itself:
-#   curl -fsSLO https://github.com/MrTheSkream/cyberhunter-releases/releases/download/v3.0.0-rc.5/install.sh
+#   curl -fsSLO https://github.com/MrTheSkream/cyberhunter-panel/releases/download/v3.0.0-rc.5/install.sh
 #   sudo DOCKPANEL_VERSION=v3.0.0-rc.5 bash install.sh
 #
 # Modes:
-#   Release (default):  download a published release from the public release
+#   Release (default):  download a published release from the project's public
 #                       repository over https, check the format of its
 #                       checksums.txt and the SHA-256 of every file against
 #                       it, then install it.
@@ -34,7 +34,7 @@
 #                              pre-release is only installed when named here.
 #                              Clone mode: the git ref (default main).
 #   CYBERHUNTER_RELEASE_REPO   release repository (default
-#                              MrTheSkream/cyberhunter-releases)
+#                              MrTheSkream/cyberhunter-panel)
 #   CYBERHUNTER_RELEASE_BASE_URL
 #                              where the release files are read from, instead of
 #                              https://github.com/<repo>/releases/download/<tag>.
@@ -57,7 +57,7 @@ set -euo pipefail
 
 INSTALL_DIR="/opt/dockpanel"
 RELEASES_ROOT="/var/lib/dockpanel/releases"
-DEFAULT_RELEASE_REPO="MrTheSkream/cyberhunter-releases"
+DEFAULT_RELEASE_REPO="MrTheSkream/cyberhunter-panel"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'

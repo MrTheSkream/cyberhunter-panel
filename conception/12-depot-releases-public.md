@@ -127,6 +127,20 @@ Risque accepté : les sommes viennent de la même release que les binaires. Quel
 du compte GitHub `MrTheSkream` (ou du dépôt de releases) peut publier une mise à jour piégée, que chaque
 panel installera en root. Protection restante : la sécurité du compte GitHub (2FA, clés, jetons limités).
 
+### D7. Un seul dépôt, rendu public (décision du 18/11/2026)
+
+Décision de l'utilisateur : « on garde le même dépot, on met a jour le readme et on le passe en public ».
+Remplace D1 et la partie « dépôt public » de D3 :
+- plus de dépôt `cyberhunter-releases` ni de dossier `release-repo/` ; les releases sont publiées sur
+  `MrTheSkream/cyberhunter-panel`, rendu public ;
+- dépôt par défaut du panel, de `release.sh` et d'`install.sh` : `MrTheSkream/cyberhunter-panel` ;
+- `release.sh` revient à `gh release create --verify-tag` (le tag est poussé dans ce même dépôt) ;
+- le `README.md` du dépôt devient la page d'accueil publique : installation, mises à jour sans jeton,
+  releases non signées (D6), licence AGPL et origine DockPanel ;
+- tout le dépôt devient public : historique, `conception/`, `lab/` (hors fichiers ignorés), tests. Avant
+  de changer la visibilité : audit de **tout l'historique** git (secrets, sauvegardes, données
+  personnelles, adresses e-mail des commits), résultat montré à l'utilisateur, puis accord explicite.
+
 ## Tests prévus
 
 Unitaires (backend) :
@@ -142,7 +156,7 @@ Shell :
   une somme fausse.
 
 VM (instantané avant chaque étape) :
-1. Release `rc` de test publiée sur `cyberhunter-releases` avec la clé de test.
+1. Release `rc` de test publiée sur `MrTheSkream/cyberhunter-panel` (D7), sans signature (D6).
 2. Installation à neuf **sans jeton** sur une VM Ubuntu 22.04 vierge par la commande ci-dessus. Cette
    étape avance aussi la section 3 de `11-mise-en-production.md`.
 3. « Check now » puis installation de `rc+1` sans jeton.

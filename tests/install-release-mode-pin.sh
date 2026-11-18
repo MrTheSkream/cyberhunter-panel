@@ -230,7 +230,7 @@ done
 exec "$REAL_CURL" "\$@"
 EOF
 chmod +x "$FB/curl"
-GH="https://github.com/MrTheSkream/cyberhunter-releases/releases/tag"
+GH="https://github.com/MrTheSkream/cyberhunter-panel/releases/tag"
 RS="$T/rel/v9.9.9"
 make_release "$RS" v9.9.9
 TEST_PATH="$FB:$PATH" run_install "$INSTALL" FAKE_LATEST="$GH/v9.9.9" CYBERHUNTER_RELEASE_BASE_URL="file://$RS"; rc=$?
@@ -242,7 +242,7 @@ fi
 TEST_PATH="$FB:$PATH" expect_refusal "latest pointing at a pre-release" "is not a stable vX.Y.Z tag" \
     "$INSTALL" FAKE_LATEST="$GH/$TAG" CYBERHUNTER_RELEASE_BASE_URL="file://$R"
 TEST_PATH="$FB:$PATH" expect_refusal "latest not leading to a release" "did not lead to a release" \
-    "$INSTALL" FAKE_LATEST="https://github.com/MrTheSkream/cyberhunter-releases/releases" CYBERHUNTER_RELEASE_BASE_URL="file://$R"
+    "$INSTALL" FAKE_LATEST="https://github.com/MrTheSkream/cyberhunter-panel/releases" CYBERHUNTER_RELEASE_BASE_URL="file://$R"
 
 echo "── 4. clone mode is still there ──"
 if grep -q 'git clone --quiet --depth 1 -b "\$VERSION" "\$REPO_URL" "\$INSTALL_DIR"' "$INSTALL"; then

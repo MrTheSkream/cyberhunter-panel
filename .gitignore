@@ -53,3 +53,7 @@ lab/import/
 
 # --- Release output (scripts/release.sh) ---
 /dist/
+
+# Notes et réglages locaux de session (gardés sur le disque, hors du dépôt public)
+/reprise.md
+/.claude/

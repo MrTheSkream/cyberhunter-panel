@@ -15,7 +15,7 @@ Validé dans la VM de lab (Ubuntu 24.04, panel installé depuis DockPanel puis b
 Jamais fait :
 - installation à neuf par `scripts/install.sh` ;
 - exécution sur Ubuntu 22.04 (cible de production) ;
-- release publiée sur le dépôt public `cyberhunter-releases` ;
+- release publiée sur le dépôt public `MrTheSkream/cyberhunter-panel` ;
 - agent distant (scénarios 7, 8, 10 de la fonctionnalité 10) ;
 - import HestiaCP suivi d'une vraie bascule (DNS, mail entrant).
 
@@ -39,11 +39,11 @@ entièrement sur la sécurité du compte GitHub.
 
 - [ ] Compte GitHub `MrTheSkream` : 2FA active (clé de sécurité ou application), e-mail de récupération
       à jour, jetons et clés SSH inutiles révoqués.
-- [ ] Dépôt public `MrTheSkream/cyberhunter-releases` créé avec `README.md` et `LICENSE` sur `main`.
+- [ ] Dépôt `MrTheSkream/cyberhunter-panel` passé en public après audit de tout l'historique (`12`, D7), signalement privé des vulnérabilités activé (Settings, Security).
 - [ ] Version `3.0.0-rc.N` cohérente dans les 4 `Cargo.toml`, `Cargo.lock` et `package.json`.
 - [ ] `bash scripts/release.sh --dry-run` depuis Git Bash : bon dépôt cible, `GLIBC_` ≤ 2.35 pour chaque
       binaire.
-- [ ] `bash scripts/release.sh` : publication de la pre-release sur `MrTheSkream/cyberhunter-releases`.
+- [ ] `bash scripts/release.sh` : publication de la pre-release sur `MrTheSkream/cyberhunter-panel`.
 - [ ] Révoquer le jeton de test du 17/11/2026 s'il ne l'est pas déjà (plus aucun jeton n'est nécessaire).
 
 ## 3. Recette sur une VM Ubuntu 22.04 vierge (bloquant)
@@ -51,14 +51,14 @@ entièrement sur la sécurité du compte GitHub.
 Instantané Hyper-V avant chaque étape.
 
 - [ ] VM Ubuntu 22.04 à jour, aucune installation préalable.
-- [ ] Installation par la commande du README de `cyberhunter-releases` (forme par tag tant qu'il n'y a que
+- [ ] Installation par la commande du README du dépôt (forme par tag tant qu'il n'y a que
       des pre-releases) : `curl -fsSLO .../releases/download/v3.0.0-rc.N/install.sh` puis
       `sudo DOCKPANEL_VERSION=v3.0.0-rc.N bash install.sh` ; fin sans erreur, chaque fichier vérifié
       contre `checksums.txt`, sans jeton ni accès au dépôt privé.
 - [ ] `systemctl is-active dockpanel-api dockpanel-agent` ; `ldd /usr/local/bin/dockpanel-agent` sans
       version manquante ; `/api/health` renvoie la bonne version.
 - [ ] Compte admin créé, 2FA activée, codes de secours rangés.
-- [ ] Telemetry, Updates : source `MrTheSkream/cyberhunter-releases`, « No token », vérification OK.
+- [ ] Telemetry, Updates : source `MrTheSkream/cyberhunter-panel`, « No token », vérification OK.
 - [ ] Mise à jour depuis l'interface : publier `rc.N+1`, l'installer (canal Beta), vérifier la version
       et le journal ; puis un « Roll back » vers l'instantané.
 - [ ] Test rapide par fonctionnalité :

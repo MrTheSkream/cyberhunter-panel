@@ -15,10 +15,9 @@
 #
 # Environment:
 #   CYBERHUNTER_RELEASE_REPO   GitHub repo the release is published on
-#                              (default MrTheSkream/cyberhunter-releases, the
-#                              public release repository; the tag itself is
-#                              still created and pushed in this private source
-#                              repository, origin)
+#                              (default MrTheSkream/cyberhunter-panel, this
+#                              repository: the tag is created and pushed to
+#                              origin, then the release is created on it)
 #
 # What a release contains (and nothing else):
 #   cyberhunter-agent-linux-amd64  cyberhunter-api-linux-amd64
@@ -38,9 +37,10 @@
 # the GitHub account. The integrity of a release rests on the security of that
 # account (2FA, keys, scoped tokens).
 #
-# Publishing (step 8): the tag is created and pushed here (origin, private),
-# then the release is created on CYBERHUNTER_RELEASE_REPO with --target main:
-# the tag does not exist there, GitHub creates it on that repository's main.
+# Publishing (step 8): the tag is created and pushed to origin, then the
+# release is created on CYBERHUNTER_RELEASE_REPO with --verify-tag: the tag
+# must already be on that repository (the same one as origin), so the release
+# cannot silently name another commit (conception/12, D7).
 #
 # Internal entry point used by tests/release-format-pin.sh and
 # tests/install-release-mode-pin.sh:
@@ -93,7 +93,7 @@ while [ $# -gt 0 ]; do
     shift
 done
 
-REPO="${CYBERHUNTER_RELEASE_REPO:-MrTheSkream/cyberhunter-releases}"
+REPO="${CYBERHUNTER_RELEASE_REPO:-MrTheSkream/cyberhunter-panel}"
 
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
@@ -136,16 +136,6 @@ if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; the
 fi
 if [ "$DRY_RUN" = "0" ] && gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
     die "a release $TAG already exists on $REPO"
-fi
-# --target main only creates the tag when it is not there: an existing tag on
-# the release repository would be used as is, whatever commit it names.
-if [ "$DRY_RUN" = "0" ] && gh api "repos/$REPO/git/ref/tags/$TAG" >/dev/null 2>&1; then
-    die "tag $TAG already exists on $REPO"
-fi
-# ...and needs a main branch there (the README commit), checked before the tag
-# is pushed to origin rather than after.
-if [ "$DRY_RUN" = "0" ] && ! gh api "repos/$REPO/branches/main" >/dev/null 2>&1; then
-    die "$REPO has no main branch (or is not reachable with gh): push its README first"
 fi
 
 DIRTY="$(git status --porcelain | grep -v ' panel/frontend/tsconfig.tsbuildinfo$' || true)"
@@ -257,7 +247,7 @@ echo ""
 
 if [ "$DRY_RUN" = "1" ]; then
     echo "Dry run: nothing tagged, nothing published."
-    echo "  would tag $TAG on origin and publish it on $REPO (release created with --target main)"
+    echo "  would tag $TAG on origin and publish it on $REPO (release created with --verify-tag)"
     exit 0
 fi
 
@@ -279,6 +269,6 @@ PRE_FLAG=()
 [ "$PRERELEASE" = "1" ] && PRE_FLAG=(--prerelease)
 FILES=()
 for f in "${REQUIRED[@]}" checksums.txt; do FILES+=("$DIST/$f"); done
-gh release create "$TAG" --repo "$REPO" --target main --title "CyberHunter $TAG" "${PRE_FLAG[@]}" \
+gh release create "$TAG" --repo "$REPO" --verify-tag --title "CyberHunter $TAG" "${PRE_FLAG[@]}" \
     --notes-file "$NOTES_FILE" "${FILES[@]}"
 echo -e "${GREEN}Published $TAG on $REPO${NC}"

@@ -1,179 +1,169 @@
-<p align="center">
-  <img src=".github/screenshots/dp-dashboard.png" alt="CyberHunter - Panel Dashboard" width="800">
-</p>
-
 <h1 align="center">CyberHunter - Panel</h1>
 
 <p align="center">
-  <strong>The most feature-packed free server panel ever built.</strong><br>
-  Self-hosted. Docker-native. Written in Rust. Panel services run on <strong>~49MB of RAM</strong>. 840 HTTP routes. 147 app templates. 4544 regression assertions. ~57MB binaries. Zero subscriptions.
+  <strong>A free, self-hosted server management panel, written in Rust.</strong><br>
+  Panel services run on <strong>~49MB of RAM</strong>. 840 HTTP routes. 147 app templates. 4544 regression assertions. ~57MB binaries. Zero subscriptions.
 </p>
 
 <p align="center">
-  <a href="https://github.com/ovexro/dockpanel/releases"><img src="https://img.shields.io/github/v/release/ovexro/dockpanel" alt="Release"></a>
-  <a href="https://github.com/ovexro/dockpanel/actions"><img src="https://img.shields.io/github/actions/workflow/status/ovexro/dockpanel/ci.yml?label=CI" alt="CI"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL_v3-blue.svg" alt="License: AGPL v3"></a>
-</p>
-
-<p align="center">
-  <a href="https://dockpanel.dev">Website</a> &bull;
-  <a href="https://docs.dockpanel.dev">Docs</a> &bull;
+  <a href="https://github.com/MrTheSkream/cyberhunter-panel/releases">Releases</a> &bull;
   <a href="CHANGELOG.md">Changelog</a> &bull;
-  <a href="https://github.com/ovexro/dockpanel/discussions">Discussions</a>
+  <a href="FEATURES.md">Features</a> &bull;
+  <a href="LICENSE">License: AGPL v3</a>
 </p>
 
 ---
 
+## What it is
+
+CyberHunter - Panel is a fork of [DockPanel](https://github.com/ovexro/dockpanel), a
+Docker-native hosting panel written in Rust and React. It keeps everything DockPanel does
+(sites, databases, Docker apps, mail, DNS, backups, monitoring, security) and adds what was
+needed to move a shared-hosting server off HestiaCP: one IP per site, PHP settings per
+domain, Apache with `.htaccess`, a full HestiaCP import, antivirus, FTP, web statistics, and
+updates installed from the panel itself.
+
+It is free software under the GNU Affero General Public License v3, like DockPanel. It is
+not affiliated with the DockPanel project, and its releases are published here, not by
+DockPanel.
+
+## Added in this fork
+
+- **Multi-IP** - Add extra IP addresses to the server from the panel (applied live
+  and kept across reboots), and give each site its own IP. A mail domain sends from the IP of
+  the site with the same name, with a matching HELO.
+- **PHP settings per domain** - Upload size, execution time, memory, process manager and
+  workers per site, plus isolation (`open_basedir`, `disable_functions`, private temp and
+  session directories) and a per-site PHP error log. Each pool is tested before PHP-FPM
+  reloads.
+- **Log in as a user** - An admin can open the panel as one of their users, see exactly what
+  that user sees, and return to their own session in one click. Every action taken that way
+  is logged under the user's name with the admin recorded alongside.
+- **Apache + .htaccess** - Optional per site: nginx stays in front (SSL, static files, WAF,
+  logs) and passes the rest to Apache, which honours the site's `.htaccess`. Debian and
+  Ubuntu only.
+- **HestiaCP import** - Import a `v-backup-user` archive: sites, certificates, databases,
+  mailboxes and FTP accounts, with the same passwords. The import can be run again and gives
+  a report per item.
+- **ClamAV antivirus** - Mail scanned through Rspamd's antivirus module, a nightly scan of
+  site files (schedule adjustable) and a manual scan per site. Detections are reported and
+  quarantined in one click; nothing is moved on its own. clamd keeps its signatures in RAM
+  (about 1.5 GB), so it is opt-in.
+- **FTP and disk quotas** - FTPS only (no plain-text FTP), using the site's existing SFTP
+  account and password. Disk usage of each site is measured, with alerts when it nears its
+  quota.
+- **Web statistics** - GoAccess reports per site, refreshed every hour (or on demand) and
+  kept for 12 months. They are shown inside the panel only, never on a public URL.
+- **User terminal** - A browser shell as a non-root Linux user, attached to a persistent
+  tmux session (for example one running Claude Code). Closing the tab or losing the
+  connection does not end it; you find it again when you reconnect.
+- **Updates from the interface** - Telemetry, Updates checks this repository's releases,
+  installs a new version after a snapshot, and can roll back. Stable and beta (pre-release)
+  channels. No GitHub account or token is needed (see [Updates](#updates)).
+
+## Requirements
+
+- A fresh **Ubuntu 22.04 or 24.04** server (other distributions inherited from DockPanel may
+  work but are not what this fork is tested on).
+- **root** access (the installer runs with `sudo`).
+- x86_64. ARM64 only for releases that ship `-linux-arm64` binaries.
+
 ## Install
 
+Releases are published on this repository's
+[Releases page](https://github.com/MrTheSkream/cyberhunter-panel/releases). No GitHub
+account and no token are needed.
+
+**While only pre-releases exist** (`vX.Y.Z-rc.N`), take `install.sh` from the tag itself,
+because `releases/latest` never points at a pre-release:
+
 ```bash
-curl -sL https://dockpanel.dev/install.sh | sudo bash
+TAG=vX.Y.Z-rc.N        # the tag shown on the Releases page
+curl -fsSLO https://github.com/MrTheSkream/cyberhunter-panel/releases/download/$TAG/install.sh
+sudo DOCKPANEL_VERSION=$TAG bash install.sh
 ```
 
-Open `https://YOUR_SERVER_IP:8443`, create your admin account, done. Without a domain the
-panel serves a self-signed certificate, so your browser warns once - it is there so the
-admin password you create is encrypted on the way to the server. Point a domain at the box
-and pass `PANEL_DOMAIN=your.domain` to get a trusted Let's Encrypt certificate instead.
+**Once a stable release exists**, the latest one:
 
-Supports Ubuntu 20+, Debian 11+, CentOS 9+, Rocky 9+, AlmaLinux 9+, Fedora 39+. x86_64 and ARM64.
-On the RHEL family the optional-service installers (Redis, Node.js, PowerDNS, WAF, Cloudflare
-Tunnel) work from the panel as of v2.40.0; the mail server still refuses there, and UFW refuses
-on any firewalld box by design. See [getting started](docs/getting-started.md#requirements).
+```bash
+curl -fsSLO https://github.com/MrTheSkream/cyberhunter-panel/releases/latest/download/install.sh
+sudo bash install.sh
+```
 
-## Why CyberHunter - Panel?
+`install.sh`:
 
-No other free panel gives you Git push-to-deploy with blue-green zero-downtime updates, 147 one-click Docker app templates, per-image CVE scanning with deploy gating, a WAF, passkey login, GPU passthrough, multi-server management, reseller accounts, a developer CLI, and Infrastructure as Code - all while the panel services themselves use under 20MB of RAM. CyberHunter - Panel does.
+1. picks the latest stable release, or the one named by `DOCKPANEL_VERSION` (a pre-release is
+   only installed when you name it);
+2. downloads that release's `checksums.txt` over https and checks its format strictly;
+3. downloads every file it installs and checks its SHA-256 against `checksums.txt`. Any
+   mismatch or missing file stops the install;
+4. unpacks the release source into `/opt/dockpanel` and runs its `setup.sh`. Nothing is
+   compiled on the server.
 
-| | CyberHunter - Panel | HestiaCP | CloudPanel | RunCloud |
-|---|---|---|---|---|
-| **Price** | **Free** | Free | Free | $8/mo+ |
-| **Stack** | **Rust + React** | PHP | PHP | PHP (SaaS) |
-| **Docker native** | **147 templates** | No | No | No |
-| **Git deploy** | **Blue-green, zero-downtime** | No | No | Basic |
-| **Multi-server** | **Unlimited** | No | No | Yes |
-| **Reseller + white-label** | **Yes** | Reseller only | No | No |
-| **CLI + IaC** | **Full CLI + YAML export** | Limited | No | No |
-| **RAM usage (panel)** | **~49MB** | ~200MB+ | ~150MB+ | SaaS |
-| **ARM64 / Homelab** | **Yes** | Partial | No | No |
-| **Self-hosted** | **Yes** | Yes | Yes | No |
+Then open `https://YOUR_SERVER_IP:8443` and create your admin account. Without a domain the
+panel serves a self-signed certificate, so your browser warns once; it is there so the admin
+password you create is encrypted on the way to the server. Point a domain at the server and
+pass `PANEL_DOMAIN=your.domain` to get a trusted Let's Encrypt certificate instead.
 
-A feature table is easy to write, so here is the harder claim: before each
-release CyberHunter - Panel is installed on a throwaway VPS with a real domain and a real
-Let's Encrypt certificate, and each journey is driven to the point where a user
-would get value from it - mail is not "installed", a message is sent to another
-server and its DKIM signature checked on arrival. That has repeatedly found
-features whose setup half worked and whose payoff half had never once run.
-[How CyberHunter - Panel is tested](https://docs.dockpanel.dev/testing.html) lists what it
-found, including what is still broken.
+## Updates
 
-## Screenshots
+Once installed, the panel updates itself from **Telemetry, Updates**: "Check now", then
+install. It reads this repository's releases anonymously, checks every file against the
+release's `checksums.txt` (same checks as `install.sh`), takes a snapshot first, and restores
+the previous binaries if the panel does not come back.
 
-<details>
-<summary><strong>Dashboard</strong> - Live server metrics, 24h graphs, site overview, recent activity</summary>
+A token is optional. It is only needed if you point the panel at a private release
+repository of your own.
 
-![Dashboard](.github/screenshots/dp-dashboard.png)
-</details>
+## Releases are not signed
 
-<details>
-<summary><strong>Sites</strong> - Static, PHP, Node.js, Python, reverse proxy with Nginx + SSL</summary>
+There is no signature on these releases. `checksums.txt` comes from the same release as the
+files it lists: it proves that a download is complete and intact, not who published it.
 
-![Sites](.github/screenshots/dp-sites.png)
-</details>
+Someone who took control of the GitHub account that publishes this repository could publish a
+modified release, with matching checksums, and every panel would install it as root. Trust in a
+release therefore rests on the security of that GitHub account (two-factor authentication,
+keys, scoped tokens).
 
-<details>
-<summary><strong>Site Detail</strong> - SSL, WAF, file manager, terminal, backups, resource limits, custom nginx</summary>
+## Check install.sh before running it
 
-![Site Detail](.github/screenshots/dp-site-detail.png)
-</details>
+`install.sh` is listed in the `checksums.txt` of each release. To check that your copy matches
+the release it came from:
 
-<details>
-<summary><strong>Docker Apps</strong> - 147 one-click templates across 14 categories</summary>
+```bash
+TAG=vX.Y.Z-rc.N        # the release you are installing
+BASE=https://github.com/MrTheSkream/cyberhunter-panel/releases/download/$TAG
+curl -fsSLO "$BASE/install.sh"
+curl -fsSLO "$BASE/checksums.txt"
 
-![Docker Apps](.github/screenshots/dp-apps.png)
-</details>
+sha256sum -c --ignore-missing checksums.txt
+# must print: install.sh: OK
 
-<details>
-<summary><strong>Databases</strong> - MySQL/PostgreSQL, SQL browser, schema viewer, scheduled backups</summary>
+sudo DOCKPANEL_VERSION=$TAG bash install.sh
+```
 
-![Databases](.github/screenshots/dp-databases.png)
-</details>
+Use files from the same release (`releases/download/<tag>/`), not a mix of `latest` and a tag.
+This catches a corrupted download; it does not protect against a release replaced on GitHub
+(see above).
 
-<details>
-<summary><strong>File Manager</strong> - Browse, edit, upload files from the browser</summary>
+## What a release contains
 
-![File Manager](.github/screenshots/dp-file-manager.png)
-</details>
-
-<details>
-<summary><strong>Terminal</strong> - Full SSH in the browser with tabs, themes, session recording</summary>
-
-![Terminal](.github/screenshots/dp-terminal.png)
-</details>
-
-<details>
-<summary><strong>Git Deploy</strong> - Push-to-deploy, atomic zero-downtime deploys, preview environments</summary>
-
-![Git Deploy](.github/screenshots/dp-git-deploy.png)
-</details>
-
-<details>
-<summary><strong>Monitoring</strong> - HTTP/TCP/ping uptime checks, SLA tracking, PagerDuty integration</summary>
-
-![Monitoring](.github/screenshots/dp-monitoring.png)
-</details>
-
-<details>
-<summary><strong>Security</strong> - Firewall, Fail2Ban, SSH hardening, vulnerability scanning, audit logs</summary>
-
-![Security](.github/screenshots/dp-security.png)
-</details>
-
-<details>
-<summary><strong>Backups</strong> - Scheduled backups, S3/SFTP destinations, one-click restore</summary>
-
-![Backups](.github/screenshots/dp-backups.png)
-</details>
-
-<details>
-<summary><strong>DNS</strong> - Cloudflare + PowerDNS, zone management, cache purge, security settings</summary>
-
-![DNS](.github/screenshots/dp-dns.png)
-</details>
-
-<details>
-<summary><strong>Mail</strong> - Postfix + Dovecot + DKIM, Roundcube webmail, Rspamd spam filter</summary>
-
-![Mail](.github/screenshots/dp-email.png)
-</details>
-
-<details>
-<summary><strong>Cron Jobs</strong> - Scheduled tasks with output logging</summary>
-
-![Cron Jobs](.github/screenshots/dp-crons.png)
-</details>
-
-<details>
-<summary><strong>System</strong> - Services, updates, diagnostics, auto-healing</summary>
-
-![System](.github/screenshots/dp-system.png)
-</details>
-
-<details>
-<summary><strong>Settings</strong> - Branding, notifications, alert channels, account security</summary>
-
-![Settings](.github/screenshots/dp-settings.png)
-</details>
-
-<details>
-<summary><strong>Login</strong> - Email/password + passkey (WebAuthn) support</summary>
-
-![Login](.github/screenshots/dp-login.png)
-</details>
+| File | What it is |
+| --- | --- |
+| `cyberhunter-{agent,api,cli,mcp}-linux-amd64` | the binaries (x86_64) |
+| `cyberhunter-{agent,api,cli,mcp}-linux-arm64` | the binaries (ARM64), when built |
+| `cyberhunter-frontend.tar.gz` | the web interface |
+| `cyberhunter-source.tar.gz` | the complete source code of this version (`scripts/`, `panel/`, `LICENSE`) |
+| `install.sh` | the installer |
+| `checksums.txt` | SHA-256 of every file above |
 
 ## Features
 
+Everything below is inherited from DockPanel and kept in this fork. The complete manifest is
+[FEATURES.md](FEATURES.md).
+
 ### Hosting
-- **Sites** - Static, PHP (8.1–8.5), Node.js, Python, reverse proxy. Automatic Nginx config, SSL, PHP-FPM pools.
+- **Sites** - Static, PHP (8.1-8.5), Node.js, Python, reverse proxy. Automatic Nginx config, SSL, PHP-FPM pools.
 - **Databases** - MySQL/PostgreSQL in Docker. Built-in SQL browser, visual schema browser, scheduled dump/restore. Auto-cleanup on site delete.
 - **Docker Apps** - 147 templates across 14 categories (AI, CMS, Database, Media, Monitoring, and more). Compose stacks. Resource limits. GPU passthrough.
 - **Git Deploy** - Push-to-deploy. Atomic zero-downtime deploys (Capistrano-style). Nixpacks (30+ languages). Preview environments.
@@ -206,13 +196,12 @@ found, including what is still broken.
 - **SSH Hardening** - Disable password/root login, change port - one click.
 - **Vulnerability Scanning** - File integrity, security headers, full-server audits.
 - **Per-Image CVE Scanning** - Scan every running Docker app's image with Anchore grype. Severity badge per app row on the Apps page. Scheduled background rescans (configurable interval). Soft deploy gate refuses images exceeding a critical/high/medium threshold - on template deploys, image changes, compose deploys and stacks alike. Grype installs self-contained into `/var/lib/dockpanel/scanners/` from the Settings UI. **Defaults to off** - opt in from Settings → Services → Image Vulnerability Scanning.
-- **Signed Releases + SBOM** - Every release binary and its SPDX SBOM is signed in CI with cosign keyless via Sigstore (no long-lived signing key, recorded in the public Rekor transparency log). Verification snippet in [SECURITY.md](SECURITY.md#verifying-release-signatures).
-- **Per-Image SBOM Generation** - Generate an SPDX 2.3 JSON SBOM for any deployed Docker app's image on demand (syft). Click "Download SBOM" in any app's scan drawer. Self-contained install at `/var/lib/dockpanel/scanners/syft`. **Defaults to off** - opt in from Settings → Services → SBOM Generation. Companion to image CVE scanning: composition vs. risk.
+- **Per-Image SBOM Generation** - Generate an SPDX 2.3 JSON SBOM for any deployed Docker app's image on demand (syft). Click "Download SBOM" in any app's scan drawer. Self-contained install at `/var/lib/dockpanel/scanners/syft`. **Defaults to off** - opt in from Settings → Services → SBOM Generation.
 - **Auto-Healing** - Restart crashed services, clean disk, renew expiring SSL, auto-sleep idle containers.
 
 ### Developer Experience
 - **CLI** - `dockpanel status`, `sites`, `apps`, `diagnose`, `export`, `apply`
-- **MCP Server** - Read-only fleet introspection (~40 tools: sites, apps, databases, logs, security, monitors, alerts, and more) for AI agents over the Model Context Protocol. Opt-in, off by default, zero mutating tools. See [docs.dockpanel.dev](https://docs.dockpanel.dev).
+- **MCP Server** - Read-only fleet introspection (~40 tools: sites, apps, databases, logs, security, monitors, alerts, and more) for AI agents over the Model Context Protocol. Opt-in, off by default, zero mutating tools.
 - **Infrastructure as Code** - Export/import server config as YAML. A Terraform/Pulumi-shaped provider API also exists for reading site/database inventory (see [FEATURES.md](FEATURES.md#withdrawn-claims) - its tokens don't yet authenticate).
 - **Smart Diagnostics** - 6 check categories with one-click fixes. Auto-optimization recommendations.
 - **File Manager** - Browse, edit, upload files from the browser.
@@ -254,12 +243,29 @@ Browser → React 19 SPA → Nginx
 
 ## Security
 
-CyberHunter - Panel has undergone seven rounds of security auditing (280+ vulnerabilities found and fixed). Credentials are encrypted at rest with AES-256-GCM. All child processes run with sanitized environments. Per-image CVE scanning (grype) with optional deploy gating catches vulnerable images before they ship. See [SECURITY.md](SECURITY.md) for details.
+Credentials are encrypted at rest with AES-256-GCM. All child processes run with sanitized environments. Per-image CVE scanning (grype) with optional deploy gating catches vulnerable images before they ship. Release integrity is covered in [Releases are not signed](#releases-are-not-signed). [SECURITY.md](SECURITY.md) covers vulnerability reporting.
+
+## CLI
+
+```bash
+dockpanel status              # Server status (CPU, RAM, disk)
+dockpanel sites               # List all sites
+dockpanel apps                # List Docker apps
+dockpanel diagnose            # Run smart diagnostics
+dockpanel export -o config.yml  # Export server config as YAML
+dockpanel apply config.yml    # Apply config (Infrastructure as Code)
+```
+
+## Uninstall
+
+```bash
+sudo bash /opt/dockpanel/scripts/uninstall.sh
+```
 
 ## Development
 
 ```bash
-git clone https://github.com/ovexro/dockpanel.git && cd dockpanel
+git clone https://github.com/MrTheSkream/cyberhunter-panel.git && cd cyberhunter-panel
 
 # Start database
 docker run -d --name dockpanel-postgres \
@@ -273,31 +279,29 @@ cargo build --release --manifest-path panel/cli/Cargo.toml
 cd panel/frontend && npm install && npx vite build
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for full development setup.
-
-## CLI
-
-```bash
-dockpanel status              # Server status (CPU, RAM, disk)
-dockpanel sites               # List all sites
-dockpanel apps                # List Docker apps
-dockpanel diagnose            # Run smart diagnostics
-dockpanel export -o config.yml  # Export server config as YAML
-dockpanel apply config.yml    # Apply config (Infrastructure as Code)
-```
-
-## Update / Uninstall
-
-```bash
-sudo bash /opt/dockpanel/scripts/update.sh     # Update
-sudo bash /opt/dockpanel/scripts/uninstall.sh   # Remove
-```
+Releases are built and published by `scripts/release.sh`. See [CONTRIBUTING.md](CONTRIBUTING.md)
+for the development setup inherited from DockPanel.
 
 ## Documentation
 
-- [Live Docs](https://docs.dockpanel.dev) - Getting started, guides, configuration
-- [How CyberHunter - Panel is tested](https://docs.dockpanel.dev/testing.html) - The fresh-VPS drills, what they found, and what is still broken
-- [FEATURES.md](FEATURES.md) - Complete feature manifest (60+ features, ~280 capabilities)
+- [FEATURES.md](FEATURES.md) - Complete feature manifest
 - [CHANGELOG.md](CHANGELOG.md) - Version history
+- [docs/](docs/) - Getting started, guides, configuration (inherited from DockPanel)
 - [SECURITY.md](SECURITY.md) - Security model and vulnerability reporting
 - [CONTRIBUTING.md](CONTRIBUTING.md) - Development setup and PR process
+
+## License and source code (AGPL v3)
+
+CyberHunter - Panel is free software: you can redistribute it and/or modify it under the terms
+of the GNU Affero General Public License v3 (see [LICENSE](LICENSE)). It is a modified version
+of [DockPanel](https://github.com/ovexro/dockpanel), also AGPL v3.
+
+The source code is this repository. The corresponding source of each release is also attached
+to it as `cyberhunter-source.tar.gz`, listed in the same `checksums.txt` as the binaries:
+
+```
+https://github.com/MrTheSkream/cyberhunter-panel/releases/download/<tag>/cyberhunter-source.tar.gz
+```
+
+If you run a modified version of the panel for users over a network, the AGPL asks you to offer
+them its source as well.

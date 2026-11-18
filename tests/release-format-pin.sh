@@ -96,22 +96,23 @@ if [ -n "$DRY_AT" ] && [ -n "$TAG_AT" ] && [ -n "$GH_AT" ] && [ "$DRY_AT" -lt "$
 else
     bad "--dry-run does not stop before tagging and publishing"
 fi
-# 12 (D3): the release goes to the public release repository, where the tag
-# does not exist; GitHub creates it on that repository's main.
-if printf '%s\n' "$REL_CODE" | grep -c 'gh release create "\$TAG" --repo "\$REPO" --target main' >/dev/null; then
-    ok "gh release create uses --target main"
+# 12 (D7): one repository. The tag is pushed to origin, which is the release
+# repository, so the release must name that existing tag (--verify-tag)
+# rather than let GitHub create one on a branch (--target main).
+if printf '%s\n' "$REL_CODE" | grep -c 'gh release create "\$TAG" --repo "\$REPO" --verify-tag' >/dev/null; then
+    ok "gh release create uses --verify-tag"
 else
-    bad "gh release create without --target main"
+    bad "gh release create without --verify-tag"
 fi
-if printf '%s\n' "$REL_CODE" | grep -c -- '--verify-tag' >/dev/null; then
-    bad "release.sh still uses --verify-tag (the tag is not in the release repository)"
+if printf '%s\n' "$REL_CODE" | grep -c -- '--target main' >/dev/null; then
+    bad "release.sh still uses --target main (the tag is already on the repository)"
 else
-    ok "no --verify-tag"
+    ok "no --target main"
 fi
-if printf '%s\n' "$REL_CODE" | grep -cx 'REPO="${CYBERHUNTER_RELEASE_REPO:-MrTheSkream/cyberhunter-releases}"' >/dev/null; then
-    ok "default release repository is MrTheSkream/cyberhunter-releases"
+if printf '%s\n' "$REL_CODE" | grep -cx 'REPO="${CYBERHUNTER_RELEASE_REPO:-MrTheSkream/cyberhunter-panel}"' >/dev/null; then
+    ok "default release repository is MrTheSkream/cyberhunter-panel"
 else
-    bad "the default release repository is not MrTheSkream/cyberhunter-releases"
+    bad "the default release repository is not MrTheSkream/cyberhunter-panel"
 fi
 if printf '%s\n' "$REL_CODE" | grep -c 'git ls-remote --exit-code --tags origin "refs/tags/\$TAG"' >/dev/null \
    && printf '%s\n' "$REL_CODE" | grep -c '^git push origin "\$TAG"$' >/dev/null; then

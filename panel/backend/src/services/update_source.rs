@@ -27,9 +27,9 @@ use zeroize::Zeroizing;
 pub const UPDATE_CONF_PATH: &str = "/etc/dockpanel/update.conf";
 /// Where `PUT /api/update/source` puts the token when no valid config names a file.
 pub const DEFAULT_TOKEN_FILE: &str = "/etc/dockpanel/update-token";
-/// Release repository used when the operator does not name one: the public
-/// releases repository, readable without a token.
-pub const DEFAULT_UPDATE_REPO: &str = "MrTheSkream/cyberhunter-releases";
+/// Release repository used when the operator does not name one: this
+/// project's public repository, readable without a token.
+pub const DEFAULT_UPDATE_REPO: &str = "MrTheSkream/cyberhunter-panel";
 /// Every path the config may name lives under this directory.
 const CONF_DIR: &str = "/etc/dockpanel/";
 /// The only accepted name of the token file, inside the config directory.
@@ -613,7 +613,7 @@ pub(crate) mod tests {
         assert!(s.configured, "{s:?}");
         assert_eq!(s.reason, None);
         assert_eq!(s.repo.as_deref(), Some(DEFAULT_UPDATE_REPO));
-        assert_eq!(DEFAULT_UPDATE_REPO, "MrTheSkream/cyberhunter-releases");
+        assert_eq!(DEFAULT_UPDATE_REPO, "MrTheSkream/cyberhunter-panel");
         assert!(!s.token_set);
         let src = s.source.as_ref().unwrap();
         assert_eq!(src.token_file, dir.join("update-token"), "default token file next to the config");

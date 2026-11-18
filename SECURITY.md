@@ -1,6 +1,6 @@
 # Security Policy
 
-> A public posture summary (audit count, supply-chain story, recent advisories, response SLA) lives at **[dockpanel.dev/security](https://dockpanel.dev/security)**. This file is the canonical policy.
+> CyberHunter - Panel is a fork of [DockPanel](https://github.com/ovexro/dockpanel). This file is the policy of the fork; the audit history below was inherited from DockPanel.
 
 ## Supported Versions
 
@@ -17,7 +17,7 @@ If you discover a security vulnerability in CyberHunter - Panel, please report i
 
 ### How to Report
 
-Send an email to **security@dockpanel.dev** with the following information:
+Use GitHub's private vulnerability reporting: on this repository, open **Security**, then **Report a vulnerability**. Include the following information:
 
 - A clear description of the vulnerability
 - Step-by-step reproduction instructions
@@ -78,23 +78,15 @@ CyberHunter - Panel is designed with defense in depth. Key security properties i
 - **Systemd hardening** - Generated service units apply systemd security directives to limit the blast radius of any compromise.
 - **Terminal sandboxing** - Terminal sessions run with `PR_SET_NO_NEW_PRIVS`, restricted bash shells, and a command blocklist to prevent privilege escalation and dangerous operations.
 - **Per-image CVE scanning with deploy gating** - Optional but built-in. Every running Docker app can be scanned against Anchore's grype vulnerability database; a configurable soft deploy gate refuses images exceeding a critical/high/medium threshold at every door that puts one on a host - the template deploy, changing an app's image, a compose deploy, and creating or editing a stack. Pressing Update on an app is deliberately exempt: it re-pulls the reference already running, so the only scan on file describes the image being replaced, and gating on it would refuse the update that fixes the finding. Scanner binary is self-contained inside `/var/lib/dockpanel/scanners/` (not `/usr/local/bin`) so it lives entirely within the agent's hardened sandbox. Defaults off; admins opt in from Settings → Services.
-- **Signed releases + per-binary SBOM** (v2.7.10+) - Every binary and its accompanying SPDX SBOM is signed in CI using cosign keyless via Sigstore. No long-lived signing key exists; the cert is bound to the GitHub Actions OIDC identity of the release workflow and recorded in the public Rekor transparency log.
 - **Per-image SBOM generation** (v2.7.11+) - Optional but built-in. Operators can generate an SPDX 2.3 JSON SBOM for any deployed Docker app's image on demand (syft). The composition companion to per-image CVE scanning - useful for supply-chain audits and EU CRA compliance asks. Like grype, syft installs self-contained inside `/var/lib/dockpanel/scanners/`. Defaults off; admins opt in from Settings → Services.
 
-## Verifying release signatures
+## Release integrity
 
-Every release asset since v2.7.10 ships with a `.sig` and `.pem` next to it, plus a `dockpanel-{agent,api,cli}.spdx.json` SBOM (also signed). To verify a downloaded binary:
+Releases of this fork are **not signed**. Each release ships a `checksums.txt` (SHA-256 and size of every file); `install.sh` and the panel's updater check every file against it and stop on any mismatch. Because `checksums.txt` comes from the same release, this protects against corrupted or truncated downloads, not against someone who controls the GitHub account publishing the release. To check a download by hand:
 
 ```bash
-cosign verify-blob \
-  --certificate dockpanel-agent-linux-amd64.pem \
-  --signature  dockpanel-agent-linux-amd64.sig \
-  --certificate-identity-regexp '^https://github\.com/ovexro/dockpanel/\.github/workflows/release\.yml@refs/tags/v.+$' \
-  --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
-  dockpanel-agent-linux-amd64
+sha256sum -c --ignore-missing checksums.txt
 ```
-
-The same command works against the SBOM JSON files. A successful verification proves the asset was produced by this repository's release workflow and recorded in the Sigstore transparency log.
 
 ## Past Security Work
 
@@ -164,4 +156,4 @@ All identified issues across all seven audit rounds have been fixed. Combined to
 
 ## Contact
 
-For security-related inquiries, reach us at **security@dockpanel.dev**.
+For security-related inquiries, use GitHub's private vulnerability reporting on this repository (**Security**, then **Report a vulnerability**).

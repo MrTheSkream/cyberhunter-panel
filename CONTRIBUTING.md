@@ -14,8 +14,8 @@ Thanks for your interest in contributing! This guide covers development setup, c
 ### Getting Started
 
 ```bash
-git clone https://github.com/ovexro/dockpanel.git
-cd dockpanel
+git clone https://github.com/MrTheSkream/cyberhunter-panel.git
+cd cyberhunter-panel
 
 # Enable the repo's git hooks (secrets scan, version consistency,
 # npm audit + cargo audit). See scripts/hooks/README.md.
