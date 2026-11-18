@@ -65,18 +65,35 @@ Instantané Hyper-V avant chaque étape.
 - [x] Mise à jour depuis l'interface : publier `rc.N+1`, l'installer (canal Beta), vérifier la version
       et le journal ; puis un « Roll back » vers l'instantané.
 - [ ] Test rapide par fonctionnalité :
-  - [ ] 1. multi-IP : IP par site, IP d'envoi mail ;
-  - [ ] 2. PHP par domaine et php.ini global ;
+  - [x] 1. multi-IP : IP par site, IP d'envoi mail ;
+  - [x] 2. PHP par domaine et php.ini global ;
   - [ ] 3. se connecter en tant qu'utilisateur ;
-  - [ ] 4. site en mode nginx + Apache avec un `.htaccess` ;
-  - [ ] 5. import HestiaCP d'une archive réelle (voir section 5) ;
-  - [ ] 6. ClamAV : installation, scan d'un site, quarantaine ;
-  - [ ] 7. FTPS par site, quota disque ; stats web GoAccess (affichage, 404 pour un non-admin, dossier
+  - [x] 4. site en mode nginx + Apache avec un `.htaccess` ;
+  - [x] 5. import HestiaCP d'une archive réelle (voir section 5) ;
+  - [x] 6. ClamAV : installation, scan d'un site, quarantaine ;
+  - [x] 7. FTPS par site, quota disque ; stats web GoAccess (affichage, 404 pour un non-admin, dossier
         supprimé avec le site) ;
   - [ ] 8. stats web : génération horaire ;
   - [ ] 9. terminal utilisateur : session persistante, `sudo` avec mot de passe ;
-  - [ ] 10. mises à jour (ci-dessus).
-- [ ] Sauvegarde : `/opt/dockpanel/scripts/db-backup.sh` tourne (cron 3 h), un dump est restaurable.
+  - [x] 10. mises à jour (ci-dessus).
+
+  Recette du 18/11/2026 sur `cyberhunter-2204` en 3.0.0-rc.2 (instantanés `recette-f1-avant` à
+  `recette-f9-avant`) :
+  - 2 : OK. Réserve : le php.ini global accepte une valeur non bornée (`memory_limit: "lots"`) et un
+    contenu complet sans extension valide (`php-fpm -t` ne le voit pas) ; la route par site, elle,
+    borne les valeurs. Conforme au contrat A3, à durcir.
+  - 3 : partiel. Refus vérifiés (clé API, client vers admin, `stop` hors emprunt). Le chemin principal
+    (bandeau, journal, retour admin) demande une session navigateur admin : à faire à la main.
+  - 5 : OK sur une sélection de l'archive réelle (1 site, 1 base, 1 domaine mail, 12 éléments, relance
+    sans réécriture). Défaut : `databases/local/install` annonce « MariaDB 11.4 LTS from mariadb.org »
+    alors que 10.6 de la distribution est installée quand `apt-get update` échoue
+    (`local_mariadb.rs`, sonde `curl -fsSI` sans `-L`, mise à jour apt non vérifiée).
+  - 8 : passage au démarrage vu (comptage exact, pas de double comptage), tick horaire non observé.
+    GoAccess 1.5.5 sur 22.04.
+  - 9 : partiel. Refus vérifiés (`browser_session_required`, `admin_required`) et prérequis 22.04
+    (tmux 3.2a, systemd 249, linger, `sudo` avec mot de passe). Le terminal lui-même demande une
+    session navigateur admin avec 2FA : à faire à la main.
+- [x] Sauvegarde : `/opt/dockpanel/scripts/db-backup.sh` tourne (cron 3 h), un dump est restaurable.
 - [ ] Canal de notification configuré (e-mail ou autre) : les alertes ne partent nulle part sinon
       (journal « No notification channels configured » vu en lab).
 
