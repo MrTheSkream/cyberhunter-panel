@@ -20,6 +20,132 @@ pub const INI_KEYS: &[&str] = &[
 /// Raw-editor size cap.
 pub const MAX_INI_BYTES: usize = 512 * 1024;
 
+/// `128M`, `2G`, `512K`, `1048576` -> bytes. `None` when not a PHP size.
+fn parse_size(v: &str) -> Option<u64> {
+    let v = v.trim();
+    let (num, mult) = match v.chars().last()? {
+        'k' | 'K' => (&v[..v.len() - 1], 1u64 << 10),
+        'm' | 'M' => (&v[..v.len() - 1], 1u64 << 20),
+        'g' | 'G' => (&v[..v.len() - 1], 1u64 << 30),
+        _ => (v, 1),
+    };
+    if num.is_empty() || num.len() > 12 || !num.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    num.parse::<u64>().ok()?.checked_mul(mult)
+}
+
+fn parse_int(v: &str) -> Option<i64> {
+    let v = v.trim();
+    let digits = v.strip_prefix('-').unwrap_or(v);
+    if digits.is_empty() || digits.len() > 9 || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    v.parse().ok()
+}
+
+/// Type and bounds of each of the 8 [`INI_KEYS`] (contract A3, hardened after
+/// the 22.04 run of 18/11/2026, where `memory_limit = lots` was accepted and
+/// written). The pool route bounds its own copies of these keys; the global
+/// php.ini, which every site inherits, now does too. Pure: the timezone's
+/// existence on disk is checked by the caller.
+pub fn validate_ini_value(key: &str, value: &str) -> Result<(), String> {
+    const MB: u64 = 1 << 20;
+    const GB: u64 = 1 << 30;
+    let v = value.trim();
+    let size_in = |lo: u64, hi: u64, what: &str| -> Result<(), String> {
+        match parse_size(v) {
+            Some(b) if b >= lo && b <= hi => Ok(()),
+            _ => Err(format!("{key} must be {what} (for example 256M)")),
+        }
+    };
+    let int_in = |lo: i64, hi: i64| -> Result<(), String> {
+        match parse_int(v) {
+            Some(n) if n >= lo && n <= hi => Ok(()),
+            _ => Err(format!("{key} must be a whole number between {lo} and {hi}")),
+        }
+    };
+    match key {
+        "memory_limit" if v == "-1" => Ok(()),
+        "memory_limit" => size_in(16 * MB, 16 * GB, "-1 or a size between 16M and 16G"),
+        "upload_max_filesize" => size_in(1 << 10, 16 * GB, "a size between 1K and 16G"),
+        "post_max_size" if v == "0" => Ok(()),
+        "post_max_size" => size_in(1 << 10, 16 * GB, "0 or a size between 1K and 16G"),
+        "max_execution_time" => int_in(0, 86_400),
+        "max_input_time" => int_in(-1, 86_400),
+        "display_errors" => {
+            let l = v.to_ascii_lowercase();
+            if matches!(l.as_str(), "on" | "off" | "1" | "0" | "true" | "false" | "yes" | "no" | "stdout" | "stderr") {
+                Ok(())
+            } else {
+                Err(format!("{key} must be On, Off, stdout or stderr"))
+            }
+        }
+        "error_reporting" => {
+            let shape_ok = !v.is_empty()
+                && v.len() <= 256
+                && v.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || " _&|~^()-".contains(c));
+            let tokens_ok = v
+                .split(|c: char| " &|~^()".contains(c))
+                .filter(|t| !t.is_empty())
+                .all(|t| (t.starts_with("E_") && t.len() > 2) || parse_int(t).is_some());
+            if shape_ok && tokens_ok {
+                Ok(())
+            } else {
+                Err(format!("{key} must be an expression of E_* constants (for example E_ALL & ~E_DEPRECATED)"))
+            }
+        }
+        "date.timezone" => {
+            let ok = !v.is_empty()
+                && v.len() <= 64
+                && v.split('/').count() <= 3
+                && v.split('/').all(|p| {
+                    !p.is_empty()
+                        && p.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
+                        && p.chars().all(|c| c.is_ascii_alphanumeric() || "_+-".contains(c))
+                });
+            if ok {
+                Ok(())
+            } else {
+                Err(format!("{key} must be a timezone name such as Europe/Paris or UTC"))
+            }
+        }
+        _ => Err(format!("{key} cannot be set here. Allowed: {}", INI_KEYS.join(", "))),
+    }
+}
+
+/// Raw-editor checks before anything is written: the file keeps its `[PHP]`
+/// section, and every one of the 8 main keys it sets passes
+/// [`validate_ini_value`]. Returns the timezone to check on disk, if any.
+pub fn validate_ini_content(content: &str) -> Result<Option<String>, String> {
+    if !content.lines().any(|l| section_header(l).is_some_and(|h| h == "PHP")) {
+        return Err("php.ini content has no [PHP] section - send the whole file, not an extract".into());
+    }
+    let values = read_ini_values(content);
+    for (k, v) in &values {
+        if let Some(v) = v {
+            validate_ini_value(k, v)?;
+        }
+    }
+    Ok(values.get("date.timezone").cloned().flatten())
+}
+
+/// `Unable to load dynamic library ...` lines of a `php-fpm -t` output that
+/// were not already in `before` (the test of the file being replaced). PHP
+/// reports a missing extension as a startup warning and `-t` still succeeds,
+/// so the raw editor could drop or misspell an extension unnoticed; a warning
+/// the server already had does not block an unrelated edit.
+pub fn new_startup_failures(before: &str, after: &str) -> Vec<String> {
+    let pick = |s: &str| -> Vec<String> {
+        s.lines()
+            .filter(|l| l.to_ascii_lowercase().contains("unable to load dynamic library"))
+            .map(|l| l.trim().to_string())
+            .collect()
+    };
+    let old = pick(before);
+    pick(after).into_iter().filter(|l| !old.contains(l)).collect()
+}
+
 /// The FPM php.ini of a version (Debian layout).
 pub fn ini_path(version: &str) -> String {
     format!("/etc/php/{version}/fpm/php.ini")
@@ -283,5 +409,55 @@ max_input_time = 5\n";
             true,
             "PHP:  syntax error, unexpected '=' in /etc/php/8.3/fpm/php.ini on line 12\nNOTICE: configuration file /etc/php/8.3/fpm/php-fpm.conf test is successful"
         ));
+    }
+
+    #[test]
+    fn ini_values_are_typed_and_bounded() {
+        for (k, v) in [
+            ("memory_limit", "256M"), ("memory_limit", "-1"), ("memory_limit", "2G"),
+            ("upload_max_filesize", "64M"), ("post_max_size", "0"), ("post_max_size", "72M"),
+            ("max_execution_time", "0"), ("max_execution_time", "300"), ("max_input_time", "-1"),
+            ("display_errors", "Off"), ("display_errors", "stderr"),
+            ("error_reporting", "E_ALL & ~E_DEPRECATED & ~E_STRICT"), ("error_reporting", "E_ALL"),
+            ("error_reporting", "32767"), ("date.timezone", "Europe/Paris"), ("date.timezone", "UTC"),
+            ("date.timezone", "America/Argentina/Buenos_Aires"),
+        ] {
+            assert!(validate_ini_value(k, v).is_ok(), "{k} = {v}");
+        }
+        // s18/11 on 22.04: `memory_limit: "lots"` went through and was written.
+        for (k, v) in [
+            ("memory_limit", "lots"), ("memory_limit", "8M"), ("memory_limit", "64G"), ("memory_limit", ""),
+            ("memory_limit", "12Q"), ("upload_max_filesize", "0"), ("post_max_size", "-1"),
+            ("max_execution_time", "-5"), ("max_execution_time", "abc"), ("max_input_time", "999999"),
+            ("display_errors", "maybe"), ("error_reporting", "E_ALL; system"), ("error_reporting", "foo"),
+            ("date.timezone", "../../etc/passwd"), ("date.timezone", "/etc/passwd"), ("date.timezone", ""),
+            ("engine", "On"),
+        ] {
+            assert!(validate_ini_value(k, v).is_err(), "{k} = {v} should be refused");
+        }
+    }
+
+    #[test]
+    fn raw_content_checks() {
+        assert_eq!(validate_ini_content(SAMPLE), Ok(None));
+        assert_eq!(
+            validate_ini_content("[PHP]\ndate.timezone = Europe/Paris\n"),
+            Ok(Some("Europe/Paris".into()))
+        );
+        // The 3-line replacement of the 22.04 run: no [PHP] section.
+        assert!(validate_ini_content("extension=nope\nmemory_limit=128M\nengine=On\n").is_err());
+        assert!(validate_ini_content("[PHP]\nmemory_limit = lots\n").is_err());
+        // A value set only inside a [PATH=] section is not the global one.
+        assert!(validate_ini_content("[PHP]\n[PATH=/var/www/x]\nmemory_limit = lots\n").is_ok());
+    }
+
+    #[test]
+    fn only_new_extension_failures_count() {
+        let warn = "PHP Warning:  PHP Startup: Unable to load dynamic library 'nope' (tried: /usr/lib/php/20210902/nope (cannot open)) in Unknown on line 0";
+        let ok = "NOTICE: configuration file /etc/php/8.1/fpm/php-fpm.conf test is successful";
+        assert!(new_startup_failures(ok, ok).is_empty());
+        assert_eq!(new_startup_failures(ok, &format!("{warn}\n{ok}")).len(), 1);
+        // Already broken before this edit: not this edit's fault.
+        assert!(new_startup_failures(&format!("{warn}\n{ok}"), &format!("{warn}\n{ok}")).is_empty());
     }
 }

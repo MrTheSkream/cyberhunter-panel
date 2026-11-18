@@ -705,6 +705,18 @@ struct IniUpdate {
     values: Option<std::collections::BTreeMap<String, String>>,
 }
 
+/// A `date.timezone` PHP would reject at startup ("Invalid date.timezone") is
+/// refused before the file is written. The name already passed
+/// `php_ini::validate_ini_value` (no `..`, no leading `/`).
+fn timezone_exists(tz: &str) -> Result<(), String> {
+    let root = std::path::Path::new("/usr/share/zoneinfo");
+    if tz == "UTC" || !root.is_dir() || root.join(tz).is_file() {
+        Ok(())
+    } else {
+        Err(format!("Unknown timezone {tz:?} (no /usr/share/zoneinfo/{tz})"))
+    }
+}
+
 /// Validate the version and return the FPM php.ini path (404 if absent).
 fn ini_path_for(version: &str) -> Result<String, PhpApiErr> {
     if !ALLOWED_VERSIONS.contains(&version) {
@@ -788,6 +800,11 @@ async fn put_ini(
             if content.contains('\0') {
                 return Err(php_api_err(StatusCode::BAD_REQUEST, "php.ini content contains a NUL byte"));
             }
+            let tz = php_ini::validate_ini_content(&content)
+                .map_err(|e| php_api_err(StatusCode::BAD_REQUEST, &e))?;
+            if let Some(tz) = tz {
+                timezone_exists(&tz).map_err(|e| php_api_err(StatusCode::BAD_REQUEST, &e))?;
+            }
             content
         }
         (None, Some(values)) => {
@@ -802,12 +819,22 @@ async fn put_ini(
                     ));
                 }
                 php_pool::validate_value(k, v).map_err(|e| php_api_err(StatusCode::BAD_REQUEST, &e))?;
+                php_ini::validate_ini_value(k, v).map_err(|e| php_api_err(StatusCode::BAD_REQUEST, &e))?;
+                if k == "date.timezone" {
+                    timezone_exists(v).map_err(|e| php_api_err(StatusCode::BAD_REQUEST, &e))?;
+                }
             }
             php_ini::set_ini_values(&previous, &values)
         }
         _ => {
             return Err(php_api_err(StatusCode::BAD_REQUEST, "Send either \"content\" or \"values\""));
         }
+    };
+
+    // Baseline of the file being replaced, so only warnings this edit
+    // introduces count (see php_ini::new_startup_failures).
+    let baseline = match php_pool::test_fpm_config(&version).await {
+        Ok(out) | Err(out) => out,
     };
 
     let backup = format!("{path}.dockpanel.bak");
@@ -820,6 +847,10 @@ async fn put_ini(
 
     // Test, restart, check. The first failure wins and triggers the rollback.
     let failure: Option<String> = match php_pool::test_fpm_config(&version).await {
+        Ok(out) if !php_ini::new_startup_failures(&baseline, &out).is_empty() => Some(format!(
+            "php-fpm{version} -t reports an extension that no longer loads: {}",
+            php_ini::new_startup_failures(&baseline, &out).join(" | ")
+        )),
         Ok(out) if php_ini::ini_test_passed(true, &out) => {
             match php_pool::fpm_systemctl(&version, "restart").await {
                 Err(e) => Some(e),

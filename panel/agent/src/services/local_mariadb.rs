@@ -420,8 +420,10 @@ async fn add_mariadb_org_repo() -> Result<(), String> {
     }
     // The Release probe comes first: a suite mariadb.org does not publish must fall
     // back to the distribution package, not leave a broken apt source behind.
+    // `-L`: deb.mariadb.org answers with a redirect to a mirror, and only the
+    // final answer says whether the suite exists.
     let script = format!(
-        "set -e; curl -fsSI https://deb.mariadb.org/11.4/{id}/dists/{codename}/Release >/dev/null; \
+        "set -e; curl -fsSIL https://deb.mariadb.org/11.4/{id}/dists/{codename}/Release >/dev/null; \
          mkdir -p /etc/apt/keyrings; \
          curl -fsSL -o /etc/apt/keyrings/mariadb-keyring.pgp https://mariadb.org/mariadb_release_signing_key.pgp; \
          printf 'X-Repolib-Name: MariaDB\\nTypes: deb\\nURIs: https://deb.mariadb.org/11.4/{id}\\nSuites: {codename}\\nComponents: main\\nSigned-By: /etc/apt/keyrings/mariadb-keyring.pgp\\n' \
@@ -435,8 +437,64 @@ async fn add_mariadb_org_repo() -> Result<(), String> {
         remove_mariadb_org_repo().await;
         return Err(String::from_utf8_lossy(&out.stderr).chars().take(300).collect());
     }
-    crate::services::pkg::refresh_index().await;
+    // The source only counts once apt has actually read it. An `apt-get update`
+    // that fails (a mirror timing out, s18/11 on 22.04) leaves the index
+    // without mariadb.org, and the install then takes the distribution package
+    // while this function had already reported success.
+    let update = safe_command_unsandboxed("apt-get", &[])
+        .arg("update")
+        .output_with_timeout(Duration::from_secs(300))
+        .await;
+    let policy = safe_command_unsandboxed("apt-cache", &[])
+        .args(["policy", "mariadb-server"])
+        .output_with_timeout(Duration::from_secs(60))
+        .await;
+    let indexed = matches!(&update, Ok(o) if o.status.success())
+        && matches!(&policy, Ok(o) if policy_offers_mariadb_org(&String::from_utf8_lossy(&o.stdout)));
+    if !indexed {
+        remove_mariadb_org_repo().await;
+        crate::services::pkg::refresh_index().await;
+        let why = match &update {
+            Ok(o) if !o.status.success() => format!(
+                "apt-get update failed: {}",
+                String::from_utf8_lossy(&o.stderr).chars().take(200).collect::<String>()
+            ),
+            Err(e) => format!("apt-get update failed: {e}"),
+            _ => "apt does not offer mariadb-server from mariadb.org".to_string(),
+        };
+        return Err(why);
+    }
     Ok(())
+}
+
+/// Whether `apt-cache policy mariadb-server` lists a candidate from mariadb.org.
+fn policy_offers_mariadb_org(policy: &str) -> bool {
+    policy.lines().any(|l| l.contains("deb.mariadb.org") || l.contains("mirror.mariadb.org"))
+}
+
+/// `major.minor` of a `SELECT VERSION()` answer ("10.6.23-MariaDB-0ubuntu0.22.04.1" -> "10.6").
+fn major_minor(version: &str) -> Option<String> {
+    let mut parts = version.split(|c: char| c == '.' || c == '-');
+    let major = parts.next().filter(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))?;
+    let minor = parts.next().filter(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))?;
+    Some(format!("{major}.{minor}"))
+}
+
+/// The install note, from the version that actually runs rather than from the
+/// repository that was configured: they disagreed on 22.04 (s18/11), where
+/// the note said 11.4 over a distribution 10.6.
+fn install_source_note(version: &str, repo_error: Option<&str>) -> String {
+    match (major_minor(version).as_deref(), repo_error) {
+        (Some("11.4"), None) => "MariaDB 11.4 LTS from mariadb.org".to_string(),
+        (mm, Some(_)) => format!(
+            "distribution MariaDB package {} (mariadb.org repository unavailable)",
+            mm.unwrap_or("of unknown version")
+        ),
+        (mm, None) => format!(
+            "distribution MariaDB package {} (mariadb.org repository not used, removed)",
+            mm.unwrap_or("of unknown version")
+        ),
+    }
 }
 
 async fn remove_mariadb_org_repo() {
@@ -463,23 +521,34 @@ pub async fn install() -> Result<(String, String), String> {
         write_cnf(&wanted).await?;
     }
 
+    // `Some(repo result)` only when this call installed the packages.
+    let mut fresh_install: Option<Result<(), String>> = None;
     if !is_installed().await {
-        match add_mariadb_org_repo().await {
-            Ok(()) => notes.push("MariaDB 11.4 LTS from mariadb.org".to_string()),
-            Err(e) => {
-                tracing::warn!("mariadb.org repository unavailable, using the distribution package: {e}");
-                notes.push("distribution MariaDB package (mariadb.org repository unavailable)".to_string());
-            }
+        let repo = add_mariadb_org_repo().await;
+        if let Err(e) = &repo {
+            tracing::warn!("mariadb.org repository unavailable, using the distribution package: {e}");
         }
         if let Err(e) = crate::services::pkg::install(&["mariadb-server", "mariadb-client"]).await {
             return Err(crate::services::pkg::explain_package_failure(&e).await);
         }
+        fresh_install = Some(repo);
     }
     systemctl(&["enable", "mariadb"]).await.ok();
     if cnf_changed || !is_running().await {
         restart_and_wait().await?;
     }
     let (version, _, uca, _) = probe().await?;
+    if let Some(repo) = &fresh_install {
+        let repo_error = repo.as_ref().err().map(String::as_str);
+        let from_org = repo_error.is_none() && major_minor(&version).as_deref() == Some("11.4");
+        if repo_error.is_none() && !from_org {
+            // The source was added but did not serve this install: leaving it
+            // would turn a later `apt upgrade` into a 10.x -> 11.4 major upgrade.
+            remove_mariadb_org_repo().await;
+            crate::services::pkg::refresh_index().await;
+        }
+        notes.insert(0, install_source_note(&version, repo_error));
+    }
     if !uca {
         notes.push("utf8mb4_uca1400_ai_ci unknown here: imported dumps are rewritten to utf8mb4_unicode_ci".into());
     }
@@ -1275,6 +1344,37 @@ mod tests {
         assert!(!is_valid_local_user(&"u".repeat(81)));
         assert!(!is_valid_local_user("root"));
         assert!(!is_valid_local_user("mariadb.sys"));
+    }
+
+    #[test]
+    fn install_note_follows_the_running_version() {
+        assert_eq!(major_minor("10.6.23-MariaDB-0ubuntu0.22.04.1").as_deref(), Some("10.6"));
+        assert_eq!(major_minor("11.4.5-MariaDB-ubu2204").as_deref(), Some("11.4"));
+        assert_eq!(major_minor("garbage"), None);
+        assert_eq!(major_minor(""), None);
+        assert_eq!(
+            install_source_note("11.4.5-MariaDB-ubu2204", None),
+            "MariaDB 11.4 LTS from mariadb.org"
+        );
+        // s18/11 on 22.04: the repository was configured, apt-get update failed,
+        // 10.6 from the distribution was installed, and the note said 11.4.
+        let n = install_source_note("10.6.23-MariaDB-0ubuntu0.22.04.1", None);
+        assert!(n.starts_with("distribution MariaDB package 10.6"), "{n}");
+        assert!(!n.contains("11.4"), "{n}");
+        let n = install_source_note("10.6.23-MariaDB", Some("apt-get update failed: timeout"));
+        assert!(n.starts_with("distribution MariaDB package 10.6"), "{n}");
+        assert!(n.contains("unavailable"), "{n}");
+        // 11.4 reported while the repository failed is still not "from mariadb.org".
+        assert!(!install_source_note("11.4.5", Some("x")).contains("from mariadb.org"));
+    }
+
+    #[test]
+    fn policy_detects_mariadb_org() {
+        let org = "mariadb-server:\n  Candidate: 1:11.4.5+maria~ubu2204\n  Version table:\n     1:11.4.5+maria~ubu2204 500\n        500 https://deb.mariadb.org/11.4/ubuntu jammy/main amd64 Packages\n";
+        let distro = "mariadb-server:\n  Candidate: 1:10.6.23-0ubuntu0.22.04.1\n  Version table:\n     500 http://archive.ubuntu.com/ubuntu jammy-updates/universe amd64 Packages\n";
+        assert!(policy_offers_mariadb_org(org));
+        assert!(!policy_offers_mariadb_org(distro));
+        assert!(!policy_offers_mariadb_org(""));
     }
 
     #[test]
