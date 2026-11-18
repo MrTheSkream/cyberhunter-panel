@@ -6,7 +6,7 @@ use axum::{
 use jsonwebtoken::{encode, EncodingKey, Header};
 
 use crate::auth::{AuthUser, ServerScope};
-use crate::error::{internal_error, err, require_admin, ApiError};
+use crate::error::{internal_error, err, err_coded, require_admin, ApiError};
 use crate::AppState;
 
 #[derive(serde::Deserialize)]
@@ -95,7 +95,34 @@ struct TerminalTicket {
     scope: String,
 }
 
-/// GET /api/terminal/token - Generate a short-lived terminal ticket.
+/// A shell is opened by someone sitting at a browser session, never by an API
+/// key: a `dp_` key is a long-lived secret kept in scripts, and this ticket is
+/// worth a root shell on the host.
+fn require_browser_session(key_id: Option<uuid::Uuid>) -> Result<(), ApiError> {
+    if key_id.is_some() {
+        return Err(err_coded(
+            StatusCode::FORBIDDEN,
+            "A browser session is required",
+            "browser_session_required",
+        ));
+    }
+    Ok(())
+}
+
+/// GET /api/terminal/token - The route's handler: the browser-session rule, then
+/// [`ws_token`]. A wrapper because `ws_token` itself is pinned byte for byte
+/// (`user_terminal::tests::ws_token_is_unchanged_byte_for_byte`).
+pub async fn ws_token_for_browser(
+    state: State<AppState>,
+    auth: AuthUser,
+    scope: ServerScope,
+    query: Query<TerminalQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    require_browser_session(auth.0.key_id)?;
+    ws_token(state, auth, scope, query).await
+}
+
+/// Generate a short-lived terminal ticket.
 /// Returns a 60-second JWT signed with the agent token (never exposes the raw agent token).
 pub async fn ws_token(
     State(state): State<AppState>,
@@ -563,4 +590,28 @@ function showToast(msg){{var el=document.getElementById('toast');el.textContent=
     );
 
     Ok(axum::response::Html(html))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_api_key_never_gets_a_terminal_ticket() {
+        let (status, body) = require_browser_session(Some(uuid::Uuid::new_v4())).unwrap_err();
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(body.0["code"], "browser_session_required");
+    }
+
+    #[test]
+    fn the_route_goes_through_the_browser_session_rule() {
+        let routes = include_str!("mod.rs");
+        assert!(routes.contains("terminal::ws_token_for_browser"));
+        assert!(!routes.contains("terminal::ws_token)"));
+    }
+
+    #[test]
+    fn a_browser_session_passes() {
+        assert!(require_browser_session(None).is_ok());
+    }
 }

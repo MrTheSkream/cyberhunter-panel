@@ -1204,7 +1204,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/sites/{id}/logs", get(logs::site_logs))
         .route("/api/sites/{id}/logs/search", get(logs::search_site_logs))
         // Terminal
-        .route("/api/terminal/token", get(terminal::ws_token))
+        .route("/api/terminal/token", get(terminal::ws_token_for_browser))
         .route("/api/terminal/share", post(terminal::share_output))
         .route("/api/terminal/shares", get(terminal::list_shares))
         .route("/api/terminal/share/{id}", delete(terminal::revoke_share))
