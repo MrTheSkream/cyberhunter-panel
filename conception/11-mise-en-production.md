@@ -81,13 +81,16 @@ Instantané Hyper-V avant chaque étape.
   `recette-f9-avant`) :
   - 2 : OK. Réserve : le php.ini global accepte une valeur non bornée (`memory_limit: "lots"`) et un
     contenu complet sans extension valide (`php-fpm -t` ne le voit pas) ; la route par site, elle,
-    borne les valeurs. Conforme au contrat A3, à durcir.
+    borne les valeurs. Corrigé (eaf9aa3, e0189a5) : 8 clés typées et bornées, `[PHP]` obligatoire
+    dans l'éditeur brut, extension qui ne se charge plus refusée ; vérifié en VM.
   - 3 : partiel. Refus vérifiés (clé API, client vers admin, `stop` hors emprunt). Le chemin principal
     (bandeau, journal, retour admin) demande une session navigateur admin : à faire à la main.
   - 5 : OK sur une sélection de l'archive réelle (1 site, 1 base, 1 domaine mail, 12 éléments, relance
     sans réécriture). Défaut : `databases/local/install` annonce « MariaDB 11.4 LTS from mariadb.org »
     alors que 10.6 de la distribution est installée quand `apt-get update` échoue
-    (`local_mariadb.rs`, sonde `curl -fsSI` sans `-L`, mise à jour apt non vérifiée).
+    (`local_mariadb.rs`, sonde `curl -fsSI` sans `-L`, mise à jour apt non vérifiée). Corrigé (eaf9aa3) :
+    la note suit la version installée, le dépôt n'est retenu que si apt le propose ; vérifié en VM
+    (miroir mariadb.org injoignable depuis le lab, 10.6 annoncée comme telle, aucune source laissée).
   - 8 : passage au démarrage vu (comptage exact, pas de double comptage), tick horaire non observé.
     GoAccess 1.5.5 sur 22.04.
   - 9 : partiel. Refus vérifiés (`browser_session_required`, `admin_required`) et prérequis 22.04
