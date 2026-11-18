@@ -792,42 +792,6 @@ export default function Landing() {
                   stuck? <a href="https://github.com/MrTheSkream/cyberhunter-panel/issues" className="text-[#6b6b74] hover:text-[#f4f4f5] underline underline-offset-4 decoration-[#3f3f46] transition-colors">open an issue</a>
                 </p>
               </div>
-
-              {/* ── Support ──────────────────────────────────────────────
-                  Deliberately AFTER the six zeroes and inside the same
-                  section. The reader has just been told the price six times;
-                  the honest next question is what pays for it, and the answer
-                  is nobody. So this states the arithmetic and stops - no
-                  "please", no progress bar, no guilt, and the word optional
-                  in the margin where the price figures were.
-
-                  ⚠ No monetary figure here on purpose. The competitor's price
-                  is already stated once, in the FAQ, and the register says a
-                  number lives in exactly one place. Repeating it here would
-                  make this the second surface that has to be corrected when
-                  it moves. */}
-              <div className="mt-14 max-w-2xl border-t border-[#1e1e22] pt-8">
-                <p className="text-[15px] text-[#a3a3ad] leading-relaxed">
-                  The panel this replaces bills every month, forever. This one has no company
-                  behind it, no investors to answer to, no telemetry, and no tier above the one
-                  you just read - which is why the roadmap is decided by what helps people
-                  running servers rather than by what converts.
-                </p>
-                <p className="mt-4 text-[15px] text-[#a3a3ad] leading-relaxed">
-                  Support buys test hardware. A wider fleet of throwaway servers means each
-                  release is verified on more distributions before it reaches yours, and a
-                  security fix ships the day it is written instead of the weekend after.
-                </p>
-                <div className="mt-6 flex flex-wrap items-center gap-x-6 gap-y-3">
-                  <a href="https://github.com/sponsors/ovexro" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 text-sm font-medium text-[#f4f4f5] underline decoration-[#3f3f46] hover:decoration-[#f4f4f5] underline-offset-4 transition-colors">
-                    <Github className="w-3.5 h-3.5" /> GitHub Sponsors
-                  </a>
-                  <a href="https://www.paypal.com/paypalme/ovexro" target="_blank" rel="noopener noreferrer" className="text-sm font-medium text-[#a3a3ad] hover:text-[#f4f4f5] transition-colors">
-                    PayPal
-                  </a>
-                  <p className="mono text-[11px] text-[#3f3f46] ml-auto">entirely optional</p>
-                </div>
-              </div>
             </div>
           </div>
         </div>
