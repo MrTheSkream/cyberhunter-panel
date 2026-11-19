@@ -1134,7 +1134,7 @@ pub async fn download_s3(
     )
     .await
     .map_err(|e| {
-        if e.contains("exit status: 63") {
+        if e.contains("exit status: 63") || e.contains("(63)") {
             format!("{DOWNLOAD_TOO_LARGE} ({DOWNLOAD_MAX_BYTES} bytes)")
         } else {
             e

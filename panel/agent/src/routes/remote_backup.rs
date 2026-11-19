@@ -407,9 +407,11 @@ async fn delete_object(
 /// The name prefix, suffixes and legacy flag a prune body asks for, validated.
 fn prune_selector(body: &PruneRequest) -> Result<(String, Vec<String>, bool), String> {
     let (prefix, legacy) = match (&body.name_prefix, &body.domain) {
+        // With a name_prefix the domain is ignored, including an empty one (the
+        // backend sends `"domain": ""` for database dumps).
         (Some(p), _) => (p.clone(), false),
-        (None, Some(d)) => (format!("{d}-"), true),
-        (None, None) => return Err("Missing name_prefix or domain".to_string()),
+        (None, Some(d)) if !d.is_empty() => (format!("{d}-"), true),
+        _ => return Err("Missing name_prefix or domain".to_string()),
     };
     remote_backup::validate_name_prefix(&prefix)?;
     let suffixes = body.suffixes.clone().unwrap_or_else(|| vec![".tar.gz".to_string()]);
@@ -537,6 +539,24 @@ mod tests {
         assert!(!legacy);
     }
 
+    /// Exactly what the backend sends for a database dump.
+    #[test]
+    fn backend_database_prune_body_is_accepted() {
+        let body: PruneRequest = serde_json::from_value(serde_json::json!({
+            "destination": { "type": "s3", "bucket": "b", "endpoint": "https://e", "access_key": "a", "secret_key": "s" },
+            "domain": "",
+            "retention": 5,
+            "name_prefix": "appdb-",
+            "suffixes": [".sql.gz", ".sql.gz.enc"]
+        }))
+        .unwrap();
+        let (prefix, suffixes, legacy) = prune_selector(&body).unwrap();
+        assert_eq!(prefix, "appdb-");
+        assert_eq!(suffixes, vec![".sql.gz".to_string(), ".sql.gz.enc".to_string()]);
+        assert!(!legacy);
+        assert_eq!(body.retention, 5);
+    }
+
     #[test]
     fn bad_prune_selectors_are_refused() {
         for np in ["", "a/b", "..", "x..y", "../etc"] {
@@ -551,6 +571,12 @@ mod tests {
         }))
         .unwrap();
         assert!(prune_selector(&neither).is_err());
+        // Legacy body with an empty domain would have meant the prefix "-".
+        let empty_domain: PruneRequest = serde_json::from_value(serde_json::json!({
+            "destination": { "type": "s3" }, "domain": "", "retention": 1
+        }))
+        .unwrap();
+        assert!(prune_selector(&empty_domain).is_err());
         let empty_suffixes: PruneRequest = serde_json::from_value(serde_json::json!({
             "destination": { "type": "s3" }, "name_prefix": "db-", "suffixes": [], "retention": 1
         }))
