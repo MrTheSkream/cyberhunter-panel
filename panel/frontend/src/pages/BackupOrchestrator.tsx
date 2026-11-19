@@ -872,7 +872,7 @@ function OverviewTab({ health }: { health: BackupHealth }) {
   const cards = [
     { label: "Site Backups", value: health.total_site_backups, color: "text-rust-400" },
     { label: "DB Backups", value: health.total_db_backups, color: "text-accent-400" },
-    { label: "Volume Backups", value: health.total_volume_backups, color: "text-warn-400" },
+    { label: "App Data Backups", value: health.total_volume_backups, color: "text-warn-400" },
     { label: "Total Storage", value: formatSize(health.total_storage_bytes), color: "text-dark-50" },
     { label: "24h Success", value: health.last_24h_success, color: "text-rust-400" },
     { label: "24h Failed", value: health.last_24h_failed, color: health.last_24h_failed > 0 ? "text-danger-400" : "text-dark-200" },

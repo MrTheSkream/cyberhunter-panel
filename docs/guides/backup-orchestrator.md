@@ -102,7 +102,7 @@ for the copy, and the archive is not encrypted.
 dockpanel backup vol-create my_app_data my-app-container
 ```
 
-### List Volume Backups
+### List App Data Backups
 
 ```bash
 dockpanel backup vol-list my-app-container
