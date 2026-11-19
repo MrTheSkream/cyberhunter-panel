@@ -851,6 +851,116 @@ eq "I16 foreign_cert_issuer delegates rather than keeping a second copy" \
    "$(occ "$(subj "$HELP")" 'matchcert_provenance(&status){')" "1"
 
 echo
+echo "── J. Une émission à la fois par site, et le vhost suit la base ─────────────"
+# rc.4 : POST /api/sites lance une émission en tâche de fond ; un clic sur le
+# bouton SSL pendant ce temps plaçait une seconde commande ACME pour le même
+# domaine (422), et le site restait `ssl_enabled = true` derrière un vhost sans
+# `listen 443`. Cause du vhost : la tâche de création reconstruisait le vhost
+# depuis la ligne AVANT d'y écrire `ssl_enabled = true`, donc sans SSL.
+
+# Corps d'une fonction, commentaires retirés puis aplati comme `subj`. Compte
+# les accolades à partir de la ligne qui porte le motif (-F).
+fbody() {
+  sed -E -e 's://.*$::' "$1" | awk -v pat="$2" '
+    !on && index($0, pat) { on=1 }
+    on { print; n += gsub(/\{/, "{"); n -= gsub(/\}/, "}"); if (seen && n <= 0) exit; if (n > 0) seen=1 }
+  ' | tr -d ' \n\\'
+}
+# Vrai si $2 apparaît avant $3 dans $1 (les deux présents).
+precedes() {
+  case "$1" in *"$2"*) ;; *) return 1 ;; esac
+  case "$1" in *"$3"*) ;; *) return 1 ;; esac
+  local a="${1%%"$2"*}" b="${1%%"$3"*}"
+  [ "${#a}" -lt "${#b}" ]
+}
+check() { if eval "$2"; then ok "$1"; else bad "$1" "${3:-condition not met}"; fi; }
+
+LOCKF=panel/backend/src/services/issuance_lock.rs
+ERRF=panel/backend/src/error.rs
+ADAPPS=panel/agent/src/routes/docker_apps.rs
+AGIT=panel/agent/src/services/git_build.rs
+for f in "$LOCKF" "$ERRF" "$ADAPPS" "$AGIT"; do
+  [ -f "$f" ] || { bad "SETUP" "$f missing"; exit 1; }
+done
+F_LOCK=$(subj "$LOCKF")
+
+# La tâche de création : verrou à chaque tentative, budget long, et la
+# reconstruction APRÈS l'UPDATE qui pose `ssl_enabled = true`.
+eq "J1 each creation-time attempt takes the site's issuance lock" \
+   "$(occ "$F_SITES" 'crate::services::issuance_lock::begin(site_id,crate::services::issuance_lock::ISSUANCE_WAIT,')" "1"
+eq "J2 the creation-time order uses the long HTTP-01 budget, not the 60s one" \
+   "$(occ "$F_SITES" 'post_http01_order(&ssl_agent,&format!("/ssl/provision/{ssl_domain}"),ssl_body)')" "1"
+AUTO=${F_SITES#*crate::services::issuance_lock::begin(site_id,}
+check "J3 the creation-time rebuild comes AFTER the row says ssl_enabled = true" \
+   'precedes "$AUTO" "ssl_profile=NULL,ssl_challenge=" "rebuild_vhost_for_site(&ssl_db,&ssl_agent,site_id)"' \
+   "the rebuild renders from a row without SSL and drops listen 443"
+eq "J4 the creation-time task rebuilds after success AND after a failed attempt" \
+   "$(occ "$F_SITES" 'rebuild_vhost_for_site(&ssl_db,&ssl_agent,site_id)')" "2"
+eq "J5 a finished issuance stops the creation-time retries" \
+   "$(occ "$F_SITES" 'Err(crate::services::issuance_lock::Blocked::AlreadyIssued)=>{')" "1"
+
+# Les portes interactives : attente bornée, relecture, 409 codé.
+eq "J6 provision, provision_dns01 and renew_for_site take the lock (3 calls + definition)" \
+   "$(occ "$F_SSL" 'begin_interactive_issuance(')" "4"
+eq "J7 only the first-issuance doors re-read ssl_enabled after the wait" \
+   "$(occ "$F_SSL" 'first_issuance&&lock::ssl_enabled_now(&pool,site_id).await')" "1"
+eq "J8 a certificate that arrived during the wait is the existing 409" \
+   "$(occ "$F_SSL" 'Blocked::AlreadyIssued=>err(StatusCode::CONFLICT,"SSLisalreadyenabled"),')" "1"
+eq "J9 a wait that runs out is the coded 409" \
+   "$(occ "$F_SSL" 'Blocked::InProgress=>lock::in_progress_error(domain),')" "1"
+eq "J10 the coded 409 names ssl_issuance_in_progress" \
+   "$(occ "$(subj "$ERRF")" 'pubconstCODE_SSL_ISSUANCE_IN_PROGRESS:&str="ssl_issuance_in_progress";')" "1"
+eq "J11 ... and the lock answers with it, as a CONFLICT" \
+   "$(occ "$F_LOCK" 'axum::http::StatusCode::CONFLICT,')$(occ "$F_LOCK" 'crate::error::CODE_SSL_ISSUANCE_IN_PROGRESS,')" "11"
+eq "J12 the wait is 90 seconds" "$(occ "$F_LOCK" 'pubconstISSUANCE_WAIT:Duration=Duration::from_secs(90);')" "1"
+check "J13 a timed-out wait places no order: the re-read runs only once the lock is held" \
+   'precedes "$(fbody "$LOCKF" "pub async fn begin<")" ".map_err(|_|Blocked::InProgress)?" "already_issued().await"'
+PROV=$(fbody "$SSL" "pub async fn provision(")
+check "J14 provision takes the lock before its agent order" \
+   'precedes "$PROV" "begin_interactive_issuance(&state.db,id,&site.domain,true)" "post_http01_order(&agent,&agent_path"'
+RENEW=$(fbody "$SSL" "pub(crate) async fn renew_for_site(")
+check "J15 renew_for_site takes the lock before its plan, and goes on after the wait" \
+   'precedes "$RENEW" "begin_interactive_issuance(&state.db,id,&site.domain,false)" "renewal_plan("'
+eq "J16 a failed order at the three interactive doors rebuilds the vhost from the row" \
+   "$(occ "$F_SSL" 'ifordered.is_err()')" "3"
+D01=$(fbody "$SSL" "pub(crate) async fn renew_over_dns01(")
+check "J17 renew_over_dns01 never takes the lock (three callers already hold it)" \
+   '[ -n "$D01" ] && [ "$(occ "$D01" "issuance_lock")$(occ "$D01" "begin_interactive_issuance")" = "00" ]'
+
+# Les renouvellements sans opérateur : pas d'attente, reprise plus tard.
+eq "J18 the auto-healer renewal skips a site being issued, without waiting" \
+   "$(occ "$F_HEAL" 'crate::services::issuance_lock::begin(*site_id,Duration::ZERO,')" "1"
+eq "J19 the security scanner renewal skips a site being issued, without waiting" \
+   "$(occ "$F_SCAN" 'crate::services::issuance_lock::begin(site_id,Duration::ZERO,')" "1"
+eq "J20 both unattended loops rebuild after a failed renewal" \
+   "$(occ "$F_HEAL" 'rebuild_vhost_after_failed_renewal(')$(occ "$F_SCAN" 'rebuild_vhost_after_failed_renewal(')" "11"
+
+# L'agent : le verrou de site couvre la commande ACME jusqu'au vhost.
+ENABLE=$(fbody "$ASSL" "pub async fn enable_ssl_for_site(")
+check "J21 enable_ssl_for_site is handed the held lock and never re-takes it (not reentrant)" \
+   '[ -n "$ENABLE" ] && [ "$(occ "$ENABLE" "held:&crate::site_lock::SiteGuard,")" = "1" ] && [ "$(occ "$ENABLE" "lock_site(")" = "0" ]'
+eq "J22 the four agent SSL doors hold the site (provision, upload, renew, DNS-01)" \
+   "$(occ "$F_ASSLR" 'crate::site_lock::hold_site(&')" "4"
+APROV=$(fbody "$ASSLR" "async fn provision(")
+check "J23 the agent's provision holds the site BEFORE ordering" \
+   'precedes "$APROV" "crate::site_lock::hold_site(&domain)" "ssl::provision_cert(&account"'
+ARENEW=$(fbody "$ASSLR" "async fn renew(")
+check "J24 the agent's renew holds the site BEFORE ordering" \
+   'precedes "$ARENEW" "crate::site_lock::hold_site(&domain)" "ssl::provision_cert(&account"'
+AD01=$(fbody "$ASSLR" "async fn provision_dns01(")
+check "J25 the agent's DNS-01 provision holds the site BEFORE ordering" \
+   'precedes "$AD01" "crate::site_lock::hold_site(&domain)" "ssl::provision_cert_dns01("'
+EXPOSE=$(fbody "$ADAPPS" "async fn expose_domain(")
+check "J26 the Docker-app door passes its held lock instead of locking twice (was a deadlock)" \
+   '[ "$(occ "$EXPOSE" "lock_site(")" = "0" ] && [ "$(occ "$EXPOSE" "enable_ssl_for_site(&site_guard,")" = "1" ]'
+eq "J27 the git-deploy door holds the site across its order" \
+   "$(occ "$(subj "$AGIT")" 'enable_ssl_for_site(&site_guard,')" "1"
+eq "J28 an order no longer empties the shared challenge directory" \
+   "$(occ "$F_ASSL" 'read_dir(&challenge_dir)')" "0"
+eq "J29 ... it removes the tokens it wrote, and only those" \
+   "$(occ "$F_ASSL" 'written_tokens.0.push(challenge_path);')" "1"
+
+echo
 echo "── Result ───────────────────────────────────────────────────────────────────"
 printf 'passed: %d   failed: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1

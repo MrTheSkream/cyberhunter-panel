@@ -1099,6 +1099,20 @@ async fn auto_renew_ssl(pool: &PgPool, agents: &AgentRegistry) {
             continue;
         }
 
+        // One issuance per site at a time (`services::issuance_lock`). An
+        // unattended loop does not queue behind an operator's click: it skips
+        // before the cooldown row and tries again on a later tick.
+        let Ok(_issuance) = crate::services::issuance_lock::begin(
+            *site_id,
+            Duration::ZERO,
+            || async { false },
+        )
+        .await
+        else {
+            tracing::info!("Auto-heal: SSL renewal for {domain} skipped - another issuance for this site is running");
+            continue;
+        };
+
         // ⛔ `post_long`, not `post`. Plain `post` caps at 60s inside
         // `AgentHandle::request`, and a wildcard DNS-01 order budgets ~260s in
         // the agent alone - so this door would have recorded a false failure,
@@ -1253,6 +1267,9 @@ async fn auto_renew_ssl(pool: &PgPool, agents: &AgentRegistry) {
             // Panel notification
             notifications::notify_panel(pool, None, &format!("SSL renewed: {}", domain), &format!("SSL certificate for {} was automatically renewed", domain), "info", "ssl", Some("/monitoring?tab=certificates")).await;
         } else {
+            // The vhost follows the row, whatever the failed order left behind.
+            crate::routes::ssl::rebuild_vhost_after_failed_renewal(pool, &agent, *site_id).await;
+
             // Fire an alert so the user is notified about the SSL renewal failure.
             //
             // The server this alert names is the one the SITE is on. It used to be

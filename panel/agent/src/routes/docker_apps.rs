@@ -346,7 +346,9 @@ async fn expose_domain(
     // Held for the full duration - this writes the same `nginx::vhost_target`
     // path `ssl::enable_ssl_for_site` and `unexpose_domain` also write/delete,
     // with no coordination before this fix. See site_lock's module doc.
-    let _guard = crate::site_lock::lock_site(domain).await;
+    // Handed to `enable_ssl_for_site` below rather than re-taken there: the
+    // lock is not reentrant, and that nested acquire deadlocked the ACME arm.
+    let site_guard = crate::site_lock::hold_site(domain).await;
 
     if use_traefik {
         // --- Traefik mode: write a dynamic route config file ---
@@ -606,7 +608,7 @@ async fn expose_domain(
     match ssl::load_or_create_account(email).await {
         Ok(account) => match ssl::provision_cert(&account, domain, None).await {
             Ok(_cert_info) => {
-                match ssl::enable_ssl_for_site(templates, domain, &site_config).await {
+                match ssl::enable_ssl_for_site(&site_guard, templates, domain, &site_config).await {
                     Ok(_) => {
                         response["ssl"] = serde_json::json!(true);
                         tracing::info!("Auto-SSL: certificate provisioned for {domain}");

@@ -191,6 +191,11 @@ async fn provision(
         )
     })?;
 
+    // One issuance per domain at a time, from the order to the vhost write:
+    // a second order arriving now waits here instead of interleaving with the
+    // first. Released when this handler returns.
+    let site_guard = crate::site_lock::hold_site(&domain).await;
+
     // 2. Provision certificate via HTTP-01 challenge
     let extra = body.names.extra(&domain)?;
     let opts = ssl::ProvisionOpts {
@@ -250,7 +255,7 @@ async fn provision(
     };
     body.names.apply(&mut site_config);
 
-    let canonical = ssl::enable_ssl_for_site(&state.templates, &domain, &site_config)
+    let canonical = ssl::enable_ssl_for_site(&site_guard, &state.templates, &domain, &site_config)
         .await
         .map_err(|e| {
             (
@@ -334,8 +339,9 @@ impl UploadRollback {
         }
     }
 
-    async fn restore(self) {
-        let _guard = crate::site_lock::lock_site(&self.domain).await;
+    /// Called with the site's lock still held by the upload (`_held`), so the
+    /// restore is part of the same critical section as the failed write.
+    async fn restore(self, _held: &crate::site_lock::SiteGuard) {
         let cert: Result<(), String> = match &self.cert {
             Some(previous) => tokio::fs::write(&self.cert_path, previous).await.map_err(|e| e.to_string()),
             None => { let _ = tokio::fs::remove_file(&self.cert_path).await; Ok(()) }
@@ -440,6 +446,10 @@ async fn upload_cert(
     // From the first write on, a failure puts the site back as it was: the
     // fallback inside `enable_ssl_for_site` is a plain-HTTP vhost, which is no
     // place to leave a site that was serving HTTPS a moment ago.
+    // Held from the capture to the restore: an ACME order for the same domain
+    // can no longer write its certificate between this upload's write and its
+    // rollback.
+    let site_guard = crate::site_lock::hold_site(&body.domain).await;
     let before = UploadRollback::capture(&body.domain, &cert_path, &key_path).await;
     let installed: Result<_, (StatusCode, Json<serde_json::Value>)> = async {
         tokio::fs::write(&cert_path, &body.certificate).await
@@ -494,7 +504,7 @@ async fn upload_cert(
             hsts: None, proxy_streaming: None, proxy_strict_client_ip: None,
         };
 
-        ssl::enable_ssl_for_site(&state.templates, &body.domain, &site_config)
+        ssl::enable_ssl_for_site(&site_guard, &state.templates, &body.domain, &site_config)
             .await
             .map_err(|e| (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -505,10 +515,11 @@ async fn upload_cert(
     let canonical = match installed {
         Ok(canonical) => canonical,
         Err(failure) => {
-            before.restore().await;
+            before.restore(&site_guard).await;
             return Err(failure);
         }
     };
+    drop(site_guard);
 
     // Hand back the expiry of the certificate just written. The panel records it
     // so an uploaded certificate is visible to the countdown, the expiry ladder
@@ -615,6 +626,11 @@ async fn renew(
         fallback_apex_only: fallback,
     };
 
+    // Same rule as `provision`: the order and the vhost rebuild below are one
+    // critical section for this domain. Taken before the timeout starts, so a
+    // renewal queued behind another issuance does not spend its budget waiting.
+    let site_guard = crate::site_lock::hold_site(&domain).await;
+
     // A declined multi-name order followed by the apex-only retry is two
     // orders: give it twice the budget.
     let budget = if !extra.is_empty() && fallback { 240 } else { 120 };
@@ -697,7 +713,7 @@ async fn renew(
                 hsts: None, proxy_streaming: None, proxy_strict_client_ip: None,
             };
             body.names.apply(&mut site_config);
-            match ssl::enable_ssl_for_site(&state.templates, &domain, &site_config).await {
+            match ssl::enable_ssl_for_site(&site_guard, &state.templates, &domain, &site_config).await {
                 Ok(outcome) => canonical = Some(outcome),
                 Err(e) => tracing::warn!("Nginx reload after renewal failed for {domain}: {e}"),
             }
@@ -888,6 +904,9 @@ async fn provision_dns01(
         extra_names: &[],
         fallback_apex_only: false,
     };
+    // Same rule as `provision`: the order and the vhost write below are one
+    // critical section for this domain (the zone apex, for a wildcard).
+    let site_guard = crate::site_lock::hold_site(&domain).await;
     let cert_info = ssl::provision_cert_dns01(
         &account,
         &domain,
@@ -934,7 +953,7 @@ async fn provision_dns01(
             };
 
             canonical = Some(
-                ssl::enable_ssl_for_site(&state.templates, &domain, &site_config)
+                ssl::enable_ssl_for_site(&site_guard, &state.templates, &domain, &site_config)
                     .await
                     .map_err(|e| {
                         (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e })))

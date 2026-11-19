@@ -16,6 +16,7 @@ pub mod drill_scheduler;
 pub mod traffic_accounting_scheduler;
 pub mod email;
 pub mod image_scanner;
+pub mod issuance_lock;
 pub mod wp_vuln_scanner;
 pub mod av_scanner;
 pub mod disk_usage;

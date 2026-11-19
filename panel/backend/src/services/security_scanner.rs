@@ -730,6 +730,20 @@ pub(crate) async fn auto_fix_safe_findings(
                     continue;
                 }
 
+                // One issuance per site at a time (`services::issuance_lock`).
+                // An unattended scan does not queue behind an operator's click:
+                // it skips and tries again on the next scan.
+                let Ok(_issuance) = crate::services::issuance_lock::begin(
+                    site_id,
+                    Duration::ZERO,
+                    || async { false },
+                )
+                .await
+                else {
+                    tracing::info!("Auto-fix: SSL renewal for {domain} skipped - another issuance for this site is running");
+                    continue;
+                };
+
                 // ⛔ `post_long` with the shared budget, not `post`. Plain `post`
                 // caps at 60s and a wildcard DNS-01 order budgets ~260s in the
                 // agent alone.
@@ -920,6 +934,9 @@ pub(crate) async fn auto_fix_safe_findings(
                     }
                     Err(e) => {
                         tracing::warn!("Auto-fix: SSL renewal failed for {domain}: {e}");
+                        // The vhost follows the row, whatever the failed order
+                        // left behind.
+                        crate::routes::ssl::rebuild_vhost_after_failed_renewal(pool, agent, site_id).await;
                         // The auto-healer alerts when its own renewal fails; this
                         // path used to end at the log line, so whether a failing
                         // renewal was visible depended on which loop reached the
