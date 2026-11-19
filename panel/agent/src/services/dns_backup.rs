@@ -310,6 +310,20 @@ pub async fn read_zone(filename: String, key: Option<String>) -> Result<serde_js
 
 // ── Snapshot ────────────────────────────────────────────────────────────────
 
+/// `Command::output()` forces stdout/stderr to pipes, overriding a
+/// `.stdout(Stdio::from(file))`: the data would go to memory and the file
+/// stay empty. Spawning keeps the redirections set on the command (the child
+/// is killed if this future is dropped, `kill_on_drop` being set by callers).
+trait RedirectedOutput {
+    async fn redirected_output(&mut self) -> std::io::Result<std::process::Output>;
+}
+
+impl RedirectedOutput for tokio::process::Command {
+    async fn redirected_output(&mut self) -> std::io::Result<std::process::Output> {
+        self.spawn()?.wait_with_output().await
+    }
+}
+
 /// `sqlite3` on our own private copy: `immutable=1` (no lock, no -wal/-shm
 /// created beside it), sandboxed. Returns the first output line.
 async fn sqlite_query_private(path: &Path, sql: &str) -> Result<String, VbError> {
@@ -348,13 +362,16 @@ async fn gzip_into(src: &Path, dst: &PartFile) -> Result<(), VbError> {
             .stdout(Stdio::from(dst.file()?))
             .stderr(Stdio::piped())
             .kill_on_drop(true)
-            .output(),
+            .redirected_output(),
     )
     .await
     .map_err(|_| VbError::Internal("gzip timed out".into()))?
     .map_err(|e| VbError::Internal(format!("gzip could not run: {e}")))?;
     if !out.status.success() {
         return Err(VbError::Internal(format!("gzip failed: {}", stderr_of(&out))));
+    }
+    if std::fs::metadata(&dst.path).map(|m| m.len()).unwrap_or(0) == 0 {
+        return Err(VbError::Internal("gzip produced an empty file".into()));
     }
     Ok(())
 }
@@ -368,13 +385,16 @@ async fn gunzip_into(src: &Path, dst: &PartFile) -> Result<(), VbError> {
             .stdout(Stdio::from(dst.file()?))
             .stderr(Stdio::piped())
             .kill_on_drop(true)
-            .output(),
+            .redirected_output(),
     )
     .await
     .map_err(|_| VbError::Internal("gunzip timed out".into()))?
     .map_err(|e| VbError::Internal(format!("gunzip could not run: {e}")))?;
     if !out.status.success() {
         return Err(VbError::Integrity(format!("The DNS snapshot is not a valid gzip stream: {}", stderr_of(&out))));
+    }
+    if std::fs::metadata(&dst.path).map(|m| m.len()).unwrap_or(0) == 0 {
+        return Err(VbError::Integrity("The DNS snapshot is empty".into()));
     }
     Ok(())
 }
@@ -408,7 +428,7 @@ async fn dump_backend(backend: &PdnsBackend, raw: &PartFile) -> Result<(), VbErr
                     .stdout(Stdio::from(raw.file()?))
                     .stderr(Stdio::piped())
                     .kill_on_drop(true)
-                    .output(),
+                    .redirected_output(),
             )
             .await
             .map_err(|_| VbError::Internal("pg_dump timed out".into()))?
@@ -500,7 +520,9 @@ async fn install_sqlite(raw: &Path, database: &Path) -> Result<(), VbError> {
     // A WAL left by the old database would be replayed into the new one.
     unsandboxed("rm", &["-f", "--", &format!("{db}-wal"), &format!("{db}-shm")], "Removing the old WAL").await?;
     unsandboxed("mv", &["-f", "--", &staged, &db], "Moving the DNS database into place").await?;
-    let uri = format!("file:{db}?mode=ro");
+    // immutable=1: PowerDNS is stopped, and a root-owned -wal/-shm created
+    // by this check would keep it from opening its own database.
+    let uri = format!("file:{db}?immutable=1");
     let check = safe_command_unsandboxed("sqlite3", &[])
         .arg(&uri)
         .arg("PRAGMA integrity_check;")
@@ -530,7 +552,7 @@ async fn pg_restore(raw: &Path, dbname: &str, user: &str) -> Result<(), VbError>
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .kill_on_drop(true)
-            .output(),
+            .redirected_output(),
     )
     .await
     .map_err(|_| VbError::Internal("pg_restore timed out".into()))?
@@ -576,7 +598,14 @@ pub async fn restore_snapshot(filename: String, snapshot_backend: &'static str, 
         PdnsBackend::Pgsql { .. } => check_pg_magic(&raw.path)?,
     }
 
-    systemctl_pdns("stop").await.map_err(VbError::Internal)?;
+    if let Err(e) = systemctl_pdns("stop").await {
+        // Whatever state the stop left PowerDNS in, it is started again.
+        let started = systemctl_pdns("start").await;
+        return Err(VbError::Internal(match started {
+            Ok(()) => format!("{e}: nothing was restored, PowerDNS is running"),
+            Err(s) => format!("{e}: nothing was restored, and starting PowerDNS again failed too: {s}"),
+        }));
+    }
     let outcome = match &backend {
         PdnsBackend::Sqlite { database } => install_sqlite(&raw.path, database).await,
         PdnsBackend::Pgsql { dbname, user } => pg_restore(&raw.path, dbname, user).await,
@@ -746,6 +775,27 @@ mod tests {
         let r: DnsArchiveRequest =
             serde_json::from_value(serde_json::json!({"kind": "snapshot", "encryption_key": "k"})).unwrap();
         assert!(matches!(plan_archive(r).ok().unwrap(), DnsArchivePlan::Snapshot { .. }));
+    }
+
+    /// stdout really lands in the part file (not in a pipe), both ways.
+    #[tokio::test]
+    async fn gzip_round_trip_through_part_files() {
+        let d = std::env::temp_dir().join(format!("dp-gz-{:016x}", rand::random::<u64>()));
+        std::fs::create_dir_all(&d).unwrap();
+        let src = d.join("src.bin");
+        let body: Vec<u8> = (0..200_000u32).flat_map(|i| i.to_le_bytes()).collect();
+        std::fs::write(&src, &body).unwrap();
+        let gz = PartFile::create(&d, "x.gz").unwrap();
+        gzip_into(&src, &gz).await.unwrap();
+        let gz_len = std::fs::metadata(&gz.path).unwrap().len();
+        assert!(gz_len > 0 && gz_len < body.len() as u64);
+        let back = PartFile::create(&d, "x.raw").unwrap();
+        gunzip_into(&gz.path, &back).await.unwrap();
+        assert_eq!(std::fs::read(&back.path).unwrap(), body);
+        let not_gz = PartFile::create(&d, "y.raw").unwrap();
+        assert!(matches!(gunzip_into(&src, &not_gz).await, Err(VbError::Integrity(_))));
+        drop((gz, back, not_gz));
+        std::fs::remove_dir_all(&d).ok();
     }
 
     #[test]

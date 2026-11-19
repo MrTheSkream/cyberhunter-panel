@@ -864,7 +864,7 @@ impl Staging {
         std::fs::DirBuilder::new()
             .mode(0o700)
             .create(&path)
-            .map_err(|e| VbError::Internal(format!("Failed to create the staging directory: {e}")))?;
+            .map_err(|e| vmail_io_err(&path, e))?;
         Ok(Self { path, keep: false })
     }
 
@@ -892,6 +892,19 @@ impl Drop for Staging {
             }
         }
     }
+}
+
+/// An I/O error under /var/vmail. EROFS there means the directory did not
+/// exist when the agent started (the unit binds `-/var/vmail` read-write only
+/// if it exists), which a restart of the agent fixes.
+fn vmail_io_err(path: &Path, e: std::io::Error) -> VbError {
+    if e.raw_os_error() == Some(libc::EROFS) {
+        return VbError::Internal(format!(
+            "Failed to create {}: /var/vmail is read-only for the agent (it did not exist when the agent started); restart dockpanel-agent and retry",
+            path.display()
+        ));
+    }
+    VbError::Internal(format!("Failed to create {}: {e}", path.display()))
 }
 
 async fn chown_vmail(path: &Path) -> Result<(), VbError> {
@@ -930,7 +943,7 @@ pub async fn restore_mailbox(
     // 2. Room for the extracted mail (heuristic: twice the compressed size).
     let domain_dir = mailbox.domain_dir();
     if !domain_dir.exists() {
-        std::fs::create_dir_all(&domain_dir).map_err(|e| VbError::Internal(format!("Failed to create {}: {e}", domain_dir.display())))?;
+        std::fs::create_dir_all(&domain_dir).map_err(|e| vmail_io_err(&domain_dir, e))?;
         chown_vmail(&domain_dir).await?;
     }
     volume_backup::check_space(&domain_dir, len.saturating_mul(2), "the restored mailbox")?;
@@ -1118,8 +1131,7 @@ pub fn list_legacy_shape(new_items: &[serde_json::Value]) -> Vec<serde_json::Val
         if !name.ends_with(".tar.gz") {
             continue;
         }
-        let parts: Vec<&str> = name.trim_end_matches(".tar.gz").rsplitn(2, '_').collect();
-        let email = if parts.len() >= 2 { parts[1].replacen('_', "@", 1) } else { name.clone() };
+        let email = legacy_email(&name).unwrap_or_else(|| name.clone());
         out.push(serde_json::json!({
             "file": format!("{LEGACY_MAIL_BACKUP_DIR}/{name}"),
             "name": name,
@@ -1140,6 +1152,19 @@ pub fn list_legacy_shape(new_items: &[serde_json::Value]) -> Vec<serde_json::Val
         }));
     }
     out
+}
+
+/// The address of a pre-lot-3 name `{user}_{domain}_{unix}.tar.gz`. The old
+/// listing replaced the FIRST `_` with `@`, so `a_b@x.com` read as
+/// `a@b_x.com`; a domain never contains `_`, so the LAST one is the split.
+pub fn legacy_email(name: &str) -> Option<String> {
+    let stem = name.strip_suffix(".tar.gz")?;
+    let (head, ts) = stem.rsplit_once('_')?;
+    if ts.is_empty() || !ts.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    let (user, domain) = head.rsplit_once('_')?;
+    (!user.is_empty() && is_valid_mail_domain(domain)).then(|| format!("{user}@{domain}"))
 }
 
 /// `POST /mail/backups/delete` accepts a full path in either directory.
@@ -1462,6 +1487,14 @@ mod tests {
         assert_eq!(cfg["encrypted"], true);
         let legacy = list_legacy_shape(&items);
         assert!(legacy.iter().any(|v| v["email"] == "a_b@example.com"));
+    }
+
+    #[test]
+    fn legacy_names_read_back_right() {
+        assert_eq!(legacy_email("a_b_example.com_1700000000.tar.gz").as_deref(), Some("a_b@example.com"));
+        assert_eq!(legacy_email("u_my-site.example.org_1.tar.gz").as_deref(), Some("u@my-site.example.org"));
+        assert_eq!(legacy_email("junk.tar.gz"), None);
+        assert_eq!(legacy_email("a_example.com_x.tar.gz"), None);
     }
 
     #[test]
