@@ -1402,8 +1402,14 @@ pub async fn create_volume_backup(
     }
 
     let body = bpe::app_data_create_body(&target, true, None);
-    let result = agent
-        .post_long("/volume-backups/create", Some(body), bpe::APP_DATA_ROUTE_TIMEOUT_SECS)
+    // The agent stops the target's running containers for the copy: recorded
+    // as expectedly stopped around the call so the auto-healer leaves them be.
+    let ledger = crate::services::expected_stops::DbBackupStops { pool: &state.db, server_id: scope_server_id };
+    let result = crate::services::expected_stops::guard_backup_stops(
+        &ledger,
+        &target.stop_names,
+        agent.post_long("/volume-backups/create", Some(body), bpe::APP_DATA_ROUTE_TIMEOUT_SECS),
+    )
         .await
         .map_err(|e| app_data_agent_error(
             "App data backup",
@@ -1600,10 +1606,44 @@ pub async fn restore_volume_backup(
         kind, &backup.volume_name, backup.source_path.as_deref(), encryption_key.as_deref(),
     );
     let agent_path = format!("/volume-backups/{}/restore/{}", backup.container_name, backup.filename);
+
+    // The agent ALWAYS stops the running containers that mount the data for the
+    // extraction. They are recorded as expectedly stopped around the call, or
+    // the auto-healer would start the app in the middle of the restore. Which
+    // containers: the ones the agent currently lists for this very target. A
+    // target no container mounts any more has nothing to protect; a listing that
+    // fails leaves the restore unprotected, which is logged, not fatal - this is
+    // the disaster recovery path.
+    let stop_names: Vec<String> = match agent.get("/backup-targets").await {
+        Ok(listed) => match bpe::parse_backup_targets(&listed) {
+            Ok(p) => p.targets.into_iter()
+                .find(|t| t.kind == kind && match kind {
+                    bpe::MountKind::Volume => t.volume_name.as_deref() == Some(backup.volume_name.as_str()),
+                    bpe::MountKind::Bind => t.source_path == backup.source_path,
+                })
+                .map(|t| t.stop_names)
+                .unwrap_or_default(),
+            Err(e) => {
+                tracing::warn!("restore_volume_backup: app data targets unreadable ({e}); the auto-healer is not told about the restore");
+                Vec::new()
+            }
+        },
+        Err(e) => {
+            tracing::warn!("restore_volume_backup: could not list app data targets ({e}); the auto-healer is not told about the restore");
+            Vec::new()
+        }
+    };
+    let restore_server_id = backup.server_id.ok_or_else(|| err(StatusCode::CONFLICT, "This backup has no server"))?;
+    let ledger = crate::services::expected_stops::DbBackupStops { pool: &state.db, server_id: restore_server_id };
+
     // `post` gave a restore of any real app 60 seconds. The route sits under the
     // 300 s request ceiling, so the budget is just below it; past that the agent
     // carries on and restarts the containers itself.
-    let result = agent.post_long(&agent_path, Some(body), bpe::APP_DATA_ROUTE_TIMEOUT_SECS).await
+    let result = crate::services::expected_stops::guard_backup_stops(
+        &ledger,
+        &stop_names,
+        agent.post_long(&agent_path, Some(body), bpe::APP_DATA_ROUTE_TIMEOUT_SECS),
+    ).await
         .map_err(|e| app_data_agent_error(
             "Volume restore",
             "The restore is taking longer than this request can wait. It goes on on the server, and the app's containers restart when it ends. Check the app before trying again.",
