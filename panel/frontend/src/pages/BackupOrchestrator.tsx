@@ -1589,9 +1589,9 @@ function PoliciesTab({
               including configuration files and any database credentials in them.
             </p>
           )}
-          {form.destination_id !== "" && destinations.find(d => d.id === form.destination_id)?.dtype === "sftp" && (
+          {form.destination_id !== "" && form.backup_volumes && (
             <p className="text-[11px] text-warn-400 font-mono">
-              Retention is enforced on this server only. The agent cannot prune an SFTP destination, so remote copies accumulate there until you remove them.
+              Remote retention covers site archives and database dumps. Volume archives are not pruned at the destination yet, so their remote copies accumulate there until you remove them.
             </p>
           )}
           {editing && (

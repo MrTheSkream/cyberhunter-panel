@@ -712,6 +712,13 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
             // v2.34.0 closed on the manual one.
             let site_dbs = crate::routes::backups::site_database_specs(db, jwt_secret, *site_id).await;
             let db_expected = site_dbs.expected() as i32;
+            // The request carries these databases' passwords; any error the
+            // agent echoes back must not carry them into the run history.
+            for spec in &site_dbs.specs {
+                if let Some(pw) = spec.get("password").and_then(|v| v.as_str()) {
+                    log.secrets.push(pw.to_string());
+                }
+            }
             let agent_body = serde_json::json!({ "databases": site_dbs.specs });
 
             let mut result = agent.post(&format!("/backups/{domain}/create"), Some(agent_body.clone())).await;
@@ -879,6 +886,7 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
             };
             let agent = &agent;
             let password = crate::services::secrets_crypto::decrypt_credential_or_legacy(password_enc, jwt_secret);
+            log.secrets.push(password.clone());
             let container_name = crate::routes::databases::container_ref(kind, db_name);
             let body = serde_json::json!({
                 "container_name": container_name,
