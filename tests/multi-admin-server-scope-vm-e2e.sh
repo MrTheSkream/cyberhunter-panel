@@ -37,7 +37,7 @@ SECRETS="${MA_SECRETS:-lab/secrets/multi-admin}"
 [ -d "$SECRETS" ] || { echo "missing secrets directory $SECRETS"; exit 2; }
 command -v python3 >/dev/null || { echo "python3 is required"; exit 2; }
 
-MA_SECRETS_DIR="$SECRETS" exec python3 - <<'PYEOF'
+MA_SECRETS_DIR="$SECRETS" PYTHONIOENCODING=utf-8 exec python3 - <<'PYEOF'
 import base64, hashlib, hmac, json, os, re, ssl, struct, subprocess, sys, time, uuid
 import urllib.request, urllib.error
 
