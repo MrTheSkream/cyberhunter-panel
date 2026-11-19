@@ -173,6 +173,8 @@ case "$*" in
     "is-active --quiet nginx") exit "${STUB_NGINX_ACTIVE_RC:-0}" ;;
     "reload nginx")            exit "${STUB_NGINX_RELOAD_RC:-0}" ;;
     "start dockpanel-agent")   exit "${STUB_AGENT_START_RC:-0}" ;;
+    "stop dockpanel-api")      exit "${STUB_API_STOP_RC:-0}" ;;
+    "is-active --quiet dockpanel-api") exit "${STUB_API_ACTIVE_RC:-3}" ;;
 esac
 exit 0
 EOF
@@ -454,6 +456,18 @@ assert_has  "dockpanel-api WAS restarted - nothing was lost, so nothing is held"
 assert_lacks "and it is NOT reported as left down" 'LEFT STOPPED'                "$J"
 assert_lacks "and no rollback is journaled: the database never moved" \
             'INSERT INTO activity_logs' "$A"
+
+# An api that will not stop must not have its database dropped under it. A stop
+# that errors on a unit that is NOT running is only noted.
+run_restore api_wont_stop yes STUB_API_STOP_RC=1 STUB_API_ACTIVE_RC=0
+chk "$([ "$RC" != "0" ] && echo 0 || echo 1)" "an api that is still running after stop: exits non-zero"
+J="$(cat "$RES_JSON")"; A="$(cat "$ACTIONS")"
+assert_has   "the detail says so, and that nothing changed" 'could not stop dockpanel-api - nothing changed' "$J"
+assert_lacks "the database was never touched"     '--single-transaction'          "$A"
+assert_has   "and the trap starts the api again"  'systemctl start dockpanel-api' "$A"
+run_restore api_stop_errs_but_down yes STUB_API_STOP_RC=5 STUB_API_ACTIVE_RC=3
+chk "$([ "$RC" = "0" ] && echo 0 || echo 1)" "a stop error on a unit that is not running: the restore goes on"
+assert_has   "and its verdict is ok=true" '"ok":true' "$(cat "$RES_JSON")"
 
 # The same early failure, with the agent refusing to come back from the trap:
 # the api must still be tried, and the verdict must say what is still down.
