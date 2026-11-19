@@ -147,7 +147,7 @@ Add a destination under **Backup Manager** > **Destinations**, then select it on
 
 A policy with no destination writes its archives to this server's own disk and nowhere else. CyberHunter - Panel says so on the Backup Manager overview rather than leaving you to discover it - see [What CyberHunter - Panel checks for you](prerequisites.md).
 
-> **Retention off-site covers site archives only.** The prune that enforces a retention count at the destination is keyed on a site's domain, so remote copies of *database* and *volume* backups accumulate there even as their local copies are pruned. Watch the bucket, or prune it on the provider's own lifecycle rules, until this is resource-agnostic.
+> **Retention off-site covers site archives and database dumps, on S3 and SFTP.** After each upload the panel keeps the newest copies at the destination, up to the policy's retention count, and deletes older ones. Only files named exactly `<site or database>-<YYYYMMDD-HHMMSS><extension>` are ever deleted, so other files in the bucket or directory are left alone. Retention is skipped, and reported in the policy's run history, when two resources share a name (the same domain on two servers, or the same database name for two owners). Remote copies of *volume* backups are not pruned yet.
 
 ## Encryption
 

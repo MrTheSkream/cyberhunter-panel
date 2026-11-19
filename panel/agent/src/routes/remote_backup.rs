@@ -61,6 +61,11 @@ pub struct PruneRequest {
     pub name_prefix: Option<String>,
     #[serde(default)]
     pub suffixes: Option<Vec<String>>,
+    /// Require the part between `name_prefix` and the suffix to be exactly the
+    /// `%Y%m%d-%H%M%S` stamp the agent writes. The backend sets it for site
+    /// archives and database dumps, so `db-` never reaches `db-test-<stamp>`.
+    #[serde(default)]
+    pub stamp_only: bool,
 }
 
 /// Body of `/backups/list`. `prefix` is relative to the destination's base
@@ -409,7 +414,7 @@ fn prune_selector(body: &PruneRequest) -> Result<(String, Vec<String>, bool), St
     let (prefix, legacy) = match (&body.name_prefix, &body.domain) {
         // With a name_prefix the domain is ignored, including an empty one (the
         // backend sends `"domain": ""` for database dumps).
-        (Some(p), _) => (p.clone(), false),
+        (Some(p), _) => (p.clone(), body.stamp_only),
         (None, Some(d)) if !d.is_empty() => (format!("{d}-"), true),
         _ => return Err("Missing name_prefix or domain".to_string()),
     };
@@ -540,6 +545,31 @@ mod tests {
     }
 
     /// Exactly what the backend sends for a database dump.
+    #[test]
+    fn stamp_only_restricts_the_middle_to_the_timestamp() {
+        let body: PruneRequest = serde_json::from_value(serde_json::json!({
+            "destination": { "type": "s3" }, "domain": "", "retention": 1,
+            "name_prefix": "db-", "suffixes": [".sql.gz"], "stamp_only": true
+        }))
+        .unwrap();
+        let (prefix, suffixes, strict) = prune_selector(&body).unwrap();
+        assert!(strict);
+        let obj = |n: &str| remote_backup::RemoteObject {
+            name: n.to_string(),
+            key: n.to_string(),
+            size: 1,
+            modified: None,
+        };
+        let objects = vec![
+            obj("db-20261119-030000.sql.gz"),
+            obj("db-20261118-030000.sql.gz"),
+            obj("db-test-20261101-030000.sql.gz"),
+        ];
+        let (kept, del) = remote_backup::select_for_prune(objects, &prefix, &suffixes, 1, strict);
+        assert_eq!(kept.len(), 1);
+        assert_eq!(del.iter().map(|o| o.name.as_str()).collect::<Vec<_>>(), vec!["db-20261118-030000.sql.gz"]);
+    }
+
     #[test]
     fn backend_database_prune_body_is_accepted() {
         let body: PruneRequest = serde_json::from_value(serde_json::json!({

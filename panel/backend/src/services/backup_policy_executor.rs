@@ -231,6 +231,10 @@ pub fn prune_body(destination: &serde_json::Value, domain: &str, spec: &PruneSpe
         "retention": retention,
         "name_prefix": spec.name_prefix,
         "suffixes": spec.suffixes,
+        // Only `<prefix><%Y%m%d-%H%M%S><suffix>` is a candidate: a site
+        // `a.com-b.org` or a volume archive `{container}-{volume}-{ts}` never
+        // matches the prefix of `a.com`.
+        "stamp_only": true,
     })
 }
 
@@ -300,23 +304,18 @@ pub async fn database_prune_conflict(db: &PgPool, db_name: &str, engine: &str) -
     Ok(conflict_reason(db_name, &spec, &names))
 }
 
+/// With `stamp_only`, the agent deletes only `<prefix><stamp><suffix>`, so a
+/// longer name sharing the prefix (`a.com-b.org` next to `a.com`) never mixes
+/// with ours. What remains is an exact duplicate: the same domain on two
+/// servers, or the same database name for two owners, writes identical file
+/// names to a shared destination.
 fn conflict_reason(own: &str, spec: &PruneSpec, names: &[String]) -> Option<String> {
-    let matching = names_sharing_prefix(&spec.name_prefix, names);
-    let mut others: Vec<&str> = matching.iter().map(String::as_str).filter(|n| *n != own).collect();
-    let own_count = matching.iter().filter(|n| n.as_str() == own).count();
-    if others.is_empty() && own_count <= 1 {
+    let own_count = names.iter().filter(|n| n.as_str() == own).count();
+    if own_count <= 1 {
         return None;
     }
-    others.sort_unstable();
-    others.dedup();
-    let who = if others.is_empty() {
-        format!("another resource also named '{own}'")
-    } else {
-        format!("'{}'", others.join("', '"))
-    };
     Some(format!(
-        "remote retention skipped: the file name prefix '{}' also matches the backups of {who}, \
-         so pruning could delete them",
+        "remote retention skipped: the file name prefix '{}' also matches the backups of          another resource also named '{own}', so pruning could delete them",
         spec.name_prefix
     ))
 }
@@ -1529,6 +1528,7 @@ mod tests {
         assert_eq!(b["domain"], "");
         assert_eq!(b["retention"], 7);
         assert_eq!(b["name_prefix"], "wp-");
+        assert_eq!(b["stamp_only"], true);
         assert_eq!(b["suffixes"], serde_json::json!([".sql.gz", ".sql.gz.enc"]));
         assert_eq!(b["destination"], dest);
         let s = prune_body(&dest, "a.com", &site_prune_spec("a.com"), 3);
@@ -1558,8 +1558,11 @@ mod tests {
         let spec = site_prune_spec("ab");
         assert_eq!(conflict_reason("ab", &spec, &names), None);
         let spec = site_prune_spec("a");
-        let r = conflict_reason("a", &spec, &names).expect("a-b.com shares a's prefix");
-        assert!(r.contains("a-b.com"), "{r}");
+        // stamp_only: a-b.com's archives never match a's prefix, so no conflict.
+        assert_eq!(conflict_reason("a", &spec, &names), None);
+        let twice = vec!["a".to_string(), "a".to_string()];
+        let r = conflict_reason("a", &spec, &twice).expect("the same domain twice conflicts");
+        assert!(r.contains("named 'a'"), "{r}");
         // Same name twice (same domain on two servers, same db name for two owners).
         let dup = vec!["wp".to_string(), "wp".to_string()];
         assert!(conflict_reason("wp", &database_prune_spec("wp", "postgres"), &dup).is_some());
