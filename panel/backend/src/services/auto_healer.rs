@@ -1783,6 +1783,49 @@ async fn run_retention_cleanup(pool: &PgPool) {
                 total_pruned += 1;
             }
         }
+
+        // Mail (lot 3): per mailbox, plus the config, per server. Flat
+        // directory, so the path is the file name under it.
+        let excess_mail: Vec<(uuid::Uuid, String, Option<uuid::Uuid>)> = sqlx::query_as(
+            "SELECT id, filename, server_id FROM ( \
+                 SELECT id, filename, server_id, \
+                        ROW_NUMBER() OVER (PARTITION BY server_id, kind, mail_domain, mailbox \
+                                           ORDER BY created_at DESC) AS rn \
+                 FROM mail_backups WHERE policy_id = $1 \
+             ) ranked WHERE rn > $2"
+        )
+        .bind(policy_id).bind(*retention_count)
+        .fetch_all(pool).await.unwrap_or_default();
+        for (id, filename, server_id) in &excess_mail {
+            if filename.contains('/') || filename.contains("..") {
+                continue;
+            }
+            let filepath = format!("{}/{filename}", crate::services::mail_dns_backup::MAIL_BACKUP_DIR);
+            if prune_policy_backup(pool, "mail_backups", *id, &filepath, *server_id, local_server_id).await {
+                total_pruned += 1;
+            }
+        }
+
+        // DNS (lot 3): per zone, plus the snapshot per backend, per server.
+        let excess_dns: Vec<(uuid::Uuid, String, Option<uuid::Uuid>)> = sqlx::query_as(
+            "SELECT id, filename, server_id FROM ( \
+                 SELECT id, filename, server_id, \
+                        ROW_NUMBER() OVER (PARTITION BY server_id, kind, zone, backend \
+                                           ORDER BY created_at DESC) AS rn \
+                 FROM dns_backups WHERE policy_id = $1 \
+             ) ranked WHERE rn > $2"
+        )
+        .bind(policy_id).bind(*retention_count)
+        .fetch_all(pool).await.unwrap_or_default();
+        for (id, filename, server_id) in &excess_dns {
+            if filename.contains('/') || filename.contains("..") {
+                continue;
+            }
+            let filepath = format!("{}/{filename}", crate::services::mail_dns_backup::DNS_BACKUP_DIR);
+            if prune_policy_backup(pool, "dns_backups", *id, &filepath, *server_id, local_server_id).await {
+                total_pruned += 1;
+            }
+        }
     }
     if total_pruned > 0 {
         tracing::info!("Retention: total {total_pruned} excess backups pruned (schedules + policies)");

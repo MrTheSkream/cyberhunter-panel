@@ -2417,14 +2417,41 @@ pub async fn rate_limit_remove(
 // ── Mailbox Backup/Restore ──────────────────────────────────────────────
 
 /// POST /api/mail/backup
+///
+/// The agent's manual archive now uses the policy naming under
+/// /var/backups/dockpanel/mail. When its answer names an archive of the
+/// requested mailbox, the archive is recorded in `mail_backups` (no policy,
+/// on the server in scope, where it was written) so it can be restored from
+/// the "Mailbox backups" list like a policy archive.
 pub async fn mailbox_backup(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
-    ServerScope(_server_id, agent): ServerScope,
+    ServerScope(scope_server_id, agent): ServerScope,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let result = agent.post("/mail/backup", Some(body)).await
+    use crate::services::mail_dns_backup as mdb;
+    let email = body.get("email").and_then(|v| v.as_str()).unwrap_or("").trim().to_lowercase();
+    let mut result = agent.post_long("/mail/backup", Some(body), mdb::START_TIMEOUT_SECS).await
         .map_err(|e| agent_error("Mailbox backup", e))?;
+    if let Ok(mdb::AgentStart::Job(id)) = mdb::parse_agent_start(&result) {
+        result = mdb::wait_job(&agent, &id, std::time::Duration::from_secs(mdb::ROUTE_JOB_BUDGET_SECS))
+            .await
+            .map_err(|e| err(StatusCode::BAD_GATEWAY, &format!("Mailbox backup failed: {e}")))?;
+    }
+    if let Some((local, domain)) = mdb::split_address(&email) {
+        if let Ok(a) = mdb::parse_created(&result, &mdb::mailbox_prune_spec(domain, local), false) {
+            if let Err(e) = sqlx::query(
+                "INSERT INTO mail_backups (server_id, kind, mail_domain, mailbox, filename, size_bytes, encrypted, sha256_hash) \
+                 VALUES ($1, 'mailbox', $2, $3, $4, $5, $6, $7)",
+            )
+            .bind(scope_server_id).bind(domain).bind(local).bind(&a.filename).bind(a.size_bytes).bind(a.encrypted)
+            .bind(if a.sha256.is_empty() { None } else { Some(&a.sha256) })
+            .execute(&state.db).await
+            {
+                tracing::warn!("Mailbox backup of {email} written but not recorded: {e}");
+            }
+        }
+    }
     activity::log_activity(&state.db, claims.sub, &claims.email, "mail.backup", None, None, None, None, claims.key_id).await;
     Ok(Json(result))
 }
@@ -2469,6 +2496,462 @@ pub async fn mailbox_backup_delete(
         &state.db, "mail.backup_delete", Some(&claims.email), ip.as_deref(), None, None, None, None, "warning", claims.key_id,
     ).await;
     Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+// ── Mail backups from the Backup Orchestrator (lot 3) ───────────────────
+
+/// One `mail_backups` row a restore reads.
+#[derive(sqlx::FromRow)]
+struct MailBackupRef {
+    server_id: Option<Uuid>,
+    kind: String,
+    mail_domain: Option<String>,
+    mailbox: Option<String>,
+    filename: String,
+    encrypted: bool,
+    encryption_key_version: i16,
+}
+
+/// A `mail_backups` row, only when it lives on a server this administrator
+/// runs (this machine, or a server they added). The role is read from the
+/// DATABASE, as `restore_volume_backup` does.
+async fn mail_backup_for_caller(state: &AppState, id: Uuid, claims: &Claims) -> Result<MailBackupRef, ApiError> {
+    sqlx::query_as::<_, MailBackupRef>(
+        "SELECT mb.server_id, mb.kind, mb.mail_domain, mb.mailbox, mb.filename, mb.encrypted, mb.encryption_key_version \
+           FROM mail_backups mb WHERE mb.id = $1 AND EXISTS (\
+             SELECT 1 FROM users u, servers sv WHERE u.id = $2 AND u.role = 'admin' \
+             AND sv.id = mb.server_id AND (sv.is_local OR sv.user_id = u.id))",
+    )
+    .bind(id)
+    .bind(claims.sub)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| internal_error("read mail backup", e))?
+    .ok_or_else(|| err(StatusCode::NOT_FOUND, "Mail backup not found"))
+}
+
+/// The agent's refusals said truthfully: a bad request, a wrong passphrase or a
+/// damaged archive (422) and a full disk (507) keep their status and message.
+fn mail_restore_agent_error(context: &str, e: crate::services::agent::AgentError) -> ApiError {
+    use crate::services::agent::AgentError;
+    match e {
+        AgentError::Status(code @ (400 | 409 | 422 | 507), ref body) => {
+            let msg = crate::error::agent_message(body);
+            tracing::warn!(agent_status = code, error = %msg, "{context}");
+            err(StatusCode::from_u16(code).unwrap_or(StatusCode::BAD_GATEWAY), &msg)
+        }
+        other => agent_error(context, other),
+    }
+}
+
+/// What putting a manifest back into the database did.
+#[derive(Default, serde::Serialize)]
+pub(crate) struct ReinsertReport {
+    pub domains_added: Vec<String>,
+    pub accounts_added: Vec<String>,
+    pub aliases_added: usize,
+    pub dkim_imported: Vec<String>,
+    pub warnings: Vec<String>,
+}
+
+/// Put back, from a mail manifest, the domains, mailboxes and aliases that no
+/// longer exist on `server_id`. Never through `create_domain`, which generates
+/// a DKIM key, publishes DNS records and provisions a certificate: the rows
+/// are inserted as they were, the maildir root is created
+/// (`/mail/domains/configure`, no DNS, no certificate), and the DKIM key of a
+/// domain that was ADDED is reinstalled from the manifest through
+/// `/mail/dkim/import`. An existing domain keeps its live key. `only_email`
+/// restricts the work to one mailbox (and its domain).
+///
+/// The caller rebuilds the maps with `/mail/sync` afterwards.
+pub(crate) async fn reinsert_from_manifest(
+    db: &sqlx::PgPool,
+    server_id: Uuid,
+    manifest: &crate::services::mail_dns_backup::MailManifest,
+    only_email: Option<&str>,
+    agent: &AgentHandle,
+    jwt_secret: &str,
+) -> Result<ReinsertReport, ApiError> {
+    let mut report = ReinsertReport::default();
+    let only_domain = only_email.and_then(|e| e.rsplit_once('@').map(|(_, d)| d.to_string()));
+
+    for d in &manifest.domains {
+        if only_domain.as_deref().is_some_and(|od| od != d.domain) {
+            continue;
+        }
+        let existing: Option<(Uuid,)> = sqlx::query_as("SELECT id FROM mail_domains WHERE domain = $1 AND server_id = $2")
+            .bind(&d.domain).bind(server_id)
+            .fetch_optional(db).await
+            .map_err(|e| internal_error("restore mail domain", e))?;
+        if existing.is_some() {
+            continue;
+        }
+        // `server_id` is always bound: a domain naming no server would make
+        // every later `/mail/sync` refuse fleet-wide.
+        let (domain_id,): (Uuid,) = sqlx::query_as(
+            "INSERT INTO mail_domains (domain, dkim_selector, dkim_public_key, catch_all, enabled, server_id) \
+             VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
+        )
+        .bind(&d.domain).bind(&d.dkim_selector).bind(&d.dkim_public_key)
+        .bind(&d.catch_all).bind(d.enabled).bind(server_id)
+        .fetch_one(db).await
+        .map_err(|e| internal_error("restore mail domain", e))?;
+        report.domains_added.push(d.domain.clone());
+
+        if let Err(e) = agent.post("/mail/domains/configure", Some(serde_json::json!({ "domain": d.domain }))).await {
+            report.warnings.push(format!("{}: the maildir root could not be created: {e}", d.domain));
+        }
+
+        let Some(enc) = &d.dkim_private_key_enc else {
+            report.warnings.push(format!("{}: no DKIM key in the backup", d.domain));
+            continue;
+        };
+        let pem = match crate::services::secrets_crypto::decrypt_credential(enc, jwt_secret) {
+            Ok(p) => p,
+            Err(_) => {
+                report.warnings.push(format!(
+                    "{}: the DKIM key in the backup cannot be decrypted with this panel's key",
+                    d.domain
+                ));
+                continue;
+            }
+        };
+        match agent
+            .post(
+                "/mail/dkim/import",
+                Some(serde_json::json!({ "domain": d.domain, "selector": d.dkim_selector, "private_key_pem": pem })),
+            )
+            .await
+        {
+            Ok(v) => {
+                let public = v.get("public_key").and_then(|p| p.as_str()).or(d.dkim_public_key.as_deref());
+                match store_dkim_key(db, domain_id, &d.dkim_selector, &pem, public, jwt_secret).await {
+                    Ok(()) => report.dkim_imported.push(d.domain.clone()),
+                    Err(e) => report.warnings.push(format!("{}: DKIM key installed but not recorded: {e}", d.domain)),
+                }
+            }
+            Err(e) => report.warnings.push(format!(
+                "{}: the DKIM key could not be reinstalled: {}",
+                d.domain,
+                crate::services::mail_dns_backup::agent_error_text(&e)
+            )),
+        }
+    }
+
+    for a in &manifest.accounts {
+        if only_email.is_some_and(|o| !o.eq_ignore_ascii_case(&a.email)) {
+            continue;
+        }
+        let domain_id: Option<(Uuid,)> = sqlx::query_as("SELECT id FROM mail_domains WHERE domain = $1 AND server_id = $2")
+            .bind(&a.domain).bind(server_id)
+            .fetch_optional(db).await
+            .map_err(|e| internal_error("restore mail account", e))?;
+        let Some((domain_id,)) = domain_id else {
+            report.warnings.push(format!("{}: its domain is not on this server", a.email));
+            continue;
+        };
+        // `mail_accounts.email` is unique across the fleet: an address that
+        // now lives elsewhere is reported, not moved.
+        let r = sqlx::query(
+            "INSERT INTO mail_accounts (domain_id, email, password_hash, display_name, quota_mb, enabled, forward_to, \
+             keep_copy, autoresponder_enabled, autoresponder_subject, autoresponder_body) \
+             SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11 \
+              WHERE NOT EXISTS (SELECT 1 FROM mail_accounts WHERE lower(email) = lower($2))",
+        )
+        .bind(domain_id).bind(&a.email).bind(&a.password_hash).bind(&a.display_name).bind(a.quota_mb)
+        .bind(a.enabled).bind(&a.forward_to).bind(a.keep_copy).bind(a.autoresponder_enabled)
+        .bind(&a.autoresponder_subject).bind(&a.autoresponder_body)
+        .execute(db).await
+        .map_err(|e| internal_error("restore mail account", e))?;
+        if r.rows_affected() > 0 {
+            report.accounts_added.push(a.email.clone());
+        }
+    }
+
+    if only_email.is_none() {
+        for al in &manifest.aliases {
+            let domain_id: Option<(Uuid,)> = sqlx::query_as("SELECT id FROM mail_domains WHERE domain = $1 AND server_id = $2")
+                .bind(&al.domain).bind(server_id)
+                .fetch_optional(db).await
+                .map_err(|e| internal_error("restore mail alias", e))?;
+            let Some((domain_id,)) = domain_id else { continue };
+            let r = sqlx::query(
+                "INSERT INTO mail_aliases (domain_id, source_email, destination_email) \
+                 SELECT $1, $2, $3 WHERE NOT EXISTS ( \
+                   SELECT 1 FROM mail_aliases WHERE source_email = $2 AND destination_email = $3)",
+            )
+            .bind(domain_id).bind(&al.source_email).bind(&al.destination_email)
+            .execute(db).await
+            .map_err(|e| internal_error("restore mail alias", e))?;
+            report.aliases_added += r.rows_affected() as usize;
+        }
+    }
+    Ok(report)
+}
+
+/// Read the manifest of a config archive through the agent (it decrypts and
+/// hands it back; it restores no file).
+async fn fetch_manifest(
+    agent: &AgentHandle,
+    filename: &str,
+    key: &str,
+) -> Result<crate::services::mail_dns_backup::MailManifest, ApiError> {
+    use crate::services::mail_dns_backup as mdb;
+    let resp = agent
+        .post_long("/mail/restore", Some(mdb::mail_config_restore_body(filename, key)), mdb::START_TIMEOUT_SECS)
+        .await
+        .map_err(|e| mail_restore_agent_error("Read mail config backup", e))?;
+    if resp.get("skipped").is_some() {
+        return Err(err(StatusCode::CONFLICT, "The mail server is not installed on this server"));
+    }
+    let manifest = resp.get("manifest").ok_or_else(|| err(StatusCode::BAD_GATEWAY, "The agent returned no manifest"))?;
+    mdb::parse_mail_manifest(manifest).map_err(|e| err(StatusCode::UNPROCESSABLE_ENTITY, &e))
+}
+
+/// Rebuild the server's maps after rows were put back. Only a rebuild the
+/// agent applied counts: Dovecot must know a mailbox before its mail is
+/// re-indexed for it.
+async fn sync_after_restore(state: &AppState, server_id: Uuid, agent: &AgentHandle) -> Result<(), ApiError> {
+    match sync_mail_config_report(state, server_id, agent).await? {
+        SyncReport::Applied(_) => Ok(()),
+        SyncReport::GatherFailed(e) => Err(err(StatusCode::INTERNAL_SERVER_ERROR, &format!("The mail configuration could not be gathered: {e}"))),
+        SyncReport::AgentFailed(e) => Err(err(StatusCode::BAD_GATEWAY, &format!("The mail configuration could not be applied: {}", agent_failure_text(&e)))),
+    }
+}
+
+#[derive(serde::Deserialize, Default)]
+pub struct MailRestoreRequest {
+    /// `merge` (default: mail newer than the backup is kept) or `replace`.
+    pub mode: Option<String>,
+}
+
+/// POST /api/mail/backups/{id}/restore - Restore one mailbox from a
+/// `mail_backups` row, on the server that holds the archive.
+///
+/// When the mailbox's account no longer exists, it is recreated first from
+/// the newest config backup of that server (original password hash), and the
+/// maps are rebuilt. Answers 200 with the agent's result, or 202
+/// `{status: "running", job_id, server_id}` when the restore outlives this
+/// request (follow it with GET /api/backup-orchestrator/backup-jobs/...).
+pub async fn restore_mail_backup(
+    State(state): State<AppState>,
+    AdminUser(claims): AdminUser,
+    Path(id): Path<Uuid>,
+    headers: axum::http::HeaderMap,
+    Json(req): Json<MailRestoreRequest>,
+) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
+    use crate::services::backup_policy_executor as bpe;
+    use crate::services::mail_dns_backup as mdb;
+
+    let mode = mdb::RestoreMode::parse(req.mode.as_deref())
+        .ok_or_else(|| err(StatusCode::BAD_REQUEST, "mode must be 'merge' or 'replace'"))?;
+    let row = mail_backup_for_caller(&state, id, &claims).await?;
+    if row.kind != "mailbox" {
+        return Err(err(StatusCode::BAD_REQUEST, "This backup is the mail config; use Restore all mail"));
+    }
+    let (Some(domain), Some(local)) = (row.mail_domain.clone(), row.mailbox.clone()) else {
+        return Err(err(StatusCode::CONFLICT, "This backup names no mailbox"));
+    };
+    if !mdb::is_plain_filename(&row.filename) || !crate::routes::is_valid_domain(&domain) {
+        return Err(err(StatusCode::BAD_REQUEST, "Invalid backup path"));
+    }
+    let email = format!("{local}@{domain}");
+    let agent = crate::helpers::agent_for_site_server(&state, row.server_id, &domain).await?;
+    let Some(server_id) = row.server_id else {
+        return Err(err(StatusCode::CONFLICT, "This backup has no server"));
+    };
+
+    // The account must exist for Dovecot to take the mail back.
+    let exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM mail_accounts a JOIN mail_domains md ON md.id = a.domain_id \
+          WHERE lower(a.email) = lower($1) AND md.server_id = $2)",
+    )
+    .bind(&email).bind(server_id)
+    .fetch_one(&state.db).await
+    .map_err(|e| internal_error("restore mailbox", e))?;
+    let mut account_recreated = false;
+    if !exists {
+        let cfg: Option<(String, bool, i16)> = sqlx::query_as(
+            "SELECT filename, encrypted, encryption_key_version FROM mail_backups \
+              WHERE server_id = $1 AND kind = 'config' ORDER BY created_at DESC LIMIT 1",
+        )
+        .bind(server_id)
+        .fetch_optional(&state.db).await
+        .map_err(|e| internal_error("restore mailbox", e))?;
+        let Some((cfg_file, cfg_enc, cfg_ver)) = cfg else {
+            return Err(err(
+                StatusCode::CONFLICT,
+                "This mailbox no longer exists and no mail config backup of this server can recreate it",
+            ));
+        };
+        let key = bpe::row_encryption_key(cfg_enc, cfg_ver, &state.config.jwt_secret)
+            .ok_or_else(|| err(StatusCode::CONFLICT, "The mail config backup is not encrypted; refusing to read it"))?;
+        let manifest = fetch_manifest(&agent, &cfg_file, &key).await?;
+        if !manifest.accounts.iter().any(|a| a.email.eq_ignore_ascii_case(&email)) {
+            return Err(err(StatusCode::CONFLICT, "This mailbox no longer exists and the latest mail config backup does not describe it"));
+        }
+        let report = reinsert_from_manifest(&state.db, server_id, &manifest, Some(&email), &agent, &state.config.jwt_secret).await?;
+        account_recreated = report.accounts_added.iter().any(|a| a.eq_ignore_ascii_case(&email));
+        if !account_recreated {
+            return Err(err(StatusCode::CONFLICT, &format!(
+                "The mailbox could not be recreated: {}",
+                report.warnings.join("; ")
+            )));
+        }
+        sync_after_restore(&state, server_id, &agent).await?;
+    }
+
+    let key = bpe::row_encryption_key(row.encrypted, row.encryption_key_version, &state.config.jwt_secret);
+    let body = mdb::mailbox_restore_body(&domain, &local, &row.filename, mode, key.as_deref());
+    let start = agent.post_long("/mail/restore", Some(body), mdb::START_TIMEOUT_SECS).await
+        .map_err(|e| mail_restore_agent_error("Mailbox restore", e))?;
+
+    let ip = crate::routes::client_ip(&headers);
+    activity::log_activity(
+        &state.db, claims.sub, &claims.email, "mail.backup_restore",
+        Some("mail"), Some(&email), Some(&row.filename), ip.as_deref(), claims.key_id,
+    ).await;
+    crate::services::security_hardening::audit_log(
+        &state.db, "mail.backup_restore", Some(&claims.email), ip.as_deref(),
+        Some("mail"), Some(&email), Some(mode.as_str()), None, "warning", claims.key_id,
+    ).await;
+
+    let result = match mdb::parse_agent_start(&start).map_err(|e| err(StatusCode::BAD_GATEWAY, &e))? {
+        mdb::AgentStart::Skipped(_) => {
+            return Err(err(StatusCode::CONFLICT, "The mail server is not installed on this server"));
+        }
+        mdb::AgentStart::Done(v) => v,
+        mdb::AgentStart::Job(job_id) => {
+            match mdb::wait_job(&agent, &job_id, std::time::Duration::from_secs(mdb::ROUTE_JOB_BUDGET_SECS)).await {
+                Ok(v) => v,
+                Err(mdb::JobWaitError::TimedOut) => {
+                    return Ok((StatusCode::ACCEPTED, Json(serde_json::json!({
+                        "status": "running",
+                        "job_id": job_id,
+                        "server_id": server_id,
+                        "message": "The restore is still running on the server.",
+                    }))));
+                }
+                Err(e) => return Err(err(StatusCode::BAD_GATEWAY, &format!("Mailbox restore failed: {e}"))),
+            }
+        }
+    };
+    Ok((StatusCode::OK, Json(serde_json::json!({
+        "ok": true,
+        "mode": mode.as_str(),
+        "messages": result.get("messages").cloned().unwrap_or(serde_json::Value::Null),
+        "account_recreated": account_recreated,
+    }))))
+}
+
+/// POST /api/mail/backups/{id}/restore-all - From a config backup: put back
+/// the domains, mailboxes and aliases that are missing on its server (no
+/// certificate, no DNS change), reinstall the DKIM keys of the domains put
+/// back, rebuild the maps, then restore every mailbox of the manifest from its
+/// newest backup on that server, one by one (merge), in the background.
+///
+/// Answers 202 once the configuration is back: restoring every mailbox can
+/// take far longer than a request may. The outcome lands in the system log and
+/// in the panel notifications.
+pub async fn restore_all_mail(
+    State(state): State<AppState>,
+    AdminUser(claims): AdminUser,
+    Path(id): Path<Uuid>,
+    headers: axum::http::HeaderMap,
+) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
+    use crate::services::backup_policy_executor as bpe;
+    use crate::services::mail_dns_backup as mdb;
+
+    let row = mail_backup_for_caller(&state, id, &claims).await?;
+    if row.kind != "config" {
+        return Err(err(StatusCode::BAD_REQUEST, "Restore all mail starts from a mail config backup"));
+    }
+    if !mdb::is_plain_filename(&row.filename) {
+        return Err(err(StatusCode::BAD_REQUEST, "Invalid backup path"));
+    }
+    let agent = crate::helpers::agent_for_site_server(&state, row.server_id, "mail config").await?;
+    let Some(server_id) = row.server_id else {
+        return Err(err(StatusCode::CONFLICT, "This backup has no server"));
+    };
+    let key = bpe::row_encryption_key(row.encrypted, row.encryption_key_version, &state.config.jwt_secret)
+        .ok_or_else(|| err(StatusCode::CONFLICT, "The mail config backup is not encrypted; refusing to read it"))?;
+    let manifest = fetch_manifest(&agent, &row.filename, &key).await?;
+    let report = reinsert_from_manifest(&state.db, server_id, &manifest, None, &agent, &state.config.jwt_secret).await?;
+    sync_after_restore(&state, server_id, &agent).await?;
+
+    let ip = crate::routes::client_ip(&headers);
+    activity::log_activity(
+        &state.db, claims.sub, &claims.email, "mail.backup_restore_all",
+        Some("mail"), None, Some(&row.filename), ip.as_deref(), claims.key_id,
+    ).await;
+    crate::services::security_hardening::audit_log(
+        &state.db, "mail.backup_restore_all", Some(&claims.email), ip.as_deref(),
+        Some("mail"), None, Some(&row.filename), None, "warning", claims.key_id,
+    ).await;
+
+    let mailboxes = manifest.accounts.len();
+    let db = state.db.clone();
+    let jwt = state.config.jwt_secret.clone();
+    let user = claims.sub;
+    let accounts: Vec<String> = manifest.accounts.iter().map(|a| a.email.clone()).collect();
+    tokio::spawn(async move {
+        let mut restored = 0usize;
+        let mut problems: Vec<String> = Vec::new();
+        for email in &accounts {
+            let Some((local, domain)) = mdb::split_address(email) else { continue };
+            let latest: Result<Option<(String, bool, i16)>, _> = sqlx::query_as(
+                "SELECT filename, encrypted, encryption_key_version FROM mail_backups \
+                  WHERE server_id = $1 AND kind = 'mailbox' AND mail_domain = $2 AND mailbox = $3 \
+                  ORDER BY created_at DESC LIMIT 1",
+            )
+            .bind(server_id).bind(domain).bind(local)
+            .fetch_optional(&db).await;
+            let (file, enc, ver) = match latest {
+                Ok(Some(r)) => r,
+                Ok(None) => {
+                    problems.push(format!("{email}: no backup"));
+                    continue;
+                }
+                Err(e) => {
+                    problems.push(format!("{email}: {e}"));
+                    continue;
+                }
+            };
+            let key = bpe::row_encryption_key(enc, ver, &jwt);
+            let body = mdb::mailbox_restore_body(domain, local, &file, mdb::RestoreMode::Merge, key.as_deref());
+            match mdb::start_and_wait(&agent, "/mail/restore", body, std::time::Duration::from_secs(mdb::JOB_BUDGET_SECS)).await {
+                Ok(mdb::JobOutcome::Done(_)) => restored += 1,
+                Ok(mdb::JobOutcome::Skipped(r)) => problems.push(format!("{email}: skipped ({r})")),
+                Ok(mdb::JobOutcome::StillRunning(id)) => problems.push(format!("{email}: still running (job {id})")),
+                Err(e) => problems.push(format!("{email}: {e}")),
+            }
+        }
+        let (level, title) = if problems.is_empty() {
+            ("info", format!("All mail restored: {restored} mailbox(es)"))
+        } else {
+            ("warning", format!("Mail restore finished: {restored} of {} mailbox(es) restored", accounts.len()))
+        };
+        let details = problems.join("\n");
+        crate::services::system_log::log_event(
+            &db, level, "mail_restore", &title, if details.is_empty() { None } else { Some(&details) },
+        ).await;
+        crate::services::notifications::notify_panel(
+            &db, Some(user), &title,
+            if problems.is_empty() { "Every mailbox of the backup was restored." } else { details.as_str() },
+            level, "backup", Some("/mail"),
+        ).await;
+    });
+
+    Ok((StatusCode::ACCEPTED, Json(serde_json::json!({
+        "started": true,
+        "message": format!("Mail configuration restored. {mailboxes} mailbox(es) are being restored in the background."),
+        "domains_added": report.domains_added,
+        "accounts_added": report.accounts_added,
+        "aliases_added": report.aliases_added,
+        "dkim_imported": report.dkim_imported,
+        "warnings": report.warnings,
+        "mailboxes": mailboxes,
+    }))))
 }
 
 // ── TLS Enforcement ─────────────────────────────────────────────────────

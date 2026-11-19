@@ -2,6 +2,58 @@ import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
 import ConfirmDialog from "../components/ConfirmDialog";
+import { useAuth } from "../context/AuthContext";
+
+/** A row of `dns_backups`, written by the backup policies. */
+interface DnsBackup {
+  id: string;
+  server_id: string | null;
+  kind: "zone" | "snapshot";
+  zone: string | null;
+  backend: "sqlite" | "pgsql" | null;
+  filename: string;
+  size_bytes: number;
+  encrypted: boolean;
+  encryption_key_version: number;
+  policy_id: string | null;
+  uploaded: boolean;
+  sha256_hash: string | null;
+  created_at: string;
+}
+
+interface DnsRestoreAnswer {
+  ok?: boolean;
+  kind?: "zone" | "snapshot";
+  zone?: string;
+  readopted?: boolean;
+  rrsets?: number;
+  backend?: string;
+  zones_tracked?: number;
+  status?: string;
+  job_id?: string;
+  server_id?: string;
+  message?: string;
+}
+
+interface BackupJobStatus {
+  status: "running" | "done" | "failed";
+  result: Record<string, unknown> | null;
+  error: string | null;
+}
+
+/** Follow a restore the backend handed back as a job: every 5 s, at most 30 minutes. */
+async function waitForBackupJob(serverId: string, jobId: string): Promise<Record<string, unknown> | null> {
+  const deadline = Date.now() + 30 * 60 * 1000;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 5000));
+    const s = await api.get<BackupJobStatus>(
+      `/backup-orchestrator/backup-jobs/${encodeURIComponent(serverId)}/${encodeURIComponent(jobId)}`,
+    );
+    if (s.status === "done") return s.result;
+    if (s.status === "failed") throw new Error(s.error || "The restore failed on the server");
+  }
+  throw new Error("The restore is still running on the server after 30 minutes. Check the DNS server before trying again.");
+}
 
 interface DnsZone {
   id: string;
@@ -78,7 +130,40 @@ export default function Dns() {
   const [zoneEmail, setZoneEmail] = useState("");
   const [authMethod, setAuthMethod] = useState<"token" | "key">("token");
   const [savingZone, setSavingZone] = useState(false);
-  const [pendingConfirm, setPendingConfirm] = useState<{ type: string; data: DnsRecord | DnsZone | null; label: string } | null>(null);
+  const [pendingConfirm, setPendingConfirm] = useState<{ type: string; data: DnsRecord | DnsZone | DnsBackup | null; label: string } | null>(null);
+
+  // DNS backups taken by the backup policies. The routes are admin-only.
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
+  const [dnsBackups, setDnsBackups] = useState<DnsBackup[]>([]);
+  const [restoringBackupId, setRestoringBackupId] = useState<string | null>(null);
+  const loadDnsBackups = async () => {
+    try { setDnsBackups(await api.get<DnsBackup[]>("/backup-orchestrator/dns-backups?limit=200")); }
+    catch { setDnsBackups([]); }
+  };
+  useEffect(() => { if (isAdmin) loadDnsBackups(); }, [isAdmin]);
+
+  const restoreDnsBackup = async (b: DnsBackup) => {
+    setRestoringBackupId(b.id);
+    try {
+      const res = await api.post<DnsRestoreAnswer>(`/dns/backups/${b.id}/restore`, {});
+      if (res.job_id && res.server_id && res.status === "running") {
+        setMessage({ text: res.message || "Restoring the DNS database, this can take a while", type: "success" });
+        await waitForBackupJob(res.server_id, res.job_id);
+      }
+      setMessage({
+        text: b.kind === "zone"
+          ? `Zone ${res.zone ?? b.zone ?? ""} restored${res.readopted ? " (existing zone re-adopted, records replaced)" : ""}`
+          : "DNS database restored",
+        type: "success",
+      });
+      loadZones();
+    } catch (e) {
+      setMessage({ text: e instanceof Error ? e.message : "Restore failed", type: "error" });
+    } finally {
+      setRestoringBackupId(null);
+    }
+  };
 
   // Add/edit record form
   const [showRecordForm, setShowRecordForm] = useState(false);
@@ -288,7 +373,9 @@ export default function Dns() {
     if (!pendingConfirm) return;
     const { type, data } = pendingConfirm;
     setPendingConfirm(null);
-    if (type === "delete-zone" && data) {
+    if (type === "restore-dns-backup" && data) {
+      await restoreDnsBackup(data as DnsBackup);
+    } else if (type === "delete-zone" && data) {
       try {
         await api.delete(`/dns/zones/${data.id}`);
         if (selectedZone?.id === data.id) { setSelectedZone(null); setRecords([]); }
@@ -1395,6 +1482,40 @@ export default function Dns() {
           )}
         </div>
       </div>
+
+      {/* DNS backups from the backup policies: one export per zone and a
+          snapshot of the whole PowerDNS database (always encrypted). */}
+      {isAdmin && dnsBackups.length > 0 && (
+        <div className="mt-6 bg-dark-800 rounded-lg border border-dark-500 overflow-hidden">
+          <div className="px-5 py-3 border-b border-dark-600">
+            <h3 className="text-xs font-medium text-dark-300 uppercase font-mono tracking-widest">DNS backups</h3>
+          </div>
+          <div className="divide-y divide-dark-600">
+            {dnsBackups.map((b) => (
+              <div key={b.id} className="px-5 py-2.5 flex items-center justify-between text-xs gap-3">
+                <div className="min-w-0">
+                  <span className="text-dark-100 font-mono">
+                    {b.kind === "zone" ? b.zone ?? b.filename : `DNS database (${b.backend ?? "unknown"})`}
+                  </span>
+                  <span className="text-dark-300 ml-2">{(b.size_bytes / 1024).toFixed(1)} KB</span>
+                  <span className="text-dark-300 ml-2">{new Date(b.created_at).toLocaleString()}</span>
+                  {b.encrypted && <span className="ml-2 text-[9px] px-1 bg-dark-700 text-accent-400 uppercase tracking-wider rounded" title="Encrypted at rest">Encrypted</span>}
+                  {b.uploaded && <span className="ml-1 text-[9px] px-1 bg-dark-700 text-rust-400 uppercase tracking-wider rounded" title="Copied to the remote destination">Remote</span>}
+                </div>
+                <button
+                  disabled={restoringBackupId === b.id}
+                  onClick={() => setPendingConfirm(b.kind === "zone"
+                    ? { type: "restore-dns-backup", data: b, label: `Restore zone ${b.zone ?? ""} from this backup? Its records are replaced by the backed up ones.` }
+                    : { type: "restore-dns-backup", data: b, label: "This replaces every zone on the DNS server." })}
+                  className="text-rust-400 hover:text-rust-300 disabled:opacity-50 shrink-0"
+                >
+                  {restoringBackupId === b.id ? "Restoring..." : b.kind === "zone" ? "Restore zone" : "Restore full DNS database"}
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       </div>
     </div>
   );

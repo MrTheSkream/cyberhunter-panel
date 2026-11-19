@@ -8,6 +8,7 @@ pub mod auto_healer;
 pub mod backup_policy_executor;
 pub mod backup_scheduler;
 pub mod backup_verifier;
+pub mod mail_dns_backup;
 pub mod chain_report;
 pub mod deploy_incidents;
 pub mod deploy_scheduler;

@@ -68,6 +68,10 @@ interface BackupPolicy {
   backup_sites: boolean;
   backup_databases: boolean;
   backup_volumes: boolean;
+  /** Mail leg: every mailbox plus the mail config. Admin-only policies. */
+  backup_mail: boolean;
+  /** DNS leg: one export per zone plus a snapshot of the DNS database. Admin-only policies. */
+  backup_dns: boolean;
   schedule: string;
   destination_id: string | null;
   retention_count: number;
@@ -215,7 +219,7 @@ interface ServerRow {
 
 interface UnifiedBackupRow {
   id: string;
-  kind: "site" | "database" | "volume";
+  kind: BackupKind;
   resource_id: string | null;
   resource_name: string;
   filename: string;
@@ -229,6 +233,12 @@ interface UnifiedBackupRow {
   extra_type: string | null;
 }
 
+// `mail` and `dns` rows have no verify, drill or chain report in the backend:
+// those controls are only offered for the three original kinds.
+type BackupKind = "site" | "database" | "volume" | "mail" | "dns";
+type DrillableKind = "site" | "database" | "volume";
+const isDrillable = (k: BackupKind): k is DrillableKind => k === "site" || k === "database" || k === "volume";
+
 interface UnifiedBackupsResponse {
   items: UnifiedBackupRow[];
   total: number;
@@ -240,6 +250,8 @@ interface PolicyForm {
   backup_sites: boolean;
   backup_databases: boolean;
   backup_volumes: boolean;
+  backup_mail: boolean;
+  backup_dns: boolean;
   destination_id: string;
   retention_count: number;
   encrypt: boolean;
@@ -255,7 +267,7 @@ interface PolicyForm {
 
 const EMPTY_POLICY_FORM: PolicyForm = {
   name: "", schedule: "0 2 * * *", backup_sites: true, backup_databases: true,
-  backup_volumes: false, destination_id: "", retention_count: 7,
+  backup_volumes: false, backup_mail: false, backup_dns: false, destination_id: "", retention_count: 7,
   encrypt: false, verify_after_backup: false, stop_apps: true, enabled: true,
   drill_enabled: false, drill_schedule: "0 4 * * 0",
 };
@@ -309,7 +321,7 @@ export default function BackupOrchestrator() {
   const [prereqs, setPrereqs] = useState<PrereqResult[]>([]);
   const [unified, setUnified] = useState<UnifiedBackupsResponse>({ items: [], total: 0 });
   const [unifiedFilterServer, setUnifiedFilterServer] = useState<string>("");
-  const [unifiedFilterKind, setUnifiedFilterKind] = useState<"" | "site" | "database" | "volume">("");
+  const [unifiedFilterKind, setUnifiedFilterKind] = useState<"" | BackupKind>("");
   const [unifiedOffset, setUnifiedOffset] = useState(0);
   const [unifiedLoading, setUnifiedLoading] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -440,6 +452,8 @@ export default function BackupOrchestrator() {
       backup_sites: p.backup_sites,
       backup_databases: p.backup_databases,
       backup_volumes: p.backup_volumes,
+      backup_mail: p.backup_mail ?? false,
+      backup_dns: p.backup_dns ?? false,
       destination_id: p.destination_id ?? "",
       retention_count: p.retention_count,
       encrypt: p.encrypt,
@@ -684,7 +698,7 @@ export default function BackupOrchestrator() {
     }
   };
 
-  const triggerDrill = async (backupId: string, backupType: "site" | "database" | "volume") => {
+  const triggerDrill = async (backupId: string, backupType: DrillableKind) => {
     try {
       await api.post("/backup-orchestrator/drill", { backup_type: backupType, backup_id: backupId });
       const msg =
@@ -777,6 +791,7 @@ export default function BackupOrchestrator() {
           onCreate={savePolicy} onDelete={deletePolicy}
           editingId={editingPolicyId} onEdit={openEditPolicy} onCancelEdit={cancelEditPolicy}
           onProtectAll={protectAll} protectAllBusy={protectAllBusy}
+          isAdmin={user.role === "admin"}
         />
       )}
       {tab === "databases" && (
@@ -1048,23 +1063,24 @@ function AllBackupsTab({
   offset: number;
   pageSize: number;
   filterServer: string;
-  filterKind: "" | "site" | "database" | "volume";
+  filterKind: "" | BackupKind;
   setFilterServer: (s: string) => void;
-  setFilterKind: (k: "" | "site" | "database" | "volume") => void;
+  setFilterKind: (k: "" | BackupKind) => void;
   onPage: (offset: number) => void;
-  onDrill: (backupId: string, backupType: "site" | "database" | "volume") => void;
+  onDrill: (backupId: string, backupType: DrillableKind) => void;
 }) {
   const [pendingDrillId, setPendingDrillId] = useState<string | null>(null);
   const hasNext = offset + data.items.length < data.total;
   const hasPrev = offset > 0;
 
-  const drillCostHint = (kind: UnifiedBackupRow["kind"]): string => {
+  const drillCostHint = (kind: DrillableKind): string => {
     if (kind === "site") return "";
     if (kind === "database") return "boots a 256 MB scratch DB engine, ~60s";
     return "boots a 128 MB scratch container + temp volume, ~60s";
   };
 
   const handleDrillClick = (row: UnifiedBackupRow) => {
+    if (!isDrillable(row.kind)) return;
     if (row.kind === "site") {
       onDrill(row.id, row.kind);
       return;
@@ -1082,7 +1098,9 @@ function AllBackupsTab({
       ? "bg-rust-500/10 text-rust-400 border-rust-500/20"
       : kind === "database"
         ? "bg-accent-500/10 text-accent-400 border-accent-500/20"
-        : "bg-warn-500/10 text-warn-400 border-warn-500/20";
+        : kind === "mail" || kind === "dns"
+          ? "bg-dark-700 text-dark-100 border-dark-500"
+          : "bg-warn-500/10 text-warn-400 border-warn-500/20";
     return (
       <span className={`px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider border rounded ${style}`}>
         {kind}
@@ -1111,13 +1129,15 @@ function AllBackupsTab({
           <label className="text-[10px] text-dark-300 uppercase font-mono tracking-widest mb-1">Kind</label>
           <select
             value={filterKind}
-            onChange={(e) => setFilterKind(e.target.value as "" | "site" | "database" | "volume")}
+            onChange={(e) => setFilterKind(e.target.value as "" | BackupKind)}
             className="bg-dark-700 border border-dark-500 text-dark-50 text-sm font-mono rounded px-2 py-1.5 min-w-[140px]"
           >
             <option value="">All kinds</option>
             <option value="site">Site</option>
             <option value="database">Database</option>
             <option value="volume">Volume</option>
+            <option value="mail">Mail</option>
+            <option value="dns">DNS</option>
           </select>
         </div>
         <div className="ml-auto text-xs text-dark-300 font-mono">
@@ -1176,7 +1196,12 @@ function AllBackupsTab({
                       <div className="text-[10px] text-dark-300">{timeAgo(row.created_at)}</div>
                     </td>
                     <td className="px-4 py-2 text-right">
-                      {pendingDrillId === row.id ? (
+                      {!isDrillable(row.kind) ? (
+                        <span
+                          className="text-[10px] text-dark-300 font-mono"
+                          title="Verify, drill and reports do not cover mail and DNS backups yet."
+                        >Restore from the {row.kind === "mail" ? "Mail" : "DNS"} page</span>
+                      ) : pendingDrillId === row.id ? (
                         <div className="inline-flex items-center gap-1.5">
                           <span className="text-[10px] text-dark-300 font-mono mr-1" title={drillCostHint(row.kind)}>
                             {drillCostHint(row.kind)}
@@ -1455,7 +1480,7 @@ function DestinationsTab({
 
 function PoliciesTab({
   policies, destinations, showForm, setShowForm, form, setForm, onCreate, onDelete,
-  editingId, onEdit, onCancelEdit, onProtectAll, protectAllBusy
+  editingId, onEdit, onCancelEdit, onProtectAll, protectAllBusy, isAdmin
 }: {
   policies: BackupPolicy[]; destinations: Destination[];
   showForm: boolean; setShowForm: (v: boolean) => void;
@@ -1467,6 +1492,7 @@ function PoliciesTab({
   onCancelEdit: () => void;
   onProtectAll: () => void;
   protectAllBusy: boolean;
+  isAdmin: boolean;
 }) {
   const editing = editingId !== null;
   const [historyFor, setHistoryFor] = useState<string | null>(null);
@@ -1559,6 +1585,18 @@ function PoliciesTab({
             <label className="flex items-center gap-2 text-dark-100">
               <input type="checkbox" checked={form.backup_volumes} onChange={e => setForm({ ...form, backup_volumes: e.target.checked })} /> App data (volumes and bind mounts)
             </label>
+            {/* Mail and DNS are shared by every tenant of a host: the backend
+                accepts these two legs from an administrator only. */}
+            {isAdmin && (
+              <label className="flex items-center gap-2 text-dark-100" title="Skipped when the mail server is not installed">
+                <input type="checkbox" checked={form.backup_mail} onChange={e => setForm({ ...form, backup_mail: e.target.checked })} /> Mail (all mailboxes and config)
+              </label>
+            )}
+            {isAdmin && (
+              <label className="flex items-center gap-2 text-dark-100" title="Config and DNS snapshots are always encrypted">
+                <input type="checkbox" checked={form.backup_dns} onChange={e => setForm({ ...form, backup_dns: e.target.checked })} /> DNS zones
+              </label>
+            )}
             {/* Scoped deliberately. The derived key reaches database dumps and
                 app data archives, and nothing else: the agent has no encryption
                 path for site archives, so an unqualified "Encrypt" would promise
@@ -1654,7 +1692,9 @@ function PoliciesTab({
                   <td className="px-5 py-4 text-xs font-mono">
                     {p.backup_sites && <span className="inline-flex px-2 py-0.5 rounded-full bg-rust-500/15 text-rust-400 mr-1">Sites</span>}
                     {p.backup_databases && <span className="inline-flex px-2 py-0.5 rounded-full bg-accent-500/15 text-accent-400 mr-1">DBs</span>}
-                    {p.backup_volumes && <span className="inline-flex px-2 py-0.5 rounded-full bg-warn-500/15 text-warn-400">App data</span>}
+                    {p.backup_volumes && <span className="inline-flex px-2 py-0.5 rounded-full bg-warn-500/15 text-warn-400 mr-1">App data</span>}
+                    {p.backup_mail && <span className="inline-flex px-2 py-0.5 rounded-full bg-dark-700 text-dark-100 mr-1" title="Skipped when the mail server is not installed">Mail</span>}
+                    {p.backup_dns && <span className="inline-flex px-2 py-0.5 rounded-full bg-dark-700 text-dark-100" title="Config and DNS snapshots are always encrypted">DNS</span>}
                   </td>
                   <td className="px-5 py-4 text-sm text-dark-200 font-mono">{p.retention_count}</td>
                   <td className="px-5 py-4">

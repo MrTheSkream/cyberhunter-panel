@@ -6,7 +6,7 @@ use axum::{
 };
 use uuid::Uuid;
 
-use crate::auth::AuthUser;
+use crate::auth::{AdminUser, AuthUser};
 use crate::error::{ApiError, err, internal_error, require_admin, upstream_error};
 use crate::services::activity;
 use crate::AppState;
@@ -1670,5 +1670,159 @@ mod tests {
         assert!(is_safe_dig_arg("example.com", true));
         assert!(is_safe_dig_arg("sub.example.com", false));
         assert!(is_safe_dig_arg("mail-1.example.com", false));
+    }
+}
+
+// ── DNS backups from the Backup Orchestrator (lot 3) ────────────────────
+
+#[derive(sqlx::FromRow)]
+struct DnsBackupRef {
+    server_id: Option<Uuid>,
+    kind: String,
+    zone: Option<String>,
+    backend: Option<String>,
+    filename: String,
+    encrypted: bool,
+    encryption_key_version: i16,
+}
+
+/// POST /api/dns/backups/{id}/restore - Restore one zone, or the whole
+/// PowerDNS database, from a `dns_backups` row, on the server that holds it.
+///
+/// * zone: the agent decrypts and hands back the export; it is re-applied
+///   through the PowerDNS API (`POST /zones` with its rrsets; when the zone
+///   exists, 409, it is re-adopted and its rrsets are replaced), and the zone
+///   is tracked in `dns_zones` again if it was not.
+/// * snapshot: the agent replaces the database (sqlite or pgsql) and restarts
+///   PowerDNS; every zone it then serves is tracked in `dns_zones`. Answers 202
+///   `{status: "running", job_id, server_id}` when it outlives this request.
+pub async fn restore_dns_backup(
+    State(state): State<AppState>,
+    AdminUser(claims): AdminUser,
+    Path(id): Path<Uuid>,
+    headers: axum::http::HeaderMap,
+) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
+    use crate::services::backup_policy_executor as bpe;
+    use crate::services::mail_dns_backup as mdb;
+
+    // Scoped to the servers this administrator runs; role read from the DATABASE.
+    let row: DnsBackupRef = sqlx::query_as(
+        "SELECT dnb.server_id, dnb.kind, dnb.zone, dnb.backend, dnb.filename, dnb.encrypted, dnb.encryption_key_version \
+           FROM dns_backups dnb WHERE dnb.id = $1 AND EXISTS (\
+             SELECT 1 FROM users u, servers sv WHERE u.id = $2 AND u.role = 'admin' \
+             AND sv.id = dnb.server_id AND (sv.is_local OR sv.user_id = u.id))",
+    )
+    .bind(id)
+    .bind(claims.sub)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| internal_error("read dns backup", e))?
+    .ok_or_else(|| err(StatusCode::NOT_FOUND, "DNS backup not found"))?;
+    if !mdb::is_plain_filename(&row.filename) {
+        return Err(err(StatusCode::BAD_REQUEST, "Invalid backup path"));
+    }
+    let label = row.zone.clone().unwrap_or_else(|| "DNS database".to_string());
+    let agent = crate::helpers::agent_for_site_server(&state, row.server_id, &label).await?;
+    let Some(server_id) = row.server_id else {
+        return Err(err(StatusCode::CONFLICT, "This backup has no server"));
+    };
+    let key = bpe::row_encryption_key(row.encrypted, row.encryption_key_version, &state.config.jwt_secret);
+    let ip = crate::routes::client_ip(&headers);
+    let refuse = |e: crate::services::agent::AgentError| -> ApiError {
+        use crate::services::agent::AgentError;
+        match e {
+            AgentError::Status(code @ (400 | 409 | 422 | 507), ref body) => err(
+                StatusCode::from_u16(code).unwrap_or(StatusCode::BAD_GATEWAY),
+                &crate::error::agent_message(body),
+            ),
+            other => crate::error::agent_error("DNS restore", other),
+        }
+    };
+
+    activity::log_activity(
+        &state.db, claims.sub, &claims.email, "dns.backup_restore",
+        Some("dns"), Some(&label), Some(&row.filename), ip.as_deref(), claims.key_id,
+    ).await;
+    crate::services::security_hardening::audit_log(
+        &state.db, "dns.backup_restore", Some(&claims.email), ip.as_deref(),
+        Some("dns"), Some(&label), Some(&row.kind), None, "warning", claims.key_id,
+    ).await;
+
+    match row.kind.as_str() {
+        "zone" => {
+            let Some(zone) = row.zone.clone().filter(|z| mdb::is_valid_zone(z)) else {
+                return Err(err(StatusCode::CONFLICT, "This backup names no valid zone"));
+            };
+            let api = mdb::pdns_api_from_settings(&state.db, &state.config.jwt_secret).await
+                .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
+                .ok_or_else(|| err(StatusCode::CONFLICT, "PowerDNS not configured. Set API URL and API Key in Settings."))?;
+            let resp = agent
+                .post_long("/dns/restore", Some(mdb::dns_restore_body("zone", &row.filename, key.as_deref())), mdb::START_TIMEOUT_SECS)
+                .await
+                .map_err(refuse)?;
+            if resp.get("skipped").is_some() {
+                return Err(err(StatusCode::CONFLICT, "PowerDNS is not installed on this server"));
+            }
+            let content = resp.get("content").ok_or_else(|| err(StatusCode::BAD_GATEWAY, "The agent returned no zone"))?;
+            // The export must be the zone this row names: the file is read on
+            // the agent, the name is checked here before anything is applied.
+            let exported = content.get("name").and_then(|v| v.as_str()).map(mdb::zone_label).unwrap_or_default();
+            if !exported.eq_ignore_ascii_case(&zone) {
+                return Err(err(StatusCode::UNPROCESSABLE_ENTITY, "The backup file holds another zone than its record says"));
+            }
+            let (readopted, rrsets) = api.apply_zone(content).await.map_err(|e| err(StatusCode::BAD_GATEWAY, &e))?;
+            mdb::track_powerdns_zone(&state.db, claims.sub, &zone, server_id).await
+                .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+            Ok((StatusCode::OK, Json(serde_json::json!({
+                "ok": true, "kind": "zone", "zone": zone, "readopted": readopted, "rrsets": rrsets,
+            }))))
+        }
+        "snapshot" => {
+            let key = key.ok_or_else(|| err(StatusCode::CONFLICT, "This DNS snapshot is not encrypted; refusing to restore it"))?;
+            let start = agent
+                .post_long("/dns/restore", Some(mdb::dns_restore_body("snapshot", &row.filename, Some(&key))), mdb::START_TIMEOUT_SECS)
+                .await
+                .map_err(refuse)?;
+            match mdb::parse_agent_start(&start).map_err(|e| err(StatusCode::BAD_GATEWAY, &e))? {
+                mdb::AgentStart::Skipped(_) => {
+                    return Err(err(StatusCode::CONFLICT, "PowerDNS is not installed on this server"));
+                }
+                mdb::AgentStart::Done(_) => {}
+                mdb::AgentStart::Job(job_id) => {
+                    match mdb::wait_job(&agent, &job_id, std::time::Duration::from_secs(mdb::ROUTE_JOB_BUDGET_SECS)).await {
+                        Ok(_) => {}
+                        Err(mdb::JobWaitError::TimedOut) => {
+                            return Ok((StatusCode::ACCEPTED, Json(serde_json::json!({
+                                "status": "running",
+                                "job_id": job_id,
+                                "server_id": server_id,
+                                "message": "The DNS restore is still running on the server.",
+                            }))));
+                        }
+                        Err(e) => return Err(err(StatusCode::BAD_GATEWAY, &format!("DNS restore failed: {e}"))),
+                    }
+                }
+            }
+            // Track every zone the restored database serves.
+            let mut zones_tracked = 0usize;
+            if let Ok(Some(api)) = mdb::pdns_api_from_settings(&state.db, &state.config.jwt_secret).await {
+                match api.list_zones().await {
+                    Ok(zones) => {
+                        for z in zones.iter().filter(|z| mdb::is_valid_zone(z)) {
+                            match mdb::track_powerdns_zone(&state.db, claims.sub, z, server_id).await {
+                                Ok(true) => zones_tracked += 1,
+                                Ok(false) => {}
+                                Err(e) => tracing::warn!("DNS restore: {e}"),
+                            }
+                        }
+                    }
+                    Err(e) => tracing::warn!("DNS restore: the restored zones could not be listed: {e}"),
+                }
+            }
+            Ok((StatusCode::OK, Json(serde_json::json!({
+                "ok": true, "kind": "snapshot", "backend": row.backend, "zones_tracked": zones_tracked,
+            }))))
+        }
+        _ => Err(err(StatusCode::CONFLICT, "This backup has an unknown kind")),
     }
 }

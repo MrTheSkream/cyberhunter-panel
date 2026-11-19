@@ -8,6 +8,7 @@ Unlike per-site backups (see [Backups](backups.md)), the Backup Orchestrator wor
 
 - **Database backups**: Any PostgreSQL, MySQL/MariaDB, or MongoDB container
 - **App data backups**: The Docker volumes (named and anonymous) and the bind mounts under `/var/lib/dockpanel/apps`, `/var/lib/dockpanel/compose` and `/var/lib/dockpanel/git-data` of every app the panel manages: template apps, compose stacks and Git deployments
+- **Mail and DNS backups** (administrators): every mailbox and the mail configuration, every PowerDNS zone and a snapshot of the PowerDNS database
 - **Policies**: Automated schedules with retention rules
 - **Encryption**: Optional AES-256 encryption at rest, for **database dumps and app data archives** (site archives are not encrypted yet)
 - **Verification**: Automated restore tests to confirm backup integrity
@@ -19,7 +20,7 @@ The fastest way to get started is the one-click preset.
 
 1. Go to **Backup Orchestrator** in the sidebar
 2. Click **Protect Everything**
-3. CyberHunter - Panel creates a policy that backs up all sites, databases, and app data daily at 2 AM, keeps 7 days of history, and verifies each backup after creation.
+3. CyberHunter - Panel creates a policy that backs up all sites, databases, app data, mail and DNS daily at 2 AM, keeps 7 days of history, and verifies each backup after creation. Mail and DNS are only included for an administrator.
 
 ## Creating Backup Policies
 
@@ -30,6 +31,7 @@ For more control, create a custom policy.
 3. Configure:
    - **Name**: A label (e.g., `production-dbs-nightly`)
    - **What to back up**: Toggle sites, databases, and/or **App data (volumes and bind mounts)**
+   - **Mail (all mailboxes and config)** and **DNS zones** (administrators only, see [Mail and DNS Backups](#mail-and-dns-backups))
    - **Stop apps during backup** (app data only, on by default): briefly stops the containers that use the data so databases are copied consistently. They are started again right after the copy, even when it fails. Untick it to archive the data while the app runs
    - **Schedule**: Cron expression (default: `0 2 * * *` = daily at 2 AM)
    - **Destination**: Optional remote destination
@@ -124,6 +126,76 @@ refused with a clear message and the live data is left untouched. A restore of
 a large archive can outlast the request: the page then says the restore is
 still running on the server, and the containers restart when it ends.
 
+## Mail and DNS Backups
+
+Mail and DNS are shared by every customer of a server, so these two parts of
+a policy are reserved to administrators: the API refuses them (403, "Mail and
+DNS backups are reserved to administrators") for anyone else, and the
+executor skips them, with a reason in the run history, for a policy whose
+owner is not an administrator.
+
+**Mail** runs on the policy's server (the local server when the policy names
+none) and writes to `/var/backups/dockpanel/mail/`:
+
+- `mailcfg-<YYYYMMDD-HHMMSS>.tar.gz.enc`: the mail configuration, **always
+  encrypted**. It holds a manifest exported from the panel database (domains,
+  mailboxes with their password hashes, quotas, forwarding and keep-a-copy,
+  aliases, DKIM selector and public key) and the files of
+  `/etc/dockpanel/dkim`, `opendkim.conf`, and the Postfix and Dovecot
+  configuration for reference. No secret is in clear in the manifest: the DKIM
+  private key stays encrypted as the panel stores it, and passwords are only
+  there as hashes.
+- `mail-<domain>-<local part in base64url>-<YYYYMMDD-HHMMSS>.tar.gz` (plus
+  `.enc` when the policy encrypts): one archive per mailbox. Mail arriving
+  while it is archived is not an error.
+
+**DNS** runs on the server PowerDNS was installed on (the local server for an
+install that predates that record) and writes to `/var/backups/dockpanel/dns/`:
+
+- `dns-zone-<zone>-<YYYYMMDD-HHMMSS>.json` (plus `.enc` when the policy
+  encrypts): each zone exported through the PowerDNS API, records included;
+- `dns-snapshot-<sqlite|pgsql>-<YYYYMMDD-HHMMSS>.gz.enc`: the whole PowerDNS
+  database, **always encrypted**. Only the snapshot covers DNSSEC keys.
+
+When the mail server or PowerDNS is not installed, that part is skipped: the
+skip is written to the system log and the run is neither failed nor degraded
+by it.
+
+### Restore mail
+
+On the **Mail** page, **Mailbox backups**:
+
+- **Restore mailbox** puts one mailbox back on the server that holds the
+  archive. By default the restore merges: messages newer than the backup are
+  kept. Tick **Replace current mail** to replace the mailbox with the backup.
+  When the mailbox no longer exists, it is recreated first from the newest
+  mail config backup of that server, with its original password.
+- **Restore all mail** (on a config backup) puts back the domains, mailboxes
+  and aliases that are missing on that server, reinstalls the DKIM key of each
+  domain it puts back, rebuilds the mail server configuration, then restores
+  every mailbox from its newest backup, one by one, in the background. The
+  outcome is written to the system log and to the panel notifications.
+
+A restore never issues a certificate and never changes DNS records: the rows
+are put back as they were, without going through domain creation.
+
+### Restore DNS
+
+On the **DNS** page, **DNS backups**:
+
+- **Restore zone** applies the exported zone through the PowerDNS API. A zone
+  that still exists is kept and its records are replaced by the backup's.
+- **Restore full DNS database** replaces the PowerDNS database with the
+  snapshot and restarts PowerDNS. This replaces every zone on the DNS server.
+
+A restore that outlasts the request goes on on the server, and the page
+follows it until it ends.
+
+Retention follows the policy's retention count, per mailbox, per zone, and
+for the mail config and the DNS snapshot, on this server and at the
+destination (see [Backup Destinations](#backup-destinations)). Verification
+and restore drills do not cover mail and DNS backups yet.
+
 ## Backup Verification
 
 Verification confirms a backup is intact and restorable by checking file integrity, decompression, headers, and structure.
@@ -174,7 +246,7 @@ Add a destination under **Backup Manager** > **Destinations**, then select it on
 
 A policy with no destination writes its archives to this server's own disk and nowhere else. CyberHunter - Panel says so on the Backup Manager overview rather than leaving you to discover it - see [What CyberHunter - Panel checks for you](prerequisites.md).
 
-> **Retention off-site covers site archives and database dumps, on S3 and SFTP.** After each upload the panel keeps the newest copies at the destination, up to the policy's retention count, and deletes older ones. Only files named exactly `<site or database>-<YYYYMMDD-HHMMSS><extension>` are ever deleted, so other files in the bucket or directory are left alone. Retention is skipped, and reported in the policy's run history, when two resources share a name (the same domain on two servers, or the same database name for two owners). App data archives follow the same rule, per volume or bind mount: only `<app>-<v|b>-<name>-<YYYYMMDD-HHMMSS>.tar.gz` and `.tar.gz.enc` of that exact target are ever deleted, and retention is skipped and reported when the same name is also used by another server or by a site.
+> **Retention off-site covers site archives and database dumps, on S3 and SFTP.** After each upload the panel keeps the newest copies at the destination, up to the policy's retention count, and deletes older ones. Only files named exactly `<site or database>-<YYYYMMDD-HHMMSS><extension>` are ever deleted, so other files in the bucket or directory are left alone. Retention is skipped, and reported in the policy's run history, when two resources share a name (the same domain on two servers, or the same database name for two owners). App data archives follow the same rule, per volume or bind mount: only `<app>-<v|b>-<name>-<YYYYMMDD-HHMMSS>.tar.gz` and `.tar.gz.enc` of that exact target are ever deleted, and retention is skipped and reported when the same name is also used by another server or by a site. Mail and DNS files follow it too: per mailbox (`mail-<domain>-<local part>-`), per zone (`dns-zone-<zone>-`), and for `mailcfg-` and `dns-snapshot-<backend>-`; retention is skipped and reported when another server writes the same names (the mail config or DNS snapshot of a second server sent to the same destination, or the same mailbox or zone on two servers).
 
 ## Encryption
 
@@ -207,6 +279,9 @@ When encryption is enabled, for the database dumps and app data archives it cove
   destination. Keep a copy of it somewhere safe, apart from the backups it
   unlocks. `SECRETS_ENCRYPTION_KEY` plays no part in this derivation. See
   [Configuration](../CONFIGURATION.md) for how these keys are handled.
+- The mail config archive and the DNS snapshot are **always** encrypted with
+  this passphrase, whatever the policy's Encrypt setting: they carry DKIM keys,
+  password hashes and, for PowerDNS on PostgreSQL, its database password
 - Encrypted backups have a `.enc` extension
 - Decryption happens automatically during restore and verification
 
@@ -249,6 +324,12 @@ The **Storage History** chart shows backup storage growth over the last 30 days.
 | `POST` | `/api/backup-orchestrator/volume-backup` | Back up one app data target (volume or bind mount) |
 | `GET` | `/api/backup-orchestrator/volume-backups` | List app data backups |
 | `POST` | `/api/backup-orchestrator/volume-backups/{id}/restore` | Restore app data (volume or bind mount) |
+| `GET` | `/api/backup-orchestrator/mail-backups` | List mail backups (admin) |
+| `GET` | `/api/backup-orchestrator/dns-backups` | List DNS backups (admin) |
+| `GET` | `/api/backup-orchestrator/backup-jobs/{server_id}/{job_id}` | Follow a long mail or DNS restore (admin) |
+| `POST` | `/api/mail/backups/{id}/restore` | Restore one mailbox, body `{"mode": "merge"}` or `{"mode": "replace"}` (admin) |
+| `POST` | `/api/mail/backups/{id}/restore-all` | Restore the mail configuration, then every mailbox (admin) |
+| `POST` | `/api/dns/backups/{id}/restore` | Restore one zone or the whole DNS database (admin) |
 | `POST` | `/api/backup-orchestrator/verify` | Trigger verification |
 | `GET` | `/api/backup-orchestrator/verifications` | List verifications |
 | `GET` | `/api/backup-orchestrator/storage-history` | Storage growth (30 days) |
