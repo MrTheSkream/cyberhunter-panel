@@ -2021,6 +2021,9 @@ mod tests {
 
     // ── App data: GET /backup-targets, bodies, retention, key version ──────
 
+    /// The bind mount directory of the fixture below.
+    const DEMO_BIND_DIR: &str = "/var/lib/dockpanel/compose/demo/uploads";
+
     fn targets_fixture() -> serde_json::Value {
         serde_json::json!({
             "targets": [
@@ -2056,7 +2059,7 @@ mod tests {
         let b = &p.targets[1];
         assert_eq!(b.kind, MountKind::Bind);
         assert_eq!(b.volume_name, None);
-        assert_eq!(b.source_path.as_deref(), Some("/var/lib/dockpanel/compose/demo/uploads"));
+        assert_eq!(b.source_path.as_deref(), Some(DEMO_BIND_DIR));
         assert_eq!(b.row_volume_name(), "uploads-1a2b3c4d", "a bind row stores its slug as volume_name");
         assert_eq!(b.stack_id, None);
         assert_eq!(b.container_ids.len(), 2);
@@ -2166,7 +2169,7 @@ mod tests {
             serde_json::json!({"kind":"volume","volume_name":"demo_pgdata","source_path":null})
         );
         assert_eq!(
-            app_data_restore_body(MountKind::Bind, "uploads-1a2b3c4d", Some("/var/lib/dockpanel/compose/demo/uploads"), Some("pw")),
+            app_data_restore_body(MountKind::Bind, "uploads-1a2b3c4d", Some(DEMO_BIND_DIR), Some("pw")),
             serde_json::json!({"kind":"bind","volume_name":null,
                                "source_path":"/var/lib/dockpanel/compose/demo/uploads",
                                "encryption_key":"pw"})
