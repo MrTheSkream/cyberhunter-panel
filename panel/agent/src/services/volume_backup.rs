@@ -23,6 +23,7 @@ use crate::services::backup_targets::{
     self, BackupTarget, TargetContainer, TargetKind, is_valid_owner_name, is_valid_volume_name,
 };
 use crate::services::encryption;
+use crate::services::stop_journal::{StopEntry, StopJournal, StoppedContainer};
 
 use super::backups::{BackupInfo, compute_file_sha256};
 
@@ -169,15 +170,37 @@ pub struct StopOutcome<T> {
 ///
 /// `work` runs in its own task so a panic in it is caught here and cannot skip
 /// the restart.
-pub async fn with_stopped<C, T, F>(ctl: &C, containers: &[TargetContainer], work: F) -> StopOutcome<T>
+///
+/// Each container is written to `journal` BEFORE it is stopped, so an agent
+/// killed half way starts it again at its next startup (`stop_journal`). A
+/// journal that cannot be written stops nothing: the work does not run.
+pub async fn with_stopped<C, T, F>(
+    ctl: &C,
+    journal: &StopJournal,
+    operation: &str,
+    containers: &[TargetContainer],
+    work: F,
+) -> StopOutcome<T>
 where
     C: ContainerControl,
     T: Send + 'static,
     F: Future<Output = Result<T, VbError>> + Send + 'static,
 {
+    let mut entry = StopEntry {
+        op_id: format!("{:016x}", rand::random::<u64>()),
+        operation: operation.to_string(),
+        started_at: chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+        containers: Vec::new(),
+    };
     let mut stopped: Vec<&TargetContainer> = Vec::new();
     let mut stop_error = None;
     for c in containers {
+        entry.containers.push(StoppedContainer { id: c.id.clone(), name: c.name.clone() });
+        if let Err(e) = journal.record(&entry) {
+            entry.containers.pop();
+            stop_error = Some(VbError::Internal(format!("Not stopping {}: {e}", c.name)));
+            break;
+        }
         match ctl.stop(&c.id).await {
             Ok(()) => {
                 tracing::info!("Stopped container {} for an app data operation", c.name);
@@ -210,6 +233,25 @@ where
         }
     }
     restarted.reverse();
+
+    // Keep in the journal only what is still down, for the next startup.
+    if !entry.containers.is_empty() {
+        let still_down: Vec<StoppedContainer> = entry
+            .containers
+            .iter()
+            .filter(|c| restart_errors.iter().any(|e| e.starts_with(&format!("{}: ", c.name))))
+            .cloned()
+            .collect();
+        let res = if still_down.is_empty() {
+            journal.remove(&entry.op_id)
+        } else {
+            entry.containers = still_down;
+            journal.record(&entry)
+        };
+        if let Err(e) = res {
+            tracing::error!("{e}");
+        }
+    }
 
     StopOutcome {
         result,
@@ -416,7 +458,7 @@ async fn backup_target_inner(req: TargetBackupRequest) -> Result<TargetBackupInf
 
     let timeout = archive_timeout(size);
     let work = tar_into(mount, dest_dir.clone(), filename.clone(), timeout);
-    let outcome = with_stopped(&DockerCli, &to_stop, work).await;
+    let outcome = with_stopped(&DockerCli, &StopJournal::system(), &format!("backup {filename}"), &to_stop, work).await;
     if !outcome.restart_errors.is_empty() {
         // The app is down: that is the failure to report, and a non-200 leaves no archive.
         std::fs::remove_file(&final_path).ok();
@@ -485,6 +527,17 @@ async fn tar_into(
     let part = format!(".{filename}.part");
     let part_path = dest_dir.join(&part);
     let dir = dest_dir.to_str().ok_or_else(|| VbError::Internal("Invalid dir".into()))?;
+    // Created here 0600 so the archive is never world-readable, even for a
+    // moment: tar opens it with O_TRUNC and keeps the mode, the rename too.
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&part_path)
+            .map_err(|e| VbError::Internal(format!("Failed to create {}: {e}", part_path.display())))?;
+    }
     let helper = helper_name("backup");
     let output = tokio::time::timeout(
         timeout,
@@ -773,7 +826,7 @@ async fn restore_target_inner(owner_name: String, filename: String, req: Restore
     .unwrap_or_default();
 
     let work = run_restore(mount.clone(), dir.clone(), archive.name.clone(), timeout);
-    let outcome = with_stopped(&DockerCli, &to_stop, work).await;
+    let outcome = with_stopped(&DockerCli, &StopJournal::system(), &format!("restore {filename}"), &to_stop, work).await;
     drop(archive);
 
     if !outcome.restart_errors.is_empty() {
@@ -957,10 +1010,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn every_container_is_journaled_before_its_stop_and_cleared_after() {
+        let j = crate::services::stop_journal::test_journal();
+        let f = Fake::default();
+        let (jj, l) = (j.clone(), f.log.clone());
+        let out = with_stopped(&f, &j, "backup x", &cs(&["a", "b"]), async move {
+            // Mid-operation: both stopped containers are on record.
+            let e = jj.entries().unwrap();
+            l.lock().unwrap().push(format!("journal {}", e[0].containers.len()));
+            Ok::<(), VbError>(())
+        })
+        .await;
+        assert_eq!(out.result, Ok(()));
+        assert!(log(&f).contains(&"journal 2".to_string()));
+        assert!(j.entries().unwrap().is_empty(), "cleared once restarted");
+
+        // A container that would not start stays on record for the next startup.
+        let f = Fake { fail_start: Some("b".into()), ..Default::default() };
+        with_stopped(&f, &j, "restore y", &cs(&["a", "b"]), async { Ok::<(), VbError>(()) }).await;
+        let e = j.entries().unwrap();
+        assert_eq!(e.len(), 1);
+        assert_eq!(e[0].operation, "restore y");
+        assert_eq!(e[0].containers.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(), ["b"]);
+        std::fs::remove_dir_all(j.path().parent().unwrap()).ok();
+    }
+
+    #[tokio::test]
+    async fn an_unwritable_journal_stops_nothing() {
+        let d = std::env::temp_dir().join(format!("dp-stopj-ro-{:016x}", rand::random::<u64>()));
+        std::fs::write(&d, b"a file, not a directory").unwrap();
+        let j = StopJournal::new(d.join("backup-stops.json"));
+        let f = Fake::default();
+        let out = with_stopped(&f, &j, "backup x", &cs(&["a"]), async { Ok::<(), VbError>(()) }).await;
+        assert!(matches!(out.result, Err(VbError::Internal(_))));
+        assert!(log(&f).is_empty(), "{:?}", log(&f));
+        std::fs::remove_file(&d).ok();
+    }
+
+    #[tokio::test]
     async fn containers_are_restarted_after_success() {
         let f = Fake::default();
         let l = f.log.clone();
-        let out = with_stopped(&f, &cs(&["a", "b"]), async move {
+        let out = with_stopped(&f, &crate::services::stop_journal::test_journal(), "test", &cs(&["a", "b"]), async move {
             l.lock().unwrap().push("work".into());
             Ok::<_, VbError>(7)
         })
@@ -975,7 +1066,7 @@ mod tests {
     #[tokio::test]
     async fn containers_are_restarted_when_the_work_fails() {
         let f = Fake::default();
-        let out = with_stopped(&f, &cs(&["a"]), async { Err::<(), _>(VbError::Integrity("bad".into())) }).await;
+        let out = with_stopped(&f, &crate::services::stop_journal::test_journal(), "test", &cs(&["a"]), async { Err::<(), _>(VbError::Integrity("bad".into())) }).await;
         assert_eq!(out.result, Err(VbError::Integrity("bad".into())));
         assert_eq!(log(&f), ["stop a", "start a"]);
         assert_eq!(out.restarted, ["n-a"]);
@@ -984,7 +1075,7 @@ mod tests {
     #[tokio::test]
     async fn containers_are_restarted_when_the_work_panics() {
         let f = Fake::default();
-        let out = with_stopped(&f, &cs(&["a", "b"]), async {
+        let out = with_stopped(&f, &crate::services::stop_journal::test_journal(), "test", &cs(&["a", "b"]), async {
             if true {
                 panic!("boom");
             }
@@ -999,7 +1090,7 @@ mod tests {
     async fn a_failed_stop_skips_the_work_and_restarts_the_ones_already_stopped() {
         let f = Fake { fail_stop: Some("b".into()), ..Default::default() };
         let l = f.log.clone();
-        let out = with_stopped(&f, &cs(&["a", "b", "c"]), async move {
+        let out = with_stopped(&f, &crate::services::stop_journal::test_journal(), "test", &cs(&["a", "b", "c"]), async move {
             l.lock().unwrap().push("work".into());
             Ok::<(), VbError>(())
         })
@@ -1012,7 +1103,7 @@ mod tests {
     #[tokio::test]
     async fn a_failed_restart_is_reported_and_the_others_still_start() {
         let f = Fake { fail_start: Some("a".into()), ..Default::default() };
-        let out = with_stopped(&f, &cs(&["a", "b"]), async { Ok::<(), VbError>(()) }).await;
+        let out = with_stopped(&f, &crate::services::stop_journal::test_journal(), "test", &cs(&["a", "b"]), async { Ok::<(), VbError>(()) }).await;
         assert_eq!(out.result, Ok(()));
         assert_eq!(log(&f), ["stop a", "stop b", "start b", "start a"]);
         assert_eq!(out.restarted, ["n-b"]);
@@ -1022,7 +1113,7 @@ mod tests {
     #[tokio::test]
     async fn nothing_to_stop_still_runs_the_work() {
         let f = Fake::default();
-        let out = with_stopped(&f, &[], async { Ok::<u8, VbError>(1) }).await;
+        let out = with_stopped(&f, &crate::services::stop_journal::test_journal(), "test", &[], async { Ok::<u8, VbError>(1) }).await;
         assert_eq!(out.result, Ok(1));
         assert!(log(&f).is_empty());
     }

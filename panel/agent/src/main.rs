@@ -85,6 +85,18 @@ async fn main() {
     // Nothing runs yet, so every hidden `.part` under the backup tree is a
     // temporary an interrupted operation left behind (half an archive, or a
     // decrypted copy of one).
+    // Containers an app data backup or restore stopped and the agent never
+    // started again (it was killed half way): start them now.
+    {
+        let journal = services::stop_journal::StopJournal::system();
+        match journal.recover(&services::volume_backup::DockerCli).await {
+            (0, 0) => {}
+            (started, 0) => tracing::warn!("Started {started} container(s) left stopped by an interrupted app data operation"),
+            (started, failed) => tracing::error!(
+                "Started {started} container(s) left stopped by an interrupted app data operation, failed to start {failed}"
+            ),
+        }
+    }
     match services::backups::remove_stale_partials(std::path::Path::new("/var/backups/dockpanel")) {
         (0, 0) => {}
         (removed, 0) => tracing::info!("Removed {removed} stale temporary file(s) under /var/backups/dockpanel"),

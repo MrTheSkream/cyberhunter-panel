@@ -113,6 +113,8 @@ pub fn classify_mount(m: &RawMount, roots: &[PathBuf]) -> MountClass {
                 return MountClass::Excluded(REASON_BAD_VOLUME.into());
             };
             let source = m.source.clone().unwrap_or_default();
+            // `enumerate_targets` fills an empty source from the volume itself
+            // (`fill_volume_sources`); still empty means truly no local path.
             if source.is_empty() {
                 return MountClass::Excluded(REASON_NO_MOUNTPOINT.into());
             }
@@ -329,7 +331,12 @@ pub fn build_targets(mut containers: Vec<ContainerInfo>, roots: &[PathBuf]) -> T
         };
         let owner_ok = is_valid_owner_name(&owner);
         for m in &c.mounts {
-            let shown_source = m.source.clone().or_else(|| m.name.clone()).unwrap_or_default();
+            let shown_source = m
+                .source
+                .clone()
+                .filter(|s| !s.is_empty())
+                .or_else(|| m.name.clone())
+                .unwrap_or_default();
             let class = classify_mount(m, roots);
             let (kind, key, volume_name, source_path, source, slug) = match class {
                 MountClass::Excluded(reason) => {
@@ -478,13 +485,67 @@ pub async fn enumerate_targets() -> Result<TargetsReport, String> {
                 .map(|m| RawMount {
                     typ: m.typ.map(|t| t.to_string()).unwrap_or_default(),
                     name: m.name,
-                    source: m.source,
+                    // Docker 29 lists an anonymous volume with `Source: ""`.
+                    source: m.source.filter(|s| !s.is_empty()),
                 })
                 .collect();
             Some(ContainerInfo { id, name, running, labels: c.labels.unwrap_or_default(), mounts })
         })
-        .collect();
+        .collect::<Vec<_>>();
+
+    let mut containers = containers;
+    let mut mountpoints = HashMap::new();
+    for name in volumes_without_source(&containers) {
+        match docker.inspect_volume(&name).await {
+            Ok(v) if !v.mountpoint.is_empty() => {
+                mountpoints.insert(name, v.mountpoint);
+            }
+            Ok(_) => {}
+            Err(e) => tracing::warn!("Failed to inspect volume {name}: {e}"),
+        }
+    }
+    fill_volume_sources(&mut containers, &mountpoints, Path::new(DOCKER_VOLUMES_DIR));
     Ok(build_targets(containers, &app_data_roots()))
+}
+
+/// Where Docker keeps local volumes, the last resort for a volume's path.
+const DOCKER_VOLUMES_DIR: &str = "/var/lib/docker/volumes";
+
+/// Names of the volumes listed without a source (anonymous ones, on Docker 29).
+pub fn volumes_without_source(containers: &[ContainerInfo]) -> Vec<String> {
+    let mut v: Vec<String> = containers
+        .iter()
+        .flat_map(|c| c.mounts.iter())
+        .filter(|m| m.typ == "volume" && m.source.as_deref().is_none_or(str::is_empty))
+        .filter_map(|m| m.name.clone())
+        .filter(|n| is_valid_volume_name(n))
+        .collect();
+    v.sort();
+    v.dedup();
+    v
+}
+
+/// Give each volume listed without a source its path: the `Mountpoint` of
+/// `docker volume inspect` (`mountpoints`), else `{volumes_dir}/{name}/_data`
+/// when that exists. A volume found by neither stays without a source, and
+/// is excluded as having no local mountpoint.
+pub fn fill_volume_sources(
+    containers: &mut [ContainerInfo],
+    mountpoints: &HashMap<String, String>,
+    volumes_dir: &Path,
+) {
+    for m in containers.iter_mut().flat_map(|c| c.mounts.iter_mut()) {
+        if m.typ != "volume" || !m.source.as_deref().is_none_or(str::is_empty) {
+            continue;
+        }
+        let Some(name) = m.name.as_deref().filter(|n| is_valid_volume_name(n)) else {
+            continue;
+        };
+        m.source = mountpoints.get(name).cloned().or_else(|| {
+            let p = volumes_dir.join(name).join("_data");
+            p.is_dir().then(|| p.to_string_lossy().to_string())
+        });
+    }
 }
 
 #[cfg(test)]
@@ -537,6 +598,36 @@ mod tests {
         assert_eq!(T::VOLUME.to_string(), "volume");
         assert_eq!(T::TMPFS.to_string(), "tmpfs");
         assert_eq!(T::NPIPE.to_string(), "npipe");
+    }
+
+    /// Docker 29.1: an anonymous volume is listed with `Source: ""` and its
+    /// name; the path comes from inspect, else from the volumes directory.
+    #[test]
+    fn anonymous_volumes_listed_without_source_get_their_path() {
+        let s = Scratch::new();
+        let anon = "3f1b9c0e5a7d2b4c6e8f0a1b3c5d7e9f1a2b4c6d8e0f1a3b5c7d9e1f2a4b6c8d";
+        std::fs::create_dir_all(s.0.join(anon).join("_data")).unwrap();
+        let tpl = labels(&[("dockpanel.managed", "true"), ("dockpanel.app.template", "wordpress")]);
+        let raw = |name: &str| RawMount { typ: "volume".into(), name: Some(name.into()), source: Some(String::new()) };
+        let mut cs = vec![ContainerInfo {
+            id: "1".into(),
+            name: "wp".into(),
+            running: true,
+            labels: tpl,
+            mounts: vec![raw(anon), raw("inspected"), raw("nowhere")],
+        }];
+        assert_eq!(volumes_without_source(&cs), [anon, "inspected", "nowhere"]);
+        let mp = HashMap::from([("inspected".to_string(), "/srv/docker/volumes/inspected/_data".to_string())]);
+        fill_volume_sources(&mut cs, &mp, &s.0);
+        let r = build_targets(cs, &[]);
+        let srcs: Vec<_> = r.targets.iter().map(|t| (t.volume_name.clone().unwrap(), t.source.clone())).collect();
+        assert!(srcs.contains(&(anon.to_string(), s.0.join(anon).join("_data").to_string_lossy().to_string())));
+        assert!(srcs.contains(&("inspected".to_string(), "/srv/docker/volumes/inspected/_data".to_string())));
+        assert_eq!(r.targets.len(), 2);
+        // Found by neither: excluded, and shown by its name, not an empty source.
+        assert_eq!(r.excluded.len(), 1);
+        assert_eq!(r.excluded[0].source, "nowhere");
+        assert_eq!(r.excluded[0].reason, REASON_NO_MOUNTPOINT);
     }
 
     #[test]
