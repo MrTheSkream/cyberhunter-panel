@@ -2,7 +2,7 @@
 
 Ce guide s'adresse à un agent (Claude ou un script) qui pilote CyberHunter - Panel avec une clé API `dp_` d'un compte administrateur. Les blocs `bash` s'exécutent dans l'ordre, du début à la fin.
 
-**Portée des tests.** Tous les blocs `bash` et les erreurs marquées « observée » ont été exécutés sur la version 3.0.0-rc.3, dans une VM Ubuntu 24.04. L'émission d'un vrai certificat Let's Encrypt n'a pas pu être testée, car les domaines du labo n'ont pas de DNS public : seuls son refus (412) et le téléversement d'un certificat l'ont été. Pour le déploiement Git, le dépôt de test est public et le second commit provenait d'un dépôt local à la VM, car le panel refuse les adresses privées et aucun commit ne pouvait être poussé sur ce dépôt. Les dépôts privés par clé SSH n'ont pas été testés.
+**Portée des tests.** Tous les blocs `bash` et les erreurs marquées « observée » ont été exécutés sur la version 3.0.0-rc.4, dans une VM Ubuntu 24.04. L'émission d'un vrai certificat Let's Encrypt n'a pas pu être testée, car les domaines du labo n'ont pas de DNS public : seuls son refus (412) et le téléversement d'un certificat l'ont été. Pour le déploiement Git, le dépôt de test est public et le second commit provenait d'un dépôt local à la VM, car le panel refuse les adresses privées et aucun commit ne pouvait être poussé sur ce dépôt. Les dépôts privés par clé SSH n'ont pas été testés.
 
 ## Règles pour l'agent
 
@@ -12,6 +12,7 @@ Ce guide s'adresse à un agent (Claude ou un script) qui pilote CyberHunter - Pa
 - Après chaque écriture, vérifier le résultat réel (HTTP, en-têtes), pas seulement le code de réponse de l'API.
 - Attendre 3 secondes avant cette vérification. L'API répond avant que nginx ait fini de recharger sa configuration, et un contrôle immédiat peut encore voir l'ancienne.
 - Ne pas relancer en boucle une émission de certificat refusée : les limites de l'autorité de certification s'aggravent à chaque essai.
+- Ne jamais demander un certificat pendant que celui de la création est en cours d'émission : attendre `ssl_enabled=true` (section 3).
 
 ## 1. Préparer la session
 
@@ -55,6 +56,8 @@ echo "SITE_ID=$SITE_ID"
 ```
 
 Réponse attendue : `HTTP 201` et un identifiant de site.
+
+**La création lance déjà l'émission du certificat Let's Encrypt.** Elle tourne en tâche de fond, sans attendre la réponse, dès qu'une adresse de contact ACME valide est configurée. Ne demandez pas de certificat vous-même tant qu'elle n'est pas terminée : voir la section 3.
 
 ### Régler la taille maximale et les directives nginx
 
@@ -110,14 +113,36 @@ api PUT "/sites/$SITE_ID/canonical-host" -d '{"canonical_host": "apex"}'
 
 ### Option A : Let's Encrypt
 
-Le domaine et ses alias doivent pointer vers le serveur et le port 80 doit être joignable. Contrôlez d'abord le DNS.
+Le domaine doit pointer vers le serveur et le port 80 doit être joignable. Contrôlez d'abord le DNS.
 
 ```bash
 api GET "/sites/$SITE_ID/preflight" | jq '{acme_contact_ok, dns: .dns.detail}'
+```
+
+**Le certificat est émis automatiquement à la création du site.** Le panel fait jusqu'à quatre tentatives, à 3 s, 30 s, 2 min et 5 min, soit environ 8 minutes au total. Attendez que `ssl_enabled` passe à `true` :
+
+```bash
+for i in $(seq 1 50); do
+  [ "$(api GET "/sites/$SITE_ID" 2>/dev/null | jq -r .ssl_enabled)" = true ] && { echo "SSL actif"; break; }
+  sleep 10
+done
+```
+
+Ne lancez `POST /sites/{id}/ssl` que si `ssl_enabled` est encore `false` après cette attente, et une seule fois :
+
+```bash
 api POST "/sites/$SITE_ID/ssl" | jq .
 ```
 
-Sans DNS public, cet appel répond `412` et ne modifie rien.
+Sans DNS public, cet appel répond `412` et ne modifie rien. S'il répond `409 SSL is already enabled`, le certificat automatique est arrivé : il n'y a rien à faire.
+
+**En 3.0.0-rc.4, ne lancez jamais cet appel pendant l'émission automatique.** Les deux commandes se croisent : l'appel échoue en `422` (délai ACME dépassé) et peut laisser `ssl_enabled=true` avec un vhost qui n'écoute plus en 443. La version suivante sérialise les deux demandes par domaine : une demande qui arrive pendant l'émission attend sa fin, puis répond `409 SSL is already enabled`, ou `409 ssl_issuance_in_progress` si l'émission dure plus de 90 s.
+
+**Un alias ajouté après l'émission n'est pas couvert par le certificat.** Le certificat de la création ne couvre que le domaine du site. Après chaque `POST /sites/{id}/aliases`, une fois le DNS de l'alias en place, réémettez le certificat avec tous les noms du site :
+
+```bash
+api POST "/ssl/$SITE_ID/renew" | jq .
+```
 
 ### Option B : téléverser un certificat
 
@@ -316,6 +341,8 @@ Limites à connaître avant de choisir :
 ## 9. Déployer avec Compose
 
 ### Exposition des ports : résultat du test
+
+**Ce comportement est celui des versions 3.0.0-rc.3 et rc.4.** La version suivante refuse en `400` toute adresse hors loopback (`0.0.0.0`, IP du serveur) au lieu de la réécrire, et publie réellement les formes IPv6 et les plages.
 
 **Un compose ne peut pas publier un port sur `0.0.0.0`.** L'agent ignore l'adresse demandée et force `127.0.0.1` pour chaque port, ce qui empêche Docker de contourner ufw. Le test a déployé chaque écriture sur la version 3.0.0-rc.3, puis a sondé les ports depuis le serveur et depuis une autre machine. Le port 80 du serveur servait de témoin et répondait bien depuis cette autre machine.
 
