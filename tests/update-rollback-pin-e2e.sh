@@ -224,6 +224,10 @@ case "$args" in
     *"information_schema.tables"*)
         echo "${STUB_VERIFY_COUNT:-3}"
         exit "${STUB_VERIFY_RC:-0}" ;;
+    *"FROM pg_database"*)
+        # Off-site restore: does the PowerDNS database exist on this machine.
+        [ "${STUB_PDNS_EXISTS:-1}" = "1" ] && echo 1
+        exit 0 ;;
     *psql*)
         # The restore itself: consume the stream it is fed.
         cat > /dev/null
@@ -596,6 +600,160 @@ assert_lacks "nginx is not reloaded"                   'systemctl reload nginx' 
 assert_has   "the skip is logged"                      'nginx is not installed or not running' \
              "$(cat "$SCRATCH/nginx_inactive/out.log")"
 
+# ── Off-site (dr) archives ───────────────────────────────────────────────────
+# What `dockpanel-api dr restore` decrypts: no binaries, no frontend, metadata
+# with kind/arch/install_id, /etc/dockpanel from the OLD machine. Knobs:
+# DR_KIND, DR_ARCH, DR_PDNS (adds db/pdns.sql.gz).
+make_dr_snapshot() {
+    local dir="$1"
+    rm -rf "$dir"; mkdir -p "$dir/src/db" "$dir/src/etc/ssl"
+    printf 'DATABASE_URL=postgresql://dockpanel:OLDPASS@127.0.0.1:5450/dockpanel\nJWT_SECRET=OLD-JWT\nAGENT_TOKEN=old-agent-token\nBASE_URL=https://panel.example.test\n' \
+        > "$dir/src/etc/api.env"
+    printf 'stale-token\n' > "$dir/src/etc/agent.token"
+    printf 'OLD-AGENT-CERT\n' > "$dir/src/etc/ssl/agent.crt"
+    {
+        echo "CREATE TABLE a (id int);"
+        echo "CREATE TABLE b (id int);"
+        echo "CREATE TABLE c (id int);"
+        echo "-- PostgreSQL database dump complete"
+    } > "$dir/src/db/dump.sql"
+    gzip -c "$dir/src/db/dump.sql" > "$dir/src/db/dump.sql.gz"; rm -f "$dir/src/db/dump.sql"
+    local pdns='null'
+    if [ -n "${DR_PDNS:-}" ]; then
+        printf 'CREATE TABLE domains (id int);\n-- PostgreSQL database dump complete\n' | gzip -c > "$dir/src/db/pdns.sql.gz"
+        pdns='"pdns"'
+    fi
+    cat > "$dir/src/metadata.json" <<JSON
+{
+  "snapshot_id": "11111111-2222-3333-4444-555555555555",
+  "from_version": "2.47.3",
+  "created_at": "2026-11-19T03:30:00Z",
+  "trigger": "scheduled",
+  "operator": null,
+  "pdns_database": $pdns,
+  "kind": "${DR_KIND-dr}",
+  "format": 1,
+  "install_id": "99999999-8888-7777-6666-555555555555",
+  "arch": "${DR_ARCH:-$(uname -m)}"
+}
+JSON
+    tar -C "$dir/src" -czf "$dir/snap.tar.gz" .
+}
+
+run_dr_restore() {
+    local name="$1"; shift
+    local base="$SCRATCH/$name"
+    make_dr_snapshot "$base"
+    mkdir -p "$base/state" "$base/bin" "$base/etc/ssl"
+    # The freshly installed machine: its own binaries (version from INSTALLED,
+    # default the archive's), its own PostgreSQL password, its own secrets.
+    printf '#!/usr/bin/env bash\necho "dockpanel-api %s"\n' "${INSTALLED:-2.47.3}" > "$base/bin/dockpanel-api"
+    chmod +x "$base/bin/dockpanel-api"
+    printf 'NEW-AGENT\n' > "$base/bin/dockpanel-agent"
+    mkdir -p "$base/frontend/dist"; printf 'NEW-UI\n' > "$base/frontend/dist/index.html"
+    printf 'DATABASE_URL=postgresql://dockpanel:NEWPASS@127.0.0.1:5450/dockpanel\nJWT_SECRET=NEW-JWT\nAGENT_TOKEN=new-agent-token\n' \
+        > "$base/etc/api.env"
+    printf 'new-agent-token\n' > "$base/etc/agent.token"
+    printf 'NEW-AGENT-CERT\n' > "$base/etc/ssl/agent.crt"
+    printf 'NEW-AGENT-KEY\n'  > "$base/etc/ssl/agent.key"
+    printf 'stale report\n'   > "$base/state/vhost-rebuild.json"
+
+    ACTIONS="$base/actions.log"; : > "$ACTIONS"
+    RES_JSON="$base/state/last-restore.json"
+    BIN_DIR_OUT="$base/bin"
+    local sha; sha="$(sha256sum "$base/snap.tar.gz" | awk '{print $1}')"
+    env PATH="$STUBS:$PATH" \
+        STUB_ACTIONS="$ACTIONS" \
+        DOCKPANEL_RESTORE_DETACHED=1 \
+        DOCKPANEL_RESTORE_MODE=dr \
+        DOCKPANEL_SNAPSHOT_ID="11111111-2222-3333-4444-$name" \
+        DOCKPANEL_SNAPSHOT_TARBALL="$base/snap.tar.gz" \
+        DOCKPANEL_SNAPSHOT_SHA256="$sha" \
+        DOCKPANEL_STATE_DIR="$base/state" \
+        DOCKPANEL_BIN_DIR="$base/bin" \
+        DOCKPANEL_ETC_DIR="$base/etc" \
+        DOCKPANEL_FRONTEND_DIR="$base/frontend" \
+        DOCKPANEL_HEALTH_URL="http://127.0.0.1:1/api/health" \
+        "$@" \
+        bash "$RESTORE_SH" > "$base/out.log" 2>&1
+    RC=$?
+}
+
+echo
+echo "S9 · an off-site (dr) archive restores onto a fresh machine"
+run_dr_restore dr_happy
+J="$(cat "$RES_JSON")"; A="$(cat "$ACTIONS")"; E="$(cat "$SCRATCH/dr_happy/etc/api.env")"
+chk "$([ "$RC" = "0" ] && echo 0 || echo 1)" "exits 0"
+assert_has   "verdict is ok=true"                          '"ok":true'                    "$J"
+assert_has   "the verdict names the dr mode"               '"mode":"dr"'                  "$J"
+assert_has   "this machine's DATABASE_URL is kept"         'DATABASE_URL=postgresql://dockpanel:NEWPASS@' "$E"
+assert_lacks "the archive's DATABASE_URL is not restored"  'OLDPASS'                      "$E"
+chk "$([ "$(grep -c '^DATABASE_URL=' "$SCRATCH/dr_happy/etc/api.env")" = "1" ] && echo 0 || echo 1)" \
+    "api.env holds exactly one DATABASE_URL line"
+assert_has   "everything else comes from the archive (JWT_SECRET)" 'JWT_SECRET=OLD-JWT'  "$E"
+assert_has   "and the archive's other lines are all there" 'BASE_URL=https://panel.example.test' "$E"
+assert_lacks "nothing of this machine's JWT_SECRET is left" 'NEW-JWT'                     "$E"
+chk "$([ "$(stat -c %a "$SCRATCH/dr_happy/etc/api.env")" = "600" ] && echo 0 || echo 1)" \
+    "the merged api.env is mode 0600"
+assert_lacks "the DATABASE_URL never reaches the log"     'NEWPASS'                      "$(cat "$SCRATCH/dr_happy/out.log")"
+assert_lacks "nor the verdict"                             'NEWPASS'                      "$J"
+chk "$([ "$(cat "$SCRATCH/dr_happy/etc/agent.token")" = "old-agent-token" ] && echo 0 || echo 1)" \
+    "agent.token agrees with AGENT_TOKEN of the restored api.env"
+chk "$([ "$(cat "$SCRATCH/dr_happy/etc/ssl/agent.crt")" = "NEW-AGENT-CERT" ] && echo 0 || echo 1)" \
+    "a lone agent.crt in the archive does not replace this machine's TLS pair"
+chk "$([ "$(head -c 13 "$BIN_DIR_OUT/dockpanel-api")" = "#!/usr/bin/en" ] && echo 0 || echo 1)" \
+    "the installed binaries are left in place"
+chk "$([ "$(cat "$SCRATCH/dr_happy/frontend/dist/index.html")" = "NEW-UI" ] && echo 0 || echo 1)" \
+    "the installed frontend is left in place"
+assert_has   "dockpanel-api WAS started"                   'systemctl start dockpanel-api' "$A"
+assert_lacks "no panel_snapshots row is recorded for an off-site archive" 'INSERT INTO panel_snapshots' "$A"
+assert_has   "the restore is journaled as dr.restore"      "'dr.restore'"                 "$A"
+chk "$([ -f "$SCRATCH/dr_happy/state/vhost-rebuild.pending" ] && echo 0 || echo 1)" \
+    "the vhost rebuild marker is written"
+chk "$([ ! -e "$SCRATCH/dr_happy/state/vhost-rebuild.json" ] && echo 0 || echo 1)" \
+    "an older vhost rebuild report is removed"
+chk "$([ ! -e "$SCRATCH/dr_happy/snap.tar.gz" ] && echo 0 || echo 1)" \
+    "the decrypted archive is deleted"
+
+echo
+echo "S10 · an off-site archive that does not fit this machine is refused BEFORE any stop"
+INSTALLED=2.48.0 run_dr_restore dr_version
+J="$(cat "$RES_JSON")"; A="$(cat "$ACTIONS")"
+chk "$([ "$RC" != "0" ] && echo 0 || echo 1)" "a different installed version: exits non-zero"
+assert_has   "the detail names the version mismatch"      'version mismatch'             "$J"
+assert_has   "and says which version to install"          'DOCKPANEL_VERSION=v2.47.3'    "$J"
+assert_lacks "no service was stopped"                     'systemctl stop'               "$A"
+assert_lacks "the database was not touched"               'pg_dump'                      "$A"
+assert_has   "this machine's api.env is untouched"        'JWT_SECRET=NEW-JWT'           "$(cat "$SCRATCH/dr_version/etc/api.env")"
+chk "$([ ! -e "$SCRATCH/dr_version/snap.tar.gz" ] && echo 0 || echo 1)" \
+    "the decrypted archive is deleted on a refusal too"
+
+DR_ARCH=s390x-elsewhere run_dr_restore dr_arch
+J="$(cat "$RES_JSON")"; A="$(cat "$ACTIONS")"
+chk "$([ "$RC" != "0" ] && echo 0 || echo 1)" "a different architecture: exits non-zero"
+assert_has   "the detail names the architecture mismatch" 'architecture mismatch'       "$J"
+assert_lacks "no service was stopped"                     'systemctl stop'               "$A"
+
+DR_KIND=manual run_dr_restore dr_kind
+J="$(cat "$RES_JSON")"; A="$(cat "$ACTIONS")"
+chk "$([ "$RC" != "0" ] && echo 0 || echo 1)" "an archive that is not kind=dr: exits non-zero"
+assert_has   "the detail says it is not an off-site archive" 'not an off-site disaster recovery archive' "$J"
+assert_lacks "no service was stopped"                     'systemctl stop'               "$A"
+
+echo
+echo "S11 · the PowerDNS dump of an off-site archive"
+DR_PDNS=1 run_dr_restore dr_pdns
+J="$(cat "$RES_JSON")"; A="$(cat "$ACTIONS")"
+chk "$([ "$RC" = "0" ] && echo 0 || echo 1)" "exits 0"
+assert_has   "verdict is ok=true"                          '"ok":true'                    "$J"
+assert_has   "the PowerDNS database is restored"           '-d pdns'                      "$A"
+DR_PDNS=1 run_dr_restore dr_pdns_missing STUB_PDNS_EXISTS=0
+J="$(cat "$RES_JSON")"; A="$(cat "$ACTIONS")"
+chk "$([ "$RC" = "0" ] && echo 0 || echo 1)" "no PowerDNS database here: still exits 0 (after the commit)"
+assert_has   "and the verdict says the zones were not restored" 'DNS zones were not restored' "$J"
+assert_lacks "nothing is fed to a database that does not exist" '-d pdns'                 "$A"
+assert_has   "dockpanel-api WAS started"                   'systemctl start dockpanel-api' "$A"
+
 echo
 echo "══ Part 2 · the update path, by source ══════════════════════════════════"
 echo
@@ -945,6 +1103,32 @@ if landed_insert "$RESTORE_SH" "$CTL" "$FAIL_DEFECT" && ! nginx_order_ok "$CTL";
     ok "planting a fail in the nginx stage makes that arm fire"
 else
     bad "planting a fail in the nginx stage makes that arm fire - it did NOT, the arm is blind"
+fi
+
+echo
+echo "§2g · the dr mode, read as code"
+pin_code "the re-exec forwards DOCKPANEL_RESTORE_MODE" "$RESTORE_SH" -F -e '--setenv=DOCKPANEL_RESTORE_MODE="$RESTORE_MODE"'
+dr_order_ok() {   # file  →  0 when the dr checks come before the services stop
+    local f="$1" ver_ln arch_ln url_ln stop_ln
+    ver_ln="$(code_lineno "$f" -F -e 'version mismatch')"
+    arch_ln="$(code_lineno "$f" -F -e 'architecture mismatch')"
+    url_ln="$(code_lineno "$f" -F -e "does not carry this machine's DATABASE_URL")"
+    stop_ln="$(code_lineno "$f" -F -e 'stage="stop-services"')"
+    [ -n "$ver_ln" ] && [ -n "$arch_ln" ] && [ -n "$url_ln" ] && [ -n "$stop_ln" ] || return 1
+    [ "$ver_ln" -lt "$stop_ln" ] && [ "$arch_ln" -lt "$stop_ln" ] && [ "$url_ln" -lt "$stop_ln" ]
+}
+if dr_order_ok "$RESTORE_SH"; then
+    ok "the version, architecture and DATABASE_URL checks of the dr mode precede the services stop"
+else
+    bad "the version, architecture and DATABASE_URL checks of the dr mode precede the services stop"
+fi
+LATE_DEFECT='    fail "version mismatch: planted after the stop"'
+CTL="$(code_lines "$RESTORE_SH" > "$MUTANTS/dr-late.sh"; grep -vF -e 'version mismatch' "$MUTANTS/dr-late.sh" > "$MUTANTS/dr-late2.sh"; echo "$MUTANTS/dr-late2.sh")"
+CTL2="$(plant_line_after "$CTL" '^stage="stop-services"' "$LATE_DEFECT" drlate)"
+if landed_insert "$CTL" "$CTL2" "$LATE_DEFECT" && ! dr_order_ok "$CTL2"; then
+    ok "moving the version check after the stop makes the ordering arm fire"
+else
+    bad "moving the version check after the stop makes the ordering arm fire - it did NOT, the arm is blind"
 fi
 
 echo

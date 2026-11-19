@@ -54,6 +54,32 @@
 # Optional provenance, for the activity log entry of this rollback:
 #   DOCKPANEL_ROLLBACK_OPERATOR      who asked for it
 #   DOCKPANEL_ROLLBACK_FROM_VERSION  the version running when they did
+# Optional mode:
+#   DOCKPANEL_RESTORE_MODE           `rollback` (default) or `dr`
+#
+# MODE dr: the restore of an off-site disaster recovery archive, usually on a
+# freshly installed machine (`dockpanel-api dr restore`, or "Restore from remote
+# snapshot" in the panel). The archive carries the database dump, the PowerDNS
+# dump when there is one and /etc/dockpanel, but NO binaries and NO frontend:
+#   - it is refused BEFORE any service is stopped when the installed version or
+#     the machine architecture differs from the archive's metadata, or when the
+#     archive is not a `kind=dr` one;
+#   - the binaries and the frontend are left as installed (same version, checked);
+#   - /etc/dockpanel is restored as it is in the archive EXCEPT the DATABASE_URL
+#     line of api.env, which is kept from this machine (its PostgreSQL was created
+#     with its own password); merged through a 0600 temporary file, never shown;
+#   - agent.token is made to agree with AGENT_TOKEN of the restored api.env, and
+#     a lone half of the agent TLS pair is not restored over this machine's pair;
+#   - db/pdns.sql.gz, when present, is restored into the PowerDNS database;
+#   - the restored database is not a local snapshot, so no panel_snapshots row
+#     is recorded, and the decrypted tarball (it holds api.env) is deleted on
+#     every exit path;
+#   - /var/lib/dockpanel/vhost-rebuild.pending is written: at its next start the
+#     api rebuilds every local site's vhost from the database and reports in
+#     vhost-rebuild.json.
+#   The api is considered to match the restored database only once
+#   /etc/dockpanel is back (same binaries, but JWT_SECRET is in api.env): until
+#   then the same guard as a rollback keeps dockpanel-api stopped.
 #
 # Result is always written to /var/lib/dockpanel/last-restore.json.
 #
@@ -85,6 +111,9 @@ PG_USER="${DOCKPANEL_PG_USER:-dockpanel}"
 PG_DB="${DOCKPANEL_PG_DB:-dockpanel}"
 ROLLBACK_OPERATOR="${DOCKPANEL_ROLLBACK_OPERATOR:-}"
 ROLLBACK_FROM="${DOCKPANEL_ROLLBACK_FROM_VERSION:-}"
+RESTORE_MODE="${DOCKPANEL_RESTORE_MODE:-rollback}"
+# Set by the dr preflight: the version this machine runs (it matched the archive).
+INSTALLED_VERSION=""
 
 # Locations. Overridable ONLY so this script can be driven end to end by
 # tests/update-rollback-pin-e2e.sh against a scratch tree: the guard below
@@ -174,7 +203,13 @@ sqlq() { printf "%s" "$1" | sed "s/'/''/g"; }
 journal_manual_rollback() {
     local outcome="$1"
     local from="${ROLLBACK_FROM:-unknown}" who="${ROLLBACK_OPERATOR:-unknown}"
+    local action="update.manual_rollback" target_type="panel_update"
     local reason="manual rollback to snapshot $SNAP_ID, from version $from to version $M_FROM, requested by $who"
+    if [ "$RESTORE_MODE" = "dr" ]; then
+        action="dr.restore"
+        target_type="dr"
+        reason="disaster recovery restore of off-site snapshot $SNAP_ID (version $M_FROM) onto this machine, requested by $who"
+    fi
     local details
     details="$(printf '{"snapshot_id":"%s","from_version":"%s","to_version":"%s","operator":"%s","outcome":"%s","reason":"%s"}' \
         "$(json_escape "$SNAP_ID")" "$(json_escape "$from")" "$(json_escape "$M_FROM")" \
@@ -182,7 +217,7 @@ journal_manual_rollback() {
     journaled=1
     docker exec "$PG_CONTAINER" psql -U "$PG_USER" -d "$PG_DB" -tAq -v ON_ERROR_STOP=1 -c \
 "INSERT INTO activity_logs (user_email, action, target_type, target_name, details)
- VALUES ('$(sqlq "${ROLLBACK_OPERATOR:-system}")', 'update.manual_rollback', 'panel_update', '$(sqlq "$SNAP_ID")', '$(sqlq "$details")')" \
+ VALUES ('$(sqlq "${ROLLBACK_OPERATOR:-system}")', '$action', '$target_type', '$(sqlq "$SNAP_ID")', '$(sqlq "$details")')" \
         </dev/null >/dev/null 2>&1
 }
 
@@ -191,8 +226,8 @@ write_result() {
     local tmp="$RESULT.tmp"
     result_stage="$st"
     result_detail="$detail"
-    printf '{"snapshot_id":"%s","ok":%s,"stage":"%s","detail":"%s","finished_at":"%s"}\n' \
-        "$SNAP_ID" "$ok" "$st" "$(json_escape "$detail")" \
+    printf '{"snapshot_id":"%s","mode":"%s","ok":%s,"stage":"%s","detail":"%s","finished_at":"%s"}\n' \
+        "$SNAP_ID" "$(json_escape "$RESTORE_MODE")" "$ok" "$st" "$(json_escape "$detail")" \
         "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$tmp"
     # The verdict holds no secret, and this runs from the exit trap too, where
     # aborting would lose the verdict itself: reported, never fatal.
@@ -245,7 +280,9 @@ rollback_would_be_undone() {
 #         -v ON_ERROR_STOP=1 < /tmp/recover.sql
 #     systemctl start dockpanel-api
 hazard_note() {
-    if rollback_would_be_undone; then
+    if rollback_would_be_undone && [ "$RESTORE_MODE" = "dr" ]; then
+        printf '%s' " - dockpanel-api was deliberately LEFT STOPPED: the database is back on the off-site snapshot but $ETC_DIR is not, and the installed api would start on this machine's JWT_SECRET over it (every stored credential unreadable). The pre-restore database is at ${PRE_DUMP:-$STATE_DIR/pre-rollback-$SNAP_ID.sql.gz}."
+    elif rollback_would_be_undone; then
         printf '%s' " - dockpanel-api was deliberately LEFT STOPPED: the database is back on the snapshot but the binaries are not, and starting the installed api would migrate it forward and undo this rollback. The pre-rollback database is at ${PRE_DUMP:-$STATE_DIR/pre-rollback-$SNAP_ID.sql.gz}."
     fi
 }
@@ -301,6 +338,14 @@ on_exit() {
         log "could not remove $WORK (it holds a copy of the database dump): remove it by hand"
         trap_note="$trap_note $WORK could not be removed and holds a copy of the database dump."
     fi
+    # The decrypted off-site archive holds api.env and the database: it never
+    # outlives the restore, whatever the outcome. It can be fetched again.
+    if [ "$RESTORE_MODE" = "dr" ] && [ -e "$TARBALL" ]; then
+        if ! rm -f "$TARBALL"; then
+            log "could not remove the decrypted archive $TARBALL: remove it by hand"
+            trap_note="$trap_note the decrypted archive $TARBALL could not be removed and holds secrets."
+        fi
+    fi
     if [ "$finished" != "1" ]; then
         write_result false "$stage" "aborted at stage '$stage' with exit code $code$(hazard_note)${trap_note:+ -$trap_note}"
     elif [ -n "$trap_note" ]; then
@@ -332,12 +377,17 @@ if [ -z "${DOCKPANEL_RESTORE_DETACHED:-}" ] && command -v systemd-run >/dev/null
             --setenv=DOCKPANEL_HEALTH_URL="$HEALTH_URL" \
             --setenv=DOCKPANEL_ROLLBACK_OPERATOR="$ROLLBACK_OPERATOR" \
             --setenv=DOCKPANEL_ROLLBACK_FROM_VERSION="$ROLLBACK_FROM" \
+            --setenv=DOCKPANEL_RESTORE_MODE="$RESTORE_MODE" \
             bash "$0"
     fi
 fi
 
 write_result false "started" "restore in progress"
-log "restoring snapshot $SNAP_ID from $TARBALL"
+log "restoring snapshot $SNAP_ID from $TARBALL (mode $RESTORE_MODE)"
+case "$RESTORE_MODE" in
+    rollback|dr) ;;
+    *) fail "unknown DOCKPANEL_RESTORE_MODE '$RESTORE_MODE' (expected rollback or dr) - nothing changed" ;;
+esac
 
 # ── 1. Verify the tarball ────────────────────────────────────────────────────
 stage="verify-tarball"
@@ -417,6 +467,111 @@ if [ -f "$DUMP_GZ" ]; then
 else
     EXPECT_TABLES=0
     log "snapshot contains no database dump - skipping the database stage"
+fi
+
+# ── 3b. Off-site archive: refuse what cannot work BEFORE stopping anything ───
+# Everything in this block either proves the archive fits this machine or
+# prepares the extracted copy; nothing here touches the running panel, so each
+# refusal leaves the box exactly as it was.
+PDNS_DB=""
+PDNS_SQL="$WORK/db/pdns.sql"
+if [ "$RESTORE_MODE" = "dr" ]; then
+    stage="dr-preflight"
+    M_KIND="$(meta_field kind)"
+    [ "$M_KIND" = "dr" ] \
+        || fail "this is not an off-site disaster recovery archive (kind '${M_KIND:-none}') - nothing changed"
+    [ -f "$DUMP_GZ" ] || fail "the off-site archive carries no database dump - nothing changed"
+    [ -f "$WORK/etc/api.env" ] || fail "the off-site archive carries no api.env - nothing changed"
+
+    # Same version: the archive has no binaries, so the installed ones must be
+    # the ones its database belongs to.
+    if ! INSTALLED_VERSION="$("$BIN_DIR/dockpanel-api" --version 2>/dev/null </dev/null)"; then
+        fail "could not read the version of $BIN_DIR/dockpanel-api - nothing changed"
+    fi
+    INSTALLED_VERSION="${INSTALLED_VERSION##* }"
+    if [ -z "$INSTALLED_VERSION" ] || [ "$INSTALLED_VERSION" != "$M_FROM" ]; then
+        fail "version mismatch: the archive was taken by version $M_FROM and this machine runs ${INSTALLED_VERSION:-an unknown version}. Install version $M_FROM first (DOCKPANEL_VERSION=v$M_FROM bash install.sh) - nothing changed"
+    fi
+    M_ARCH="$(meta_field arch)"
+    HOST_ARCH="$(uname -m)"
+    if [ -z "$M_ARCH" ] || [ "$M_ARCH" != "$HOST_ARCH" ]; then
+        fail "architecture mismatch: the archive was taken on ${M_ARCH:-an unknown architecture} and this machine is $HOST_ARCH - nothing changed"
+    fi
+    log "off-site archive matches this machine: version $INSTALLED_VERSION, architecture $HOST_ARCH"
+
+    # api.env: everything from the archive (JWT_SECRET, SECRETS_ENCRYPTION_KEY,
+    # AGENT_TOKEN...) except DATABASE_URL, which must stay this machine's own:
+    # its PostgreSQL was created with its own password. Merged into the extracted
+    # copy, so $ETC_DIR never holds the archive's URL even for a moment. The line
+    # is never printed: awk writes it straight into a 0600 file.
+    [ -f "$ETC_DIR/api.env" ] || fail "$ETC_DIR/api.env does not exist on this machine - nothing changed"
+    CUR_URLS="$(awk '/^DATABASE_URL=/ { n++ } END { print n + 0 }' "$ETC_DIR/api.env")" \
+        || fail "could not read $ETC_DIR/api.env - nothing changed"
+    [ "$CUR_URLS" = "1" ] \
+        || fail "$ETC_DIR/api.env must hold exactly one DATABASE_URL line (found $CUR_URLS) - nothing changed"
+    ENV_MERGED="$WORK/etc/.api.env.merge"
+    if ! ( umask 077; awk '
+            FNR == NR { if (!got && $0 ~ /^DATABASE_URL=/) { keep = $0; got = 1 } next }
+            /^DATABASE_URL=/ { if (!done) { print keep; done = 1 } next }
+            { print }
+            END { if (!done) print keep }
+        ' "$ETC_DIR/api.env" "$WORK/etc/api.env" > "$ENV_MERGED" ); then
+        fail "could not merge DATABASE_URL into the restored api.env - nothing changed"
+    fi
+    chmod 0600 "$ENV_MERGED" || fail "could not restrict the merged api.env to 0600 - nothing changed"
+    if ! cmp -s <(grep '^DATABASE_URL=' "$ETC_DIR/api.env") <(grep '^DATABASE_URL=' "$ENV_MERGED"); then
+        fail "the merged api.env does not carry this machine's DATABASE_URL - nothing changed"
+    fi
+    mv "$ENV_MERGED" "$WORK/etc/api.env" || fail "could not place the merged api.env - nothing changed"
+    log "api.env prepared: the archive's settings with this machine's DATABASE_URL"
+
+    # agent.token must be the AGENT_TOKEN the restored api.env hands the api, or
+    # the api cannot talk to its own agent. Never printed.
+    ARCHIVE_TOKEN="$(awk '/^AGENT_TOKEN=/ { sub(/^AGENT_TOKEN=/, ""); print; exit }' "$WORK/etc/api.env")" \
+        || fail "could not read AGENT_TOKEN from the restored api.env - nothing changed"
+    if [ -n "$ARCHIVE_TOKEN" ]; then
+        CUR_ARCHIVE_TOKEN=""
+        if [ -f "$WORK/etc/agent.token" ]; then
+            CUR_ARCHIVE_TOKEN="$(tr -d '[:space:]' < "$WORK/etc/agent.token")" \
+                || fail "could not read the archive's agent.token - nothing changed"
+        fi
+        if [ "$CUR_ARCHIVE_TOKEN" != "$ARCHIVE_TOKEN" ]; then
+            if ! ( umask 077; printf '%s\n' "$ARCHIVE_TOKEN" > "$WORK/etc/.agent.token.merge" ); then
+                fail "could not write agent.token - nothing changed"
+            fi
+            mv "$WORK/etc/.agent.token.merge" "$WORK/etc/agent.token" \
+                || fail "could not place agent.token - nothing changed"
+            log "agent.token aligned with AGENT_TOKEN of the restored api.env"
+        fi
+    else
+        log "the restored api.env has no AGENT_TOKEN line: agent.token is restored as it is"
+    fi
+    ARCHIVE_TOKEN=""
+    CUR_ARCHIVE_TOKEN=""
+
+    # The agent TLS pair goes back whole or not at all: half of it over this
+    # machine's pair would leave a certificate without its key.
+    if [ -f "$WORK/etc/ssl/agent.crt" ] && [ ! -f "$WORK/etc/ssl/agent.key" ]; then
+        rm -f "$WORK/etc/ssl/agent.crt" || fail "could not drop the lone agent.crt - nothing changed"
+        log "the archive has agent.crt without agent.key: this machine's agent TLS pair is kept"
+    elif [ -f "$WORK/etc/ssl/agent.key" ] && [ ! -f "$WORK/etc/ssl/agent.crt" ]; then
+        rm -f "$WORK/etc/ssl/agent.key" || fail "could not drop the lone agent.key - nothing changed"
+        log "the archive has agent.key without agent.crt: this machine's agent TLS pair is kept"
+    fi
+
+    # PowerDNS zones (gpgsql): proven complete now, applied after the panel's
+    # database.
+    if [ -f "$WORK/db/pdns.sql.gz" ]; then
+        PDNS_DB="$(meta_field pdns_database)"
+        case "$PDNS_DB" in
+            ''|*[!A-Za-z0-9_]*) fail "the archive has a PowerDNS dump but no valid pdns_database name - nothing changed" ;;
+        esac
+        gunzip -c "$WORK/db/pdns.sql.gz" > "$PDNS_SQL" || fail "gunzip of the PowerDNS dump failed - nothing changed"
+        if ! tail -20 "$PDNS_SQL" | grep -c 'PostgreSQL database dump complete' >/dev/null; then
+            fail "the PowerDNS dump is truncated (completion marker absent) - nothing changed"
+        fi
+        log "PowerDNS dump verified complete (database $PDNS_DB)"
+    fi
 fi
 
 # ── 4. Stop services ─────────────────────────────────────────────────────────
@@ -627,13 +782,55 @@ if [ -f "$DUMP_SQL" ]; then
     # `panel_snapshots` had a different shape is enough to break it. Losing the
     # row costs a listing entry and a `rolled_back_at` stamp; aborting used to
     # cost the rollback itself.
-    if docker exec "$PG_CONTAINER" psql -U "$PG_USER" -d "$PG_DB" -tAq -v ON_ERROR_STOP=1 -c \
+    #
+    # An off-site archive is not a local snapshot: its decrypted tarball is
+    # deleted when this script exits, so a row would list a file that is gone.
+    if [ "$RESTORE_MODE" = "dr" ]; then
+        log "off-site restore: no local snapshot row is recorded (the decrypted archive is removed at the end)"
+    elif docker exec "$PG_CONTAINER" psql -U "$PG_USER" -d "$PG_DB" -tAq -v ON_ERROR_STOP=1 -c \
 "INSERT INTO panel_snapshots (id, file_path, from_version, to_version, trigger, operator, size_bytes, sha256, created_at, rolled_back_at)
  VALUES ('$SNAP_ID', '$(sqlq "$TARBALL")', '$(sqlq "$M_FROM")', $TO_SQL, '$(sqlq "$M_TRIG")', $OPER_SQL, $SIZE_BYTES, '$(sqlq "$EXPECT_SHA")', $CREATED_SQL, NOW())
  ON CONFLICT (id) DO UPDATE SET rolled_back_at = NOW(), to_version = COALESCE(panel_snapshots.to_version, EXCLUDED.to_version)" >/dev/null 2>&1; then
         log "recorded rollback against snapshot $SNAP_ID"
     else
         degrade "restore applied but the rollback could not be recorded in panel_snapshots (the snapshot will not be listed as rolled back)"
+    fi
+
+    # The PowerDNS zones of an off-site archive (proven complete before the
+    # services stopped). After the panel's database has committed, so a problem
+    # here is reported and the restore carries on: the zones can be restored
+    # again from the DNS backups, the panel cannot be half put back.
+    #
+    # Atomic on its own: the file opens a transaction and only its last line
+    # commits it, and ON_ERROR_STOP ends psql at the first error, so an error or
+    # a short file rolls everything back. Fed from a regular file, never piped.
+    stage="pdns"
+    if [ -n "$PDNS_DB" ] && [ -f "$PDNS_SQL" ]; then
+        if ! PDNS_EXISTS="$(docker exec "$PG_CONTAINER" psql -U "$PG_USER" -d "$PG_DB" -tAq \
+            -c "SELECT 1 FROM pg_database WHERE datname = '$(sqlq "$PDNS_DB")'" </dev/null | tr -d ' \r')"; then
+            PDNS_EXISTS=""
+        fi
+        if [ "$PDNS_EXISTS" != "1" ]; then
+            degrade "the PowerDNS database '$PDNS_DB' does not exist on this machine, so the DNS zones were not restored: set up PowerDNS with gpgsql, then restore the zones from a DNS backup"
+        else
+            PDNS_APPLY="$WORK/db/pdns-apply.sql"
+            if { printf '%s\n' 'BEGIN;' 'DROP SCHEMA IF EXISTS public CASCADE;' 'CREATE SCHEMA public;' \
+                    'ALTER SCHEMA public OWNER TO pg_database_owner;' 'GRANT USAGE ON SCHEMA public TO PUBLIC;' \
+                    && cat "$PDNS_SQL" && printf '%s\n' 'COMMIT;'; } > "$PDNS_APPLY"; then
+                set +e
+                docker exec -i "$PG_CONTAINER" psql -U "$PG_USER" -d "$PDNS_DB" -X -q -v ON_ERROR_STOP=1 \
+                    < "$PDNS_APPLY" > "$WORK/pdns.out" 2> "$WORK/pdns.err"
+                PDNS_RC=$?
+                set -e
+                if [ "$PDNS_RC" = "0" ]; then
+                    log "PowerDNS database $PDNS_DB restored"
+                else
+                    degrade "the PowerDNS database $PDNS_DB could not be restored (psql exit $PDNS_RC, rolled back, the zones are as before): $(tail -3 "$WORK/pdns.err" | tr '\n' ' ')"
+                fi
+            else
+                degrade "the PowerDNS restore stream could not be assembled, so the DNS zones were not restored"
+            fi
+        fi
     fi
 fi
 
@@ -642,6 +839,12 @@ fi
 # .prerestore copy. No failure is silenced anywhere in this file: a restore that
 # cannot restore must say so (lesson #48).
 stage="binaries"
+# An off-site archive carries none: the installed ones were checked to be the
+# archive's version before anything stopped.
+if [ "$RESTORE_MODE" = "dr" ]; then
+    BINS=()
+    log "off-site restore: the installed binaries (version $INSTALLED_VERSION) are kept"
+fi
 for bin in "${BINS[@]}"; do
     src="$WORK/binaries/$bin"
     dst="$BIN_DIR/$bin"
@@ -672,7 +875,9 @@ done
 # and the database already agree, and stopping here would strand the box. A
 # snapshot taken before the frontend was archived simply has none to restore.
 stage="frontend"
-if [ -f "$WORK/frontend/dist/index.html" ]; then
+if [ "$RESTORE_MODE" = "dr" ]; then
+    log "off-site restore: the installed frontend is kept"
+elif [ -f "$WORK/frontend/dist/index.html" ]; then
     if rm -rf "$FRONTEND_DIR/dist.restoring" "$FRONTEND_DIR/dist.prerestore" \
         && mkdir -p "$FRONTEND_DIR" \
         && cp -a "$WORK/frontend/dist" "$FRONTEND_DIR/dist.restoring"; then
@@ -730,6 +935,22 @@ if [ -d "$WORK/etc" ]; then
     cp -a "$WORK/etc/." "$ETC_DIR/" || fail "restoring $ETC_DIR failed"
     etc_restored=1
     log "restored $ETC_DIR"
+    if [ "$RESTORE_MODE" = "dr" ]; then
+        # Same binaries (checked before the stop), and now the api.env the
+        # restored database was written with: the api agrees with it again.
+        api_reverted=1
+        # The vhosts are not in the archive: the api rebuilds every local site's
+        # from the restored database at its next start, and reports. An older
+        # report is removed so nobody reads it as this restore's.
+        if ! rm -f "$STATE_DIR/vhost-rebuild.json"; then
+            degrade "the previous vhost rebuild report could not be removed"
+        fi
+        if printf '%s\n' "$SNAP_ID" > "$STATE_DIR/vhost-rebuild.pending"; then
+            log "vhost rebuild requested for the next api start"
+        else
+            degrade "the vhost rebuild marker could not be written: rebuild the sites by saving each one, or create $STATE_DIR/vhost-rebuild.pending and restart dockpanel-api"
+        fi
+    fi
 fi
 
 # ── 7b. nginx ────────────────────────────────────────────────────────────────
@@ -778,7 +999,11 @@ sleep 1
 # success. Refusing is the same answer as in the trap, for the same reason.
 if rollback_would_be_undone; then
     services_stopped=0
-    degrade "the snapshot contains no dockpanel-api binary, so the database was reverted while the installed api was not; dockpanel-api has been left stopped"
+    if [ "$RESTORE_MODE" = "dr" ]; then
+        degrade "the off-site archive restored the database but not $ETC_DIR, so the installed api.env does not match it; dockpanel-api has been left stopped"
+    else
+        degrade "the snapshot contains no dockpanel-api binary, so the database was reverted while the installed api was not; dockpanel-api has been left stopped"
+    fi
     log "NOT starting dockpanel-api: $degraded"
     write_result false "$stage" "$degraded$(hazard_note)"
     finished=1
