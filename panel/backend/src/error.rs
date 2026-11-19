@@ -119,6 +119,11 @@ pub const CODE_APACHE_IN_USE: &str = "apache_in_use";
 /// installed and managed outside the panel (409). Nothing to install either.
 pub const CODE_APACHE_FOREIGN: &str = "apache_foreign";
 
+/// The label on a certificate request refused because another issuance for
+/// the same site was still running after the wait (409,
+/// `services::issuance_lock`). Panel-only: the agent never sends it.
+pub const CODE_SSL_ISSUANCE_IN_PROGRESS: &str = "ssl_issuance_in_progress";
+
 /// The agent labels a 4xx may carry that [`agent_error`] relays verbatim. Any
 /// other label is dropped: the frontend only branches on these.
 const RELAYED_AGENT_CODES: &[&str] = &[

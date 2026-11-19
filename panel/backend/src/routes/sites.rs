@@ -1026,6 +1026,43 @@ pub async fn create(
                 let delays = [3u64, 30, 120, 300];
                 for (i, delay) in delays.iter().enumerate() {
                     tokio::time::sleep(Duration::from_secs(*delay)).await;
+                    // One issuance per site at a time (`services::issuance_lock`),
+                    // held from the order to the rebuild below. A click on the SSL
+                    // button while an attempt runs now waits for it instead of
+                    // placing a second order for the same domain - and if that click
+                    // got the certificate first, this attempt has nothing left to do.
+                    let _issuance = match crate::services::issuance_lock::begin(
+                        site_id,
+                        crate::services::issuance_lock::ISSUANCE_WAIT,
+                        || crate::services::issuance_lock::ssl_enabled_now(&ssl_db, site_id),
+                    )
+                    .await
+                    {
+                        Ok(guard) => guard,
+                        Err(crate::services::issuance_lock::Blocked::AlreadyIssued) => {
+                            tracing::info!("Auto-SSL for {ssl_domain}: the site already has its certificate, stopping");
+                            emit_step(&ssl_logs, site_id, "ssl", "Provisioning SSL certificate", "done", None);
+                            if let Some(tx) = ssl_tx.take() {
+                                let _ = tx.send(true);
+                            }
+                            return;
+                        }
+                        Err(crate::services::issuance_lock::Blocked::InProgress) => {
+                            // Another issuance still holds the site: this attempt
+                            // counts as a failed one and the next delay applies.
+                            if i == delays.len() - 1 {
+                                emit_step(&ssl_logs, site_id, "ssl", "SSL certificate", "error",
+                                    Some("Another certificate issuance for this site was still running. \
+                                          Open the site's SSL section to check its result.".to_string()));
+                                if let Some(tx) = ssl_tx.take() {
+                                    let _ = tx.send(false);
+                                }
+                            } else {
+                                tracing::info!("Auto-SSL attempt {} for {ssl_domain} skipped: another issuance is running", i + 1);
+                            }
+                            continue;
+                        }
+                    };
                     emit_step(&ssl_logs, site_id, "ssl", "Provisioning SSL certificate", "in_progress", None);
                     let mut ssl_body = serde_json::json!({
                         "email": ssl_email,
@@ -1040,20 +1077,13 @@ pub async fn create(
                     if let Some(ref root) = ssl_root_path {
                         ssl_body["root"] = serde_json::json!(root);
                     }
-                    match ssl_agent.post(&format!("/ssl/provision/{ssl_domain}"), Some(ssl_body)).await {
+                    // The long budget, as on the SSL button: with the 60s quick one
+                    // the panel gave up on an order the agent was still running,
+                    // released the site, and the next attempt ordered again.
+                    match crate::helpers::post_http01_order(&ssl_agent, &format!("/ssl/provision/{ssl_domain}"), ssl_body).await {
                         Ok(result) => {
                             tracing::info!("Auto-SSL provisioned for {ssl_domain} (attempt {})", i + 1);
                             emit_step(&ssl_logs, site_id, "ssl", "Provisioning SSL certificate", "done", None);
-
-                            // The body above carries the runtime, the root and the
-                            // PHP socket, but NOT the per-site limits or the
-                            // hardening fields - and the agent re-renders the whole
-                            // vhost from it. This task retries with delays, so a
-                            // limit the operator sets between creation and a later
-                            // attempt is published and then silently dropped.
-                            // Cheaper to put the row back than to keep this body in
-                            // step with every column `build_nginx_body` renders.
-                            crate::routes::ssl::rebuild_vhost_for_site(&ssl_db, &ssl_agent, site_id).await;
 
                             // Parse cert details from agent response
                             let ssl_expiry = result
@@ -1091,6 +1121,24 @@ pub async fn create(
                             .execute(&ssl_db)
                             .await;
 
+                            // The body above carries the runtime, the root and the
+                            // PHP socket, but NOT the per-site limits or the
+                            // hardening fields - and the agent re-renders the whole
+                            // vhost from it. This task retries with delays, so a
+                            // limit the operator sets between creation and a later
+                            // attempt is published and then silently dropped.
+                            // Cheaper to put the row back than to keep this body in
+                            // step with every column `build_nginx_body` renders.
+                            //
+                            // ⛔ AFTER the UPDATE above, never before it. The rebuild
+                            // renders from the row, and a row still saying
+                            // `ssl_enabled = false` renders a vhost with no
+                            // `listen 443`: done first, as it was until rc.4, it
+                            // replaced the HTTPS vhost the agent had just written with
+                            // an HTTP-only one, and the UPDATE then set
+                            // `ssl_enabled = true` beside it.
+                            crate::routes::ssl::rebuild_vhost_for_site(&ssl_db, &ssl_agent, site_id).await;
+
                             // Activate paused monitors now that SSL is working
                             let _ = sqlx::query(
                                 "UPDATE monitors SET enabled = TRUE WHERE site_id = $1 AND enabled = FALSE AND status = 'pending'"
@@ -1105,6 +1153,9 @@ pub async fn create(
                             return; // Success, stop retrying
                         }
                         Err(e) => {
+                            // The vhost follows the row, whatever the failed order
+                            // left behind (lock still held).
+                            crate::routes::ssl::rebuild_vhost_for_site(&ssl_db, &ssl_agent, site_id).await;
                             if i == delays.len() - 1 {
                                 // Last attempt failed. Say WHY - this used to read
                                 // "Skipped", which described neither the four

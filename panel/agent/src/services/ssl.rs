@@ -508,6 +508,24 @@ pub async fn provision_cert(
     }
 }
 
+/// The HTTP-01 token files ONE order wrote, removed when it is dropped - on
+/// success and on every early return alike.
+///
+/// The challenge directory is shared by every domain on the host. The cleanup
+/// used to empty it after a successful order, which deleted the token of any
+/// other order still waiting for the CA to fetch it: that order then failed
+/// validation, and its own leftovers stayed until the next success.
+#[derive(Default)]
+struct ChallengeFiles(Vec<String>);
+
+impl Drop for ChallengeFiles {
+    fn drop(&mut self) {
+        for path in &self.0 {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
 /// One HTTP-01 order for `names` (the domain first); the certificate is
 /// stored under the domain's directory.
 async fn order_http01(
@@ -538,6 +556,7 @@ async fn order_http01(
 
     let state = order.state();
     let needs_challenge = matches!(state.status, OrderStatus::Pending);
+    let mut written_tokens = ChallengeFiles::default();
 
     if !needs_challenge && !matches!(state.status, OrderStatus::Ready) {
         return Err(format!("{CA_DECLINED}The CA returned an unexpected order status: {:?}", state.status));
@@ -571,6 +590,7 @@ async fn order_http01(
             tokio::fs::write(&challenge_path, key_auth.as_str())
                 .await
                 .map_err(|e| format!("Failed to write challenge file: {e}"))?;
+            written_tokens.0.push(challenge_path);
 
             tracing::info!("Challenge file written for {domain}");
 
@@ -618,13 +638,9 @@ async fn order_http01(
     // Write the private key 0600-at-creation (no world-readable 0644 window).
     write_key_file(&key_path, &private_key_pem).await?;
 
-    // Clean up challenge files
-    let challenge_dir = format!("{ACME_WEBROOT}/.well-known/acme-challenge");
-    if let Ok(mut entries) = tokio::fs::read_dir(&challenge_dir).await {
-        while let Ok(Some(entry)) = entries.next_entry().await {
-            tokio::fs::remove_file(entry.path()).await.ok();
-        }
-    }
+    // This order's challenge files go when `written_tokens` is dropped, on
+    // every return path (see `ChallengeFiles`).
+    drop(written_tokens);
 
     // Parse expiry for response
     let expiry = get_cert_expiry(&cert_path).await;
@@ -1082,15 +1098,25 @@ pub fn private_key_matches_cert(cert_pem: &str, key_pem: &str) -> Result<(), Str
 /// renewal, git deploys, Docker apps - comes through here, which is why the
 /// promotion lives here and not in any one of them.
 pub async fn enable_ssl_for_site(
+    held: &crate::site_lock::SiteGuard,
     templates: &Tera,
     domain: &str,
     site_config: &SiteConfig,
 ) -> Result<crate::services::wordpress::CanonicalUrlOutcome, String> {
     // Every caller (provision, upload_cert, renew, DNS-01, Docker-app auto-SSL,
-    // git-deploy auto-SSL) funnels through here - locking once here, rather than
-    // in each of the 6 callers, is what makes them all mutually exclusive on the
-    // same domain. See site_lock's module doc.
-    let _guard = crate::site_lock::lock_site(domain).await;
+    // git-deploy auto-SSL) funnels through here, and each one now holds the
+    // site's lock BEFORE its ACME order and hands it in: the order and the vhost
+    // write are one critical section, so two issuances for the same domain can
+    // no longer interleave (one order cleaning up the other's challenge, or a
+    // late vhost write landing over the other's). The lock is not taken here
+    // because it is not reentrant - the Docker-app door already held it around
+    // this call and deadlocked. See site_lock's module doc.
+    if held.key() != domain {
+        return Err(format!(
+            "internal: the site lock held is for {}, not {domain}",
+            held.key()
+        ));
+    }
 
     // Several callers rebuild the site from a partial description and do not
     // know its web server: keep an Apache site in Apache mode (feature 4)
@@ -1904,5 +1930,30 @@ mod private_key_match_tests {
             let refusal = private_key_matches_cert(&cert, key).unwrap_err();
             assert!(refusal.contains("could not be read"), "{refusal}");
         }
+    }
+}
+
+#[cfg(test)]
+mod challenge_cleanup_tests {
+    use super::*;
+
+    /// Une commande ne supprime que les jetons qu'elle a écrits : celui d'une
+    /// autre commande (un autre domaine) qui attend encore la CA reste en place.
+    #[test]
+    fn an_order_removes_only_its_own_tokens() {
+        let dir = std::env::temp_dir().join(format!("acme-cleanup-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mine = dir.join("token-mine");
+        let theirs = dir.join("token-theirs");
+        std::fs::write(&mine, "a").unwrap();
+        std::fs::write(&theirs, "b").unwrap();
+
+        let mut files = ChallengeFiles::default();
+        files.0.push(mine.to_string_lossy().into_owned());
+        drop(files);
+
+        assert!(!mine.exists(), "le jeton de la commande est resté après elle");
+        assert!(theirs.exists(), "la commande a supprimé le jeton d'une autre commande");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -595,6 +595,9 @@ async fn apply_tls(
                     Err(_) => break,
                 }
             }
+            // The order and the vhost write are one critical section for this
+            // domain (see `ssl::enable_ssl_for_site`).
+            let site_guard = crate::site_lock::hold_site(domain).await;
             match crate::services::ssl::load_or_create_account(email).await {
                 Ok(account) => match crate::services::ssl::provision_cert(&account, domain, None).await
                 {
@@ -633,7 +636,7 @@ async fn apply_tls(
                             force_ssl: None,
                             hsts: None, proxy_streaming: None, proxy_strict_client_ip: None,
                         };
-                        if crate::services::ssl::enable_ssl_for_site(templates, domain, &ssl_config)
+                        if crate::services::ssl::enable_ssl_for_site(&site_guard, templates, domain, &ssl_config)
                             .await
                             .is_ok()
                         {

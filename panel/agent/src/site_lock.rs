@@ -65,6 +65,31 @@ pub async fn lock_site(key: &str) -> OwnedMutexGuard<()> {
     entry(key).lock_owned().await
 }
 
+/// Un verrou de site qui sait quelle clé il tient.
+///
+/// Sert de preuve à une fonction qui DOIT s'exécuter sous le verrou d'un
+/// domaine sans le prendre elle-même (le verrou n'est pas réentrant) :
+/// `services::ssl::enable_ssl_for_site` le reçoit en paramètre, ce qui permet
+/// à l'appelant de couvrir toute la commande ACME ET l'écriture du vhost d'un
+/// seul tenant, au lieu de deux sections critiques séparées entre lesquelles
+/// une autre émission pouvait s'intercaler.
+pub struct SiteGuard {
+    key: String,
+    _guard: OwnedMutexGuard<()>,
+}
+
+impl SiteGuard {
+    /// La clé tenue, pour qu'un appelé vérifie qu'on lui a passé le bon verrou.
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+}
+
+/// [`lock_site`], en gardant la clé avec le verrou (voir [`SiteGuard`]).
+pub async fn hold_site(key: &str) -> SiteGuard {
+    SiteGuard { key: key.to_string(), _guard: lock_site(key).await }
+}
+
 /// Acquire locks for two sites (e.g. staging clone/sync's source+target) in a
 /// fixed, key-sorted order - never call-argument order - so two concurrent
 /// operations naming the same pair in opposite directions cannot deadlock by
@@ -127,6 +152,26 @@ mod tests {
         let fut = lock_site("b.example");
         let res = tokio::time::timeout(std::time::Duration::from_millis(200), fut).await;
         assert!(res.is_ok(), "lock on a different key blocked - keys are not independent");
+    }
+
+    #[tokio::test]
+    async fn hold_site_names_its_key_and_excludes_lock_site() {
+        let held = hold_site("held.example").await;
+        assert_eq!(held.key(), "held.example");
+        // Même registre que lock_site : tant que `held` vit, la même clé attend.
+        let blocked = tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            lock_site("held.example"),
+        )
+        .await;
+        assert!(blocked.is_err(), "hold_site ne verrouille pas le même registre que lock_site");
+        drop(held);
+        let freed = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            lock_site("held.example"),
+        )
+        .await;
+        assert!(freed.is_ok(), "le verrou n'est pas rendu quand le SiteGuard est lâché");
     }
 
     #[tokio::test]

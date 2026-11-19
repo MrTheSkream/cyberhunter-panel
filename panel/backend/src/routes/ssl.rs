@@ -215,6 +215,26 @@ pub(crate) async fn rebuild_vhost_for_site(
     }
 }
 
+/// After a FAILED unattended renewal: put the vhost back to what the row says,
+/// so a site whose row says SSL keeps listening on 443 whatever the failed
+/// order left behind. Same rule as the unattended loops' success arms: a
+/// disabled site is not rebuilt by a loop.
+pub(crate) async fn rebuild_vhost_after_failed_renewal(
+    pool: &sqlx::PgPool,
+    agent: &crate::services::agent::AgentHandle,
+    site_id: Uuid,
+) {
+    match sqlx::query_as::<_, Site>("SELECT * FROM sites WHERE id = $1")
+        .bind(site_id)
+        .fetch_optional(pool)
+        .await
+    {
+        Ok(Some(site)) if site.enabled => put_full_vhost(pool, agent, &site).await,
+        Ok(_) => {}
+        Err(e) => tracing::warn!("Vhost rebuild after a failed renewal: could not load site {site_id}: {e}"),
+    }
+}
+
 pub(crate) async fn rebuild_vhost_after_ssl(
     state: &AppState,
     agent: &crate::services::agent::AgentHandle,
@@ -249,6 +269,34 @@ pub(crate) async fn rebuild_vhost_after_ssl(
         }
         Err(e) => tracing::warn!("Vhost rebuild after SSL op: could not load site {site_id}: {e}"),
     }
+}
+
+/// Take a site's issuance lock for an interactive door, waiting at most
+/// `issuance_lock::ISSUANCE_WAIT`.
+///
+/// `first_issuance`: the door issues a site's FIRST certificate (`provision`,
+/// `provision_dns01`). Once the wait is over it re-reads `ssl_enabled`, and a
+/// certificate that arrived meanwhile is the existing 409 - the same answer the
+/// door gives before the wait. A renewal passes `false` and simply goes on.
+///
+/// A wait that runs out is a 409 coded `ssl_issuance_in_progress`, and no ACME
+/// order is placed.
+pub(crate) async fn begin_interactive_issuance(
+    pool: &sqlx::PgPool,
+    site_id: Uuid,
+    domain: &str,
+    first_issuance: bool,
+) -> Result<crate::services::issuance_lock::IssuanceGuard, ApiError> {
+    use crate::services::issuance_lock::{self as lock, Blocked};
+    let pool = pool.clone();
+    lock::begin(site_id, lock::ISSUANCE_WAIT, move || async move {
+        first_issuance && lock::ssl_enabled_now(&pool, site_id).await
+    })
+    .await
+    .map_err(|blocked| match blocked {
+        Blocked::AlreadyIssued => err(StatusCode::CONFLICT, "SSL is already enabled"),
+        Blocked::InProgress => lock::in_progress_error(domain),
+    })
 }
 
 #[derive(Deserialize, Default)]
@@ -386,12 +434,23 @@ pub async fn provision(
     // agent's own re-render keeps the aliases until the full rebuild below.
     crate::helpers::add_http01_names(&agent, &site, &mut agent_body).await;
 
+    // One issuance per site at a time (`services::issuance_lock`). A request
+    // that arrives while the creation-time issuance (or another click) is
+    // running waits for it, and answers the existing 409 when that issuance
+    // produced the certificate - instead of placing a second ACME order for
+    // the same domain.
+    let _issuance = begin_interactive_issuance(&state.db, id, &site.domain, true).await?;
+
     // Call agent to provision SSL. The long budget: with extra names the agent
     // may place a second, apex-only order after the first one fails, which does
     // not fit the 60s quick budget.
     let agent_path = format!("/ssl/provision/{}", site.domain);
-    let result = crate::helpers::post_http01_order(&agent, &agent_path, agent_body)
-        .await
+    let ordered = crate::helpers::post_http01_order(&agent, &agent_path, agent_body).await;
+    if ordered.is_err() {
+        // The vhost follows the row, whatever the failed order left behind.
+        rebuild_vhost_for_site(&state.db, &agent, id).await;
+    }
+    let result = ordered
         .map_err(|e| acme_failure_or(&site.domain, "SSL provisioning", e))?;
     let warnings = crate::helpers::log_agent_warnings(&site.domain, &result);
 
@@ -578,6 +637,9 @@ pub async fn provision_dns01(
         agent_body["force"] = serde_json::json!(true);
     }
 
+    // One issuance per site at a time - see `provision`.
+    let _issuance = begin_interactive_issuance(&state.db, id, &site.domain, true).await?;
+
     // ⛔ THE SAME BUDGET AS EVERY OTHER DNS-01 DOOR. This is the door that ISSUES
     // a wildcard - the exact order `DNS01_ORDER_TIMEOUT_SECS` derives its 300s
     // from (two 10s propagation sleeps for `{d}` and `*.{d}`, then two 120s
@@ -586,13 +648,18 @@ pub async fn provision_dns01(
     // short, so issuing a wildcard could report a false failure while the agent
     // went on to succeed. A budget below the agent's own wait is not a timeout,
     // it is a guaranteed false failure - which is what that constant already says.
-    let result = agent
+    let ordered = agent
         .post_long(
             &format!("/ssl/provision-dns01/{provision_domain}"),
             Some(agent_body),
             DNS01_ORDER_TIMEOUT_SECS,
         )
-        .await
+        .await;
+    if ordered.is_err() {
+        // The vhost follows the row, whatever the failed order left behind.
+        rebuild_vhost_for_site(&state.db, &agent, id).await;
+    }
+    let result = ordered
         .map_err(|e| dns01_failure_or(provision_domain, &zone.domain, wildcard, e))?;
 
     // Parse response
@@ -1039,6 +1106,17 @@ pub(crate) async fn renew_for_site(
         return Err(err(StatusCode::BAD_REQUEST, "SSL is not enabled for this site"));
     }
 
+    // One issuance per site at a time - see `provision`. A renewal that waited
+    // goes on afterwards, from the row as that issuance left it.
+    let _issuance = begin_interactive_issuance(&state.db, id, &site.domain, false).await?;
+    let reread: Option<Site> = sqlx::query_as("SELECT * FROM sites WHERE id = $1")
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten();
+    let site: &Site = reread.as_ref().unwrap_or(site);
+
     // Renewing writes a certificate and rebuilds the vhost, both named by domain on
     // whichever host this handle points at. The row names that host; the caller's
     // selection only ever named the one they were looking at.
@@ -1132,7 +1210,10 @@ pub(crate) async fn renew_for_site(
 
     // `plan` was already decided above the foreign-certificate check, since that
     // check needs to know which name is about to be ordered.
-    let result = match &plan {
+    //
+    // Run as one block so that ANY failed order is followed by a rebuild from
+    // the row below, while the issuance lock is still held.
+    let ordered: Result<serde_json::Value, ApiError> = async { Ok(match &plan {
         crate::helpers::RenewalPlan::Refuse { reason } => {
             // The idiom this file already uses for a precondition that is not an
             // agent failure - the three sibling refusals in `provision_dns01` are
@@ -1171,7 +1252,14 @@ pub(crate) async fn renew_for_site(
                 .await
                 .map_err(|e| acme_failure_or(&site.domain, "SSL renewal", e))?
         }
-    };
+    }) }
+    .await;
+    if ordered.is_err() && !matches!(&plan, crate::helpers::RenewalPlan::Refuse { .. }) {
+        // The vhost follows the row, whatever the failed order left behind: a
+        // site whose row says SSL keeps listening on 443.
+        rebuild_vhost_for_site(&state.db, &agent, id).await;
+    }
+    let result = ordered?;
 
     // Update expiry from the renew response and clear stale ARI hints so
     // the next auto-heal cycle refetches them.
