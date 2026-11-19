@@ -47,7 +47,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
-use crate::services::agent::AgentRegistry;
+use crate::services::agent::{AgentHandle, AgentRegistry};
 use crate::services::backup_policy_executor::{self as bpe, PruneSpec};
 use crate::services::notifications;
 use crate::services::panel_snapshot::{self, SnapshotTrigger};
@@ -949,6 +949,36 @@ async fn finish_run(db: &PgPool, status: &str, messages: &[String]) {
     }
 }
 
+/// The note `last_error` carries for a restored run: where the panel came from.
+pub fn restored_note(archive: Option<&str>, snapshot_id: Option<&str>) -> String {
+    match (archive, snapshot_id) {
+        (Some(a), _) => format!("Panel restored from {a}"),
+        (None, Some(id)) => format!("Panel restored from off-site snapshot {id}"),
+        (None, None) => "Panel restored from an off-site snapshot".into(),
+    }
+}
+
+/// After a restore: the restored database says `running` (its snapshot was
+/// taken during that run, elsewhere or earlier). That run did not run on THIS
+/// machine, so it is neither running nor failed here: `restored`, with a note.
+/// Only from `running`, so a second start (marker kept) changes nothing.
+pub async fn mark_restored(db: &PgPool, note: &str) -> Result<bool, sqlx::Error> {
+    let r = sqlx::query("UPDATE dr_settings SET last_status = 'restored', last_error = $1 WHERE id = 1 AND last_status = 'running'")
+        .bind(note)
+        .execute(db)
+        .await?;
+    Ok(r.rows_affected() > 0)
+}
+
+/// Name the archive in the note once the resync found it.
+pub async fn name_restored_archive(db: &PgPool, note: &str) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE dr_settings SET last_error = $1 WHERE id = 1 AND last_status = 'restored'")
+        .bind(note)
+        .execute(db)
+        .await
+        .map(|_| ())
+}
+
 /// Upload with the retry ladder of the backup executor (5s / 15s / 30s).
 async fn upload_with_retries(agents: &AgentRegistry, payload: &serde_json::Value, filepath: &str) -> Result<(), String> {
     let body = serde_json::json!({ "filepath": filepath, "destination": payload });
@@ -1025,6 +1055,11 @@ pub async fn run_once(db: &PgPool, agents: &AgentRegistry, operator: Option<Stri
     }
 
     let mut messages: Vec<String> = Vec::new();
+    // The rows of the copies at the destinations first: a restored database
+    // does not know the copies made after its snapshot, and retention below
+    // counts what is recorded.
+    let resynced = crate::services::dr_resync::resync(db, &AgentHandle::Local(agents.local().clone())).await;
+    messages.extend(resynced.errors.iter().map(|e| format!("resync: {e}")));
     let built = match prepare(db, operator, &mut messages).await {
         Ok(b) => b,
         Err(e) => {
@@ -1250,7 +1285,12 @@ pub async fn run(db: PgPool, agents: AgentRegistry, mut shutdown_rx: tokio::sync
         Err(e) => tracing::error!("Off-site snapshot: cannot sweep the staging directory: {e}"),
     }
     // A restart during a run leaves `running` behind; no run survives a restart.
-    if !is_running() {
+    // Except after a restore: the restored database says `running` because the
+    // snapshot was taken during ITS run, on another machine or earlier. The
+    // post-restore pass records `restored` for it instead (dr_post_restore).
+    if crate::services::dr_post_restore::pending() {
+        tracing::info!("Off-site snapshot: restore pending, the post-restore pass records the run state");
+    } else if !is_running() {
         if let Err(e) = sqlx::query(
             "UPDATE dr_settings SET last_status = 'failed',              last_error = 'Interrupted: the panel restarted during the off-site snapshot'              WHERE id = 1 AND last_status = 'running'",
         )
@@ -1281,7 +1321,12 @@ async fn tick(db: &PgPool, agents: &AgentRegistry) {
         }
     };
     let now = Utc::now();
-    if schedule_due(settings.enabled, &settings.schedule, settings.last_run_at, now) {
+    // Not before the post-restore pass is done: it re-points the SFTP key paths
+    // the run uploads with, and records the state of the restored run.
+    let due = schedule_due(settings.enabled, &settings.schedule, settings.last_run_at, now);
+    if due && crate::services::dr_post_restore::pending() {
+        tracing::warn!("Off-site snapshot: scheduled run postponed until the post-restore pass is done");
+    } else if due {
         match RunGuard::acquire() {
             Some(guard) => {
                 let (db, agents) = (db.clone(), agents.clone());
@@ -1627,6 +1672,23 @@ mod tests {
         assert_eq!(run_status(2, 0, 0), "success");
         assert_eq!(run_status(1, 1, 0), "partial");
         assert_eq!(run_status(1, 0, 1), "partial");
+    }
+
+    #[test]
+    fn a_restored_run_is_neither_running_nor_failed() {
+        assert_eq!(restored_note(Some("cyberhunter-dr-x.tar.gz.age"), Some("s")), "Panel restored from cyberhunter-dr-x.tar.gz.age");
+        assert_eq!(restored_note(None, Some("s")), "Panel restored from off-site snapshot s");
+        assert_eq!(restored_note(None, None), "Panel restored from an off-site snapshot");
+        // The status the post-restore pass records is one the CHECK accepts.
+        let mig = include_str!("../../migrations/20261130000100_dr_settings_restored_status.sql");
+        assert!(mig.contains("'restored'") && mig.contains("dr_settings_last_status_check"));
+        let src = include_str!("dr_snapshot.rs");
+        assert!(src.contains("SET last_status = 'restored'"));
+        // The startup sweep and the scheduler both wait for a pending restore.
+        let run = src.split("pub async fn run(").nth(1).unwrap();
+        assert!(run.contains("dr_post_restore::pending()"));
+        let tick = src.split("async fn tick(").nth(1).unwrap();
+        assert!(tick.contains("dr_post_restore::pending()"));
     }
 
     #[test]

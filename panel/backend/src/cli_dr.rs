@@ -356,6 +356,19 @@ async fn restore(archive: &str, identity_file: &Path, destination_file: &Path, y
             for e in &r.errors {
                 println!("  ! {e}");
             }
+            if let Some(c) = r.panel_certificate.as_ref().filter(|c| !c.names_primary_ip) {
+                println!("  ! panel certificate: {}", c.detail);
+            }
+            if let Some(d) = &r.dr_snapshots {
+                println!(
+                    "  Off-site copies at the destinations: {} added to the Disaster recovery card, {} marked removed",
+                    d.added.len(),
+                    d.removed.len()
+                );
+                for e in &d.errors {
+                    println!("  ! off-site copies: {e}");
+                }
+            }
         }
         None if Path::new(dr_post_restore::MARKER).exists() => {
             println!("\nThe site configurations are still being rebuilt: see {} later.", dr_post_restore::REPORT);

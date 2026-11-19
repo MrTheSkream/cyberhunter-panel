@@ -18,9 +18,17 @@
 //!    then removes the marker. A pass that cannot reach the agent writes its
 //!    report and KEEPS the marker, so the next start tries again.
 //!
-//! The panel's own certificate (/etc/letsencrypt) is not in the archive: it is
-//! issued again by certbot once the DNS points at the new machine (decision 12,
-//! docs/guides/disaster-recovery.md).
+//! It also records `restored` as the state of the off-site run that took the
+//! snapshot (the restored database says `running`), resynchronises the
+//! off-site copies with the destinations (`dr_resync`), and checks that the
+//! panel's self-signed certificate (`/etc/dockpanel/ssl/panel.crt`, IP installs
+//! only, carried by the archive) names this machine's primary address. No
+//! existing mechanism regenerates that certificate (setup.sh never overwrites
+//! it), so the report says so and the guide gives the command.
+//!
+//! A panel certificate issued by certbot (/etc/letsencrypt) is not in the
+//! archive: it is issued again once the DNS points at the new machine
+//! (decision 12, docs/guides/disaster-recovery.md).
 
 use std::path::{Path, PathBuf};
 
@@ -32,7 +40,8 @@ use uuid::Uuid;
 use crate::models::Site;
 use crate::services::agent::{AgentClient, AgentHandle};
 use crate::services::dr_restore::agent_message;
-use crate::services::dr_snapshot::BACKUP_KEYS_DIR;
+use crate::services::dr_resync;
+use crate::services::dr_snapshot::{self, BACKUP_KEYS_DIR};
 
 pub const MARKER: &str = "/var/lib/dockpanel/vhost-rebuild.pending";
 pub const REPORT: &str = "/var/lib/dockpanel/vhost-rebuild.json";
@@ -199,6 +208,13 @@ pub struct RebuildReport {
     pub reload: Option<ReloadResult>,
     pub key_paths: Vec<KeyPathResult>,
     pub errors: Vec<String>,
+    /// The panel's self-signed certificate (IP installs only). A warning, not
+    /// an error: it does not make the rebuild fail.
+    #[serde(default)]
+    pub panel_certificate: Option<PanelCertCheck>,
+    /// The off-site copies found at the destinations and put back on the card.
+    #[serde(default)]
+    pub dr_snapshots: Option<dr_resync::ResyncReport>,
 }
 
 impl RebuildReport {
@@ -217,6 +233,8 @@ impl RebuildReport {
             reload: None,
             key_paths: Vec::new(),
             errors: Vec::new(),
+            panel_certificate: None,
+            dr_snapshots: None,
         }
     }
 
@@ -262,12 +280,23 @@ pub async fn run_if_pending(db: PgPool, agent: AgentClient, local_server_id: Uui
     let Ok(marker) = std::fs::read_to_string(MARKER) else { return };
     let snapshot_id = Some(marker.trim().to_string()).filter(|s| !s.is_empty());
     tracing::info!("Off-site restore: rebuilding the site configurations (marker {MARKER} present)");
-    let report = rebuild(&db, &AgentHandle::Local(agent), local_server_id, snapshot_id).await;
+    // First, and without the agent: the restored database says the off-site
+    // run that took this snapshot is `running`. It did not run here.
+    match dr_snapshot::mark_restored(&db, &dr_snapshot::restored_note(None, snapshot_id.as_deref())).await {
+        Ok(true) => tracing::info!("Off-site restore: the run state of the restored snapshot is recorded as restored"),
+        Ok(false) => {}
+        Err(e) => tracing::error!("Off-site restore: could not record the restored run state: {e}"),
+    }
+    let mut report = rebuild(&db, &AgentHandle::Local(agent.clone()), local_server_id, snapshot_id.clone()).await;
+    let agent_unreachable = report.errors.iter().any(|e| e.starts_with(AGENT_UNREACHABLE));
+    if !agent_unreachable {
+        // After the key paths are re-pointed (rebuild): SFTP lists with them.
+        report.dr_snapshots = Some(resync_after_restore(&db, &AgentHandle::Local(agent), snapshot_id.as_deref()).await);
+    }
     if let Err(e) = write_report(Path::new(REPORT), &report) {
         tracing::error!("Off-site restore: the vhost rebuild report could not be written: {e}");
         return;
     }
-    let agent_unreachable = report.errors.iter().any(|e| e.starts_with(AGENT_UNREACHABLE));
     if agent_unreachable {
         tracing::error!("Off-site restore: the agent never answered; the rebuild is retried at the next start");
         return;
@@ -285,6 +314,98 @@ pub async fn run_if_pending(db: PgPool, agent: AgentClient, local_server_id: Uui
 }
 
 const AGENT_UNREACHABLE: &str = "the agent did not answer";
+
+/// Put the off-site copies the destinations hold back on the card, and name
+/// the archive this restore came from in the run note.
+async fn resync_after_restore(db: &PgPool, agent: &AgentHandle, snapshot_id: Option<&str>) -> dr_resync::ResyncReport {
+    let r = dr_resync::resync(db, agent).await;
+    let archive = snapshot_id.and_then(|s| Uuid::parse_str(s).ok()).and_then(|id| r.archive_of(id));
+    if archive.is_some() {
+        if let Err(e) = dr_snapshot::name_restored_archive(db, &dr_snapshot::restored_note(archive, snapshot_id)).await {
+            tracing::error!("Off-site restore: could not name the restored archive: {e}");
+        }
+    }
+    tracing::info!(
+        "Off-site restore: off-site copies resynchronised ({} destinations, {} added, {} marked removed, {} errors)",
+        r.destinations,
+        r.added.len(),
+        r.removed.len(),
+        r.errors.len()
+    );
+    r
+}
+
+/// The self-signed certificate of a panel installed without a domain.
+pub const PANEL_CERT: &str = "/etc/dockpanel/ssl/panel.crt";
+
+/// What the post-restore pass says about the panel's own self-signed
+/// certificate: it is in the archive, so it comes back naming the OLD
+/// machine's addresses.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PanelCertCheck {
+    pub path: String,
+    pub primary_ip: Option<String>,
+    /// The certificate names the primary address of this machine.
+    pub names_primary_ip: bool,
+    pub detail: String,
+}
+
+/// The IP addresses of an `openssl x509 -noout -ext subjectAltName` output
+/// (`IP Address:203.0.113.5`, IPv6 written out in full).
+pub fn san_ips(openssl_text: &str) -> Vec<std::net::IpAddr> {
+    openssl_text
+        .split([',', '\n'])
+        .filter_map(|part| part.trim().strip_prefix("IP Address:"))
+        .filter_map(|ip| ip.trim().parse().ok())
+        .collect()
+}
+
+/// The verdict on the certificate's addresses against the primary one.
+pub fn panel_cert_verdict(san: &[std::net::IpAddr], primary: Option<&str>) -> PanelCertCheck {
+    let parsed = primary.and_then(|p| p.parse::<std::net::IpAddr>().ok());
+    let names = parsed.is_some_and(|p| san.contains(&p));
+    let detail = match (primary, names) {
+        (None, _) => "the primary IP address of this machine is unknown: the certificate was not checked".to_string(),
+        (Some(_), true) => "the certificate names the primary IP address".to_string(),
+        (Some(p), false) => format!(
+            "the self-signed panel certificate came back from the archive and does not name {p} (it names {}): \
+             browsers add a name mismatch to the self-signed warning. Regenerate it as described in \
+             docs/guides/disaster-recovery.md (step 5, \"The panel's self-signed certificate\")",
+            if san.is_empty() {
+                "no IP address".to_string()
+            } else {
+                san.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(", ")
+            }
+        ),
+    };
+    PanelCertCheck { path: PANEL_CERT.into(), primary_ip: primary.map(str::to_string), names_primary_ip: names, detail }
+}
+
+/// `None` when the panel has no self-signed certificate (installed with a domain).
+async fn check_panel_cert(primary: Option<&str>) -> Option<PanelCertCheck> {
+    if !Path::new(PANEL_CERT).is_file() {
+        return None;
+    }
+    let out = crate::safe_cmd::safe_command("openssl")
+        .args(["x509", "-noout", "-ext", "subjectAltName", "-in", PANEL_CERT])
+        .output()
+        .await;
+    let failed = |detail: String| PanelCertCheck {
+        path: PANEL_CERT.into(),
+        primary_ip: primary.map(str::to_string),
+        names_primary_ip: false,
+        detail,
+    };
+    let check = match out {
+        Ok(o) if o.status.success() => panel_cert_verdict(&san_ips(&String::from_utf8_lossy(&o.stdout)), primary),
+        Ok(o) => failed(format!("openssl could not read the certificate: {}", String::from_utf8_lossy(&o.stderr).trim())),
+        Err(e) => failed(format!("openssl could not be run: {e}")),
+    };
+    if !check.names_primary_ip {
+        tracing::warn!("Off-site restore: {}", check.detail);
+    }
+    Some(check)
+}
 
 async fn wait_for_agent(agent: &AgentHandle) -> Result<serde_json::Value, String> {
     let mut last = String::new();
@@ -311,6 +432,8 @@ async fn rebuild(db: &PgPool, agent: &AgentHandle, local_server_id: Uuid, snapsh
             return report;
         }
     };
+    let primary = ips.get("primary").and_then(|p| p.as_str()).map(str::to_string);
+    report.panel_certificate = check_panel_cert(primary.as_deref()).await;
     let on_host: Vec<String> = ips
         .get("ips")
         .and_then(|a| a.as_array())
@@ -594,5 +717,50 @@ mod tests {
         assert_eq!(back, r);
         assert!(!dir.join("vhost-rebuild.json.tmp").exists());
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_report_written_before_the_certificate_and_resync_fields_still_reads() {
+        let mut r = RebuildReport::new(Some("abc".into()));
+        r.finish();
+        let mut v = serde_json::to_value(&r).unwrap();
+        let o = v.as_object_mut().unwrap();
+        o.remove("panel_certificate");
+        o.remove("dr_snapshots");
+        let back: RebuildReport = serde_json::from_value(v).unwrap();
+        assert_eq!(back.panel_certificate, None);
+        assert_eq!(back.dr_snapshots, None);
+    }
+
+    #[test]
+    fn the_self_signed_certificate_is_checked_against_the_primary_ip() {
+        let text = "X509v3 Subject Alternative Name: \n    DNS:localhost, IP Address:127.0.0.1, IP Address:203.0.113.5, IP Address:2001:DB8:0:0:0:0:0:1\n";
+        let san = san_ips(text);
+        assert_eq!(san.len(), 3);
+        assert!(panel_cert_verdict(&san, Some("203.0.113.5")).names_primary_ip);
+        assert!(panel_cert_verdict(&san, Some("2001:db8::1")).names_primary_ip, "IPv6 compared as addresses");
+        let moved = panel_cert_verdict(&san, Some("198.51.100.9"));
+        assert!(!moved.names_primary_ip);
+        assert!(moved.detail.contains("198.51.100.9") && moved.detail.contains("203.0.113.5"), "{}", moved.detail);
+        assert!(moved.detail.contains("disaster-recovery.md"));
+        let unknown = panel_cert_verdict(&san, None);
+        assert!(!unknown.names_primary_ip && unknown.detail.contains("unknown"));
+        assert!(panel_cert_verdict(&san_ips("DNS:localhost\n"), Some("203.0.113.5")).detail.contains("no IP address"));
+    }
+
+    /// The order of the pass: the run state first (no agent needed), the
+    /// resync after the rebuild (whose key path rewrite SFTP lists with), and
+    /// never when the agent did not answer.
+    #[test]
+    fn the_pass_records_the_restored_state_then_resyncs_after_the_rebuild() {
+        let src = include_str!("dr_post_restore.rs");
+        let body = src.split("pub async fn run_if_pending(").nth(1).unwrap().split("\n}\n").next().unwrap();
+        let mark = body.find("mark_restored(").expect("the run state is recorded");
+        let rebuild = body.find("rebuild(&db").expect("the rebuild runs");
+        let resync = body.find("resync_after_restore(").expect("the copies are resynchronised");
+        assert!(mark < rebuild && rebuild < resync);
+        assert!(body[rebuild..resync].contains("if !agent_unreachable"));
+        let rb = src.split("async fn rebuild(").nth(1).unwrap();
+        assert!(rb.find("rewrite_key_paths(").unwrap() < rb.find("check_panel_cert(").unwrap());
     }
 }

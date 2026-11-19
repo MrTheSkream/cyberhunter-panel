@@ -206,7 +206,14 @@ pub async fn restore_remote(
         Some(&details), None, "critical", claims.key_id,
     )
     .await;
-    tracing::warn!("Off-site restore of {} requested by {}", copy.filename, claims.email);
+    // The fingerprint of the recovery key (checked against the archive's
+    // recipient above), never the key.
+    tracing::warn!(
+        "Off-site restore of {} requested by {} (recovery key fingerprint {})",
+        copy.filename,
+        claims.email,
+        copy.recipient_fingerprint
+    );
 
     let (agents, handle, operator, archive) =
         (state.agents.clone(), state.panel_update_state.clone(), claims.email.clone(), copy.filename.clone());
@@ -327,5 +334,10 @@ mod tests {
         }
         assert!(!code.contains("--setenv"));
         assert!(code.contains("Zeroizing::new(body.identity)"), "the key is wrapped as soon as it is read");
+        // Its fingerprint is what the log says, after the key was checked against it.
+        let check = code.find("rs::identity_matches(&key, &copy.recipient_fingerprint)").unwrap();
+        let logged = code.find("(recovery key fingerprint {})").expect("the fingerprint is logged");
+        assert!(check < logged);
+        assert!(code[logged..logged + 200].contains("copy.recipient_fingerprint"));
     }
 }

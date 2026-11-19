@@ -17,7 +17,7 @@ import ConfirmDialog from "./ConfirmDialog";
  * sent back to the server.
  */
 
-type DrRunStatus = "running" | "success" | "partial" | "failed";
+type DrRunStatus = "running" | "success" | "partial" | "failed" | "restored";
 
 interface DrSettings {
   enabled: boolean;
@@ -131,6 +131,8 @@ interface DrVhostRebuild {
   reload: { ok: boolean; detail: string } | null;
   key_paths: { destination: string; from: string; to: string }[];
   errors: string[];
+  panel_certificate?: { path: string; primary_ip: string | null; names_primary_ip: boolean; detail: string } | null;
+  dr_snapshots?: { destinations: number; added: string[]; removed: string[]; errors: string[] } | null;
 }
 
 interface DrRehydrateItem {
@@ -344,6 +346,22 @@ function RemoteRestoreReport({
                     </li>
                   ))}
                 </ul>
+              </div>
+            )}
+            {vr.panel_certificate && !vr.panel_certificate.names_primary_ip && (
+              <div className="mt-2 text-warn-400 break-words">Panel certificate: {vr.panel_certificate.detail}</div>
+            )}
+            {vr.dr_snapshots && (
+              <div className="mt-2 text-dark-300">
+                Off-site copies found at the destinations: {vr.dr_snapshots.added.length} added,{" "}
+                {vr.dr_snapshots.removed.length} no longer there
+                {vr.dr_snapshots.errors.length > 0 && (
+                  <ul className="mt-1 space-y-0.5 text-warn-400">
+                    {vr.dr_snapshots.errors.map((err, i) => (
+                      <li key={i} className="break-words">{err}</li>
+                    ))}
+                  </ul>
+                )}
               </div>
             )}
             {vr.errors.length > 0 && (
@@ -842,7 +860,8 @@ export default function DisasterRecoveryCard() {
     );
   const localOnly =
     !status.running &&
-    (s.last_status === "failed" || (s.last_run_at !== null && s.last_status !== "running" && !lastRunHasCopy));
+    (s.last_status === "failed" ||
+      (s.last_run_at !== null && s.last_status !== "running" && s.last_status !== "restored" && !lastRunHasCopy));
 
   const statusColor =
     s.last_status === "success"
@@ -918,7 +937,11 @@ export default function DisasterRecoveryCard() {
             </span>
           )}
         </div>
-        {s.last_error && <div className="mt-1 text-danger-400 break-words">{s.last_error}</div>}
+        {s.last_error && (
+          <div className={`mt-1 break-words ${s.last_status === "restored" ? "text-dark-300" : "text-danger-400"}`}>
+            {s.last_error}
+          </div>
+        )}
       </div>
 
       {/* Recovery key */}

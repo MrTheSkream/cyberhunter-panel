@@ -18,6 +18,7 @@ pub mod dr_snapshot;
 pub mod dr_restore;
 pub mod dr_post_restore;
 pub mod dr_rehydrate;
+pub mod dr_resync;
 pub mod drill_scheduler;
 pub mod traffic_accounting_scheduler;
 pub mod email;
