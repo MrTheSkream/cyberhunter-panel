@@ -21,6 +21,7 @@ use crate::routes::tls_certificates::{
 };
 use crate::services::activity;
 use crate::services::agent::AgentHandle;
+use crate::services::deploy_incidents::{self, DeployTrigger};
 use crate::services::domain_claim;
 use crate::services::expected_stops;
 use crate::services::notifications;
@@ -435,6 +436,57 @@ pub struct GitDeployHistory {
     pub triggered_by: String,
     pub duration_ms: Option<i32>,
     pub created_at: chrono::DateTime<chrono::Utc>,
+    /// The environment this deployment ran with, encrypted. Read by rollback and
+    /// by nothing else: the history endpoints serialise this struct, and these are
+    /// the application's secrets.
+    #[serde(skip_serializing)]
+    #[sqlx(default)]
+    pub env_snapshot: Option<String>,
+}
+
+/// Encrypt an environment for `git_deploy_history.env_snapshot`.
+fn seal_env_snapshot(env_vars: &serde_json::Value, jwt_secret: &str) -> Result<String, String> {
+    crate::services::secrets_crypto::encrypt_credential(&env_object(env_vars).to_string(), jwt_secret)
+}
+
+/// The snapshot to record beside a deployment that just succeeded. A failure costs
+/// that entry its snapshot, never the deploy that has already happened.
+fn history_env_snapshot(env_vars: &serde_json::Value) -> Option<String> {
+    let sealed = std::env::var("JWT_SECRET")
+        .map_err(|e| e.to_string())
+        .and_then(|secret| seal_env_snapshot(env_vars, &secret));
+    match sealed {
+        Ok(snapshot) => Some(snapshot),
+        Err(e) => {
+            tracing::warn!("Could not record the environment of this deployment: {e}");
+            None
+        }
+    }
+}
+
+/// The environment a rollback deploys, and whether it is the target's own.
+///
+/// An entry written before snapshots existed has none. Refusing those would take
+/// rollback away from every deployment made before the upgrade, so the current
+/// environment is kept and the caller says so. A snapshot that exists but cannot
+/// be opened is refused: rolling back the image alone is the defect itself.
+fn rollback_env(
+    snapshot: Option<&str>,
+    current: &serde_json::Value,
+    jwt_secret: &str,
+) -> Result<(serde_json::Value, bool), String> {
+    let Some(sealed) = snapshot.filter(|s| !s.is_empty()) else {
+        return Ok((current.clone(), false));
+    };
+    crate::services::secrets_crypto::decrypt_credential(sealed, jwt_secret)
+        .ok()
+        .and_then(|plain| serde_json::from_str::<serde_json::Value>(&plain).ok())
+        .filter(|env| env.is_object())
+        .map(|env| (env, true))
+        .ok_or_else(|| {
+            "The environment saved with this deployment cannot be read, so it was not rolled back"
+                .to_string()
+        })
 }
 
 #[derive(serde::Deserialize)]
@@ -946,9 +998,25 @@ pub async fn update(
         }
     }
 
+    // The form was handed a masked URL and sends it back as it got it.
+    let stored_repo_url: Option<(String,)> =
+        sqlx::query_as("SELECT repo_url FROM git_deploys WHERE id = $1 AND user_id = $2")
+            .bind(id)
+            .bind(claims.sub)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(|e| internal_error("update git_deploys", e))?;
+    let repo_url = match (body.repo_url.as_deref(), stored_repo_url) {
+        (Some(url), Some((stored,))) => Some(
+            restore_repo_credentials(url, &stored)
+                .map_err(|msg| err(StatusCode::BAD_REQUEST, msg))?,
+        ),
+        (url, _) => url.map(str::to_string),
+    };
+
     // Validate repo_url for SSRF the same way create() does, whenever it's present -
     // an edit can point an existing deploy at a NEW repo, not just create one.
-    if let Some(ref url) = body.repo_url {
+    if let Some(ref url) = repo_url {
         if !url.trim().is_empty() {
             if let Err(e) = crate::helpers::validate_repo_url_not_internal(url).await {
                 return Err(err(StatusCode::BAD_REQUEST, &format!("Invalid repository URL: {e}")));
@@ -1082,7 +1150,7 @@ pub async fn update(
          WHERE id = $22 AND user_id = $23 \
          RETURNING *",
     )
-    .bind(body.repo_url.as_deref())
+    .bind(repo_url.as_deref())
     .bind(body.branch.as_deref())
     .bind(body.dockerfile.as_deref())
     .bind(body.container_port)
@@ -1309,9 +1377,10 @@ pub async fn remove(
     // here were fire-and-forget and reported success; it described a defect
     // rather than a decision.
     if let Err(e) = agent
-        .post(
+        .post_long(
             "/git/cleanup",
             Some(serde_json::json!({ "name": name, "scope": "deploy" })),
+            120,
         )
         .await
     {
@@ -1349,6 +1418,15 @@ pub async fn remove(
         .await
         .map_err(|e| internal_error("remove git_deploys", e))?;
 
+    deploy_incidents::retire_app_monitors(
+        &state.db,
+        claims.sub,
+        domain.as_deref(),
+        None,
+        Some(&format!("dockpanel-git-{name}")),
+    )
+    .await;
+
     let ip = crate::routes::client_ip(&headers);
 
     activity::log_activity(
@@ -1380,18 +1458,6 @@ pub async fn deploy(
 ) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
     require_admin(&claims.role)?;
 
-    // Check for active critical/major incidents - block deploy during outage
-    let active_incidents: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM managed_incidents \
-         WHERE status NOT IN ('resolved', 'postmortem') \
-         AND severity IN ('critical', 'major')"
-    ).fetch_one(&state.db).await.unwrap_or((0,));
-
-    if active_incidents.0 > 0 {
-        return Err(err(StatusCode::CONFLICT,
-            "Deploy blocked: active critical/major incident in progress. Resolve the incident first."));
-    }
-
     let config: GitDeploy = sqlx::query_as(
         &format!("{GIT_DEPLOY_SELECT} WHERE d.id = $1 AND d.user_id = $2"),
     )
@@ -1401,6 +1467,14 @@ pub async fn deploy(
     .await
     .map_err(|e| internal_error("deploy", e))?
     .ok_or_else(|| err(StatusCode::NOT_FOUND, "Git deploy not found"))?;
+
+    // Check for active critical/major incidents - block deploy during outage
+    if deploy_incidents::deploy_blocked(
+        &state.db, config.user_id, config.domain.as_deref(), DeployTrigger::Operator,
+    ).await {
+        return Err(err(StatusCode::CONFLICT,
+            "Deploy blocked: active critical/major incident in progress. Resolve the incident first."));
+    }
 
     // Protected deploy: require approval from another admin
     if config.deploy_protected {
@@ -1693,6 +1767,14 @@ pub async fn rollback(
     .map_err(|e| internal_error("rollback", e))?
     .ok_or_else(|| err(StatusCode::NOT_FOUND, "History entry not found"))?;
 
+    // Image and environment go back together, or not at all.
+    let (target_env, env_restored) = rollback_env(
+        hist.env_snapshot.as_deref(),
+        &config.env_vars,
+        &state.config.jwt_secret,
+    )
+    .map_err(|e| err(StatusCode::CONFLICT, &e))?;
+
     // The host comes from the row, not from the caller's server switcher - see
     // `remove()`. Rollback carries its own edge: `hist.image_tag` names an image
     // built on THIS deployment's server and present in that daemon's local store,
@@ -1755,7 +1837,14 @@ pub async fn rollback(
         };
 
         // Skip clone+build - go straight to deploy with the historical image
-        emit("deploy", "Rolling back container", "in_progress", None);
+        emit(
+            "deploy",
+            "Rolling back container",
+            "in_progress",
+            (!env_restored).then(|| {
+                "This deployment has no saved environment, so the current variables are kept".to_string()
+            }),
+        );
 
         let effective_mode =
             effective_tls_mode(config.tls_mode.as_deref(), config.ssl_email.as_deref());
@@ -1809,7 +1898,7 @@ pub async fn rollback(
             image_tag: &rollback_image,
             container_port: config.container_port,
             host_port: config.host_port,
-            env_vars: &config.env_vars,
+            env_vars: &target_env,
             domain: config.domain.as_deref(),
             memory_mb: config.memory_mb,
             cpu_percent: config.cpu_percent,
@@ -1835,8 +1924,8 @@ pub async fn rollback(
 
                 // Record history
                 if let Err(e) = sqlx::query(
-                    "INSERT INTO git_deploy_history (git_deploy_id, commit_hash, commit_message, image_tag, status, output, triggered_by, duration_ms) \
-                     VALUES ($1, $2, $3, $4, 'success', $5, 'rollback', $6)",
+                    "INSERT INTO git_deploy_history (git_deploy_id, commit_hash, commit_message, image_tag, status, output, triggered_by, duration_ms, env_snapshot) \
+                     VALUES ($1, $2, $3, $4, 'success', $5, 'rollback', $6, $7)",
                 )
                 .bind(id)
                 .bind(&rollback_commit)
@@ -1844,20 +1933,23 @@ pub async fn rollback(
                 .bind(&rollback_image)
                 .bind(format!("Rolled back to image {rollback_image}"))
                 .bind(duration_ms)
+                .bind(history_env_snapshot(&target_env))
                 .execute(&db)
                 .await
                 {
                     tracing::warn!("Failed to record git deploy rollback history: {e}");
                 }
 
-                // Update git_deploys
+                // Update git_deploys. The row takes the restored environment too:
+                // the next deploy must not bring back what was just rolled away.
                 if let Err(e) = sqlx::query(
-                    "UPDATE git_deploys SET status = 'running', container_id = $1, image_tag = $2, last_deploy = NOW(), last_commit = $3, updated_at = NOW() WHERE id = $4",
+                    "UPDATE git_deploys SET status = 'running', container_id = $1, image_tag = $2, last_deploy = NOW(), last_commit = $3, env_vars = COALESCE($5, env_vars), updated_at = NOW() WHERE id = $4",
                 )
                 .bind(container_id)
                 .bind(&rollback_image)
                 .bind(&rollback_commit)
                 .bind(id)
+                .bind(env_restored.then_some(&target_env))
                 .execute(&db)
                 .await
                 {
@@ -1916,6 +2008,7 @@ pub async fn rollback(
     Ok((StatusCode::ACCEPTED, Json(serde_json::json!({
         "deploy_id": deploy_id,
         "message": "Rollback started",
+        "env_restored": env_restored,
     }))))
 }
 
@@ -2215,13 +2308,9 @@ pub async fn webhook(
     }
 
     // Check for active critical/major incidents - skip webhook deploy during outage
-    let active_incidents: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM managed_incidents \
-         WHERE status NOT IN ('resolved', 'postmortem') \
-         AND severity IN ('critical', 'major')"
-    ).fetch_one(&state.db).await.unwrap_or((0,));
-
-    if active_incidents.0 > 0 {
+    if deploy_incidents::deploy_blocked(
+        &state.db, config.user_id, config.domain.as_deref(), DeployTrigger::Unattended,
+    ).await {
         tracing::warn!("Deploy blocked for {}: active incident in progress", config.name);
         return Ok(Json(serde_json::json!({ "ok": false, "message": "Deploy skipped: active incident" })));
     }
@@ -2489,6 +2578,7 @@ fn spawn_deploy_task(
                 (hash, msg)
             }
             Err(e) => {
+                let e = scrub_repo_credentials(&e.to_string());
                 emit("clone", "Cloning repository", "error", Some(format!("{e}")));
                 emit("complete", "Deploy failed", "error", None);
 
@@ -2661,18 +2751,14 @@ fn spawn_deploy_task(
         }
 
         // Try Nixpacks first (skipped when a pre-build command is configured
-        // - see above), then fall back to auto-detect.
+        // - see above; the agent refuses it when the repository has a
+        // Dockerfile), then fall back to auto-detect.
         let mut nixpacks_image: Option<String> = None;
         emit("detect", "Detecting build method", "in_progress", None);
         let nixpacks_result = if pre_build_cmd.is_some() {
             None
         } else {
-            agent.post_long("/git/nixpacks-build", Some(serde_json::json!({
-                "name": config.name,
-                "commit_hash": commit_hash,
-                "build_context": &config.build_context,
-                "env_vars": config.env_vars,
-            })), 660).await.ok()
+            agent.post_long("/git/nixpacks-build", Some(nixpacks_build_body(&config, &commit_hash)), 660).await.ok()
         };
         match nixpacks_result {
             Some(result) => {
@@ -2685,8 +2771,9 @@ fn spawn_deploy_task(
                 }
             }
             None => {
-                // Nixpacks failed/unavailable, or was skipped for a pre-build
-                // command - either way, fall through to auto-detect.
+                // Nixpacks failed/unavailable, was refused for a repository with
+                // a Dockerfile, or was skipped for a pre-build command - in every
+                // case, fall through to auto-detect.
                 match agent.post("/git/auto-detect", Some(serde_json::json!({
                     "name": config.name, "dockerfile": config.dockerfile, "build_context": config.build_context,
                     "pre_build_cmd": pre_build_cmd,
@@ -2894,8 +2981,8 @@ fn spawn_deploy_task(
 
                 // Record success history
                 if let Err(db_err) = sqlx::query(
-                    "INSERT INTO git_deploy_history (git_deploy_id, commit_hash, commit_message, image_tag, status, output, triggered_by, duration_ms) \
-                     VALUES ($1, $2, $3, $4, 'success', $5, $6, $7)",
+                    "INSERT INTO git_deploy_history (git_deploy_id, commit_hash, commit_message, image_tag, status, output, triggered_by, duration_ms, env_snapshot) \
+                     VALUES ($1, $2, $3, $4, 'success', $5, $6, $7, $8)",
                 )
                 .bind(git_deploy_id)
                 .bind(&commit_hash)
@@ -2904,6 +2991,7 @@ fn spawn_deploy_task(
                 .bind(if blue_green { "Deployed with zero-downtime swap" } else { "Deployed successfully" })
                 .bind(&triggered)
                 .bind(duration_ms)
+                .bind(history_env_snapshot(&config.env_vars))
                 .execute(&db)
                 .await
                 {
@@ -3067,8 +3155,8 @@ fn spawn_deploy_task(
                                     tracing::warn!("Auto-rollback: container {container_name} may have crashed, checking...");
 
                                     // Get last successful deploy before this one
-                                    let prev: Option<(String, String)> = sqlx::query_as(
-                                        "SELECT image_tag, commit_hash FROM git_deploy_history \
+                                    let prev: Option<(String, String, Option<String>)> = sqlx::query_as(
+                                        "SELECT image_tag, commit_hash, env_snapshot FROM git_deploy_history \
                                          WHERE git_deploy_id = $1 AND status = 'success' AND image_tag != $2 \
                                          ORDER BY created_at DESC LIMIT 1"
                                     )
@@ -3078,8 +3166,18 @@ fn spawn_deploy_task(
                                     .await
                                     .unwrap_or_else(|e| { tracing::warn!("Failed to fetch previous deploy for rollback: {e}"); None });
 
-                                    if let Some((prev_image, prev_commit)) = prev {
+                                    if let Some((prev_image, prev_commit, prev_snapshot)) = prev {
                                         tracing::warn!("Auto-rollback: rolling back {monitor_name} to {prev_image}");
+
+                                        // Nobody is waiting on this path to read a refusal, and the
+                                        // container is down: an unreadable snapshot keeps the current
+                                        // environment rather than leaving the app crashed.
+                                        let jwt_secret = std::env::var("JWT_SECRET").unwrap_or_default();
+                                        let (prev_env, env_restored) = rollback_env(prev_snapshot.as_deref(), &monitor_config_env, &jwt_secret)
+                                            .unwrap_or_else(|e| {
+                                                tracing::warn!("Auto-rollback: {monitor_name}: {e}");
+                                                (monitor_config_env.clone(), false)
+                                            });
 
                                         // Deploy the previous image
                                         let rollback_body = build_deploy_body(DeployBody {
@@ -3087,7 +3185,7 @@ fn spawn_deploy_task(
                                             image_tag: &prev_image,
                                             container_port: monitor_config_port,
                                             host_port: monitor_config_host_port,
-                                            env_vars: &monitor_config_env,
+                                            env_vars: &prev_env,
                                             domain: monitor_config_domain.as_deref(),
                                             memory_mb: monitor_config_memory,
                                             cpu_percent: monitor_config_cpu,
@@ -3101,12 +3199,13 @@ fn spawn_deploy_task(
                                         if monitor_agent.post_long("/git/deploy", Some(rollback_body), 120).await.is_ok() {
                                             // Record rollback in history
                                             if let Err(db_err) = sqlx::query(
-                                                "INSERT INTO git_deploy_history (git_deploy_id, commit_hash, image_tag, status, output, triggered_by) \
-                                                 VALUES ($1, $2, $3, 'success', 'Auto-rollback after container crash', 'auto-rollback')"
+                                                "INSERT INTO git_deploy_history (git_deploy_id, commit_hash, image_tag, status, output, triggered_by, env_snapshot) \
+                                                 VALUES ($1, $2, $3, 'success', 'Auto-rollback after container crash', 'auto-rollback', $4)"
                                             )
                                             .bind(monitor_gd_id)
                                             .bind(&prev_commit)
                                             .bind(&prev_image)
+                                            .bind(history_env_snapshot(&prev_env))
                                             .execute(&monitor_db)
                                             .await
                                             {
@@ -3114,10 +3213,11 @@ fn spawn_deploy_task(
                                             }
 
                                             // Update git_deploys
-                                            if let Err(db_err) = sqlx::query("UPDATE git_deploys SET image_tag = $1, last_commit = $2, updated_at = NOW() WHERE id = $3")
+                                            if let Err(db_err) = sqlx::query("UPDATE git_deploys SET image_tag = $1, last_commit = $2, env_vars = COALESCE($4, env_vars), updated_at = NOW() WHERE id = $3")
                                                 .bind(&prev_image)
                                                 .bind(&prev_commit)
                                                 .bind(monitor_gd_id)
+                                                .bind(env_restored.then_some(&prev_env))
                                                 .execute(&monitor_db)
                                                 .await
                                             {
@@ -3403,6 +3503,64 @@ pub fn mask_repo_credentials(url: &str) -> String {
     }
 }
 
+/// Hide the credentials of every URL quoted in a message from the agent. An
+/// agent older than this panel reports git's errors as they came.
+fn scrub_repo_credentials(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(i) = rest.find("://") {
+        let (head, tail) = rest.split_at(i + 3);
+        out.push_str(head);
+        let end = tail
+            .find(|c: char| c.is_whitespace() || matches!(c, '/' | '\'' | '"' | '`' | '<' | '>'))
+            .unwrap_or(tail.len());
+        let authority = &tail[..end];
+        match authority.rfind('@') {
+            Some(at) => {
+                out.push_str("•••");
+                out.push_str(&authority[at..]);
+            }
+            None => out.push_str(authority),
+        }
+        rest = &tail[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Put the stored credentials back into a URL the edit form sent with the mask
+/// `mask_repo_credentials` gave it. They only ever go back to the host they were
+/// issued for: pointing a masked URL at another host needs them typed again.
+fn restore_repo_credentials(incoming: &str, stored: &str) -> Result<String, &'static str> {
+    let Some((scheme, rest)) = incoming.split_once("://") else {
+        return Ok(incoming.to_string());
+    };
+    let Some(host_and_path) = rest.strip_prefix("•••@") else {
+        return Ok(incoming.to_string());
+    };
+    const REFUSAL: &str = "Enter the repository credentials again to use this URL";
+    let (_, stored_rest) = stored.split_once("://").ok_or(REFUSAL)?;
+    let stored_authority = &stored_rest[..stored_rest.find('/').unwrap_or(stored_rest.len())];
+    let at = stored_authority.rfind('@').ok_or(REFUSAL)?;
+    let host = &host_and_path[..host_and_path.find('/').unwrap_or(host_and_path.len())];
+    if !host.eq_ignore_ascii_case(&stored_authority[at + 1..]) {
+        return Err(REFUSAL);
+    }
+    Ok(format!("{scheme}://{}@{host_and_path}", &stored_authority[..at]))
+}
+
+/// The body of `POST /git/nixpacks-build`. Carries the Dockerfile path because the
+/// agent refuses Nixpacks for a repository that has one there.
+fn nixpacks_build_body(config: &GitDeploy, commit_hash: &str) -> serde_json::Value {
+    serde_json::json!({
+        "name": config.name,
+        "commit_hash": commit_hash,
+        "build_context": &config.build_context,
+        "dockerfile": &config.dockerfile,
+        "env_vars": config.env_vars,
+    })
+}
+
 /// The wire spells "not set" as an empty string; this table spells it NULL.
 /// Translating at the writer is what keeps `Some("")` out of storage, and with it
 /// out of every `if let Some(..)` and `unwrap_or` that reads these columns.
@@ -3442,6 +3600,7 @@ fn mask_github_token(deploy: &mut GitDeploy) {
             deploy.github_token = Some(GITHUB_TOKEN_MASK.to_string());
         }
     }
+    deploy.repo_url = mask_repo_credentials(&deploy.repo_url);
 }
 
 /// The URL a git deploy's domain is actually reachable on.
@@ -3533,18 +3692,6 @@ pub async fn trigger_deploy_task(
     user_id: Uuid,
     triggered_by: String,
 ) {
-    // Check for active critical/major incidents - skip scheduled deploy during outage
-    let active_incidents: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM managed_incidents \
-         WHERE status NOT IN ('resolved', 'postmortem') \
-         AND severity IN ('critical', 'major')"
-    ).fetch_one(&db).await.unwrap_or((0,));
-
-    if active_incidents.0 > 0 {
-        tracing::warn!("Scheduled deploy blocked for {git_deploy_id}: active incident in progress");
-        return;
-    }
-
     // Fetch config FIRST - before acquiring the lock - so a config-fetch error
     // (or a row deleted between the scheduler's list and now) returns WITHOUT
     // having flipped status to 'building' and stranding it for the self-heal window.
@@ -3553,6 +3700,15 @@ pub async fn trigger_deploy_task(
         Ok(Some(c)) => c,
         _ => return,
     };
+
+    // Check for active critical/major incidents - skip scheduled deploy during outage
+    if deploy_incidents::deploy_blocked(
+        &db, config.user_id, config.domain.as_deref(), DeployTrigger::Unattended,
+    ).await {
+        tracing::warn!("Scheduled deploy blocked for {git_deploy_id}: active incident in progress");
+        return;
+    }
+
     let effective_mode = effective_tls_mode(config.tls_mode.as_deref(), config.ssl_email.as_deref());
 
     // Resolve the agent for the server this deployment LIVES ON, not for
@@ -3645,6 +3801,7 @@ pub async fn trigger_deploy_task(
             r.get("commit_message").and_then(|v| v.as_str()).unwrap_or("").to_string(),
         ),
         Err(e) => {
+            let e = scrub_repo_credentials(&e.to_string());
             tracing::error!("Scheduled deploy clone failed: {}: {e}", config.name);
             record_failed_history(&db, git_deploy_id, "unknown", "", &format!("Clone failed: {e}"), &triggered_by).await;
             if let Err(db_err) = sqlx::query("UPDATE git_deploys SET status = 'failed', updated_at = NOW() WHERE id = $1")
@@ -3747,17 +3904,13 @@ pub async fn trigger_deploy_task(
     }
 
     // Try Nixpacks first (skipped when a pre-build command is configured -
-    // see above), then fall back to auto-detect + docker build.
+    // see above; the agent refuses it when the repository has a Dockerfile),
+    // then fall back to auto-detect + docker build.
     let mut nixpacks_image: Option<String> = None;
     let nixpacks_result = if pre_build_cmd.is_some() {
         None
     } else {
-        agent.post_long("/git/nixpacks-build", Some(serde_json::json!({
-            "name": config.name,
-            "commit_hash": commit_hash,
-            "build_context": &config.build_context,
-            "env_vars": config.env_vars,
-        })), 660).await.ok()
+        agent.post_long("/git/nixpacks-build", Some(nixpacks_build_body(&config, &commit_hash)), 660).await.ok()
     };
     if let Some(result) = nixpacks_result {
         nixpacks_image = result.get("image_tag").and_then(|v| v.as_str()).map(|s| s.to_string());
@@ -3768,7 +3921,8 @@ pub async fn trigger_deploy_task(
             tracing::warn!("Failed to update git deploy build method: {db_err}");
         }
     } else {
-        // Nixpacks unavailable, or skipped for a pre-build command - try auto-detect.
+        // Nixpacks unavailable, refused for a repository with a Dockerfile, or
+        // skipped for a pre-build command - try auto-detect.
         let auto_detect_result = agent.post("/git/auto-detect", Some(serde_json::json!({
             "name": config.name, "dockerfile": config.dockerfile, "build_context": config.build_context,
             "pre_build_cmd": pre_build_cmd,
@@ -3898,8 +4052,9 @@ pub async fn trigger_deploy_task(
             };
 
             if let Err(db_err) = sqlx::query(
-                "INSERT INTO git_deploy_history (git_deploy_id, commit_hash, commit_message, image_tag, status, triggered_by, duration_ms) VALUES ($1, $2, $3, $4, 'success', $5, $6)"
+                "INSERT INTO git_deploy_history (git_deploy_id, commit_hash, commit_message, image_tag, status, triggered_by, duration_ms, env_snapshot) VALUES ($1, $2, $3, $4, 'success', $5, $6, $7)"
             ).bind(git_deploy_id).bind(&commit_hash).bind(&commit_message).bind(&image_tag).bind(&triggered_by).bind(duration_ms)
+            .bind(history_env_snapshot(&config.env_vars))
             .execute(&db).await
             {
                 tracing::warn!("Failed to record git deploy history: {db_err}");
@@ -4224,6 +4379,7 @@ async fn handle_preview_deploy(
         let commit_hash = match clone_result {
             Ok(r) => r.get("commit_hash").and_then(|v| v.as_str()).unwrap_or("unknown").to_string(),
             Err(e) => {
+                let e = scrub_repo_credentials(&e.to_string());
                 tracing::error!("Preview clone failed: {name}/{branch}: {e}");
                 if let Err(db_err) = sqlx::query("UPDATE git_previews SET status = 'failed' WHERE git_deploy_id = $1 AND branch = $2")
                     .bind(deploy_id).bind(&branch).execute(&db).await
@@ -4812,9 +4968,45 @@ pub async fn reject_deploy(
 #[cfg(test)]
 mod tests {
     use super::{
-        DeployBody, blank_to_none, build_deploy_body, env_object, is_valid_cron,
-        mask_repo_credentials, preview_cleanup_target, strip_container_prefix,
+        DeployBody, GitDeployHistory, blank_to_none, build_deploy_body, env_object, is_valid_cron,
+        mask_repo_credentials, preview_cleanup_target, restore_repo_credentials, rollback_env,
+        scrub_repo_credentials, seal_env_snapshot, strip_container_prefix,
     };
+    use uuid::Uuid;
+
+    #[test]
+    fn a_token_in_an_agent_error_is_scrubbed() {
+        assert_eq!(
+            scrub_repo_credentials("git clone failed: fatal: unable to access 'https://ghp_x@github.com/me/app.git/'"),
+            "git clone failed: fatal: unable to access 'https://•••@github.com/me/app.git/'"
+        );
+        assert_eq!(scrub_repo_credentials("no url here"), "no url here");
+    }
+
+    #[test]
+    fn the_masked_url_of_the_edit_form_keeps_the_stored_token() {
+        let stored = "https://user:ghp_x@github.com/me/app.git";
+        let masked = mask_repo_credentials(stored);
+        assert_eq!(restore_repo_credentials(&masked, stored).unwrap(), stored);
+
+        // Another repository on the same host keeps the credentials.
+        assert_eq!(
+            restore_repo_credentials("https://•••@github.com/me/other.git", stored).unwrap(),
+            "https://user:ghp_x@github.com/me/other.git"
+        );
+        // A URL typed in full replaces them.
+        assert_eq!(
+            restore_repo_credentials("https://new@github.com/me/app.git", stored).unwrap(),
+            "https://new@github.com/me/app.git"
+        );
+    }
+
+    #[test]
+    fn a_stored_token_is_never_sent_to_another_host() {
+        let stored = "https://ghp_x@github.com/me/app.git";
+        assert!(restore_repo_credentials("https://•••@evil.example.com/me/app.git", stored).is_err());
+        assert!(restore_repo_credentials("https://•••@github.com/me/app.git", "https://github.com/me/app.git").is_err());
+    }
 
     #[test]
     fn an_embedded_credential_never_reaches_a_reader_who_does_not_own_it() {
@@ -5098,5 +5290,68 @@ mod tests {
         assert_eq!(super::dns_label("--weird__"), "weird");
         assert_eq!(super::dns_label("###"), "preview"); // fallback when nothing alphanumeric remains
         assert_eq!(super::dns_label("Main"), "main");
+    }
+
+    const SNAPSHOT_KEY: &str = "unit-test-jwt-secret-of-sufficient-length";
+
+    #[test]
+    fn a_rollback_restores_the_environment_of_the_deployment_it_targets() {
+        let then = serde_json::json!({ "API_KEY": "old-secret", "MODE": "a" });
+        let now = serde_json::json!({ "API_KEY": "new-secret", "EXTRA": "b" });
+        let sealed = seal_env_snapshot(&then, SNAPSHOT_KEY).unwrap();
+
+        let (env, restored) = rollback_env(Some(&sealed), &now, SNAPSHOT_KEY).unwrap();
+
+        assert!(restored);
+        assert_eq!(env, then, "variables added since are gone and changed ones are back");
+    }
+
+    #[test]
+    fn an_emptied_environment_is_restored_as_empty() {
+        let sealed = seal_env_snapshot(&serde_json::json!({}), SNAPSHOT_KEY).unwrap();
+        let now = serde_json::json!({ "ADDED": "later" });
+        let (env, restored) = rollback_env(Some(&sealed), &now, SNAPSHOT_KEY).unwrap();
+        assert!(restored);
+        assert_eq!(env, serde_json::json!({}));
+    }
+
+    #[test]
+    fn a_deployment_from_before_snapshots_says_it_kept_the_current_environment() {
+        let now = serde_json::json!({ "KEEP": "me" });
+        let (env, restored) = rollback_env(None, &now, SNAPSHOT_KEY).unwrap();
+        assert!(!restored);
+        assert_eq!(env, now);
+    }
+
+    #[test]
+    fn an_unreadable_snapshot_refuses_and_never_deploys_its_ciphertext() {
+        let sealed = seal_env_snapshot(&serde_json::json!({ "API_KEY": "s3cret-value" }), SNAPSHOT_KEY).unwrap();
+        let now = serde_json::json!({});
+        let e = rollback_env(Some(&sealed), &now, "another-secret-of-sufficient-length-00").unwrap_err();
+        assert!(!e.contains("s3cret-value") && !e.contains(&sealed), "{e}");
+        assert!(rollback_env(Some("not ciphertext"), &now, SNAPSHOT_KEY).is_err());
+    }
+
+    #[test]
+    fn the_snapshot_is_ciphertext_and_never_leaves_through_the_history_api() {
+        let sealed = seal_env_snapshot(&serde_json::json!({ "API_KEY": "s3cret-value" }), SNAPSHOT_KEY).unwrap();
+        assert!(!sealed.is_empty() && !sealed.contains("s3cret-value") && !sealed.contains("API_KEY"));
+
+        let entry = GitDeployHistory {
+            id: Uuid::nil(),
+            git_deploy_id: Uuid::nil(),
+            commit_hash: "abc".into(),
+            commit_message: None,
+            image_tag: "img".into(),
+            status: "success".into(),
+            output: None,
+            triggered_by: "manual".into(),
+            duration_ms: None,
+            created_at: chrono::Utc::now(),
+            env_snapshot: Some(sealed.clone()),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(!json.contains("env_snapshot"), "{json}");
+        assert!(!json.contains(&sealed), "{json}");
     }
 }

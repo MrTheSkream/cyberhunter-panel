@@ -797,8 +797,8 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
     // GAP 10: If backup failures, create managed incident
     if failures > 0 || upload_failures > 0 {
         let _ = sqlx::query(
-            "INSERT INTO managed_incidents (user_id, title, status, severity, description, visible_on_status_page) \
-             VALUES ($1, $2, 'investigating', 'major', $3, FALSE)"
+            "INSERT INTO managed_incidents (user_id, title, status, severity, description, visible_on_status_page, auto_created) \
+             VALUES ($1, $2, 'investigating', 'major', $3, FALSE, TRUE)"
         )
         .bind(policy.user_id)
         .bind(if failures > 0 {

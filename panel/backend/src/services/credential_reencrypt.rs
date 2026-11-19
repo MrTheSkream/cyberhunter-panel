@@ -54,6 +54,7 @@ const SIMPLE_SUBJECTS: &[(&str, &str, &str)] = &[
     ("whmcs_config", "id", "webhook_secret"),
     ("deploy_configs", "id", "webhook_secret"),
     ("git_deploys", "id", "webhook_secret"),
+    ("git_deploy_history", "id", "env_snapshot"),
 ];
 
 /// Subjects the sweep visits through a hand-written arm rather than
@@ -107,6 +108,7 @@ pub const COVERED_MODULES: &[(&str, &str)] = &[
     ("whmcs", "whmcs_config.webhook_secret"),
     ("deploy", "deploy_configs.webhook_secret"),
     ("git_deploys", "git_deploys.webhook_secret"),
+    ("git_deploys", "git_deploy_history.env_snapshot"),
 ];
 
 /// The module names alone, for the operator-facing settings endpoint.

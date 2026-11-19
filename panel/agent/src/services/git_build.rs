@@ -2,9 +2,10 @@ use bollard::container::{
     Config, CreateContainerOptions, ListContainersOptions, RemoveContainerOptions,
     RenameContainerOptions, StartContainerOptions, StopContainerOptions,
 };
+use bollard::image::{ListImagesOptions, RemoveImageOptions};
 use bollard::Docker;
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 use tera::Tera;
 use crate::routes::docker_apps::TlsIntent;
@@ -57,8 +58,157 @@ struct TlsOutcome {
     warning: Option<String>,
 }
 
+/// Hide the credentials of every URL found in `text`.
+///
+/// `https://TOKEN@host/repo.git` is a form the panel accepts, and git quotes the
+/// URL it was given in some of its errors. Those errors travel a long way: the
+/// deploy log, `git_deploy_history.output`, the backend's journal. Everything
+/// this module reports about a repository goes through here first.
+pub fn scrub_url_credentials(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(i) = rest.find("://") {
+        let (head, tail) = rest.split_at(i + 3);
+        out.push_str(head);
+        let end = tail
+            .find(|c: char| c.is_whitespace() || matches!(c, '/' | '\'' | '"' | '`' | '<' | '>'))
+            .unwrap_or(tail.len());
+        let authority = &tail[..end];
+        // The LAST '@' ends the userinfo: a username may contain one.
+        match authority.rfind('@') {
+            Some(at) => {
+                out.push_str("•••");
+                out.push_str(&authority[at..]);
+            }
+            None => out.push_str(authority),
+        }
+        rest = &tail[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// A repository URL without its credentials: what names the repository itself.
+fn repository_identity(url: &str) -> String {
+    let url = url.trim().trim_end_matches('/');
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return url.to_string();
+    };
+    let authority_end = rest.find('/').unwrap_or(rest.len());
+    let (authority, tail) = rest.split_at(authority_end);
+    let host = authority.rfind('@').map_or(authority, |at| &authority[at + 1..]);
+    format!("{scheme}://{host}{tail}")
+}
+
+/// How the configured repository differs from the one a checkout was cloned from.
+#[derive(Debug, PartialEq, Eq)]
+enum OriginChange {
+    Same,
+    /// Same repository, other credentials: a rotated token.
+    Credentials,
+    Repository,
+}
+
+fn origin_change(current: &str, wanted: &str) -> OriginChange {
+    if current == wanted {
+        OriginChange::Same
+    } else if repository_identity(current) == repository_identity(wanted) {
+        OriginChange::Credentials
+    } else {
+        OriginChange::Repository
+    }
+}
+
+/// Bring the checkout's `origin` in line with the configured URL.
+///
+/// Returns `false` when the checkout belongs to another repository and has to be
+/// cloned again: its history and shallow boundary are of no use to the new one.
+async fn reconcile_origin(repo_dir: &str, repo_url: &str) -> Result<bool, String> {
+    let current = safe_command("git")
+        .args(["-C", repo_dir, "config", "--get", "remote.origin.url"])
+        .output()
+        .await
+        .map_err(|e| format!("git config failed: {e}"))?;
+    if !current.status.success() {
+        return Ok(false);
+    }
+    let current = String::from_utf8_lossy(&current.stdout).trim().to_string();
+
+    match origin_change(&current, repo_url) {
+        OriginChange::Same => Ok(true),
+        OriginChange::Repository => Ok(false),
+        OriginChange::Credentials => {
+            let set_url = safe_command("git")
+                .args(["-C", repo_dir, "remote", "set-url", "origin", repo_url])
+                .output()
+                .await
+                .map_err(|e| format!("git remote set-url failed: {e}"))?;
+            if !set_url.status.success() {
+                let stderr = String::from_utf8_lossy(&set_url.stderr);
+                return Err(format!("git remote set-url failed: {}", scrub_url_credentials(&stderr)));
+            }
+            Ok(true)
+        }
+    }
+}
+
+/// Move the checkout onto what `git fetch origin {branch}` just brought in.
+///
+/// `FETCH_HEAD`, not `origin/{branch}`: the first clone is `--single-branch`, so
+/// its refspec only tracks the branch it was made from. Fetching any other branch
+/// never creates `origin/{branch}`, and a deploy whose branch had been changed
+/// failed here on every attempt.
+async fn reset_to_fetched(repo_dir: &str, branch: &str) -> Result<(), String> {
+    let reset = safe_command("git")
+        .args(["-C", repo_dir, "reset", "--hard", "FETCH_HEAD"])
+        .output()
+        .await
+        .map_err(|e| format!("git reset failed: {e}"))?;
+
+    if !reset.status.success() {
+        let stderr = String::from_utf8_lossy(&reset.stderr);
+        return Err(format!("git reset to {branch} failed: {}", scrub_url_credentials(&stderr)));
+    }
+    Ok(())
+}
+
+/// Drop whatever the repository does not contain from the checkout.
+///
+/// `reset --hard` leaves untracked files alone, and `auto_generate_dockerfile`
+/// writes one into this directory. Left in place it would pass for the
+/// repository's own Dockerfile on the next deploy.
+async fn clean_checkout(repo_dir: &str) -> Result<(), String> {
+    let clean = safe_command("git")
+        .args(["-C", repo_dir, "clean", "-ffdx"])
+        .output()
+        .await
+        .map_err(|e| format!("git clean failed: {e}"))?;
+
+    if !clean.status.success() {
+        let stderr = String::from_utf8_lossy(&clean.stderr);
+        return Err(format!("git clean failed: {}", scrub_url_credentials(&stderr)));
+    }
+    Ok(())
+}
+
+/// The Dockerfile this checkout would be built from, resolved the way
+/// [`build_image`] resolves it. Its presence is what rules Nixpacks out.
+pub fn repo_dockerfile(
+    repo_dir: &std::path::Path,
+    build_context: &str,
+    dockerfile: &str,
+) -> Option<std::path::PathBuf> {
+    let path = if build_context == "." {
+        repo_dir.join(dockerfile)
+    } else {
+        repo_dir.join(build_context).join(dockerfile)
+    };
+    path.is_file().then_some(path)
+}
+
 /// Clone or pull a git repository to `/var/lib/dockpanel/git/{name}/`.
-/// Uses `--depth 50` for clone and `fetch + reset --hard` for pull.
+/// Uses `--depth 50` for clone and `fetch + reset --hard` for pull. A checkout of
+/// another repository is replaced, and one on another branch moves to it.
 pub async fn clone_or_pull(
     name: &str,
     repo_url: &str,
@@ -78,10 +228,17 @@ pub async fn clone_or_pull(
         None => None,
     };
 
+    if std::path::Path::new(&git_dir).exists() && !reconcile_origin(&repo_dir, repo_url).await? {
+        std::fs::remove_dir_all(&repo_dir)
+            .map_err(|e| format!("Failed to replace the previous checkout: {e}"))?;
+        tracing::info!("Git repo {name}: repository changed, cloning it afresh");
+    }
+
     if std::path::Path::new(&git_dir).exists() {
         // Fetch from remote
         let mut cmd = safe_command("git");
         cmd.args(["-C", &repo_dir, "fetch", "origin", branch])
+            .args(["--depth", "50"])
             .env("GIT_TERMINAL_PROMPT", "0");
         if let Some(ref ssh) = env_ssh {
             cmd.env("GIT_SSH_COMMAND", ssh);
@@ -104,20 +261,12 @@ pub async fn clone_or_pull(
 
         if !fetch.status.success() {
             let stderr = String::from_utf8_lossy(&fetch.stderr);
-            return Err(format!("git fetch failed: {stderr}"));
+            return Err(format!("git fetch failed: {}", scrub_url_credentials(&stderr)));
         }
 
         // Reset to remote branch head
-        let reset = safe_command("git")
-            .args(["-C", &repo_dir, "reset", "--hard", &format!("origin/{branch}")])
-            .output()
-            .await
-            .map_err(|e| format!("git reset failed: {e}"))?;
-
-        if !reset.status.success() {
-            let stderr = String::from_utf8_lossy(&reset.stderr);
-            return Err(format!("git reset failed: {stderr}"));
-        }
+        reset_to_fetched(&repo_dir, branch).await?;
+        clean_checkout(&repo_dir).await?;
 
         tracing::info!("Git repo pulled: {name} (branch {branch})");
     } else {
@@ -149,7 +298,7 @@ pub async fn clone_or_pull(
             let stderr = String::from_utf8_lossy(&clone.stderr);
             // Clean up partial clone
             std::fs::remove_dir_all(&repo_dir).ok();
-            return Err(format!("git clone failed: {stderr}"));
+            return Err(format!("git clone failed: {}", scrub_url_credentials(&stderr)));
         }
 
         tracing::info!("Git repo cloned: {name} (branch {branch})");
@@ -1075,7 +1224,7 @@ pub async fn cleanup_container(
     // real site can be created on that exact domain and pass every check - and
     // then this cleanup, running unattended on TTL expiry, deletes the site's
     // vhost and certificates five minutes later.
-    let (domain, host_port, git_data_dir) = match docker.inspect_container(&container_name, None).await {
+    let (domain, host_port, git_data_dir, inspected) = match docker.inspect_container(&container_name, None).await {
         Ok(info) => {
             // Who does it say it is? A TTL sweep runs with nobody watching, and
             // the legacy preview space is shared with real deployments - so
@@ -1117,6 +1266,7 @@ pub async fn cleanup_container(
                     .as_ref()
                     .and_then(|hc| hc.binds.as_ref())
                     .and_then(|binds| owned_git_data_dir(name, binds)),
+                true,
             )
         }
         // The container is already gone. That used to end the vhost and
@@ -1136,6 +1286,7 @@ pub async fn cleanup_container(
             known_domain.map(str::to_string),
             known_port,
             None,
+            false,
         ),
     };
 
@@ -1159,6 +1310,12 @@ pub async fn cleanup_container(
         .ok();
 
     tracing::info!("Removed git container: {container_name}");
+
+    // The legacy preview space is shared with real deployments, so there a bare
+    // name proves nothing once the container that would have vouched for it is gone.
+    if inspected || scope != ownership::GitScope::PreviewLegacy {
+        remove_deploy_images(&docker, name).await;
+    }
 
     // Remove nginx config + certs - only while they are still THIS container's.
     if let Some(ref d) = domain {
@@ -1187,6 +1344,73 @@ pub async fn cleanup_container(
     }
 
     Ok(())
+}
+
+/// The tags of this deployment's images that can go.
+///
+/// The repository has to match exactly: `dockpanel-git-myapp` must not answer for
+/// `dockpanel-git-myapp-staging`. An image any remaining container still runs is
+/// left whole, whichever name that container knows it by.
+fn removable_image_tags(
+    name: &str,
+    images: &[(String, Vec<String>)],
+    in_use: &HashSet<String>,
+) -> Vec<String> {
+    let repository = format!("dockpanel-git-{name}");
+    let mut tags = Vec::new();
+    for (id, repo_tags) in images {
+        if in_use.contains(id) || repo_tags.iter().any(|t| in_use.contains(t)) {
+            continue;
+        }
+        tags.extend(
+            repo_tags
+                .iter()
+                .filter(|t| t.rsplit_once(':').is_some_and(|(repo, _)| repo == repository))
+                .cloned(),
+        );
+    }
+    tags
+}
+
+/// Remove the images built for a deployment that is being torn down.
+///
+/// By tag and never forced, so Docker keeps its own refusal for an image another
+/// image is built on, and an image also tagged for someone else only loses this
+/// deployment's name. Best effort: a teardown is not failed over disk space.
+async fn remove_deploy_images(docker: &Docker, name: &str) {
+    let containers = match docker
+        .list_containers(Some(ListContainersOptions::<String> { all: true, ..Default::default() }))
+        .await
+    {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("Keeping the images of {name}: could not list containers: {e}");
+            return;
+        }
+    };
+    let in_use: HashSet<String> = containers
+        .into_iter()
+        .flat_map(|c| [c.image, c.image_id])
+        .flatten()
+        .collect();
+
+    let images = match docker.list_images(Some(ListImagesOptions::<String>::default())).await {
+        Ok(i) => i,
+        Err(e) => {
+            tracing::warn!("Keeping the images of {name}: could not list images: {e}");
+            return;
+        }
+    };
+    let images: Vec<(String, Vec<String>)> =
+        images.into_iter().map(|i| (i.id, i.repo_tags)).collect();
+
+    for tag in removable_image_tags(name, &images, &in_use) {
+        let options = RemoveImageOptions { force: false, noprune: false };
+        match docker.remove_image(&tag, Some(options), None).await {
+            Ok(_) => tracing::info!("Removed image: {tag}"),
+            Err(e) => tracing::warn!("Failed to remove image {tag}: {e}"),
+        }
+    }
 }
 
 /// Which directory under [`GIT_DATA_DIR`] does this container's own binds prove
@@ -2116,6 +2340,179 @@ pub async fn nixpacks_build(
 
     tracing::info!("Nixpacks build succeeded: {image_tag}");
     Ok((image_tag, full_output))
+}
+
+#[cfg(test)]
+mod git_deploy_recette_tests {
+    use super::*;
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+
+    fn scratch(label: &str) -> PathBuf {
+        let dir = std::env::temp_dir()
+            .join(format!("git-deploy-{label}-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn git(dir: &Path, args: &[&str]) -> String {
+        let out = Command::new("git")
+            .args(["-c", "user.email=t@example.com", "-c", "user.name=t"])
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    /// A repository with `main` and `feature`, checked out the way the first deploy does.
+    fn single_branch_checkout(label: &str) -> (PathBuf, PathBuf) {
+        let root = scratch(label);
+        let origin = root.join("origin");
+        std::fs::create_dir_all(&origin).unwrap();
+        git(&origin, &["init", "-b", "main"]);
+        std::fs::write(origin.join("main.txt"), "main").unwrap();
+        git(&origin, &["add", "."]);
+        git(&origin, &["commit", "-m", "main"]);
+        git(&origin, &["checkout", "-b", "feature"]);
+        std::fs::write(origin.join("feature.txt"), "feature").unwrap();
+        git(&origin, &["add", "."]);
+        git(&origin, &["commit", "-m", "feature"]);
+        git(&origin, &["checkout", "main"]);
+
+        let checkout = root.join("checkout");
+        let url = format!("file://{}", origin.display());
+        git(&root, &[
+            "clone", "--branch", "main", "--single-branch", "--depth", "50",
+            &url, checkout.to_str().unwrap(),
+        ]);
+        (origin, checkout)
+    }
+
+    #[tokio::test]
+    async fn a_branch_changed_after_the_first_deploy_is_followed() {
+        let (_origin, checkout) = single_branch_checkout("branch");
+        git(&checkout, &["fetch", "origin", "feature", "--depth", "50"]);
+
+        reset_to_fetched(checkout.to_str().unwrap(), "feature").await.unwrap();
+
+        assert!(checkout.join("feature.txt").is_file(), "the new branch was not checked out");
+    }
+
+    #[tokio::test]
+    async fn a_rotated_token_repoints_origin_and_keeps_the_checkout() {
+        let (_origin, checkout) = single_branch_checkout("token");
+        git(&checkout, &["remote", "set-url", "origin", "https://old@example.com/me/app.git"]);
+        let dir = checkout.to_str().unwrap();
+
+        assert!(reconcile_origin(dir, "https://new@example.com/me/app.git").await.unwrap());
+
+        assert_eq!(
+            git(&checkout, &["config", "--get", "remote.origin.url"]),
+            "https://new@example.com/me/app.git"
+        );
+    }
+
+    #[tokio::test]
+    async fn another_repository_asks_for_a_fresh_clone() {
+        let (_origin, checkout) = single_branch_checkout("repo");
+        git(&checkout, &["remote", "set-url", "origin", "https://example.com/me/app.git"]);
+
+        let keep = reconcile_origin(checkout.to_str().unwrap(), "https://example.com/me/other.git")
+            .await
+            .unwrap();
+
+        assert!(!keep, "a checkout of another repository must not be reused");
+    }
+
+    #[test]
+    fn origin_change_tells_a_new_token_from_a_new_repository() {
+        let url = "https://example.com/me/app.git";
+        assert_eq!(origin_change(url, url), OriginChange::Same);
+        assert_eq!(
+            origin_change("https://a:old@example.com/me/app.git", "https://a:new@example.com/me/app.git"),
+            OriginChange::Credentials
+        );
+        assert_eq!(origin_change("https://tok@example.com/me/app.git", url), OriginChange::Credentials);
+        assert_eq!(
+            origin_change(url, "https://example.com/me/other.git"),
+            OriginChange::Repository
+        );
+        assert_eq!(
+            origin_change(url, "https://mirror.example.com/me/app.git"),
+            OriginChange::Repository
+        );
+    }
+
+    #[test]
+    fn a_token_never_survives_into_a_reported_error() {
+        assert_eq!(
+            scrub_url_credentials("fatal: unable to access 'https://ghp_secret@github.com/me/app.git/': 403"),
+            "fatal: unable to access 'https://•••@github.com/me/app.git/': 403"
+        );
+        assert_eq!(
+            scrub_url_credentials("https://me@corp.com:ghp_secret@github.com/me/app.git"),
+            "https://•••@github.com/me/app.git"
+        );
+        let clean = "fatal: repository 'https://github.com/~u@h/app.git' not found";
+        assert_eq!(scrub_url_credentials(clean), clean);
+    }
+
+    #[tokio::test]
+    async fn a_dockerfile_the_panel_generated_does_not_outlive_the_deploy() {
+        let (_origin, checkout) = single_branch_checkout("clean");
+        std::fs::write(checkout.join("Dockerfile"), "FROM scratch").unwrap();
+
+        clean_checkout(checkout.to_str().unwrap()).await.unwrap();
+
+        assert!(!checkout.join("Dockerfile").exists(), "the leftover must be gone");
+        assert_eq!(repo_dockerfile(&checkout, ".", "Dockerfile"), None);
+        assert!(checkout.join("main.txt").is_file(), "tracked files must stay");
+    }
+
+    #[test]
+    fn a_dockerfile_is_found_where_the_build_would_read_it() {
+        let repo = scratch("dockerfile");
+        assert_eq!(repo_dockerfile(&repo, ".", "Dockerfile"), None, "nothing to find yet");
+
+        std::fs::write(repo.join("Dockerfile"), "FROM scratch").unwrap();
+        assert_eq!(repo_dockerfile(&repo, ".", "Dockerfile"), Some(repo.join("Dockerfile")));
+
+        std::fs::create_dir_all(repo.join("app/docker")).unwrap();
+        assert_eq!(repo_dockerfile(&repo, "app", "docker/Prod"), None);
+        std::fs::write(repo.join("app/docker/Prod"), "FROM scratch").unwrap();
+        assert_eq!(
+            repo_dockerfile(&repo, "app", "docker/Prod"),
+            Some(repo.join("app").join("docker/Prod"))
+        );
+    }
+
+    #[test]
+    fn only_this_deployments_unused_images_are_removed() {
+        let image = |id: &str, tags: &[&str]| {
+            (id.to_string(), tags.iter().map(|t| t.to_string()).collect::<Vec<_>>())
+        };
+        let images = vec![
+            image("sha256:old", &["dockpanel-git-myapp:abc", "dockpanel-git-myapp:latest"]),
+            image("sha256:neighbour", &["dockpanel-git-myapp-staging:abc"]),
+            image("sha256:running", &["dockpanel-git-myapp:def"]),
+            image("sha256:named", &["dockpanel-git-myapp:ghi"]),
+            image("sha256:shared", &["dockpanel-git-myapp:jkl", "registry.example.com:5000/base:1"]),
+        ];
+        let in_use: HashSet<String> =
+            ["sha256:running".to_string(), "dockpanel-git-myapp:ghi".to_string()].into();
+
+        assert_eq!(
+            removable_image_tags("myapp", &images, &in_use),
+            vec![
+                "dockpanel-git-myapp:abc".to_string(),
+                "dockpanel-git-myapp:latest".to_string(),
+                "dockpanel-git-myapp:jkl".to_string(),
+            ]
+        );
+    }
 }
 
 #[cfg(test)]

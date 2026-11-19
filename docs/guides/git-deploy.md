@@ -359,6 +359,8 @@ Every deployment is tracked in the deploy history with a build hash and timestam
 
 CyberHunter - Panel performs a blue-green rollback: it starts the old version in a new container, verifies the health check, and switches traffic -- the same zero-downtime process as a forward deploy.
 
+The environment variables go back with the image: each deployment saves the variables it ran with, encrypted, and a rollback restores them on the container and on the deployment's settings. A deployment made before this was introduced has no saved variables, so rolling back to it keeps the current ones and the rollback log says so.
+
 ## Deploy History
 
 Each deploy records:

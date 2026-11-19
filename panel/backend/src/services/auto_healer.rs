@@ -280,8 +280,8 @@ async fn auto_restart_services(pool: &PgPool, agents: &AgentRegistry) {
 
                 // Create managed incident
                 let _ = sqlx::query(
-                    "INSERT INTO managed_incidents (user_id, title, status, severity, description, visible_on_status_page) \
-                     VALUES ($1, $2, 'investigating', 'critical', $3, TRUE)",
+                    "INSERT INTO managed_incidents (user_id, title, status, severity, description, visible_on_status_page, auto_created) \
+                     VALUES ($1, $2, 'investigating', 'critical', $3, TRUE, TRUE)",
                 )
                 .bind(user_id)
                 .bind(&incident_title)

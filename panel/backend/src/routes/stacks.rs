@@ -297,6 +297,100 @@ pub(crate) fn deployed_service_states(
     (running, total, errors)
 }
 
+/// How a compose deploy ended, read from the agent's per-service results.
+///
+/// The agent answers 200 whatever happened to the services, so every door that
+/// deploys a compose file translates that answer the same way:
+///
+/// * `Complete`: the door's own success status.
+/// * `Failed`, no service running: **502** with `code: compose_deploy_failed`
+///   and the services in `failed_services`. It is not a success.
+/// * `Partial`, some services running and some not: **207 Multi-Status** with
+///   `partial: true` and the services in `failed_services`. What did start is
+///   left running and the stack is kept: tearing down healthy services over one
+///   bad sibling is a larger outage than the failure being reported, and the
+///   operator can correct the file and redeploy. It is a 2xx because the deploy
+///   did change the host, and never a plain 200/201, so a caller reading only
+///   the status can still tell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ComposeOutcome {
+    Complete,
+    Partial,
+    Failed,
+}
+
+#[derive(Debug)]
+pub(crate) struct ComposeDeployReport {
+    pub outcome: ComposeOutcome,
+    pub running: usize,
+    pub total: usize,
+    /// `{ "name", "error" }` for each service that is not running.
+    pub failed_services: Vec<serde_json::Value>,
+}
+
+/// The status a door answers with when the deploy was not a total failure.
+pub(crate) fn compose_success_status(report: &ComposeDeployReport, success: StatusCode) -> StatusCode {
+    match report.outcome {
+        ComposeOutcome::Partial => StatusCode::MULTI_STATUS,
+        _ => success,
+    }
+}
+
+/// The response for a deploy in which no service came up.
+pub(crate) fn compose_failure(message: &str, report: &ComposeDeployReport) -> ApiError {
+    let detail: Vec<String> = report
+        .failed_services
+        .iter()
+        .map(|s| {
+            format!(
+                "{}: {}",
+                s["name"].as_str().unwrap_or("service"),
+                s["error"].as_str().unwrap_or_default()
+            )
+        })
+        .collect();
+    (
+        StatusCode::BAD_GATEWAY,
+        Json(serde_json::json!({
+            "error": format!("{message} {}", detail.join(" | ")),
+            "code": "compose_deploy_failed",
+            "running": report.running,
+            "total": report.total,
+            "failed_services": report.failed_services,
+        })),
+    )
+}
+
+/// An agent that reports no services at all is one too old to report them, which
+/// says nothing about the deploy (see `git_deploys::compose_outcome`).
+pub(crate) fn compose_deploy_report(deploy_result: &serde_json::Value) -> ComposeDeployReport {
+    let (running, total, _) = deployed_service_states(deploy_result);
+    let failed_services = deploy_result
+        .get("services")
+        .and_then(|s| s.as_array())
+        .into_iter()
+        .flatten()
+        .filter(|s| s.get("status").and_then(|v| v.as_str()) != Some("running"))
+        .map(|s| {
+            serde_json::json!({
+                "name": s.get("name").and_then(|v| v.as_str()).unwrap_or("service"),
+                "error": s
+                    .get("error")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("The agent reported no reason"),
+            })
+        })
+        .collect();
+    let outcome = if total == 0 || running == total {
+        ComposeOutcome::Complete
+    } else if running == 0 {
+        ComposeOutcome::Failed
+    } else {
+        ComposeOutcome::Partial
+    };
+    ComposeDeployReport { outcome, running, total, failed_services }
+}
+
 /// Normalise + claim a stack's domain, or clear it.
 async fn claim_stack_domain(
     state: &AppState,
@@ -579,18 +673,16 @@ pub async fn create(
     // A stack where nothing came up is not a stack. Leaving the row behind gave
     // the operator a Compose Stacks entry with no containers and a second one
     // on every retry, and the domain claim would have outlived the deploy.
-    let (running, total, errors) = deployed_service_states(&deploy_result);
+    let (running, total, _) = deployed_service_states(&deploy_result);
+    let report = compose_deploy_report(&deploy_result);
     if total > 0 && running == 0 {
         let _ = sqlx::query("DELETE FROM docker_stacks WHERE id = $1")
             .bind(stack.id)
             .execute(&state.db)
             .await;
-        return Err(err(
-            StatusCode::BAD_GATEWAY,
-            &format!(
-                "No service in the stack stayed running, so it was not saved. {}",
-                errors.join(" | ")
-            ),
+        return Err(compose_failure(
+            "No service in the stack stayed running, so it was not saved.",
+            &report,
         ));
     }
 
@@ -625,7 +717,7 @@ pub async fn create(
     }
 
     Ok((
-        StatusCode::CREATED,
+        compose_success_status(&report, StatusCode::CREATED),
         Json(serde_json::json!({
             "id": stack.id,
             "name": stack.name,
@@ -635,6 +727,8 @@ pub async fn create(
             "tls_certificate": tls.alias,
             "running": running,
             "total": total,
+            "partial": report.outcome == ComposeOutcome::Partial,
+            "failed_services": report.failed_services,
             "deploy_result": deploy_result,
         })),
     ))
@@ -824,7 +918,7 @@ pub async fn update(
     Path(id): Path<Uuid>,
     headers: HeaderMap,
     Json(body): Json<UpdateStackRequest>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
     require_admin(&claims.role)?;
 
     if body.yaml.len() > 65536 {
@@ -1041,7 +1135,8 @@ pub async fn update(
         }
     };
 
-    let (running, total, errors) = deployed_service_states(&deploy_result);
+    let (running, total, _) = deployed_service_states(&deploy_result);
+    let report = compose_deploy_report(&deploy_result);
     if total > 0 && running == 0 {
         restore_previous(
             &state.db,
@@ -1055,13 +1150,10 @@ pub async fn update(
             previous_alias.as_deref(),
         )
         .await;
-        return Err(err(
-            StatusCode::BAD_GATEWAY,
-            &format!(
-                "No service in the new definition stayed running - the previous stack was \
-                 redeployed and the saved YAML is unchanged. {}",
-                errors.join(" | ")
-            ),
+        return Err(compose_failure(
+            "No service in the new definition stayed running - the previous stack was \
+             redeployed and the saved YAML is unchanged.",
+            &report,
         ));
     }
 
@@ -1129,16 +1221,21 @@ pub async fn update(
         }
     }
 
-    Ok(Json(serde_json::json!({
-        "ok": true,
-        "service_count": service_count,
-        "domain": domain,
-        "tls_mode": tls.mode,
-        "tls_certificate": tls.alias,
-        "running": running,
-        "total": total,
-        "deploy_result": deploy_result,
-    })))
+    Ok((
+        compose_success_status(&report, StatusCode::OK),
+        Json(serde_json::json!({
+            "ok": report.outcome == ComposeOutcome::Complete,
+            "service_count": service_count,
+            "domain": domain,
+            "tls_mode": tls.mode,
+            "tls_certificate": tls.alias,
+            "running": running,
+            "total": total,
+            "partial": report.outcome == ComposeOutcome::Partial,
+            "failed_services": report.failed_services,
+            "deploy_result": deploy_result,
+        })),
+    ))
 }
 
 /// Put the stack back the way it was after a failed edit.
@@ -1496,5 +1593,69 @@ mod tests {
             Some("Traefik".to_string())
         );
         assert!(provided_tls_refusal(&serde_json::json!({})).is_some());
+    }
+
+    fn deployed(services: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({ "services": services, "network": "dockpanel-stack-adhoc" })
+    }
+
+    #[test]
+    fn every_service_failing_is_a_failed_deploy_that_names_them() {
+        let report = compose_deploy_report(&deployed(serde_json::json!([
+            { "name": "web", "container_id": "", "status": "failed", "error": "name conflict" },
+            { "name": "db", "container_id": "", "status": "failed", "error": null },
+        ])));
+        assert_eq!(report.outcome, ComposeOutcome::Failed);
+        assert_eq!((report.running, report.total), (0, 2));
+        assert_eq!(report.failed_services.len(), 2);
+        assert_eq!(report.failed_services[0]["name"], "web");
+        assert_eq!(report.failed_services[0]["error"], "name conflict");
+        assert!(
+            report.failed_services[1]["error"].as_str().is_some_and(|e| !e.is_empty()),
+            "a failure the agent gave no reason for still reads as one"
+        );
+    }
+
+    #[test]
+    fn some_services_failing_is_partial_and_names_only_those() {
+        let report = compose_deploy_report(&deployed(serde_json::json!([
+            { "name": "web", "container_id": "a", "status": "running", "error": null },
+            { "name": "db", "container_id": "", "status": "failed", "error": "bad image" },
+        ])));
+        assert_eq!(report.outcome, ComposeOutcome::Partial);
+        assert_eq!((report.running, report.total), (1, 2));
+        assert_eq!(report.failed_services.len(), 1);
+        assert_eq!(report.failed_services[0]["name"], "db");
+        assert_eq!(compose_success_status(&report, StatusCode::CREATED), StatusCode::MULTI_STATUS);
+    }
+
+    #[test]
+    fn every_service_running_keeps_the_doors_own_success_status() {
+        let report = compose_deploy_report(&deployed(serde_json::json!([
+            { "name": "web", "container_id": "a", "status": "running", "error": null },
+        ])));
+        assert_eq!(report.outcome, ComposeOutcome::Complete);
+        assert!(report.failed_services.is_empty());
+        assert_eq!(compose_success_status(&report, StatusCode::CREATED), StatusCode::CREATED);
+        assert_eq!(compose_success_status(&report, StatusCode::OK), StatusCode::OK);
+    }
+
+    #[test]
+    fn an_agent_that_reports_no_services_is_not_called_a_failure() {
+        let report = compose_deploy_report(&serde_json::json!({}));
+        assert_eq!(report.outcome, ComposeOutcome::Complete);
+    }
+
+    #[test]
+    fn the_failure_response_carries_the_status_the_code_and_the_services() {
+        let report = compose_deploy_report(&deployed(serde_json::json!([
+            { "name": "web", "container_id": "", "status": "failed", "error": "name conflict" },
+        ])));
+        let (status, body) = compose_failure("No service stayed running.", &report);
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert_eq!(body.0["code"], "compose_deploy_failed");
+        assert_eq!(body.0["failed_services"][0]["name"], "web");
+        let message = body.0["error"].as_str().unwrap();
+        assert!(message.contains("web: name conflict"), "{message}");
     }
 }

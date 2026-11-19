@@ -2426,6 +2426,16 @@ pub async fn remove(
         }
     }
 
+    // Close the incidents of this site's monitors while their names are known.
+    crate::services::deploy_incidents::retire_app_monitors(
+        &state.db,
+        site.user_id,
+        Some(&site.domain),
+        Some(id),
+        None,
+    )
+    .await;
+
     // Delete monitors linked to this site (FK is SET NULL, not CASCADE)
     sqlx::query("DELETE FROM monitors WHERE site_id = $1")
         .bind(id)

@@ -78,7 +78,7 @@ async fn run_deploy(
         return Err(err(StatusCode::BAD_REQUEST, "Invalid branch name"));
     }
 
-    tracing::info!("Deploying {} from {} ({})", body.domain, body.repo_url, body.branch);
+    tracing::info!("Deploying {} from {} ({})", body.domain, crate::services::git_build::scrub_url_credentials(&body.repo_url), body.branch);
 
     // 1. Clone or pull
     let git_result = deploy::clone_or_pull(
@@ -192,7 +192,7 @@ async fn atomic_deploy(
         }
     }
 
-    tracing::info!("Atomic deploy {} from {} ({}) keep={}", body.domain, body.repo_url, body.branch, keep);
+    tracing::info!("Atomic deploy {} from {} ({}) keep={}", body.domain, crate::services::git_build::scrub_url_credentials(&body.repo_url), body.branch, keep);
 
     let result = deploy::atomic_deploy(
         &body.domain,

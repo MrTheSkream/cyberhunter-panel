@@ -1200,14 +1200,26 @@ export default function Apps() {
     setEditSaving(true);
     setEditError("");
     try {
-      await api.put(`/stacks/${editingStack.id}`, {
+      const result = await api.put<{
+        partial?: boolean;
+        failed_services?: { name: string; error: string }[];
+      }>(`/stacks/${editingStack.id}`, {
         yaml: editYaml,
         domain: editDomain.trim() || null,
         ssl_email: editSslEmail.trim() || null,
         tls_mode: editTlsMode,
         ...(editTlsMode === "provided" ? { tls_certificate: editTlsCertificate } : {}),
       });
-      setMessage({ text: `Stack "${editingStack.name}" updated`, type: "success" });
+      setMessage(
+        result.partial
+          ? {
+              text: `Stack "${editingStack.name}" updated, but some services failed: ${(result.failed_services ?? [])
+                .map(s => `${s.name}: ${s.error}`)
+                .join(" | ")}`,
+              type: "error",
+            }
+          : { text: `Stack "${editingStack.name}" updated`, type: "success" }
+      );
       setEditingStack(null);
       loadApps();
     } catch (e) {

@@ -681,6 +681,114 @@ fn reattach_sidecar_if_any(
     Some(app_sidecar::attach_config(app_name))
 }
 
+/// The networks a recreated container has to come back on.
+#[derive(Debug, Default)]
+struct RecreateNetworks {
+    /// Passed to `create_container`. One endpoint only: daemons older than API
+    /// 1.44 refuse several at create.
+    create: Option<bollard::container::NetworkingConfig<String>>,
+    /// Connected after the create, before the start.
+    connect: Vec<(String, bollard::models::EndpointSettings)>,
+}
+
+/// Work out which networks a container must be recreated on, from what the
+/// daemon reports for the container being replaced.
+///
+/// A compose service reaches its siblings through its stack network and the
+/// aliases it holds there. Neither is part of the container's `Config`, so every
+/// recreate path used to bring the service back without them.
+///
+/// Only the aliases are carried: addresses and endpoint ids belong to the old
+/// endpoint, and the alias Docker derives from the old container id names a
+/// container that is gone. The sidecar's own definition wins on its network.
+fn plan_recreate_networks(
+    current: Option<&HashMap<String, bollard::models::EndpointSettings>>,
+    old_id: Option<&str>,
+    sidecar: Option<bollard::container::NetworkingConfig<String>>,
+    host_config: &mut bollard::service::HostConfig,
+) -> RecreateNetworks {
+    let mode = host_config.network_mode.as_deref().unwrap_or_default();
+    if matches!(mode, "host" | "none") || mode.starts_with("container:") {
+        return RecreateNetworks { create: sidecar, connect: Vec::new() };
+    }
+
+    let mut endpoints: std::collections::BTreeMap<String, bollard::models::EndpointSettings> =
+        current
+            .into_iter()
+            .flatten()
+            .filter(|(name, _)| !matches!(name.as_str(), "host" | "none"))
+            .map(|(name, endpoint)| {
+                let aliases: Vec<String> = endpoint
+                    .aliases
+                    .iter()
+                    .flatten()
+                    .filter(|a| !(a.len() >= 12 && old_id.is_some_and(|id| id.starts_with(a.as_str()))))
+                    .cloned()
+                    .collect();
+                let endpoint = bollard::models::EndpointSettings {
+                    // The default bridge refuses network-scoped aliases.
+                    aliases: (name != "bridge" && !aliases.is_empty()).then_some(aliases),
+                    ..Default::default()
+                };
+                (name.clone(), endpoint)
+            })
+            .collect();
+    if let Some(sidecar) = sidecar {
+        endpoints.extend(sidecar.endpoints_config);
+    }
+
+    // Alone on the default bridge is what a container gets by asking for nothing.
+    let primary = host_config
+        .network_mode
+        .clone()
+        .filter(|m| m != "bridge" && endpoints.contains_key(m))
+        .or_else(|| endpoints.keys().find(|n| *n != "bridge").cloned());
+    let Some(primary) = primary else {
+        return RecreateNetworks::default();
+    };
+
+    let endpoint = endpoints.remove(&primary).unwrap_or_default();
+    host_config.network_mode = Some(primary.clone());
+    RecreateNetworks {
+        create: Some(bollard::container::NetworkingConfig {
+            endpoints_config: HashMap::from([(primary, endpoint)]),
+        }),
+        connect: endpoints.into_iter().collect(),
+    }
+}
+
+impl RecreateNetworks {
+    /// Refuse while the old container still exists: a network that has gone away
+    /// would otherwise fail the create after the remove, with no app left.
+    async fn verify(&self, docker: &Docker) -> Result<(), String> {
+        let created = self.create.iter().flat_map(|c| c.endpoints_config.keys());
+        for network in created.chain(self.connect.iter().map(|(name, _)| name)) {
+            docker
+                .inspect_network::<String>(network, None)
+                .await
+                .map_err(|e| format!("Network {network} is not available, the container was left in place: {e}"))?;
+        }
+        Ok(())
+    }
+
+    /// Attach the networks `create_container` could not take.
+    async fn connect_all(&self, docker: &Docker, container_id: &str) -> Result<(), String> {
+        for (network, endpoint) in &self.connect {
+            docker
+                .connect_network(
+                    network,
+                    bollard::network::ConnectNetworkOptions {
+                        container: container_id.to_string(),
+                        endpoint_config: endpoint.clone(),
+                    },
+                )
+                .await
+                .map_err(|e| format!("Failed to connect the container to network {network}: {e}"))?;
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnvVar {
     pub name: String,
@@ -4801,12 +4909,15 @@ pub(crate) fn shares_persistent_state(host_config: &bollard::service::HostConfig
 /// Blue-green update: start new container → health check → swap nginx → remove old.
 /// Returns UpdateResult on success. On ANY failure, rolls back and returns Err
 /// so the caller can fall back to stop/start.
+#[allow(clippy::too_many_arguments)]
 async fn blue_green_update(
     docker: &Docker,
     old_container_id: &str,
     name: &str,
     config: &bollard::models::ContainerConfig,
     host_config: &bollard::service::HostConfig,
+    current_networks: Option<&HashMap<String, bollard::models::EndpointSettings>>,
+    old_full_id: Option<&str>,
     domain: &str,
     old_port: u16,
 ) -> Result<UpdateResult, String> {
@@ -4872,7 +4983,13 @@ async fn blue_green_update(
     // the sidecar and its network are the app's, unaffected by the swap.
     let app_name = app_data_name(config.labels.as_ref(), name);
     let mut env_list = config.env.clone().unwrap_or_default();
-    let networking_config = reattach_sidecar_if_any(config.labels.as_ref(), &app_name, &mut env_list);
+    let sidecar = reattach_sidecar_if_any(config.labels.as_ref(), &app_name, &mut env_list);
+    let mut networks = plan_recreate_networks(
+        current_networks,
+        old_full_id,
+        sidecar,
+        &mut new_host_config,
+    );
 
     let new_config = Config {
         image: config.image.clone(),
@@ -4880,7 +4997,7 @@ async fn blue_green_update(
         exposed_ports: config.exposed_ports.clone(),
         labels: config.labels.clone(),
         host_config: Some(new_host_config),
-        networking_config,
+        networking_config: networks.create.take(),
         cmd: config.cmd.clone(),
         entrypoint: config.entrypoint.clone(),
         working_dir: if config.working_dir.as_deref() == Some("") {
@@ -4901,6 +5018,21 @@ async fn blue_green_update(
         )
         .await
         .map_err(|e| format!("Failed to create blue container: {e}"))?;
+
+    if let Err(e) = networks.connect_all(docker, &new_container.id).await {
+        docker
+            .remove_container(
+                &new_container.id,
+                Some(RemoveContainerOptions {
+                    force: true,
+                    v: false,
+                    ..Default::default()
+                }),
+            )
+            .await
+            .ok();
+        return Err(e);
+    }
 
     // Start new container
     if let Err(e) = docker
@@ -5225,6 +5357,8 @@ pub async fn update_app(container_id: &str) -> Result<UpdateResult, String> {
     // container is actually running, which the verdict compares against whatever
     // the tag resolves to locally.
     let running_image = info.image.clone();
+    let old_id = info.id.clone();
+    let current_networks = info.network_settings.as_ref().and_then(|n| n.networks.clone());
 
     let config = info.config.ok_or("No container config found")?;
     let mut host_config = info.host_config.ok_or("No host config found")?;
@@ -5340,6 +5474,8 @@ pub async fn update_app(container_id: &str) -> Result<UpdateResult, String> {
                 &name,
                 &config,
                 &host_config,
+                current_networks.as_ref(),
+                old_id.as_deref(),
                 domain,
                 old_port,
             )
@@ -5354,6 +5490,16 @@ pub async fn update_app(container_id: &str) -> Result<UpdateResult, String> {
             }
         }
     }
+
+    let mut env_list = config.env.clone().unwrap_or_default();
+    let sidecar = reattach_sidecar_if_any(config.labels.as_ref(), &app_name, &mut env_list);
+    let mut networks = plan_recreate_networks(
+        current_networks.as_ref(),
+        old_id.as_deref(),
+        sidecar,
+        &mut host_config,
+    );
+    networks.verify(&docker).await?;
 
     // Fallback: stop old → migrate → remove → create new → start (brief downtime)
     docker
@@ -5391,16 +5537,13 @@ pub async fn update_app(container_id: &str) -> Result<UpdateResult, String> {
         .await
         .map_err(|e| format!("Failed to remove old container: {e}"))?;
 
-    let mut env_list = config.env.clone().unwrap_or_default();
-    let networking_config = reattach_sidecar_if_any(config.labels.as_ref(), &app_name, &mut env_list);
-
     let new_config = Config {
         image: config.image,
         env: if env_list.is_empty() { None } else { Some(env_list) },
         exposed_ports: config.exposed_ports,
         labels: config.labels,
         host_config: Some(host_config),
-        networking_config,
+        networking_config: networks.create.take(),
         cmd: config.cmd,
         entrypoint: config.entrypoint,
         working_dir: if config.working_dir.as_deref() == Some("") {
@@ -5421,6 +5564,7 @@ pub async fn update_app(container_id: &str) -> Result<UpdateResult, String> {
         )
         .await
         .map_err(|e| format!("Failed to create updated container: {e}"))?;
+    networks.connect_all(&docker, &container.id).await?;
 
     if was_running {
         docker
@@ -5500,6 +5644,8 @@ pub async fn change_container_image(container_id: &str, new_image: &str) -> Resu
         info.state.as_ref().and_then(|s| s.status),
         Some(bollard::models::ContainerStateStatusEnum::RUNNING)
     );
+    let old_id = info.id.clone();
+    let current_networks = info.network_settings.as_ref().and_then(|n| n.networks.clone());
 
     let config = info.config.ok_or("No container config found")?;
     let mut host_config = info.host_config.ok_or("No host config found")?;
@@ -5542,6 +5688,16 @@ pub async fn change_container_image(container_id: &str, new_image: &str) -> Resu
         ));
     }
 
+    let mut env_list = config.env.clone().unwrap_or_default();
+    let sidecar = reattach_sidecar_if_any(config.labels.as_ref(), &app_name, &mut env_list);
+    let mut networks = plan_recreate_networks(
+        current_networks.as_ref(),
+        old_id.as_deref(),
+        sidecar,
+        &mut host_config,
+    );
+    networks.verify(&docker).await?;
+
     // Stop + remove the old container, KEEPING its volumes (v: false) so data persists.
     // ⚠ `v: false` preserves VOLUMES, which is not the same as preserving DATA: a
     // container with no mount keeps its state in the writable layer, and `docker rm`
@@ -5583,9 +5739,6 @@ pub async fn change_container_image(container_id: &str, new_image: &str) -> Resu
         .await
         .map_err(|e| format!("Failed to remove old container: {e}"))?;
 
-    let mut env_list = config.env.clone().unwrap_or_default();
-    let networking_config = reattach_sidecar_if_any(config.labels.as_ref(), &app_name, &mut env_list);
-
     // Recreate with the SAME hardening/networking/limits/labels/env, only the image changes.
     let new_config = Config {
         image: Some(new_image.to_string()),
@@ -5593,7 +5746,7 @@ pub async fn change_container_image(container_id: &str, new_image: &str) -> Resu
         exposed_ports: config.exposed_ports,
         labels: config.labels,
         host_config: Some(host_config),
-        networking_config,
+        networking_config: networks.create.take(),
         cmd: catalogue_cmd,
         ..Default::default()
     };
@@ -5608,6 +5761,7 @@ pub async fn change_container_image(container_id: &str, new_image: &str) -> Resu
         )
         .await
         .map_err(|e| format!("Failed to create container with new image: {e}"))?;
+    networks.connect_all(&docker, &container.id).await?;
 
     if was_running {
         docker
@@ -5791,6 +5945,8 @@ pub async fn update_env(
         info.state.as_ref().and_then(|s| s.status),
         Some(bollard::models::ContainerStateStatusEnum::RUNNING)
     );
+    let old_id = info.id.clone();
+    let current_networks = info.network_settings.as_ref().and_then(|n| n.networks.clone());
 
     let config = info.config.ok_or("No container config found")?;
     let mut host_config = info.host_config.ok_or("No host config found")?;
@@ -5813,6 +5969,15 @@ pub async fn update_env(
             kept.join(", ")
         );
     }
+
+    let sidecar = reattach_sidecar_if_any(config.labels.as_ref(), &app_name, &mut env_list);
+    let mut networks = plan_recreate_networks(
+        current_networks.as_ref(),
+        old_id.as_deref(),
+        sidecar,
+        &mut host_config,
+    );
+    networks.verify(&docker).await?;
 
     // Stop, migrate anything living in the writable layer, then remove.
     // Editing one environment variable recreates the container, so this door destroys an
@@ -5853,8 +6018,6 @@ pub async fn update_env(
         .await
         .map_err(|e| format!("Failed to remove old container: {e}"))?;
 
-    let networking_config = reattach_sidecar_if_any(config.labels.as_ref(), &app_name, &mut env_list);
-
     // Recreate with new env
     let new_config = Config {
         image: config.image,
@@ -5862,7 +6025,7 @@ pub async fn update_env(
         exposed_ports: config.exposed_ports,
         labels: config.labels,
         host_config: Some(host_config),
-        networking_config,
+        networking_config: networks.create.take(),
         cmd: config.cmd,
         entrypoint: config.entrypoint,
         working_dir: if config.working_dir.as_deref() == Some("") {
@@ -5883,6 +6046,7 @@ pub async fn update_env(
         )
         .await
         .map_err(|e| format!("Failed to create container: {e}"))?;
+    networks.connect_all(&docker, &container.id).await?;
 
     if was_running {
         docker
@@ -7985,5 +8149,117 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         }
         false
+    }
+
+    const OLD_ID: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    fn endpoint(aliases: &[&str]) -> bollard::models::EndpointSettings {
+        bollard::models::EndpointSettings {
+            aliases: Some(aliases.iter().map(|a| a.to_string()).collect()),
+            ip_address: Some("172.20.0.5".to_string()),
+            endpoint_id: Some("stale-endpoint".to_string()),
+            network_id: Some("stale-network".to_string()),
+            mac_address: Some("02:42:ac:14:00:05".to_string()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_compose_service_keeps_its_network_and_aliases_when_recreated() {
+        let current = HashMap::from([(
+            "dockpanel-stack-abc".to_string(),
+            endpoint(&["database", "db-main", &OLD_ID[..12]]),
+        )]);
+        let mut host_config = bollard::service::HostConfig {
+            network_mode: Some("default".to_string()),
+            ..Default::default()
+        };
+
+        let plan = plan_recreate_networks(Some(&current), Some(OLD_ID), None, &mut host_config);
+
+        let create = plan.create.expect("the stack network must be requested");
+        let ep = &create.endpoints_config["dockpanel-stack-abc"];
+        assert_eq!(
+            ep.aliases.as_deref(),
+            Some(&["database".to_string(), "db-main".to_string()][..]),
+            "the service names survive and the old container's id does not"
+        );
+        assert_eq!(ep.ip_address, None, "runtime state of the old endpoint is not replayed");
+        assert_eq!(ep.endpoint_id, None);
+        assert_eq!(ep.network_id, None);
+        assert_eq!(ep.mac_address, None);
+        assert!(plan.connect.is_empty());
+        assert_eq!(host_config.network_mode.as_deref(), Some("dockpanel-stack-abc"));
+    }
+
+    #[test]
+    fn every_network_comes_back_one_at_create_and_the_rest_by_connect() {
+        let current = HashMap::from([
+            ("net-b".to_string(), endpoint(&["b-name"])),
+            ("net-a".to_string(), endpoint(&["a-name"])),
+            ("bridge".to_string(), endpoint(&[])),
+        ]);
+        let mut host_config = bollard::service::HostConfig::default();
+
+        let plan = plan_recreate_networks(Some(&current), Some(OLD_ID), None, &mut host_config);
+
+        let create = plan.create.unwrap();
+        assert_eq!(create.endpoints_config.len(), 1, "older daemons accept one endpoint at create");
+        assert!(create.endpoints_config.contains_key("net-a"));
+        let extra: Vec<&str> = plan.connect.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(extra, ["bridge", "net-b"]);
+        let bridge = &plan.connect[0].1;
+        assert_eq!(bridge.aliases, None, "the default bridge refuses aliases");
+    }
+
+    #[test]
+    fn a_container_on_the_default_bridge_alone_is_left_to_the_default() {
+        let current = HashMap::from([("bridge".to_string(), endpoint(&[]))]);
+        let mut host_config = bollard::service::HostConfig {
+            network_mode: Some("bridge".to_string()),
+            ..Default::default()
+        };
+        let plan = plan_recreate_networks(Some(&current), Some(OLD_ID), None, &mut host_config);
+        assert!(plan.create.is_none());
+        assert!(plan.connect.is_empty());
+        assert_eq!(host_config.network_mode.as_deref(), Some("bridge"));
+    }
+
+    #[test]
+    fn host_and_none_modes_are_not_turned_into_endpoints() {
+        for mode in ["host", "none"] {
+            let current = HashMap::from([(mode.to_string(), endpoint(&[]))]);
+            let mut host_config = bollard::service::HostConfig {
+                network_mode: Some(mode.to_string()),
+                ..Default::default()
+            };
+            let plan = plan_recreate_networks(Some(&current), Some(OLD_ID), None, &mut host_config);
+            assert!(plan.create.is_none(), "{mode}");
+            assert!(plan.connect.is_empty(), "{mode}");
+            assert_eq!(host_config.network_mode.as_deref(), Some(mode));
+        }
+    }
+
+    #[test]
+    fn the_sidecar_network_is_merged_with_what_the_container_was_on() {
+        let sidecar = app_sidecar::attach_config("myapp");
+        let sidecar_net = app_sidecar::network_name("myapp");
+        let current = HashMap::from([
+            (sidecar_net.clone(), endpoint(&["stale-alias"])),
+            ("zz-extra".to_string(), endpoint(&["extra-name"])),
+        ]);
+        let mut host_config = bollard::service::HostConfig::default();
+
+        let plan =
+            plan_recreate_networks(Some(&current), Some(OLD_ID), Some(sidecar), &mut host_config);
+
+        let create = plan.create.unwrap();
+        assert_eq!(
+            create.endpoints_config[&sidecar_net].aliases.as_deref(),
+            Some(&["myapp".to_string()][..]),
+            "the sidecar's own definition wins on its network"
+        );
+        assert_eq!(plan.connect.len(), 1);
+        assert_eq!(plan.connect[0].0, "zz-extra");
     }
 }

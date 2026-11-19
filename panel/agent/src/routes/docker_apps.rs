@@ -1628,14 +1628,14 @@ async fn compose_deploy(
         Some(_) => {
             let port = body
                 .expose_port
-                .or_else(|| services.iter().find_map(|s| s.ports.first().map(|p| p.host)));
+                .or_else(|| compose::default_expose_port(&services));
             match port {
                 Some(p) => Some(p),
                 None => {
                     return Err((
                         StatusCode::BAD_REQUEST,
                         Json(serde_json::json!({
-                            "error": "This stack publishes no host port, so there is nothing for the domain to point at. \
+                            "error": "This stack publishes no host port on 127.0.0.1, so there is nothing for the domain to point at. \
                                       Add a 'ports:' entry to the service you want reachable."
                         })),
                     ))

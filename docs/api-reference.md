@@ -287,6 +287,29 @@ with `domain_derived: true`.
 | POST | `/api/apps/compose/parse` | Validate compose YAML |
 | POST | `/api/apps/compose/deploy` | Deploy compose stack |
 
+**Published ports.** `ports:` accepts `container`, `host:container`,
+`ip:host:container` and `[ipv6]:host:container`, ranges of equal length on both
+sides (`8000-8010:8000-8010`, at most 1024 ports per file), `/tcp`, `/udp` or
+`/sctp`, and the long form. A port with no address is published on `127.0.0.1`. An
+address outside loopback (`0.0.0.0`, `[::]`, a public IP) is refused, because
+Docker's published ports bypass the host firewall. An entry that cannot be published
+is never skipped: `parse` and every deploy door answer `400` naming the service and
+the entry, and `validate` answers `valid: false` with the same message.
+
+**Deploy outcome.** `POST /api/apps/compose/deploy`, `POST /api/stacks` and
+`PUT /api/stacks/{id}` report what became of the services:
+
+| Outcome | Status | Body |
+|---------|--------|------|
+| Every service running | `201` (`200` for `PUT`) | The deploy result |
+| Some services running | `207` | `partial: true`, `running`, `total`, `failed_services` |
+| No service running | `502` | `code: compose_deploy_failed`, `error`, `running`, `total`, `failed_services` |
+
+`failed_services` lists `{ "name", "error" }`. After a partial failure the services
+that started are left running and the stack is kept, so the file can be corrected and
+redeployed. When no service runs, a new stack is not saved and an edited stack goes
+back to its previous definition.
+
 ### Images & Registries
 
 | Method | Path | Purpose |

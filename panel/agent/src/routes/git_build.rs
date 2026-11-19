@@ -276,7 +276,12 @@ async fn clone(
 
     let name = scope_of(&body.scope).scoped(&body.name);
 
-    tracing::info!("Git clone: {} from {} ({})", name, body.repo_url, body.branch);
+    tracing::info!(
+        "Git clone: {} from {} ({})",
+        name,
+        git_build::scrub_url_credentials(&body.repo_url),
+        body.branch
+    );
 
     let result = git_build::clone_or_pull(
         &name,
@@ -742,6 +747,16 @@ async fn nixpacks_build_handler(
     let build_context = body["build_context"].as_str().unwrap_or(".");
     if build_context.contains("..") || build_context.starts_with('/') {
         return Err((StatusCode::BAD_REQUEST, "Invalid build_context path".into()));
+    }
+    // A repository that ships a Dockerfile says how it wants to be built. The
+    // refusal is what sends the panel on to `/git/auto-detect` and `/git/build`.
+    let dockerfile = body["dockerfile"].as_str().unwrap_or("Dockerfile");
+    if !is_valid_dockerfile(dockerfile) {
+        return Err((StatusCode::BAD_REQUEST, "Invalid dockerfile path".into()));
+    }
+    let repo_dir = format!("/var/lib/dockpanel/git/{name}");
+    if git_build::repo_dockerfile(std::path::Path::new(&repo_dir), build_context, dockerfile).is_some() {
+        return Err((StatusCode::CONFLICT, "Repository has a Dockerfile, Nixpacks not used".into()));
     }
     // Both spellings, for the same reason `/git/deploy` accepts both: this endpoint
     // reads `env_vars` and its sibling reads `env`, and that disagreement is what

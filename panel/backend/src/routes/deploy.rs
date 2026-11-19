@@ -12,6 +12,7 @@ use crate::error::{internal_error, err, agent_error, paginate, ApiError};
 use crate::routes::is_safe_shell_command;
 use crate::routes::sites::ProvisionStep;
 use crate::services::activity;
+use crate::services::deploy_incidents::{self, DeployTrigger};
 use crate::services::agent::AgentHandle;
 use crate::services::notifications;
 use crate::AppState;
@@ -168,10 +169,11 @@ pub async fn set_config(
         &state.config.jwt_secret,
     );
 
-    tracing::info!("Deploy config set for {domain}: {}", body.repo_url);
+    let logged_repo_url = crate::routes::git_deploys::mask_repo_credentials(&body.repo_url);
+    tracing::info!("Deploy config set for {domain}: {logged_repo_url}");
     activity::log_activity(
         &state.db, claims.sub, &claims.email, "deploy.config",
-        Some("deploy"), Some(&domain), Some(&body.repo_url), None, claims.key_id,
+        Some("deploy"), Some(&domain), Some(&logged_repo_url), None, claims.key_id,
     ).await;
 
     Ok(Json(config))
@@ -200,23 +202,22 @@ pub async fn trigger(
     AuthUser(claims): AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
-    // Check for active critical/major incidents - block deploy during outage
-    let active_incidents: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM managed_incidents \
-         WHERE status NOT IN ('resolved', 'postmortem') \
-         AND severity IN ('critical', 'major')"
-    ).fetch_one(&state.db).await.unwrap_or((0,));
-
-    if active_incidents.0 > 0 {
-        return Err(err(StatusCode::CONFLICT,
-            "Deploy blocked: active critical/major incident in progress. Resolve the incident first."));
-    }
-
     // The same rule the webhook path below already follows: this clones a repository into
     // the site's webroot and runs its build script as root on whichever host it is handed.
     // The webhook was fixed because it has no caller to take a host from; this one had a
     // caller, took the host from them, and was left as it was. Both need the site's own row.
     let (domain, agent) = crate::helpers::site_agent_for_caller(&state, id, &claims).await?;
+
+    // Check for active critical/major incidents - block deploy during outage
+    let owner: (Uuid,) = sqlx::query_as("SELECT user_id FROM sites WHERE id = $1")
+        .bind(id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(|e| internal_error("trigger", e))?;
+    if deploy_incidents::deploy_blocked(&state.db, owner.0, Some(&domain), DeployTrigger::Operator).await {
+        return Err(err(StatusCode::CONFLICT,
+            "Deploy blocked: active critical/major incident in progress. Resolve the incident first."));
+    }
 
     let config: DeployConfig = sqlx::query_as(
         "SELECT * FROM deploy_configs WHERE site_id = $1",
@@ -423,13 +424,18 @@ pub async fn webhook(
     };
 
     // Check for active critical/major incidents - skip webhook deploy during outage
-    let active_incidents: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM managed_incidents \
-         WHERE status NOT IN ('resolved', 'postmortem') \
-         AND severity IN ('critical', 'major')"
-    ).fetch_one(&state.db).await.unwrap_or((0,));
-
-    if active_incidents.0 > 0 {
+    let site_owner: Option<(Uuid,)> = sqlx::query_as("SELECT user_id FROM sites WHERE id = $1")
+        .bind(site_id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| internal_error("webhook", e))?;
+    let blocked = match site_owner {
+        Some((owner,)) => {
+            deploy_incidents::deploy_blocked(&state.db, owner, Some(&domain), DeployTrigger::Unattended).await
+        }
+        None => false,
+    };
+    if blocked {
         tracing::warn!("Deploy blocked for {domain}: active incident in progress");
         return Ok(Json(serde_json::json!({ "ok": false, "message": "Deploy skipped: active incident" })));
     }

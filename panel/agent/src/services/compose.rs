@@ -82,6 +82,16 @@ pub struct PortMapping {
     pub host: u16,
     pub container: u16,
     pub protocol: String,
+    /// Loopback address the port is published on, without brackets.
+    #[serde(default = "default_host_ip")]
+    pub host_ip: String,
+}
+
+/// Where a mapping that names no address is published.
+const DEFAULT_HOST_IP: &str = "127.0.0.1";
+
+fn default_host_ip() -> String {
+    DEFAULT_HOST_IP.to_string()
 }
 
 #[derive(Debug, Serialize)]
@@ -277,7 +287,7 @@ pub fn parse_compose(yaml: &str, stack_id: Option<&str>) -> Result<Vec<ComposeSe
         };
 
         // Parse ports
-        let ports = parse_ports(&def.ports);
+        let ports = parse_ports(name, &def.ports)?;
 
         // Parse environment
         let environment = match &def.environment {
@@ -382,6 +392,8 @@ pub fn parse_compose(yaml: &str, stack_id: Option<&str>) -> Result<Vec<ComposeSe
         return Err("No deployable services found (all services require build context?)".into());
     }
 
+    check_published_ports(&result)?;
+
     Ok(order_by_dependencies(result))
 }
 
@@ -461,87 +473,270 @@ fn order_by_dependencies(services: Vec<ComposeService>) -> Vec<ComposeService> {
         .collect()
 }
 
-fn parse_ports(ports_val: &Option<Vec<serde_yaml_ng::Value>>) -> Vec<PortMapping> {
+/// The most host ports one compose file may publish. Docker runs a proxy per
+/// published port, so a typo in a range must not become 60 000 processes.
+const MAX_PUBLISHED_PORTS: usize = 1024;
+
+/// Read a service's `ports:` into the mappings Docker will be asked to publish.
+///
+/// Every entry is either published exactly as written or refused here. Parsing
+/// is what `validate`, `parse` and every deploy door share, so a refusal reaches
+/// all of them; an entry skipped here is a service that deploys "successfully"
+/// with a port nobody can reach.
+///
+/// Accepted: `container`, `host:container`, `ip:host:container`, `[ipv6]:host:container`,
+/// each side optionally a range of equal length, an optional `/tcp`, `/udp` or `/sctp`,
+/// and the long form (`target`, `published`, `host_ip`, `protocol`).
+fn parse_ports(
+    service: &str,
+    ports_val: &Option<Vec<serde_yaml_ng::Value>>,
+) -> Result<Vec<PortMapping>, String> {
     let ports = match ports_val {
         Some(p) => p,
-        None => return Vec::new(),
+        None => return Ok(Vec::new()),
     };
 
     let mut result = Vec::new();
 
     for port in ports {
-        // Long form - `- target: 80` / `published: 8080` / `protocol: tcp`.
-        // This is what `docker compose config` emits, so a file that has been
-        // through any compose tooling arrives in this shape; discarding it left
-        // the service with no published port and no explanation.
-        if let serde_yaml_ng::Value::Mapping(map) = port {
-            let get = |k: &str| map.get(serde_yaml_ng::Value::String(k.to_string()));
-            let as_u16 = |v: Option<&serde_yaml_ng::Value>| -> Option<u16> {
-                match v {
-                    Some(serde_yaml_ng::Value::Number(n)) => n.as_u64().and_then(|n| u16::try_from(n).ok()),
-                    Some(serde_yaml_ng::Value::String(s)) => s.parse::<u16>().ok(),
-                    _ => None,
-                }
-            };
-            let container = as_u16(get("target"));
-            let host = as_u16(get("published")).or(container);
-            let protocol = match get("protocol") {
-                Some(serde_yaml_ng::Value::String(s)) => s.clone(),
-                _ => "tcp".to_string(),
-            };
-            if let (Some(h), Some(c)) = (host, container) {
-                result.push(PortMapping {
-                    host: h,
-                    container: c,
-                    protocol,
-                });
-            }
-            continue;
-        }
-
-        let port_str = match port {
-            serde_yaml_ng::Value::String(s) => s.clone(),
-            serde_yaml_ng::Value::Number(n) => n.to_string(),
-            _ => continue,
+        let spec = match port {
+            // Long form - `- target: 80` / `published: 8080` / `protocol: tcp`.
+            // This is what `docker compose config` emits, so a file that has been
+            // through any compose tooling arrives in this shape.
+            serde_yaml_ng::Value::Mapping(map) => long_form_port(map),
+            serde_yaml_ng::Value::String(s) => short_form_port(s),
+            serde_yaml_ng::Value::Number(n) => short_form_port(&n.to_string()),
+            _ => Err("is not a port mapping".to_string()),
         };
-
-        // Formats: "8080:80", "8080:80/tcp", "80" (same on host+container)
-        let (mapping, protocol) = if port_str.contains('/') {
-            let parts: Vec<&str> = port_str.splitn(2, '/').collect();
-            (parts[0], parts[1])
-        } else {
-            (port_str.as_str(), "tcp")
-        };
-
-        if let Some((host, container)) = mapping.split_once(':') {
-            // Handle IP:host:container format (e.g., "127.0.0.1:8080:80")
-            let (host_port, container_port) = if host.contains('.') || host.contains(':') {
-                // Has IP prefix, container is the third part
-                match container.split_once(':') {
-                    Some((hp, cp)) => (hp, cp),
-                    None => (container, container),
-                }
-            } else {
-                (host, container)
-            };
-
-            if let (Ok(h), Ok(c)) = (host_port.parse::<u16>(), container_port.parse::<u16>()) {
-                result.push(PortMapping {
-                    host: h,
-                    container: c,
-                    protocol: protocol.to_string(),
-                });
-            }
-        } else if let Ok(p) = mapping.parse::<u16>() {
-            result.push(PortMapping {
-                host: p,
-                container: p,
-                protocol: protocol.to_string(),
-            });
-        }
+        let expanded = spec.and_then(PortSpec::expand).map_err(|reason| {
+            format!("Service '{service}': port '{}' {reason}", port_label(port))
+        })?;
+        result.extend(expanded);
     }
 
-    result
+    Ok(result)
+}
+
+/// One `ports:` entry, before its ranges are expanded.
+struct PortSpec {
+    host_ip: String,
+    host: (u16, u16),
+    container: (u16, u16),
+    protocol: String,
+}
+
+impl PortSpec {
+    fn expand(self) -> Result<Vec<PortMapping>, String> {
+        let count = usize::from(self.host.1 - self.host.0) + 1;
+        if count != usize::from(self.container.1 - self.container.0) + 1 {
+            return Err(
+                "must map the same number of ports on the host and in the container".to_string(),
+            );
+        }
+        if count > MAX_PUBLISHED_PORTS {
+            return Err(format!("publishes {count} ports, at most {MAX_PUBLISHED_PORTS} are allowed"));
+        }
+        Ok((self.host.0..=self.host.1)
+            .zip(self.container.0..=self.container.1)
+            .map(|(host, container)| PortMapping {
+                host,
+                container,
+                protocol: self.protocol.clone(),
+                host_ip: self.host_ip.clone(),
+            })
+            .collect())
+    }
+}
+
+/// How an entry is named in a refusal: as the author wrote it.
+fn port_label(port: &serde_yaml_ng::Value) -> String {
+    match port {
+        serde_yaml_ng::Value::String(s) => s.clone(),
+        other => serde_yaml_ng::to_string(other)
+            .map(|s| s.trim().replace('\n', ", "))
+            .unwrap_or_else(|_| "?".to_string()),
+    }
+}
+
+fn short_form_port(entry: &str) -> Result<PortSpec, String> {
+    let (mapping, protocol) = match entry.rsplit_once('/') {
+        Some((mapping, protocol)) => (mapping, protocol),
+        None => (entry, "tcp"),
+    };
+
+    // A bracketed address is taken off first: its colons are not separators.
+    let (bracketed, rest) = match mapping.strip_prefix('[') {
+        Some(tail) => {
+            let (ip, rest) = tail
+                .split_once(']')
+                .ok_or("has an IPv6 address with unbalanced brackets")?;
+            let rest = rest
+                .strip_prefix(':')
+                .ok_or("must give a port after the bracketed IPv6 address")?;
+            (Some(ip), rest)
+        }
+        None => (None, mapping),
+    };
+
+    let parts: Vec<&str> = rest.split(':').collect();
+    let (ip, host, container) = match (bracketed, parts.as_slice()) {
+        (Some(ip), [port]) => (Some(ip), *port, *port),
+        (Some(ip), [host, container]) => (Some(ip), *host, *container),
+        (None, [port]) => (None, *port, *port),
+        // `127.0.0.1:8080` names an address and one port, not two ports.
+        (None, [ip, port]) if ip.contains('.') => (Some(*ip), *port, *port),
+        (None, [host, container]) => (None, *host, *container),
+        (None, [ip, host, container]) => (Some(*ip), *host, *container),
+        (None, _) => return Err("has an IPv6 address that must be written in brackets".to_string()),
+        (Some(_), _) => return Err("has too many ':' separators".to_string()),
+    };
+    if host.is_empty() {
+        return Err("has no host port, publishing on a random port is not supported".to_string());
+    }
+
+    Ok(PortSpec {
+        host_ip: match ip {
+            Some(ip) => loopback_address(ip)?,
+            None => default_host_ip(),
+        },
+        host: port_range(host)?,
+        container: port_range(container)?,
+        protocol: port_protocol(protocol)?,
+    })
+}
+
+fn long_form_port(map: &serde_yaml_ng::Mapping) -> Result<PortSpec, String> {
+    let text = |key: &str| -> Result<Option<String>, String> {
+        match map.get(serde_yaml_ng::Value::String(key.to_string())) {
+            None | Some(serde_yaml_ng::Value::Null) => Ok(None),
+            Some(serde_yaml_ng::Value::String(s)) => Ok(Some(s.clone())),
+            Some(serde_yaml_ng::Value::Number(n)) => Ok(Some(n.to_string())),
+            Some(_) => Err(format!("has an invalid '{key}' value")),
+        }
+    };
+
+    let target = text("target")?.ok_or("has no 'target' container port")?;
+    let published = text("published")?.unwrap_or_else(|| target.clone());
+    Ok(PortSpec {
+        host_ip: match text("host_ip")? {
+            Some(ip) => loopback_address(&ip)?,
+            None => default_host_ip(),
+        },
+        host: port_range(&published)?,
+        container: port_range(&target)?,
+        protocol: port_protocol(&text("protocol")?.unwrap_or_else(|| "tcp".to_string()))?,
+    })
+}
+
+/// `8000` or `8000-8010`, as inclusive bounds.
+fn port_range(text: &str) -> Result<(u16, u16), String> {
+    let number = |n: &str| -> Result<u16, String> {
+        n.parse::<u16>()
+            .ok()
+            .filter(|p| *p > 0 && n.bytes().all(|b| b.is_ascii_digit()))
+            .ok_or_else(|| format!("has '{n}' where a port between 1 and 65535 is required"))
+    };
+    match text.split_once('-') {
+        None => number(text).map(|p| (p, p)),
+        Some((first, last)) => {
+            let (first, last) = (number(first)?, number(last)?);
+            if first > last {
+                return Err(format!("has the reversed range '{text}'"));
+            }
+            Ok((first, last))
+        }
+    }
+}
+
+fn port_protocol(protocol: &str) -> Result<String, String> {
+    let lower = protocol.to_ascii_lowercase();
+    if matches!(lower.as_str(), "tcp" | "udp" | "sctp") {
+        Ok(lower)
+    } else {
+        Err(format!("has the unsupported protocol '{protocol}' (use tcp, udp or sctp)"))
+    }
+}
+
+/// The address a mapping asked for, which has to be a loopback one.
+///
+/// Stacks are reached through the panel's reverse proxy, and Docker's published
+/// ports bypass the host firewall. `0.0.0.0:80:80` used to be quietly narrowed
+/// to `127.0.0.1`; honouring it would open the port to the internet, so it is
+/// refused and the author is told what to write instead.
+fn loopback_address(ip: &str) -> Result<String, String> {
+    let addr: std::net::IpAddr = ip
+        .parse()
+        .map_err(|_| format!("has the invalid address '{ip}'"))?;
+    if !addr.is_loopback() {
+        return Err(format!(
+            "binds to '{ip}', which is not a loopback address. Stack ports are published on \
+             127.0.0.1 or ::1 only: attach a domain to reach the service from outside"
+        ));
+    }
+    Ok(addr.to_string())
+}
+
+/// Refuse what Docker could only fail on at start, once containers are running:
+/// one host port claimed twice anywhere in the file.
+fn check_published_ports(services: &[ComposeService]) -> Result<(), String> {
+    let total: usize = services.iter().map(|s| s.ports.len()).sum();
+    if total > MAX_PUBLISHED_PORTS {
+        return Err(format!(
+            "This compose file publishes {total} ports, at most {MAX_PUBLISHED_PORTS} are allowed"
+        ));
+    }
+
+    let mut claimed: HashMap<(&str, u16, &str), &str> = HashMap::new();
+    for svc in services {
+        for pm in &svc.ports {
+            let key = (pm.host_ip.as_str(), pm.host, pm.protocol.as_str());
+            if let Some(owner) = claimed.insert(key, svc.key.as_str()) {
+                return Err(format!(
+                    "Service '{}': host port {}/{} on {} is already published by service '{owner}'",
+                    svc.key, pm.host, pm.protocol, pm.host_ip
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Docker's `PortBindings` and `ExposedPorts` for a service's mappings.
+#[allow(clippy::type_complexity)]
+fn port_bindings_for(
+    ports: &[PortMapping],
+) -> (
+    HashMap<String, Option<Vec<bollard::service::PortBinding>>>,
+    HashMap<String, HashMap<(), ()>>,
+) {
+    let mut port_bindings = HashMap::new();
+    let mut exposed_ports = HashMap::new();
+    for pm in ports {
+        let container_port = format!("{}/{}", pm.container, pm.protocol);
+        // One container port may be published on several addresses.
+        port_bindings
+            .entry(container_port.clone())
+            .or_insert_with(|| Some(Vec::new()))
+            .get_or_insert_with(Vec::new)
+            .push(bollard::service::PortBinding {
+                host_ip: Some(pm.host_ip.clone()),
+                host_port: Some(pm.host.to_string()),
+            });
+        exposed_ports.insert(container_port, HashMap::new());
+    }
+    (port_bindings, exposed_ports)
+}
+
+/// The published port a domain should front when the request names none.
+///
+/// The vhost proxies to `127.0.0.1`, so a port published on another loopback
+/// address is not one it can reach.
+pub fn default_expose_port(services: &[ComposeService]) -> Option<u16> {
+    services
+        .iter()
+        .flat_map(|s| &s.ports)
+        .find(|p| p.host_ip == DEFAULT_HOST_IP)
+        .map(|p| p.host)
 }
 
 /// Create the stack's bridge network if it does not already exist.
@@ -757,19 +952,7 @@ async fn deploy_service(
         .collect();
 
     // Port bindings
-    let mut port_bindings = HashMap::new();
-    let mut exposed_ports = HashMap::new();
-    for pm in &svc.ports {
-        let container_port = format!("{}/{}", pm.container, pm.protocol);
-        port_bindings.insert(
-            container_port.clone(),
-            Some(vec![bollard::service::PortBinding {
-                host_ip: Some("127.0.0.1".to_string()),
-                host_port: Some(pm.host.to_string()),
-            }]),
-        );
-        exposed_ports.insert(container_port, HashMap::new());
-    }
+    let (port_bindings, exposed_ports) = port_bindings_for(&svc.ports);
 
     // Volume binds - validate that host paths are under the allowed prefix
     // and block mounting the Docker socket.
@@ -1312,5 +1495,151 @@ services:
         assert!(!svc.user_ignored);
         assert!(!svc.healthcheck_ignored);
         assert!(!svc.entrypoint_ignored);
+    }
+
+    fn ports_of(entries: &str) -> Result<Vec<PortMapping>, String> {
+        let yaml = format!("services:\n  web:\n    image: nginx:alpine\n    ports:\n{entries}");
+        parse_compose(&yaml, None).map(|mut s| s.remove(0).ports)
+    }
+
+    fn refusal(entries: &str) -> String {
+        match ports_of(entries) {
+            Ok(p) => panic!("expected a refusal for {entries:?}, got {p:?}"),
+            Err(e) => e,
+        }
+    }
+
+    #[test]
+    fn a_bracketed_ipv6_loopback_is_published_on_that_address() {
+        let ports = ports_of("      - \"[::1]:8080:80\"\n").unwrap();
+        assert_eq!(ports.len(), 1);
+        assert_eq!((ports[0].host, ports[0].container), (8080, 80));
+        assert_eq!(ports[0].host_ip, "::1");
+        assert_eq!(ports[0].protocol, "tcp");
+        let (bindings, _) = port_bindings_for(&ports);
+        let binding = bindings["80/tcp"].as_ref().unwrap();
+        assert_eq!(binding[0].host_ip.as_deref(), Some("::1"));
+    }
+
+    #[test]
+    fn the_written_ipv4_loopback_reaches_docker() {
+        let ports = ports_of("      - \"127.0.0.2:8080:80\"\n").unwrap();
+        let (bindings, _) = port_bindings_for(&ports);
+        let binding = bindings["80/tcp"].as_ref().unwrap();
+        assert_eq!(binding[0].host_ip.as_deref(), Some("127.0.0.2"));
+    }
+
+    #[test]
+    fn a_port_range_publishes_every_port_in_it() {
+        let ports = ports_of("      - \"8000-8010:8000-8010\"\n").unwrap();
+        assert_eq!(ports.len(), 11);
+        assert_eq!((ports[0].host, ports[0].container), (8000, 8000));
+        assert_eq!((ports[10].host, ports[10].container), (8010, 8010));
+    }
+
+    #[test]
+    fn ranges_combine_with_an_address_a_shift_and_a_protocol() {
+        let ports = ports_of("      - \"[::1]:9000-9001:80-81/udp\"\n").unwrap();
+        assert_eq!(ports.len(), 2);
+        assert_eq!((ports[1].host, ports[1].container), (9001, 81));
+        assert!(ports.iter().all(|p| p.host_ip == "::1" && p.protocol == "udp"));
+    }
+
+    #[test]
+    fn a_long_form_range_and_address_are_published() {
+        let ports = ports_of(
+            "      - target: \"80-81\"\n        published: \"8080-8081\"\n        host_ip: \"::1\"\n",
+        )
+        .unwrap();
+        assert_eq!(ports.len(), 2);
+        assert_eq!((ports[1].host, ports[1].container), (8081, 81));
+        assert_eq!(ports[1].host_ip, "::1");
+    }
+
+    #[test]
+    fn one_container_port_can_be_published_on_both_loopbacks() {
+        let ports =
+            ports_of("      - \"127.0.0.1:8080:80\"\n      - \"[::1]:8080:80\"\n").unwrap();
+        let (bindings, exposed) = port_bindings_for(&ports);
+        assert_eq!(exposed.len(), 1);
+        let binding = bindings["80/tcp"].as_ref().unwrap();
+        assert_eq!(binding.len(), 2, "the second mapping must not replace the first");
+    }
+
+    #[test]
+    fn plain_forms_keep_working_on_the_default_loopback() {
+        let ports =
+            ports_of("      - \"8080:80\"\n      - 9090\n      - \"127.0.0.1:7070:70/udp\"\n").unwrap();
+        assert_eq!(ports.len(), 3);
+        assert!(ports.iter().all(|p| p.host_ip == "127.0.0.1"));
+        assert_eq!((ports[1].host, ports[1].container), (9090, 9090));
+        assert_eq!(ports[2].protocol, "udp");
+    }
+
+    #[test]
+    fn every_form_that_cannot_be_published_is_refused_by_name() {
+        for (entry, needle) in [
+            ("\"8000-8010:80\"", "same number of ports"),
+            ("\"8000-8001:80-82\"", "same number of ports"),
+            ("\"80:8000-8001\"", "same number of ports"),
+            ("\"8010-8000:80-90\"", "range"),
+            ("\"70000:80\"", "1 and 65535"),
+            ("\"0:80\"", "1 and 65535"),
+            ("\"${PORT}:80\"", "${PORT}"),
+            ("\"abc\"", "abc"),
+            ("\"8080:80/icmp\"", "protocol"),
+            ("\"127.0.0.1::80\"", "host port"),
+            ("\"::1:8080:80\"", "brackets"),
+            ("\"[::1:8080:80\"", "brackets"),
+            ("\"[nope]:8080:80\"", "address"),
+            ("\"1-40000:1-40000\"", "at most"),
+            ("true", "true"),
+        ] {
+            let e = refusal(&format!("      - {entry}\n"));
+            assert!(e.contains("'web'"), "{entry}: the service is named in {e:?}");
+            assert!(e.contains(needle), "{entry}: expected {needle:?} in {e:?}");
+        }
+    }
+
+    #[test]
+    fn an_address_outside_loopback_is_refused_rather_than_narrowed() {
+        for entry in ["\"0.0.0.0:8080:80\"", "\"[::]:8080:80\"", "\"192.0.2.10:8080:80\""] {
+            let e = refusal(&format!("      - {entry}\n"));
+            assert!(e.contains("loopback"), "{entry}: {e}");
+        }
+        let e = refusal("      - target: 80\n        published: 8080\n        host_ip: 0.0.0.0\n");
+        assert!(e.contains("loopback"), "{e}");
+    }
+
+    #[test]
+    fn a_long_form_entry_that_cannot_be_published_is_refused() {
+        for entry in [
+            "      - published: 8080\n",
+            "      - target: 80\n        published: \"${PORT}\"\n",
+            "      - target: 80\n        published: \"8000-8010\"\n",
+            "      - target: 80\n        protocol: icmp\n",
+        ] {
+            refusal(entry);
+        }
+    }
+
+    #[test]
+    fn the_same_host_port_published_twice_is_refused_across_services() {
+        let yaml = "services:\n  a:\n    image: nginx:1\n    ports:\n      - \"8080:80\"\n  b:\n    image: nginx:1\n    ports:\n      - \"8070-8090:70-90\"\n";
+        let e = parse_compose(yaml, None).unwrap_err();
+        assert!(e.contains("8080"), "{e}");
+        // Different protocol or address: no collision.
+        ports_of("      - \"8080:80\"\n      - \"8080:80/udp\"\n      - \"[::1]:8080:80\"\n").unwrap();
+    }
+
+    #[test]
+    fn a_domain_is_fronted_on_a_port_nginx_can_reach() {
+        let yaml = "services:\n  web:\n    image: nginx:1\n    ports:\n      - \"[::1]:8081:81\"\n      - \"8082:82\"\n";
+        let services = parse_compose(yaml, None).unwrap();
+        assert_eq!(default_expose_port(&services), Some(8082));
+
+        let yaml = "services:\n  web:\n    image: nginx:1\n    ports:\n      - \"[::1]:8081:81\"\n";
+        let services = parse_compose(yaml, None).unwrap();
+        assert_eq!(default_expose_port(&services), None);
     }
 }

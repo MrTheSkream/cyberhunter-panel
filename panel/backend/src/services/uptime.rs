@@ -749,8 +749,8 @@ async fn create_auto_incident(pool: &PgPool, monitor: &MonitorRow, cause: &str) 
 
     // Create managed incident
     let incident_id: uuid::Uuid = match sqlx::query_scalar(
-        "INSERT INTO managed_incidents (user_id, title, status, severity, description, visible_on_status_page) \
-         VALUES ($1, $2, 'investigating', 'major', $3, TRUE) RETURNING id"
+        "INSERT INTO managed_incidents (user_id, title, status, severity, description, visible_on_status_page, auto_created) \
+         VALUES ($1, $2, 'investigating', 'major', $3, TRUE, TRUE) RETURNING id"
     )
     .bind(user_id)
     .bind(format!("{} is down", monitor.name))

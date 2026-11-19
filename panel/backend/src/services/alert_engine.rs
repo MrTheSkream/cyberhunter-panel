@@ -210,8 +210,8 @@ async fn fire_alert_with_retry(
                         // hostname, "vps", "web") could have the update land on the
                         // OTHER tenant's investigating incident.
                         let new_incident: Option<(Uuid,)> = sqlx::query_as(
-                            "INSERT INTO managed_incidents (user_id, title, status, severity, description, visible_on_status_page) \
-                             VALUES ($1, $2, 'investigating', $3, $4, TRUE) RETURNING id"
+                            "INSERT INTO managed_incidents (user_id, title, status, severity, description, visible_on_status_page, auto_created) \
+                             VALUES ($1, $2, 'investigating', $3, $4, TRUE, TRUE) RETURNING id"
                         )
                         .bind(user_id).bind(title).bind(incident_severity).bind(message)
                         .fetch_optional(pool).await.ok().flatten();

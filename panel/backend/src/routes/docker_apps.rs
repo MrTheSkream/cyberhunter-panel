@@ -15,6 +15,9 @@ use crate::auth::ServerScope;
 use crate::error::{internal_error, err, agent_error, require_admin, ApiError};
 use crate::routes::{is_valid_container_id, is_valid_name};
 use crate::routes::sites::ProvisionStep;
+use crate::routes::stacks::{
+    compose_deploy_report, compose_failure, compose_success_status, ComposeOutcome,
+};
 use crate::services::activity;
 use crate::services::expected_stops;
 use crate::services::extensions::fire_event;
@@ -2142,17 +2145,36 @@ pub async fn compose_deploy(
             .await?;
     }
 
-    let result = agent
+    let mut result = agent
         .post("/apps/compose/deploy", Some(serde_json::json!({ "yaml": yaml })))
         .await
         .map_err(|e| agent_error("Docker deploy", e))?;
 
+    // The agent answers 200 whatever became of the services. See `ComposeOutcome`
+    // for what each ending means to the caller.
+    let report = compose_deploy_report(&result);
+    let details = match report.outcome {
+        ComposeOutcome::Complete => "compose",
+        ComposeOutcome::Partial => "compose (partial failure)",
+        ComposeOutcome::Failed => "compose (failed)",
+    };
     activity::log_activity(
         &state.db, claims.sub, &claims.email, "app.compose_deploy",
-        Some("app"), None, Some("compose"), None, claims.key_id,
+        Some("app"), None, Some(details), None, claims.key_id,
     ).await;
 
-    Ok((StatusCode::CREATED, Json(result)))
+    if report.outcome == ComposeOutcome::Failed {
+        return Err(compose_failure("No service in the compose file stayed running.", &report));
+    }
+    let status = compose_success_status(&report, StatusCode::CREATED);
+    if report.outcome == ComposeOutcome::Partial {
+        result["partial"] = serde_json::json!(true);
+        result["running"] = serde_json::json!(report.running);
+        result["total"] = serde_json::json!(report.total);
+        result["failed_services"] = serde_json::json!(report.failed_services);
+    }
+
+    Ok((status, Json(result)))
 }
 
 /// DELETE /api/apps/{container_id} - Remove a deployed app.
@@ -2193,6 +2215,24 @@ pub async fn remove_app(
     // the app, or a future app reusing the freed domain would inherit a
     // stranger's renewal history (wrong owner, stale tls_mode/ssl_email).
     if let Some(domain_removed) = result.get("domain_removed").and_then(|v| v.as_str()) {
+        // Whoever deployed the app owns its monitor, and may not be who removes it.
+        let owner: Option<(Uuid,)> = sqlx::query_as(
+            "SELECT user_id FROM docker_app_domains WHERE server_id = $1 AND lower(domain) = lower($2)",
+        )
+        .bind(server_id)
+        .bind(domain_removed)
+        .fetch_optional(&state.db)
+        .await
+        .unwrap_or_default();
+        crate::services::deploy_incidents::retire_app_monitors(
+            &state.db,
+            owner.map_or(claims.sub, |(id,)| id),
+            Some(domain_removed),
+            None,
+            removed_name.as_deref(),
+        )
+        .await;
+
         let _ = sqlx::query(
             "DELETE FROM docker_app_domains WHERE server_id = $1 AND lower(domain) = lower($2)",
         )
