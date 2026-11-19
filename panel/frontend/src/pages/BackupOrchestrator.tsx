@@ -73,6 +73,7 @@ interface BackupPolicy {
   retention_count: number;
   encrypt: boolean;
   verify_after_backup: boolean;
+  stop_apps: boolean;
   enabled: boolean;
   drill_enabled: boolean;
   drill_schedule: string;
@@ -124,8 +125,13 @@ interface DatabaseBackup {
 
 interface VolumeBackup {
   id: string;
+  // The app that owns the data: template container, compose project or Git app.
   container_name: string;
+  // The Docker volume's name, or a bind mount's slug.
   volume_name: string;
+  mount_type: "volume" | "bind";
+  // The bind mount's host directory; null for a volume.
+  source_path: string | null;
   filename: string;
   size_bytes: number;
   encrypted: boolean;
@@ -238,6 +244,7 @@ interface PolicyForm {
   retention_count: number;
   encrypt: boolean;
   verify_after_backup: boolean;
+  stop_apps: boolean;
   // Only editable on an existing policy - a new one is always created enabled.
   // Nothing could flip it before, though the table has always rendered the word
   // "Paused" for the state that produced it.
@@ -249,7 +256,7 @@ interface PolicyForm {
 const EMPTY_POLICY_FORM: PolicyForm = {
   name: "", schedule: "0 2 * * *", backup_sites: true, backup_databases: true,
   backup_volumes: false, destination_id: "", retention_count: 7,
-  encrypt: false, verify_after_backup: false, enabled: true,
+  encrypt: false, verify_after_backup: false, stop_apps: true, enabled: true,
   drill_enabled: false, drill_schedule: "0 4 * * 0",
 };
 
@@ -437,6 +444,7 @@ export default function BackupOrchestrator() {
       retention_count: p.retention_count,
       encrypt: p.encrypt,
       verify_after_backup: p.verify_after_backup,
+      stop_apps: p.stop_apps,
       enabled: p.enabled,
       drill_enabled: p.drill_enabled,
       drill_schedule: p.drill_schedule || "0 4 * * 0",
@@ -652,9 +660,9 @@ export default function BackupOrchestrator() {
   const restoreVolumeBackup = async (b: VolumeBackup) => {
     setPendingRestoreId(null);
     try {
-      setMessage({ text: `Restoring volume ${b.volume_name} from ${b.filename}...`, type: "success" });
+      setMessage({ text: `Restoring ${volumeLabel(b)} from ${b.filename}...`, type: "success" });
       await api.post(`/backup-orchestrator/volume-backups/${b.id}/restore`);
-      setMessage({ text: `Volume ${b.volume_name} restored from ${b.filename}`, type: "success" });
+      setMessage({ text: `${volumeLabel(b)} restored from ${b.filename}`, type: "success" });
       loadAll();
     } catch (e) {
       setMessage({ text: e instanceof Error ? e.message : "Restore failed", type: "error" });
@@ -699,7 +707,7 @@ export default function BackupOrchestrator() {
     { key: "all", label: "All Backups" },
     { key: "policies", label: "Policies" },
     { key: "databases", label: "DB Backups" },
-    { key: "volumes", label: "Volume Backups" },
+    { key: "volumes", label: "App Data Backups" },
     { key: "verifications", label: "Verifications" },
     { key: "drills", label: "Drills" },
     { key: "destinations", label: "Destinations" },
@@ -1549,19 +1557,29 @@ function PoliciesTab({
               <input type="checkbox" checked={form.backup_databases} onChange={e => setForm({ ...form, backup_databases: e.target.checked })} /> Databases
             </label>
             <label className="flex items-center gap-2 text-dark-100">
-              <input type="checkbox" checked={form.backup_volumes} onChange={e => setForm({ ...form, backup_volumes: e.target.checked })} /> Volumes
+              <input type="checkbox" checked={form.backup_volumes} onChange={e => setForm({ ...form, backup_volumes: e.target.checked })} /> App data (volumes and bind mounts)
             </label>
-            {/* Scoped deliberately. The derived key reaches the database dump
-                and nothing else: the agent has no encryption path for site or
-                volume archives at all, so an unqualified "Encrypt" promised
+            {/* Scoped deliberately. The derived key reaches database dumps and
+                app data archives, and nothing else: the agent has no encryption
+                path for site archives, so an unqualified "Encrypt" would promise
                 something the product cannot do. */}
-            <label className="flex items-center gap-2 text-dark-100" title="Applies to database dumps only. Site and volume archives are stored and uploaded unencrypted.">
-              <input type="checkbox" checked={form.encrypt} onChange={e => setForm({ ...form, encrypt: e.target.checked })} /> Encrypt DB dumps
+            <label className="flex items-center gap-2 text-dark-100" title="Encrypts database dumps and app data archives. Site archives are not encrypted yet.">
+              <input type="checkbox" checked={form.encrypt} onChange={e => setForm({ ...form, encrypt: e.target.checked })} /> Encrypt dumps and app data
             </label>
             <label className="flex items-center gap-2 text-dark-100">
               <input type="checkbox" checked={form.verify_after_backup} onChange={e => setForm({ ...form, verify_after_backup: e.target.checked })} /> Auto-verify
             </label>
           </div>
+          {form.backup_volumes && (
+            <div className="text-sm font-mono">
+              <label className="flex items-center gap-2 text-dark-100">
+                <input type="checkbox" checked={form.stop_apps} onChange={e => setForm({ ...form, stop_apps: e.target.checked })} /> Stop apps during backup
+              </label>
+              <p className="text-[11px] text-dark-300 mt-1 ml-6">
+                Briefly stops the containers that use the data so databases are copied consistently.
+              </p>
+            </div>
+          )}
           <div className="flex items-center gap-3 text-sm font-mono pt-2 border-t border-dark-600">
             <label className="flex items-center gap-2 text-dark-100">
               <input type="checkbox" checked={form.drill_enabled} onChange={e => setForm({ ...form, drill_enabled: e.target.checked })} /> Drill on schedule
@@ -1581,17 +1599,11 @@ function PoliciesTab({
               End-to-end restore probe of latest db + volume backup. Site backups not yet covered.
             </span>
           </div>
-          {form.encrypt && (form.backup_sites || form.backup_volumes) && (
+          {form.encrypt && form.backup_sites && (
             <p className="text-[11px] text-warn-400 font-mono">
-              Encryption covers database dumps only. This policy also backs up{" "}
-              {[form.backup_sites && "sites", form.backup_volumes && "volumes"].filter(Boolean).join(" and ")}
-              , and those archives are written and uploaded unencrypted - a site archive contains its webroot,
+              Encryption covers database dumps and app data. This policy also backs up sites, and site
+              archives are written and uploaded unencrypted - a site archive contains its webroot,
               including configuration files and any database credentials in them.
-            </p>
-          )}
-          {form.destination_id !== "" && form.backup_volumes && (
-            <p className="text-[11px] text-warn-400 font-mono">
-              Remote retention covers site archives and database dumps. Volume archives are not pruned at the destination yet, so their remote copies accumulate there until you remove them.
             </p>
           )}
           {editing && (
@@ -1642,7 +1654,7 @@ function PoliciesTab({
                   <td className="px-5 py-4 text-xs font-mono">
                     {p.backup_sites && <span className="inline-flex px-2 py-0.5 rounded-full bg-rust-500/15 text-rust-400 mr-1">Sites</span>}
                     {p.backup_databases && <span className="inline-flex px-2 py-0.5 rounded-full bg-accent-500/15 text-accent-400 mr-1">DBs</span>}
-                    {p.backup_volumes && <span className="inline-flex px-2 py-0.5 rounded-full bg-warn-500/15 text-warn-400">Vols</span>}
+                    {p.backup_volumes && <span className="inline-flex px-2 py-0.5 rounded-full bg-warn-500/15 text-warn-400">App data</span>}
                   </td>
                   <td className="px-5 py-4 text-sm text-dark-200 font-mono">{p.retention_count}</td>
                   <td className="px-5 py-4">
@@ -1873,7 +1885,16 @@ function DatabasesTab({
   );
 }
 
-// ── Volume Backups Tab ────────────────────────────────────────────────────
+// ── App Data Backups Tab (volumes and bind mounts) ────────────────────────
+
+// Where the data lives: the bind mount's directory, or the volume's name.
+function volumeSource(b: VolumeBackup): string {
+  return b.mount_type === "bind" ? (b.source_path ?? b.volume_name) : b.volume_name;
+}
+
+function volumeLabel(b: VolumeBackup): string {
+  return b.mount_type === "bind" ? `directory ${volumeSource(b)}` : `volume ${b.volume_name}`;
+}
 
 function VolumesTab({
   backups, onVerify, onRestore, pendingRestoreId, setPendingRestoreId
@@ -1884,15 +1905,15 @@ function VolumesTab({
 }) {
   return backups.length === 0 ? (
     <div className="p-12 text-center">
-      <p className="text-dark-200 text-sm font-mono">No volume backups yet</p>
-      <p className="text-dark-300 text-xs mt-1 font-mono">Volume backups will appear here when created via policies or API</p>
+      <p className="text-dark-200 text-sm font-mono">No app data backups yet</p>
+      <p className="text-dark-300 text-xs mt-1 font-mono">Backups of app volumes and bind mounts will appear here when created via policies or API</p>
     </div>
   ) : (
     <div className="bg-dark-800 rounded-lg border border-dark-500 overflow-x-auto">
       <table className="w-full">
         <thead>
           <tr className="bg-dark-900 border-b border-dark-500">
-            {["Container", "Volume", "Filename", "Size", "Created", ""].map(h => (
+            {["App", "Type", "Source", "Filename", "Size", "Created", ""].map(h => (
               <th key={h} className="text-left text-xs font-medium text-dark-200 uppercase font-mono tracking-widest px-5 py-3">{h}</th>
             ))}
           </tr>
@@ -1901,15 +1922,25 @@ function VolumesTab({
           {backups.map(b => (
             <tr key={b.id} className="hover:bg-dark-700/30 transition-colors">
               <td className="px-5 py-4 text-sm text-dark-50 font-mono">{b.container_name}</td>
-              <td className="px-5 py-4 text-sm text-dark-200 font-mono">{b.volume_name}</td>
-              <td className="px-5 py-4 text-xs text-dark-200 font-mono truncate max-w-[200px]">{b.filename}</td>
+              <td className="px-5 py-4 text-sm text-dark-200 font-mono whitespace-nowrap">
+                {b.mount_type === "bind" ? "Bind mount" : "Volume"}
+              </td>
+              <td className="px-5 py-4 text-xs text-dark-200 font-mono truncate max-w-[260px]" title={volumeSource(b)}>
+                {volumeSource(b)}
+              </td>
+              <td className="px-5 py-4 text-xs text-dark-200 font-mono truncate max-w-[200px]">
+                <span className="inline-flex items-center gap-2">
+                  <span className="truncate">{b.filename}</span>
+                  {b.encrypted && <span className="inline-flex px-2 py-0.5 rounded-full text-xs font-medium bg-accent-500/15 text-accent-400 font-mono">Encrypted</span>}
+                </span>
+              </td>
               <td className="px-5 py-4 text-sm text-dark-200 font-mono">{formatSize(b.size_bytes)}</td>
               <td className="px-5 py-4 text-xs text-dark-300 font-mono">{formatDate(b.created_at)}</td>
               <td className="px-5 py-4">
                 {pendingRestoreId === b.id ? (
                   <div className="inline-flex items-center gap-1.5">
                     <span className="text-[10px] text-danger-400 font-mono mr-1">
-                      Unpacks over the live {b.volume_name} volume
+                      Unpacks over the live {volumeLabel(b)}. The app containers using this data will be stopped during the restore.
                     </span>
                     <button type="button" onClick={() => onRestore(b)}
                       className="px-2.5 py-1 text-[10px] font-mono uppercase tracking-wider bg-danger-500/10 hover:bg-danger-500/20 text-danger-400 border border-danger-500/40 rounded">
@@ -1927,7 +1958,7 @@ function VolumesTab({
                       Verify
                     </button>
                     <button type="button" onClick={() => setPendingRestoreId(b.id)}
-                      title="Unpack this archive over the live volume it was taken from"
+                      title="Unpack this archive over the live volume or directory it was taken from"
                       className="px-3 py-1 bg-warn-500/10 text-warn-400 rounded-md text-xs font-medium font-mono hover:bg-warn-500/20 transition-colors">
                       Restore
                     </button>

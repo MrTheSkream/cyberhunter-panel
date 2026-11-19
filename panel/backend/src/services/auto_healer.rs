@@ -1761,11 +1761,16 @@ async fn run_retention_cleanup(pool: &PgPool) {
             }
         }
 
-        // Same shape for volumes: per container+volume, and nested per container.
+        // Same shape for app data: per TARGET, and nested per owner. A target is
+        // (server, owner, volume or bind, volume name or slug, bind directory).
+        // `container_id` is not part of it: it changes every time a container is
+        // recreated, which split one volume's history into partitions of one and
+        // kept every archive for ever.
         let excess_vol: Vec<(uuid::Uuid, String, String, Option<uuid::Uuid>)> = sqlx::query_as(
             "SELECT id, filename, container_name, server_id FROM ( \
                  SELECT id, filename, container_name, server_id, \
-                        ROW_NUMBER() OVER (PARTITION BY container_id, volume_name ORDER BY created_at DESC) AS rn \
+                        ROW_NUMBER() OVER (PARTITION BY server_id, container_name, mount_type, volume_name, source_path \
+                                           ORDER BY created_at DESC) AS rn \
                  FROM volume_backups WHERE policy_id = $1 \
              ) ranked WHERE rn > $2"
         )
