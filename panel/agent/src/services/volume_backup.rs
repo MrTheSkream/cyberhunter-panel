@@ -265,17 +265,37 @@ async fn du_bytes(path: &str) -> Result<u64, String> {
     .await
     .map_err(|_| format!("Measuring {path} timed out"))?
     .map_err(|e| format!("Failed to measure {path}: {e}"))?;
-    if !out.status.success() {
-        return Err(format!(
-            "Failed to measure {path}: {}",
-            String::from_utf8_lossy(&out.stderr).trim()
-        ));
-    }
-    String::from_utf8_lossy(&out.stdout)
+    parse_du(&out.stdout).ok_or_else(|| {
+        format!("Failed to measure {path}: {}", String::from_utf8_lossy(&out.stderr).trim())
+    })
+}
+
+/// The total `du -sb` printed. It runs on live data, and GNU du exits 1 when a
+/// file vanishes mid-walk while still printing the total: the number counts,
+/// the exit status does not. No number at all is a failure.
+fn parse_du(stdout: &[u8]) -> Option<u64> {
+    String::from_utf8_lossy(stdout)
+        .lines()
+        .last()?
         .split_whitespace()
-        .next()
-        .and_then(|n| n.parse().ok())
-        .ok_or_else(|| format!("Failed to measure {path}: unreadable du output"))
+        .next()?
+        .parse()
+        .ok()
+}
+
+/// A unique name for a helper container, so a timeout can remove it: killing
+/// the `docker run` client does not stop the container, which would keep
+/// writing into the data after the app was started again.
+fn helper_name(what: &str) -> String {
+    format!("dockpanel-appdata-{what}-{:016x}", rand::random::<u64>())
+}
+
+async fn remove_helper(name: &str) {
+    if let Err(e) = docker_simple(&["rm", "-f", name], 120).await {
+        if !e.contains("No such container") {
+            tracing::error!("Failed to remove helper container {name}: {e}");
+        }
+    }
 }
 
 fn check_space(dir: &Path, need: u64, what: &str) -> Result<(), VbError> {
@@ -347,6 +367,12 @@ async fn backup_target_inner(req: TargetBackupRequest) -> Result<TargetBackupInf
         }
     }
 
+    // The owner lock BEFORE the enumeration: another operation on this app
+    // may have its containers stopped right now, and reading `running` then
+    // would archive them hot once they are back. Owner then mount is the
+    // order `lock_sites` produces, so this cannot deadlock against it.
+    let _owner_lock = crate::site_lock::lock_site(&format!("app-data:{}", req.owner_name)).await;
+
     // Never archive what the enumeration would not offer.
     let report = backup_targets::enumerate_targets().await.map_err(VbError::Internal)?;
     let target: BackupTarget = backup_targets::find_target(
@@ -368,7 +394,7 @@ async fn backup_target_inner(req: TargetBackupRequest) -> Result<TargetBackupInf
         TargetKind::Bind => MountRef::Bind(PathBuf::from(&target.source)),
     };
 
-    let _locks = crate::site_lock::lock_sites(&format!("app-data:{}", target.owner_name), &mount.lock_key()).await;
+    let _mount_lock = crate::site_lock::lock_site(&mount.lock_key()).await;
 
     let dest_dir = backup_dir(&target.owner_name);
     std::fs::create_dir_all(&dest_dir)
@@ -459,12 +485,15 @@ async fn tar_into(
     let part = format!(".{filename}.part");
     let part_path = dest_dir.join(&part);
     let dir = dest_dir.to_str().ok_or_else(|| VbError::Internal("Invalid dir".into()))?;
+    let helper = helper_name("backup");
     let output = tokio::time::timeout(
         timeout,
         safe_command("docker")
             .args([
                 "run",
                 "--rm",
+                "--name",
+                &helper,
                 "-v",
                 &mount.docker_arg(true),
                 "-v",
@@ -484,10 +513,12 @@ async fn tar_into(
     let output = match output {
         Ok(Ok(o)) => o,
         Ok(Err(e)) => {
+            remove_helper(&helper).await;
             std::fs::remove_file(&part_path).ok();
             return Err(VbError::Internal(format!("Failed to run volume backup: {e}")));
         }
         Err(_) => {
+            remove_helper(&helper).await;
             std::fs::remove_file(&part_path).ok();
             return Err(VbError::Internal(format!(
                 "Volume backup timed out after {} seconds",
@@ -496,6 +527,7 @@ async fn tar_into(
         }
     };
     if !output.status.success() {
+        remove_helper(&helper).await;
         std::fs::remove_file(&part_path).ok();
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(VbError::Internal(format!("Volume backup failed: {}", stderr.trim())));
@@ -613,7 +645,9 @@ pub async fn decrypted_copy(dir: &Path, filename: &str, key: &str) -> Result<Pla
     }
     let len = std::fs::metadata(&src).map(|m| m.len()).unwrap_or(0);
     check_space(dir, len, "the decrypted archive")?;
-    let tmp = PlainTemp { path: dir.join(format!(".{filename}.{:016x}.plain.part", rand::random::<u64>())) };
+    // Short on purpose: decrypt_file wraps it in its own temporary name, and a
+    // name built from a long archive name would pass NAME_MAX.
+    let tmp = PlainTemp { path: dir.join(format!(".dec-{:016x}.part", rand::random::<u64>())) };
     encryption::decrypt_file(&src, &tmp.path, key).await.map_err(VbError::from_crypto)?;
     Ok(tmp)
 }
@@ -766,12 +800,15 @@ async fn run_restore(
     timeout: std::time::Duration,
 ) -> Result<(), VbError> {
     let dir_str = dir.to_str().ok_or_else(|| VbError::Internal("Invalid dir".into()))?;
+    let helper = helper_name("restore");
     let output = tokio::time::timeout(
         timeout,
         safe_command("docker")
             .args([
                 "run",
                 "--rm",
+                "--name",
+                &helper,
                 "-v",
                 &mount.docker_arg(false),
                 "-v",
@@ -801,11 +838,25 @@ async fn run_restore(
             .kill_on_drop(true)
             .output(),
     )
-    .await
-    .map_err(|_| VbError::Internal(format!("Volume restore timed out after {} seconds", timeout.as_secs())))?
-    .map_err(|e| VbError::Internal(format!("Failed to run volume restore: {e}")))?;
+    .await;
+    let output = match output {
+        Ok(Ok(o)) => o,
+        Ok(Err(e)) => {
+            remove_helper(&helper).await;
+            return Err(VbError::Internal(format!("Failed to run volume restore: {e}")));
+        }
+        Err(_) => {
+            // Stop the extraction BEFORE the app is started again on top of it.
+            remove_helper(&helper).await;
+            return Err(VbError::Internal(format!(
+                "Volume restore timed out after {} seconds",
+                timeout.as_secs()
+            )));
+        }
+    };
 
     if !output.status.success() {
+        remove_helper(&helper).await;
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         return Err(if output.status.code() == Some(3) {
             VbError::Integrity(format!("Volume restore failed: {stderr}"))
@@ -1013,6 +1064,13 @@ mod tests {
     }
 
     #[test]
+    fn du_totals_are_read_even_from_a_partial_walk() {
+        assert_eq!(parse_du(b"12345\t/var/lib/docker/volumes/x/_data\n"), Some(12345));
+        assert_eq!(parse_du(b""), None);
+        assert_eq!(parse_du(b"garbage\n"), None);
+    }
+
+    #[test]
     fn space_is_twice_the_data() {
         assert_eq!(space_needed(10), 20);
         assert_eq!(space_needed(u64::MAX), u64::MAX);
@@ -1040,7 +1098,7 @@ mod tests {
         encryption::encrypt_file(&d.join("x.tar.gz"), &d.join("x.tar.gz.enc"), "k1").await.unwrap();
         {
             let a = readable_archive(&d, "x.tar.gz.enc", Some("k1")).await.unwrap();
-            assert!(a.name.starts_with(".x.tar.gz.enc.") && a.name.ends_with(".plain.part"), "{}", a.name);
+            assert!(a.name.starts_with(".dec-") && a.name.ends_with(".part"), "{}", a.name);
             assert_eq!(std::fs::read(d.join(&a.name)).unwrap(), b"not really a tarball but bytes");
         }
         let left: Vec<_> = std::fs::read_dir(&d).unwrap().map(|e| e.unwrap().file_name()).collect();

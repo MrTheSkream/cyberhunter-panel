@@ -527,6 +527,18 @@ mod tests {
         }
     }
 
+    /// The seam with Docker: `enumerate_targets` classifies on bollard's
+    /// mount type rendered as a string. If that rendering ever changed, every
+    /// mount would be "unsupported" and a policy would succeed with 0 targets.
+    #[test]
+    fn bollard_mount_types_render_as_classify_expects() {
+        use bollard::service::MountPointTypeEnum as T;
+        assert_eq!(T::BIND.to_string(), "bind");
+        assert_eq!(T::VOLUME.to_string(), "volume");
+        assert_eq!(T::TMPFS.to_string(), "tmpfs");
+        assert_eq!(T::NPIPE.to_string(), "npipe");
+    }
+
     #[test]
     fn binds_under_each_root_are_included() {
         let (s, roots) = layout();

@@ -75,8 +75,20 @@ async fn drill_volume(
     }
     let result = backup_drill::drill_volume_backup(&req.container_name, &req.filename, req.encryption_key.as_deref())
         .await
-        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+        .map_err(|e| err(volume_check_status(&e), &e))?;
     Ok(Json(result))
+}
+
+/// A volume verify/drill refusal the caller can fix is a 4xx, so the panel
+/// relays the sentence instead of an incident id.
+fn volume_check_status(e: &str) -> StatusCode {
+    if e == "Backup file not found" {
+        StatusCode::NOT_FOUND
+    } else if e.starts_with("Invalid ") || e.starts_with("Encryption key required") {
+        StatusCode::BAD_REQUEST
+    } else {
+        StatusCode::INTERNAL_SERVER_ERROR
+    }
 }
 
 pub fn router() -> Router<AppState> {

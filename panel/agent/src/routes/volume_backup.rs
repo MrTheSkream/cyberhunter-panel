@@ -224,6 +224,30 @@ mod tests {
         assert_eq!(v.stop_containers.unwrap_or(true), true);
     }
 
+    /// The exact bodies the backend sends: absent key, explicit nulls.
+    #[test]
+    fn backend_bodies_with_nulls_parse() {
+        let v: VolumeBackupRequest = serde_json::from_value(serde_json::json!({
+            "kind": "volume", "volume_name": "demo_pgdata", "source_path": null,
+            "owner_name": "demo", "stop_containers": true
+        }))
+        .unwrap();
+        assert_eq!(v.source_path, None);
+        assert_eq!(v.encryption_key, None);
+        let b: VolumeBackupRequest = serde_json::from_value(serde_json::json!({
+            "kind": "bind", "volume_name": null, "source_path": "/var/lib/dockpanel/compose/demo/uploads",
+            "owner_name": "demo", "stop_containers": false, "encryption_key": "k"
+        }))
+        .unwrap();
+        assert_eq!(b.volume_name, None);
+        let r: VolumeRestoreRequest = serde_json::from_value(serde_json::json!({
+            "kind": "bind", "volume_name": null, "source_path": "/var/lib/dockpanel/apps/x/data"
+        }))
+        .unwrap();
+        assert_eq!(r.volume_name, None);
+        assert_eq!(r.encryption_key, None);
+    }
+
     #[test]
     fn old_and_new_restore_bodies_parse() {
         let old: VolumeRestoreRequest = serde_json::from_value(serde_json::json!({"volume_name": "pgdata"})).unwrap();
