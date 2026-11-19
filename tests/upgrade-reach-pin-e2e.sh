@@ -208,7 +208,7 @@ if S=$(subj code "$ORCH"); then
     # function already spells `backup.volume_name` in the label it passes to
     # `agent_for_site_server`, an unrelated use. That false green sat inside a
     # batch of twelve reds, which is precisely where one hides (lesson #330).
-    POSTCALL=$(awk '/let result = agent\.post(_long)?\(/{inside=1} inside{print} inside && /\.await/{exit}' <<< "$BODY")
+    POSTCALL=$(awk '/let result = (agent\.post(_long)?\(|crate::services::expected_stops::guard_backup_stops\()/{inside=1} inside{print} inside && /\.await/{exit}' <<< "$BODY")
     # Since lot 1 the body is built just above the call, from the row:
     # `app_data_restore_body(kind, &backup.volume_name, backup.source_path...)`.
     BODYBUILD=$(grep -A2 'app_data_restore_body(' <<< "$BODY" || true)

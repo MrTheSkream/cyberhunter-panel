@@ -396,6 +396,10 @@ pub struct BackupTarget {
     /// Ids of the containers that mount the target. Informational only: a
     /// container id changes every time the container is recreated.
     pub container_ids: Vec<String>,
+    /// Names of the containers the agent will stop for this target: the ones
+    /// it reports running (or does not say). They are recorded as expectedly
+    /// stopped for the call, so the auto-healer leaves them alone.
+    pub stop_names: Vec<String>,
 }
 
 impl BackupTarget {
@@ -539,6 +543,18 @@ pub fn parse_backup_targets(resp: &serde_json::Value) -> Result<ParsedTargets, S
                     .collect()
             })
             .unwrap_or_default();
+        let stop_names = t
+            .get("containers")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter(|c| c.get("running").and_then(|v| v.as_bool()) != Some(false))
+                    .filter_map(|c| c.get("name").and_then(|v| v.as_str()))
+                    .map(|n| n.trim_start_matches('/').to_string())
+                    .filter(|n| !n.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
         out.targets.push(BackupTarget {
             kind,
             volume_name: if kind == MountKind::Volume { volume_name } else { None },
@@ -548,6 +564,7 @@ pub fn parse_backup_targets(resp: &serde_json::Value) -> Result<ParsedTargets, S
             app_type: s("app_type").unwrap_or_default(),
             stack_id: s("stack_id").filter(|v| !v.is_empty()),
             container_ids,
+            stop_names,
         });
     }
     Ok(out)
@@ -1506,15 +1523,24 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
             // One retry, and only when the request never reached the agent. After
             // a timeout or an agent error the first attempt may still be running,
             // with the app stopped, and a refusal (400, 507) would not change.
-            let mut result = agent
-                .post_long("/volume-backups/create", Some(body.clone()), APP_DATA_BACKUP_TIMEOUT_SECS)
-                .await;
-            if matches!(result, Err(crate::services::agent::AgentError::Connection(_))) {
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                result = agent
-                    .post_long("/volume-backups/create", Some(body), APP_DATA_BACKUP_TIMEOUT_SECS)
+            //
+            // With stop_apps the agent stops the target's running containers for
+            // the copy: they are recorded as expectedly stopped around the call,
+            // or the auto-healer would restart them in the middle of it.
+            let stops: &[String] = if policy.stop_apps { &target.stop_names } else { &[] };
+            let ledger = crate::services::expected_stops::DbBackupStops { pool: db, server_id: vol_server_id };
+            let result = crate::services::expected_stops::guard_backup_stops(&ledger, stops, async {
+                let mut result = agent
+                    .post_long("/volume-backups/create", Some(body.clone()), APP_DATA_BACKUP_TIMEOUT_SECS)
                     .await;
-            }
+                if matches!(result, Err(crate::services::agent::AgentError::Connection(_))) {
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    result = agent
+                        .post_long("/volume-backups/create", Some(body), APP_DATA_BACKUP_TIMEOUT_SECS)
+                        .await;
+                }
+                result
+            }).await;
             let resp = match result {
                 Ok(r) => r,
                 Err(e) => {
@@ -2056,6 +2082,7 @@ mod tests {
         assert_eq!(v.row_volume_name(), "demo_pgdata");
         assert_eq!(v.stack_id.as_deref(), Some("st-1"));
         assert_eq!(v.container_ids, vec!["abc".to_string()]);
+        assert_eq!(v.stop_names, vec!["demo-db-1".to_string()]);
         let b = &p.targets[1];
         assert_eq!(b.kind, MountKind::Bind);
         assert_eq!(b.volume_name, None);
@@ -2063,6 +2090,8 @@ mod tests {
         assert_eq!(b.row_volume_name(), "uploads-1a2b3c4d", "a bind row stores its slug as volume_name");
         assert_eq!(b.stack_id, None);
         assert_eq!(b.container_ids.len(), 2);
+        // Only the running container is stopped by the agent, so only it is protected.
+        assert_eq!(b.stop_names, vec!["demo-app-1".to_string()]);
     }
 
     #[test]

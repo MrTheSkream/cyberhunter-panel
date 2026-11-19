@@ -30,6 +30,21 @@ pub const REASON_STACK_STOP: &str = "stack_stop";
 /// the healer must be blind to the gap from the moment it opens, not after.
 /// [[project_dockpanel_tech_debt_p185]] carry G.
 pub const REASON_RECREATE: &str = "recreate_in_progress";
+/// An app data backup or restore: the agent stops the running containers that
+/// mount the data for the copy or the extraction and starts them again itself.
+/// Recorded BEFORE the agent call, like [`REASON_RECREATE`], because the stop
+/// happens inside that call and lasts minutes - the healer must not "repair"
+/// an app in the middle of a restore. Unlike every other reason it EXPIRES
+/// after [`BACKUP_STOP_TTL_SECS`]: if the agent dies mid-operation and never
+/// restarts the containers, the healer and the down alert take over again.
+pub const REASON_BACKUP: &str = "backup_in_progress";
+
+/// Lifetime of a [`REASON_BACKUP`] expectation, from the moment it is recorded:
+/// the policy executor's whole budget for one archive
+/// (`backup_policy_executor::APP_DATA_BACKUP_TIMEOUT_SECS`, 1800 s) plus ten
+/// minutes. It also covers a restore that outlived its 270 s request, which the
+/// agent carries on (its own budget is shorter than this).
+pub const BACKUP_STOP_TTL_SECS: i64 = 2400;
 
 /// Record that this container was stopped on purpose.
 ///
@@ -95,15 +110,218 @@ pub async fn clear_if_older_than(
     container_name: &str,
     observed_at: chrono::DateTime<chrono::Utc>,
 ) {
+    // A live backup expectation is recorded BEFORE the agent stops anything,
+    // so seeing the container still running says nothing against it: it is
+    // left to the backup's own clear, or to its expiry.
     let _ = sqlx::query(
         "DELETE FROM container_expected_stops \
-         WHERE server_id = $1 AND container_name = $2 AND stopped_at < $3",
+         WHERE server_id = $1 AND container_name = $2 AND stopped_at < $3 \
+           AND NOT (reason = $4 AND stopped_at >= NOW() - make_interval(secs => $5))",
     )
     .bind(server_id)
     .bind(container_name)
     .bind(observed_at)
+    .bind(REASON_BACKUP)
+    .bind(BACKUP_STOP_TTL_SECS as f64)
     .execute(pool)
     .await;
+}
+
+// ── App data backup and restore: stops the agent makes inside one call ─────
+
+/// Where backup expectations are written. A trait so the record/clear cycle
+/// around an agent call can be tested without a database.
+pub(crate) trait BackupStopLedger {
+    async fn record_all(&self, names: &[String]);
+    async fn clear_all(&self, names: &[String]);
+}
+
+/// The real ledger: `container_expected_stops` rows of one server.
+pub(crate) struct DbBackupStops<'a> {
+    pub pool: &'a PgPool,
+    pub server_id: Uuid,
+}
+
+impl BackupStopLedger for DbBackupStops<'_> {
+    /// Insert-if-absent: a container that already carries an expectation (an
+    /// operator stop, a sleep) keeps it, and its reason. The agent only stops
+    /// RUNNING containers, so such a container is not touched by the backup.
+    async fn record_all(&self, names: &[String]) {
+        for name in names {
+            if let Err(e) = sqlx::query(
+                "INSERT INTO container_expected_stops (server_id, container_name, reason, actor_email, stopped_at) \
+                 VALUES ($1, $2, $3, NULL, NOW()) ON CONFLICT (server_id, container_name) DO NOTHING",
+            )
+            .bind(self.server_id)
+            .bind(name)
+            .bind(REASON_BACKUP)
+            .execute(self.pool)
+            .await
+            {
+                tracing::warn!(
+                    "Could not record the backup stop of '{name}' on server {}: {e} - the auto-healer may restart it mid-operation",
+                    self.server_id
+                );
+            }
+        }
+    }
+
+    /// Deletes only this reason's rows, never an operator's own stop.
+    async fn clear_all(&self, names: &[String]) {
+        for name in names {
+            if let Err(e) = sqlx::query(
+                "DELETE FROM container_expected_stops \
+                 WHERE server_id = $1 AND container_name = $2 AND reason = $3",
+            )
+            .bind(self.server_id)
+            .bind(name)
+            .bind(REASON_BACKUP)
+            .execute(self.pool)
+            .await
+            {
+                tracing::warn!(
+                    "Could not clear the backup stop of '{name}' on server {}: {e} - it expires after {BACKUP_STOP_TTL_SECS}s",
+                    self.server_id
+                );
+            }
+        }
+    }
+}
+
+/// Is this agent error our own client-side timeout? Then the agent is still
+/// working (and holding the app stopped), whatever we answer.
+pub fn is_agent_timeout(e: &crate::services::agent::AgentError) -> bool {
+    matches!(e, crate::services::agent::AgentError::Request(d) if d.contains("timed out"))
+}
+
+/// Run one agent call that may stop `names` (the running containers that mount
+/// the data), with those containers recorded as expectedly stopped for its
+/// whole duration.
+///
+/// Cleared after the call on success and on every agent error: the agent
+/// restarts the containers itself before it answers, failure included. NOT
+/// cleared when the call timed out on OUR side: the agent is then still
+/// copying or extracting with the app stopped, and clearing would let the
+/// healer start the app in the middle of it. That row ends with
+/// [`BACKUP_STOP_TTL_SECS`], after which a container still down is healed and
+/// alerted like any crash - which is also what happens if the agent dies
+/// mid-operation.
+pub(crate) async fn guard_backup_stops<L, T, F>(
+    ledger: &L,
+    names: &[String],
+    call: F,
+) -> Result<T, crate::services::agent::AgentError>
+where
+    L: BackupStopLedger,
+    F: std::future::Future<Output = Result<T, crate::services::agent::AgentError>>,
+{
+    if names.is_empty() {
+        return call.await;
+    }
+    ledger.record_all(names).await;
+    let result = call.await;
+    match &result {
+        Err(e) if is_agent_timeout(e) => {
+            tracing::warn!(
+                "App data operation outlived its request with {} container(s) stopped; \
+                 their expected stop is kept until the agent restarts them or it expires ({BACKUP_STOP_TTL_SECS}s)",
+                names.len()
+            );
+        }
+        _ => ledger.clear_all(names).await,
+    }
+    result
+}
+
+#[cfg(test)]
+mod backup_stop_tests {
+    use super::*;
+    use crate::services::agent::AgentError;
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct FakeLedger {
+        log: Mutex<Vec<String>>,
+    }
+
+    impl BackupStopLedger for FakeLedger {
+        async fn record_all(&self, names: &[String]) {
+            self.log.lock().unwrap().push(format!("record {}", names.join(",")));
+        }
+        async fn clear_all(&self, names: &[String]) {
+            self.log.lock().unwrap().push(format!("clear {}", names.join(",")));
+        }
+    }
+
+    fn names() -> Vec<String> {
+        vec!["demo-db-1".to_string(), "demo-app-1".to_string()]
+    }
+
+    fn block<F: std::future::Future>(f: F) -> F::Output {
+        tokio::runtime::Builder::new_current_thread().build().unwrap().block_on(f)
+    }
+
+    #[test]
+    fn success_records_before_and_clears_after() {
+        let l = FakeLedger::default();
+        let r = block(guard_backup_stops(&l, &names(), async {
+            // The expectation must already be there while the agent works.
+            Ok::<_, AgentError>(1)
+        }));
+        assert_eq!(r.unwrap(), 1);
+        assert_eq!(*l.log.lock().unwrap(), vec!["record demo-db-1,demo-app-1", "clear demo-db-1,demo-app-1"]);
+    }
+
+    #[test]
+    fn the_record_happens_before_the_call_runs() {
+        let l = FakeLedger::default();
+        let r = block(guard_backup_stops(&l, &names(), async {
+            Ok::<_, AgentError>(l.log.lock().unwrap().len())
+        }));
+        assert_eq!(r.unwrap(), 1, "one record entry existed when the call ran");
+    }
+
+    #[test]
+    fn an_agent_error_still_clears() {
+        for e in [
+            AgentError::Status(500, "tar failed".into()),
+            AgentError::Status(422, "integrity".into()),
+            AgentError::Status(507, "disk".into()),
+            AgentError::Connection("refused".into()),
+            AgentError::Request("connection reset".into()),
+        ] {
+            let l = FakeLedger::default();
+            let r = block(guard_backup_stops(&l, &names(), async move { Err::<(), _>(e) }));
+            assert!(r.is_err());
+            assert_eq!(l.log.lock().unwrap().len(), 2, "record then clear");
+            assert!(l.log.lock().unwrap()[1].starts_with("clear"));
+        }
+    }
+
+    #[test]
+    fn our_timeout_keeps_the_expectation_for_its_expiry() {
+        let l = FakeLedger::default();
+        let r = block(guard_backup_stops(&l, &names(), async {
+            Err::<(), _>(AgentError::Request("agent request timed out after 270s".into()))
+        }));
+        assert!(r.is_err());
+        assert_eq!(*l.log.lock().unwrap(), vec!["record demo-db-1,demo-app-1"]);
+    }
+
+    #[test]
+    fn nothing_to_protect_touches_nothing() {
+        let l = FakeLedger::default();
+        let r = block(guard_backup_stops(&l, &[], async { Ok::<_, AgentError>(()) }));
+        assert!(r.is_ok());
+        assert!(l.log.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn the_expiry_outlasts_every_app_data_budget() {
+        use crate::services::backup_policy_executor as bpe;
+        assert!(BACKUP_STOP_TTL_SECS as u64 > bpe::APP_DATA_BACKUP_TIMEOUT_SECS);
+        assert!(BACKUP_STOP_TTL_SECS as u64 > bpe::APP_DATA_ROUTE_TIMEOUT_SECS);
+    }
 }
 
 /// Forget every expectation for a container this host no longer reports.
@@ -167,11 +385,18 @@ pub async fn clear_absent(
 /// Loaded once per member per sweep rather than queried per container: the
 /// health check already walks every container the host reports, and a query
 /// each would multiply the sweep's database round-trips by the app count.
+///
+/// An expired [`REASON_BACKUP`] row is not an expectation any more: the
+/// operation it covered has outlived every budget, so a container still down is
+/// treated as crashed (healed, alerted).
 pub async fn expected_on_server(pool: &PgPool, server_id: Uuid) -> HashSet<String> {
     sqlx::query_as::<_, (String,)>(
-        "SELECT container_name FROM container_expected_stops WHERE server_id = $1",
+        "SELECT container_name FROM container_expected_stops WHERE server_id = $1 \
+         AND NOT (reason = $2 AND stopped_at < NOW() - make_interval(secs => $3))",
     )
     .bind(server_id)
+    .bind(REASON_BACKUP)
+    .bind(BACKUP_STOP_TTL_SECS as f64)
     .fetch_all(pool)
     .await
     .map(|rows| rows.into_iter().map(|(n,)| n).collect())
