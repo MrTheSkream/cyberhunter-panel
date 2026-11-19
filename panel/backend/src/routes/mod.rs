@@ -31,6 +31,7 @@ pub mod notifications;
 pub mod on_call;
 pub mod escalation_policies;
 pub mod dr;
+pub mod dr_restore;
 pub mod drift;
 pub mod security;
 pub mod security_scans;
@@ -1630,6 +1631,11 @@ pub fn router() -> Router<AppState> {
         .route("/api/dr/settings", put(dr::put_settings))
         .route("/api/dr/recipient", post(dr::enroll_recipient))
         .route("/api/dr/run", post(dr::run_now))
+        // Lot 2, 2.5/2.6: restore from a remote snapshot, rehydration (admin only)
+        .route("/api/dr/remote-snapshots/{id}/download", get(dr_restore::download_remote))
+        .route("/api/dr/remote-snapshots/{id}/restore", post(dr_restore::restore_remote))
+        .route("/api/dr/restore", get(dr_restore::restore_status))
+        .route("/api/dr/rehydrate", post(dr_restore::rehydrate))
         .route("/api/update/fleet", get(update::list_fleet_runs).post(update::apply_fleet))
         .route("/api/update/fleet/{id}", get(update::get_fleet_run))
         // Phase 4 W5: fleet configuration-drift report (read-only)

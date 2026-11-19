@@ -470,6 +470,63 @@ pub async fn spawn_restore(
     // came back empty), and this process no longer exists afterwards to write
     // one. The restore records it itself, into the database it just restored.
 
+    launch_restore_unit(snapshot_id, &file_path, &snapshot.sha256, operator, RestoreMode::Rollback).await
+}
+
+/// Which kind of restore `restore-snapshot.sh` performs (`DOCKPANEL_RESTORE_MODE`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RestoreMode {
+    /// A local snapshot: binaries, frontend, /etc/dockpanel and the database.
+    Rollback,
+    /// A decrypted off-site disaster recovery archive (`services::dr_restore`):
+    /// no binaries, version checked, DATABASE_URL kept, vhosts rebuilt after.
+    Dr,
+}
+
+impl RestoreMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RestoreMode::Rollback => "rollback",
+            RestoreMode::Dr => "dr",
+        }
+    }
+}
+
+/// The `systemd-run` arguments of the detached restore unit. Paths, ids, a hash
+/// and the mode only: never a key, a password or anything read from api.env.
+pub(crate) fn restore_unit_args(
+    snapshot_id: Uuid,
+    tarball: &Path,
+    sha256: &str,
+    operator: Option<&str>,
+    mode: RestoreMode,
+) -> Vec<String> {
+    let mut args = vec![
+        "--quiet".to_string(),
+        "--collect".to_string(),
+        format!("--unit=dockpanel-snapshot-restore-{snapshot_id}"),
+        "--setenv=DOCKPANEL_RESTORE_DETACHED=1".to_string(),
+        format!("--setenv=DOCKPANEL_SNAPSHOT_ID={snapshot_id}"),
+        format!("--setenv=DOCKPANEL_SNAPSHOT_TARBALL={}", tarball.to_string_lossy()),
+        format!("--setenv=DOCKPANEL_SNAPSHOT_SHA256={sha256}"),
+        format!("--setenv=DOCKPANEL_RESTORE_MODE={}", mode.as_str()),
+    ];
+    args.extend(rollback_provenance_env(operator));
+    args.push("bash".to_string());
+    args.push(RESTORE_SCRIPT_PATH.to_string());
+    args
+}
+
+/// Write the embedded restore script and hand it to a PID1-owned transient
+/// unit. The caller has verified `tarball` against `sha256` (the script checks
+/// it again before acting).
+pub async fn launch_restore_unit(
+    snapshot_id: Uuid,
+    tarball: &Path,
+    sha256: &str,
+    operator: Option<&str>,
+    mode: RestoreMode,
+) -> Result<(), SnapshotError> {
     tokio::fs::create_dir_all("/var/lib/dockpanel").await?;
     tokio::fs::write(RESTORE_SCRIPT_PATH, RESTORE_SCRIPT).await?;
     #[cfg(unix)]
@@ -484,20 +541,7 @@ pub async fn spawn_restore(
     // it. `--scope` is not a substitute - it is created in the caller's context
     // and dies with the invoking session (lesson #47).
     let status = Command::new("systemd-run")
-        .args([
-            "--quiet",
-            "--collect",
-            &format!("--unit=dockpanel-snapshot-restore-{snapshot_id}"),
-            "--setenv=DOCKPANEL_RESTORE_DETACHED=1",
-            &format!("--setenv=DOCKPANEL_SNAPSHOT_ID={snapshot_id}"),
-            &format!(
-                "--setenv=DOCKPANEL_SNAPSHOT_TARBALL={}",
-                file_path.to_string_lossy()
-            ),
-            &format!("--setenv=DOCKPANEL_SNAPSHOT_SHA256={}", snapshot.sha256),
-        ])
-        .args(rollback_provenance_env(operator))
-        .args(["bash", RESTORE_SCRIPT_PATH])
+        .args(restore_unit_args(snapshot_id, tarball, sha256, operator, mode))
         .status()
         .await?;
 
@@ -1365,6 +1409,65 @@ mod tests {
                 RESTORE_SCRIPT.contains(&format!("--setenv={var}=")),
                 "{var} is lost on the re-exec"
             );
+        }
+    }
+
+    /// The mode reaches the unit, and the unit's command line carries paths,
+    /// ids and a hash only.
+    #[test]
+    fn the_restore_unit_carries_its_mode_and_nothing_secret() {
+        let id = Uuid::nil();
+        let dr = restore_unit_args(id, Path::new("/x/a.tar.gz"), "ab", Some("op@example.test"), RestoreMode::Dr);
+        assert!(dr.contains(&"--setenv=DOCKPANEL_RESTORE_MODE=dr".to_string()));
+        let rb = restore_unit_args(id, Path::new("/x/a.tar.gz"), "ab", None, RestoreMode::Rollback);
+        assert!(rb.contains(&"--setenv=DOCKPANEL_RESTORE_MODE=rollback".to_string()));
+        for a in dr.iter().chain(rb.iter()) {
+            for secret in ["JWT", "PASSWORD", "AGE-SECRET", "DATABASE_URL", "SECRET_KEY", "TOKEN="] {
+                assert!(!a.contains(secret), "{a} carries {secret}");
+            }
+        }
+        assert_eq!(dr.last().map(String::as_str), Some(RESTORE_SCRIPT_PATH));
+    }
+
+    /// The mode survives the script's own re-exec under systemd-run.
+    #[test]
+    fn the_restore_forwards_its_mode_when_it_re_executes() {
+        assert!(RESTORE_SCRIPT.contains("--setenv=DOCKPANEL_RESTORE_MODE=\"$RESTORE_MODE\""));
+    }
+
+    fn code_line_of(needle: &str) -> usize {
+        RESTORE_SCRIPT
+            .lines()
+            .enumerate()
+            .filter(|(_, l)| !l.trim_start().starts_with('#'))
+            .find(|(_, l)| l.contains(needle))
+            .map(|(i, _)| i)
+            .unwrap_or_else(|| panic!("`{needle}` must appear in the script's code"))
+    }
+
+    /// An off-site archive that does not fit this machine is refused while the
+    /// panel still runs: version, architecture and kind are checked before the
+    /// services stop.
+    #[test]
+    fn dr_mode_checks_version_and_arch_before_stopping_anything() {
+        let stop = code_line_of("stage=\"stop-services\"");
+        for check in ["version mismatch", "architecture mismatch", "not an off-site disaster recovery archive", "--version"] {
+            assert!(code_line_of(check) < stop, "`{check}` must come before the services stop");
+        }
+    }
+
+    /// The fresh machine's DATABASE_URL is merged into the extracted api.env
+    /// before the services stop and before /etc/dockpanel is copied, through a
+    /// file (never echoed), and checked.
+    #[test]
+    fn dr_mode_keeps_this_machines_database_url() {
+        let stop = code_line_of("stage=\"stop-services\"");
+        let merge = code_line_of("FNR == NR { if (!got && $0 ~ /^DATABASE_URL=/)");
+        let check = code_line_of("does not carry this machine's DATABASE_URL");
+        let copy = code_line_of("cp -a \"$WORK/etc/.\" \"$ETC_DIR/\"");
+        assert!(merge < check && check < stop && stop < copy);
+        for line in RESTORE_SCRIPT.lines().filter(|l| l.contains("DATABASE_URL") && !l.trim_start().starts_with('#')) {
+            assert!(!line.contains("echo ") && !line.contains("printf "), "a line could print DATABASE_URL: {line}");
         }
     }
 

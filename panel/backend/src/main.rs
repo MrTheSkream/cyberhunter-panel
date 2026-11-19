@@ -2,6 +2,7 @@
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 mod auth;
+mod cli_dr;
 mod config;
 pub mod error;
 pub mod helpers;
@@ -111,7 +112,11 @@ fn informational_answer(args: &[String]) -> Option<String> {
              Options:\n  \
              -h, --help               Print this help and exit\n  \
              -V, --version            Print the version and exit\n      \
-             --emit-guidance <DIR>    Write the generated guidance files under <DIR> and exit",
+             --emit-guidance <DIR>    Write the generated guidance files under <DIR> and exit
+
+             Disaster recovery (no configuration needed, run as root):
+               dr list    --destination-file <FILE> [--install-id <UUID>]
+               dr restore --archive <NAME> --identity-file <FILE> --destination-file <FILE> [--yes]",
             env!("CARGO_PKG_VERSION")
         )),
         _ => None,
@@ -138,6 +143,12 @@ async fn main() {
     if let Some(answer) = informational_answer(&args) {
         println!("{answer}");
         return;
+    }
+
+    // Disaster recovery on a fresh machine: like the two above, before any
+    // configuration is read. It talks to the local agent only.
+    if args.get(1).map(String::as_str) == Some("dr") {
+        std::process::exit(cli_dr::run(&args[2..]).await);
     }
 
     // Install rustls CryptoProvider before any TLS usage. Required by rustls 0.23+
@@ -240,6 +251,10 @@ async fn main() {
     if !local_server_id.is_nil() {
         agents.set_local_server_id(local_server_id).await;
         tracing::info!("Local server ID: {local_server_id}");
+        // First start after an off-site restore: rebuild the vhosts (marker).
+        if services::dr_post_restore::pending() {
+            tokio::spawn(services::dr_post_restore::run_if_pending(db.clone(), agent.clone(), local_server_id));
+        }
     }
 
     // Build CORS policy.

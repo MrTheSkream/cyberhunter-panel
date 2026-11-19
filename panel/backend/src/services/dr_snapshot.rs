@@ -410,6 +410,80 @@ pub fn purge_outbox(dir: &Path) -> Result<u32, String> {
     Ok(removed)
 }
 
+// ── Decryption to a file (restore, step 2.5) ────────────────────────────────
+
+/// SHA-256 and byte count of what is read through it.
+struct HashingReader<R: Read> {
+    inner: R,
+    hasher: Sha256,
+    read: u64,
+}
+
+impl<R: Read> Read for HashingReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        self.hasher.update(&buf[..n]);
+        self.read += n as u64;
+        Ok(n)
+    }
+}
+
+/// What [`decrypt_file_to`] produced.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DecryptedFile {
+    /// Size and SHA-256 of the ciphertext that was read (to compare with the manifest).
+    pub cipher_size: u64,
+    pub cipher_sha256: String,
+    /// Size and SHA-256 of the plaintext `.tar.gz` that was written.
+    pub size: u64,
+    pub sha256: String,
+}
+
+/// Decrypt the age file `input` into `out`, streaming: created 0600 under a
+/// hidden `.part` name, renamed only once the age stream has authenticated to
+/// its end. Both sides are hashed on the way. On any error the partial output
+/// is removed and nothing is left at `out`.
+pub fn decrypt_file_to(identity_file: &str, input: &Path, out: &Path) -> Result<DecryptedFile, String> {
+    let part = out.with_file_name(format!(
+        ".{}.part",
+        out.file_name().and_then(|n| n.to_str()).unwrap_or("restore")
+    ));
+    let _ = std::fs::remove_file(&part);
+    let result = (|| {
+        let file = std::fs::File::open(input).map_err(|e| format!("cannot open {}: {e}", input.display()))?;
+        let mut reader = HashingReader { inner: std::io::BufReader::new(file), hasher: Sha256::new(), read: 0 };
+        let file = create_private(&part).map_err(|e| format!("cannot create {}: {e}", part.display()))?;
+        let mut sink = HashingWriter { inner: std::io::BufWriter::new(file), hasher: Sha256::new(), written: 0 };
+        decrypt_stream(identity_file, &mut reader, &mut sink)?;
+        // Anything after the last authenticated chunk still counts in the
+        // ciphertext hash, so it cannot pass the manifest check unnoticed.
+        std::io::copy(&mut reader, &mut std::io::sink()).map_err(|e| format!("reading the archive: {e}"))?;
+        sink.flush().map_err(|e| format!("writing the decrypted archive: {e}"))?;
+        let HashingWriter { inner, hasher, written } = sink;
+        let file = inner.into_inner().map_err(|e| format!("writing the decrypted archive: {e}"))?;
+        file.sync_all().map_err(|e| format!("syncing the decrypted archive: {e}"))?;
+        Ok(DecryptedFile {
+            cipher_size: reader.read,
+            cipher_sha256: hex::encode(reader.hasher.finalize()),
+            size: written,
+            sha256: hex::encode(hasher.finalize()),
+        })
+    })();
+    match result {
+        Ok(r) => {
+            std::fs::rename(&part, out).map_err(|e| {
+                let _ = std::fs::remove_file(&part);
+                format!("cannot rename the decrypted archive: {e}")
+            })?;
+            Ok(r)
+        }
+        Err(e) => {
+            let _ = std::fs::remove_file(&part);
+            Err(e)
+        }
+    }
+}
+
 // ── SFTP keys into /etc/dockpanel/backup-keys ───────────────────────────────
 
 /// One SFTP key to copy so the snapshot carries it.
