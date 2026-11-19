@@ -139,7 +139,11 @@ async fn check_nginx() -> Vec<DiagnosticFinding> {
         while let Ok(Some(entry)) = entries.next_entry().await {
             let path = entry.path();
             let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
-            if filename == "default" || filename == "dockpanel-panel.conf" || filename == "dockpanel.dev.conf" {
+            if filename == "default"
+                || filename == "dockpanel-panel.conf"
+                || filename == "dockpanel.dev.conf"
+                || filename == super::default_vhost::DEFAULT_VHOST_FILE
+            {
                 continue;
             }
 

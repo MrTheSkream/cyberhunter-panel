@@ -576,7 +576,10 @@ async fn scan_security_headers() -> Vec<Finding> {
         let filename = path.file_name().and_then(|f| f.to_str()).unwrap_or("");
 
         // Skip non-site configs
-        if !filename.ends_with(".conf") || filename == "dockpanel.dev.conf" {
+        if !filename.ends_with(".conf")
+            || filename == "dockpanel.dev.conf"
+            || filename == super::default_vhost::DEFAULT_VHOST_FILE
+        {
             continue;
         }
         let domain = filename.trim_end_matches(".conf");

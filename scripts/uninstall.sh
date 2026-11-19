@@ -81,6 +81,7 @@ done
 echo -e "${GREEN}[+]${NC} Removing nginx config..."
 rm -f /etc/nginx/sites-enabled/dockpanel-panel.conf
 rm -f /etc/nginx/conf.d/dockpanel-panel.conf
+rm -f /etc/nginx/conf.d/dockpanel-default-vhost.conf
 nginx -t > /dev/null 2>&1 && (nginx -s reload 2>/dev/null || systemctl reload nginx 2>/dev/null) || true
 
 # Remove CLI binary

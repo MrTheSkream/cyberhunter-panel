@@ -43,6 +43,13 @@ PANEL_SELF_SIGNED=0
 PANEL_SSL_OK=0
 # Which firewall this box is enforcing with: firewalld | ufw | none.
 # Resolved by detect_firewall in main().
+# FW_STATE, FW_NOTE and FW_MANUAL carry the verified outcome to print_summary.
+FW_STATE="inactive"
+FW_NOTE=""
+FW_MANUAL=""
+# Set by main() before anything is written: a re-run must not switch a firewall
+# on under a server that is already live.
+PANEL_ALREADY_INSTALLED=0
 FW_MGR="none"
 
 # ── Resolve repo root ───────────────────────────────────────────────────
@@ -345,7 +352,9 @@ pkg_update() {
 # ── Firewall ─────────────────────────────────────────────────────────────
 # Sibling of detect_pkg_manager: find the firewall the box is ALREADY
 # enforcing with, so we configure that one instead of installing a second.
-# Debian/Ubuntu images normally ship neither -> we install UFW. RHEL-family
+# Debian images normally ship neither -> we install UFW. Ubuntu ships UFW
+# installed but INACTIVE, so finding the binary says nothing about whether it
+# is enforcing (see configure_ufw). RHEL-family
 # images ship firewalld running -> we use it. Never both (see the s265 note
 # in install_recommended_services).
 detect_firewall() {
@@ -376,6 +385,108 @@ fw_reload() {
     case "$FW_MGR" in
         firewalld) firewall-cmd --reload > /dev/null 2>&1 || true ;;
     esac
+}
+
+# Every port sshd may be answering on, one per line. A union on purpose, because
+# each source can be blind: `sshd -T` fails on Ubuntu 24.04 while socket activation
+# has not created /run/sshd yet, sudo strips SSH_CONNECTION, and ssh.socket can
+# listen somewhere sshd_config does not say.
+detect_ssh_ports() {
+    local port_field='{ for (i = 1; i <= NF; i++) if ($i ~ /:[0-9]+$/) { n = split($i, a, ":"); print a[n]; break } }'
+    {
+        { command -v sshd > /dev/null 2>&1 && sshd -T 2>/dev/null || /usr/sbin/sshd -T 2>/dev/null; } \
+            | awk 'tolower($1) == "port" { print $2 }'
+        grep -hiE '^[[:space:]]*Port[[:space:]]+[0-9]+' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null \
+            | awk '{ print $2 }'
+        [ -n "${SSH_CONNECTION:-}" ] && echo "$SSH_CONNECTION" | awk '{ print $4 }'
+        ss -Htnp state established 2>/dev/null | grep -E '"sshd(-session)?"' | awk "$port_field"
+        ss -Hltnp 2>/dev/null | grep -E '"sshd"' | awk "$port_field"
+        systemctl show ssh.socket -p Listen --value 2>/dev/null | grep -oE '[0-9]+ \(Stream\)' | awk '{ print $1 }'
+    } | awk '$1 ~ /^[0-9]+$/ && $1 >= 1 && $1 <= 65535' | sort -un
+}
+
+# Turn UFW on for a new install, or say exactly why it stayed off. FW_STATE is only
+# ever "active" after `ufw status` confirmed it. Never fails the install.
+# (grep without -q: under pipefail, -q closing the pipe early can read as a failure.)
+#
+# Docker is left alone: no reset and no rule file is edited, so its own chains and
+# published ports keep working. Those ports are not filtered by UFW.
+configure_ufw() {
+    local web_ports="80/tcp 443/tcp" ssh_ports p allowed=""
+    if [ -n "$PANEL_PORT" ] && [ "$PANEL_PORT" != "80" ] && [ "$PANEL_PORT" != "443" ]; then
+        web_ports="$web_ports ${PANEL_PORT}/tcp"
+    fi
+    FW_MANUAL="ufw allow <ssh-port>/tcp"
+    for p in $web_ports; do FW_MANUAL="$FW_MANUAL && ufw allow $p"; done
+    FW_MANUAL="$FW_MANUAL && ufw enable"
+    FW_STATE="inactive"
+
+    # Already enforcing: the administrator's rules stay, only the panel's are added.
+    if ufw status 2>/dev/null | grep '^Status: active' > /dev/null; then
+        FW_STATE="active"
+        FW_NOTE="UFW active (existing rules kept)"
+        svc_ok "UFW"
+        for p in $web_ports; do
+            fw_allow "$p" || { FW_NOTE="UFW active, but $p could not be allowed"; warn "$FW_NOTE"; }
+        done
+        return 0
+    fi
+
+    if [ "$PANEL_ALREADY_INSTALLED" = "1" ]; then
+        FW_NOTE="UFW is inactive and was left as found on this existing install"
+        log "$FW_NOTE"
+        return 0
+    fi
+
+    # UFW evaluates rules in order, so an allow added now would land behind these.
+    if ufw show added 2>/dev/null | grep -E '^ufw (route )?(deny|reject)' > /dev/null; then
+        FW_NOTE="UFW was not enabled: it already holds deny rules that need review"
+        warn "$FW_NOTE"
+        return 0
+    fi
+
+    ssh_ports=$(detect_ssh_ports)
+    if [ -z "$ssh_ports" ]; then
+        FW_NOTE="UFW was not enabled: the SSH port could not be detected"
+        warn "$FW_NOTE"
+        return 0
+    fi
+    FW_MANUAL="${FW_MANUAL/<ssh-port>/$(echo "$ssh_ports" | head -1)}"
+
+    for p in $ssh_ports; do
+        if ! fw_allow "${p}/tcp"; then
+            FW_NOTE="UFW was not enabled: the SSH port $p could not be allowed"
+            warn "$FW_NOTE"
+            return 0
+        fi
+        allowed="${allowed:+$allowed, }$p"
+    done
+    for p in $web_ports; do
+        if ! fw_allow "$p"; then
+            FW_NOTE="UFW was not enabled: $p could not be allowed"
+            warn "$FW_NOTE"
+            return 0
+        fi
+        allowed="$allowed, ${p%/tcp}"
+    done
+
+    if ! ufw default deny incoming > /dev/null 2>&1 || ! ufw default allow outgoing > /dev/null 2>&1; then
+        FW_NOTE="UFW was not enabled: its default policies could not be set"
+        warn "$FW_NOTE"
+        return 0
+    fi
+
+    ufw --force enable > /dev/null 2>&1
+    if ufw status 2>/dev/null | grep '^Status: active' > /dev/null; then
+        FW_STATE="active"
+        FW_NOTE="UFW active (allowed: $allowed)"
+        log "$FW_NOTE"
+        svc_ok "UFW"
+    else
+        FW_NOTE="UFW could not be enabled"
+        warn "$FW_NOTE"
+    fi
+    return 0
 }
 
 # ── SELinux ──────────────────────────────────────────────────────────────
@@ -2008,29 +2119,29 @@ install_recommended_services() {
         firewalld)
             log "Firewall: firewalld is already active - using it (not installing UFW)"
             svc_ok "firewalld"
+            FW_STATE="active"
+            FW_NOTE="firewalld active"
             ;;
         ufw)
-            log "UFW already installed"
-            svc_ok "UFW"
+            configure_ufw
             ;;
         none)
             if run "Installing UFW firewall" pkg_install ufw; then
-                ufw default deny incoming > /dev/null 2>&1
-                ufw default allow outgoing > /dev/null 2>&1
-                ufw allow 22/tcp > /dev/null 2>&1
-                ufw --force enable > /dev/null 2>&1
                 FW_MGR="ufw"
-                log "UFW installed and enabled"
-                svc_ok "UFW"
+                configure_ufw
             else
                 warn "UFW failed to install - no firewall is active"
+                FW_NOTE="UFW failed to install"
                 svc_fail "UFW"
             fi
             ;;
     esac
 
     # Ensure panel ports are open in whichever firewall is actually enforcing.
-    if fw_allow 80/tcp && fw_allow 443/tcp; then
+    # configure_ufw already decided this for UFW, including leaving it untouched.
+    if [ "$FW_MGR" = "ufw" ]; then
+        :
+    elif fw_allow 80/tcp && fw_allow 443/tcp; then
         local opened="80, 443"
         if [ -n "$PANEL_PORT" ] && [ "$PANEL_PORT" != "80" ] && [ "$PANEL_PORT" != "443" ]; then
             fw_allow "${PANEL_PORT}/tcp" && opened="$opened, $PANEL_PORT"
@@ -2237,6 +2348,20 @@ print_summary() {
         echo -e "    ${DIM}Retry from the panel: Settings → Services · details: ${INSTALL_LOG}${NC}"
     fi
     echo ""
+    # The state configure_ufw verified, never the mere presence of a binary.
+    if [ "$FW_STATE" = "active" ]; then
+        echo -e "  ${BOLD}Firewall:${NC}       ${FW_NOTE}"
+        if [ "$FW_MGR" = "ufw" ]; then
+            echo -e "    ${DIM}Ports published by Docker containers are not filtered by UFW.${NC}"
+        fi
+    else
+        echo -e "  ${YELLOW}${BOLD}⚠ Firewall not active:${NC} ${FW_NOTE:-no firewall is enforcing on this server}"
+        echo -e "    ${DIM}The panel port is reachable from every network this server is on.${NC}"
+        if [ -n "$FW_MANUAL" ]; then
+            echo -e "    To enable it:   ${FW_MANUAL}"
+        fi
+    fi
+    echo ""
     echo -e "  ${BOLD}Optional (install from panel):${NC}"
     echo -e "    Mail server:    Settings → Services or Mail page → Install"
     echo -e "    Webmail:        Apps → Deploy → Roundcube"
@@ -2333,6 +2458,9 @@ main() {
 
     detect_pkg_manager
     detect_firewall
+    if [ -f "$CONFIG_DIR/api.env" ]; then
+        PANEL_ALREADY_INSTALLED=1
+    fi
 
     # Auto-detect: if no source available, use release binaries
     if [ "$INSTALL_FROM_RELEASE" != "1" ] && [ ! -d "$AGENT_SRC/src" ]; then
@@ -2447,6 +2575,11 @@ main() {
 
     install_recommended_services
     provision_panel_ssl
+    # certbot has just given the panel its :443 listeners, after the agent started.
+    # The agent derives the default vhost from the live listeners when it starts.
+    if [ "$PANEL_SSL_OK" = "1" ]; then
+        systemctl restart dockpanel-agent 2>/dev/null || warn "Could not restart the agent - the default vhost will follow at its next start"
+    fi
     wait_for_health
     setup_db_backup
     set -e

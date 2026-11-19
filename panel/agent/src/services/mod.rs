@@ -12,6 +12,7 @@ pub mod crontab;
 pub mod cpu_sampler;
 pub mod database;
 pub mod database_backup;
+pub mod default_vhost;
 pub mod deploy;
 pub mod diagnostics;
 pub mod docker_apps;

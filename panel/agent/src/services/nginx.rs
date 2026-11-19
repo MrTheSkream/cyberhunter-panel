@@ -1455,7 +1455,12 @@ pub async fn test_config() -> Result<CmdOutput, std::io::Error> {
 }
 
 /// Reload nginx gracefully.
+///
+/// Every vhost write, delete, rename and disable ends here, so this is where a
+/// site's new listen address gets its catch-all before nginx serves it.
 pub async fn reload() -> Result<(), String> {
+    super::default_vhost::sync().await;
+
     let output = tokio::time::timeout(
         std::time::Duration::from_secs(30),
         safe_command("nginx").args(["-s", "reload"]).output(),

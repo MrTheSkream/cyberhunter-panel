@@ -106,6 +106,10 @@ async fn main() {
     // `access_log off;` get static files logged too. Idempotent, one reload.
     services::nginx::reconcile_static_access_logs().await;
 
+    // An unknown host name must not receive the first site's certificate or
+    // content. Run at every start, which is how setup.sh and update.sh deliver it.
+    services::default_vhost::reconcile().await;
+
     // Load auth token: prefer AGENT_TOKEN env var, then file, then generate new
     let token_path = format!("{CONFIG_DIR}/agent.token");
     let token = if let Ok(env_token) = std::env::var("AGENT_TOKEN") {
