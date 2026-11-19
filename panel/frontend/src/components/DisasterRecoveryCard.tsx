@@ -92,8 +92,326 @@ interface IssuedKey {
   rotated: boolean;
 }
 
+type DrRestorePhase = "downloading" | "verifying" | "decrypting" | "starting" | "handed_off" | "failed";
+
+interface DrRestoreProgress {
+  archive: string;
+  snapshot_id: string;
+  phase: DrRestorePhase;
+  started_at: string;
+  updated_at: string;
+  error: string | null;
+}
+
+interface DrLastRestore {
+  snapshot_id: string;
+  ok: boolean;
+  stage: string;
+  detail: string;
+  finished_at: string;
+  mode?: string;
+}
+
+interface DrVhostSite {
+  domain: string;
+  status: "rebuilt" | "failed" | "skipped";
+  remapped_from: string | null;
+  detail: string | null;
+}
+
+interface DrVhostRebuild {
+  started_at: string;
+  finished_at: string;
+  ok: boolean;
+  sites: DrVhostSite[];
+  remapped: number;
+  rebuilt: number;
+  failed: number;
+  nginx_test: { ok: boolean; output: string } | null;
+  reload: { ok: boolean; detail: string } | null;
+  key_paths: { destination: string; from: string; to: string }[];
+  errors: string[];
+}
+
+interface DrRehydrateItem {
+  kind: "site" | "database";
+  name: string;
+  filename: string | null;
+  destination: string | null;
+  status: "restored" | "failed" | "skipped";
+  detail: string;
+}
+
+interface DrRehydrate {
+  started_at: string;
+  finished_at: string | null;
+  items: DrRehydrateItem[];
+  restored: number;
+  failed: number;
+  skipped: number;
+}
+
+interface DrRestoreStatus {
+  progress: DrRestoreProgress | null;
+  last_restore: DrLastRestore | null;
+  vhost_rebuild_pending: boolean;
+  vhost_rebuild: DrVhostRebuild | null;
+  rehydrate_running: boolean;
+  rehydrate: DrRehydrate | null;
+}
+
+interface DrRestoreStarted {
+  started: boolean;
+  snapshot_id: string;
+  archive: string;
+}
+
+/** A remote restore being followed. `baseline` is the last_restore.finished_at
+ *  seen when following started: a different value means a newer verdict. */
+interface RestoreTrack {
+  startedAt: number;
+  baseline: string | null;
+  archive: string | null;
+}
+
+type RestoreFetch = { kind: "ok"; data: DrRestoreStatus } | { kind: "auth" } | { kind: "down" };
+
+const PHASE_LABELS: Record<DrRestorePhase, string> = {
+  downloading: "Downloading",
+  verifying: "Verifying checksum",
+  decrypting: "Decrypting",
+  starting: "Starting the restore",
+  handed_off: "Handed off: the panel is restarting",
+  failed: "Failed",
+};
+
 const DEFAULT_SCHEDULE = "30 3 * * *";
 const POLL_MS = 5000;
+const RESTORE_POLL_MS = 3000;
+const RESTORE_TRACK_MAX_MS = 20 * 60 * 1000;
+
+const BADGE = "px-1.5 py-0.5 rounded text-[10px] font-medium border whitespace-nowrap";
+const BADGE_OK = "bg-rust-500/10 text-rust-400 border-rust-500/20";
+const BADGE_BAD = "bg-danger-500/10 text-danger-400 border-danger-500/20";
+const BADGE_MUTED = "bg-dark-700 text-dark-400 border-dark-600";
+const SMALL_BTN =
+  "px-2 py-1 bg-dark-700 hover:bg-dark-600 text-dark-300 border border-dark-600 rounded text-xs whitespace-nowrap disabled:opacity-50";
+
+function itemBadge(status: string): string {
+  if (status === "rebuilt" || status === "restored") return BADGE_OK;
+  if (status === "failed") return BADGE_BAD;
+  return BADGE_MUTED;
+}
+
+/** The remote restore report: progress, last verdict, vhost rebuild, rehydrate. */
+function RemoteRestoreReport({
+  data,
+  following,
+  unreachable,
+  timedOut,
+}: {
+  data: DrRestoreStatus | null;
+  following: boolean;
+  unreachable: boolean;
+  timedOut: boolean;
+}) {
+  if (!data) return null;
+  const { progress, last_restore: last, vhost_rebuild: vr, rehydrate: rh } = data;
+  return (
+    <div className="space-y-3">
+      {following && unreachable && (
+        <div className="px-3 py-2 rounded-lg text-xs border bg-warn-500/10 text-warn-400 border-warn-500/20">
+          The panel is restarting. This page keeps checking.
+        </div>
+      )}
+      {timedOut && (
+        <div className="px-3 py-2 rounded-lg text-xs border bg-warn-500/10 text-warn-400 border-warn-500/20">
+          Stopped checking after 20 minutes. Reload the page to check again.
+        </div>
+      )}
+
+      {progress && (
+        <div className="bg-dark-900 border border-dark-700 rounded-lg px-3 py-2 text-xs">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+            <span className="text-dark-400">
+              Restore progress:{" "}
+              <span className={`font-medium ${progress.phase === "failed" ? "text-danger-400" : "text-dark-100"}`}>
+                {PHASE_LABELS[progress.phase] ?? progress.phase}
+              </span>
+            </span>
+            <span className="text-dark-400">
+              Archive: <span className="font-mono text-dark-200 break-all">{progress.archive}</span>
+            </span>
+            <span className="text-dark-400">
+              Started: <span className="text-dark-200">{formatDate(progress.started_at)}</span>
+            </span>
+            <span className="text-dark-400">
+              Updated: <span className="text-dark-200">{formatDate(progress.updated_at)}</span>
+            </span>
+          </div>
+          {progress.error && <div className="mt-1 text-danger-400 break-words">{progress.error}</div>}
+        </div>
+      )}
+
+      {last && (
+        <div
+          className={`px-3 py-2 rounded-lg text-xs border ${
+            last.ok ? "bg-rust-500/10 text-rust-400 border-rust-500/20" : BADGE_BAD
+          }`}
+        >
+          <div className="font-medium">
+            {last.ok ? "Last restore succeeded" : "Last restore needs attention"}
+            <span className="font-normal text-dark-400"> ({formatDate(last.finished_at)})</span>
+          </div>
+          {!last.ok && (
+            <div className="mt-1 break-words">
+              <span className="font-mono">{last.stage}</span>
+              {last.detail ? `: ${last.detail}` : ""}
+            </div>
+          )}
+          {last.ok && last.detail && <div className="mt-1 text-dark-300 break-words">{last.detail}</div>}
+        </div>
+      )}
+
+      {data.vhost_rebuild_pending ? (
+        <div className="text-xs text-dark-300">Rebuilding site configurations...</div>
+      ) : (
+        vr && (
+          <div className="bg-dark-900 border border-dark-700 rounded-lg px-3 py-2 text-xs">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mb-2">
+              <span className="text-dark-200 font-medium">Site configurations</span>
+              <span className={`${BADGE} ${vr.ok ? BADGE_OK : BADGE_BAD}`}>{vr.ok ? "OK" : "Needs attention"}</span>
+              <span className="text-dark-400">
+                Rebuilt <span className="text-dark-200">{vr.rebuilt}</span>
+              </span>
+              <span className="text-dark-400">
+                Failed <span className="text-dark-200">{vr.failed}</span>
+              </span>
+              <span className="text-dark-400">
+                Moved to the primary IP <span className="text-dark-200">{vr.remapped}</span>
+              </span>
+              <span className="text-dark-400">Finished {formatDate(vr.finished_at)}</span>
+            </div>
+            {vr.sites.length > 0 && (
+              <div className="overflow-x-auto mb-2">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="text-left text-dark-400 border-b border-dark-700">
+                      <th className="px-2 py-1.5 font-normal">Domain</th>
+                      <th className="px-2 py-1.5 font-normal">Status</th>
+                      <th className="px-2 py-1.5 font-normal">Detail</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {vr.sites.map(site => (
+                      <tr key={site.domain} className="border-b border-dark-700/50">
+                        <td className="px-2 py-1.5 font-mono text-dark-200 break-all">{site.domain}</td>
+                        <td className="px-2 py-1.5">
+                          <span className={`${BADGE} ${itemBadge(site.status)}`}>{site.status}</span>
+                        </td>
+                        <td className="px-2 py-1.5 text-dark-300 break-words">
+                          {site.remapped_from && <div>Moved to the primary IP (was {site.remapped_from})</div>}
+                          {site.detail && <div>{site.detail}</div>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {vr.nginx_test && (
+              <div className={vr.nginx_test.ok ? "text-dark-300" : "text-danger-400"}>
+                nginx test: {vr.nginx_test.ok ? "passed" : "failed"}
+                {!vr.nginx_test.ok && vr.nginx_test.output && (
+                  <pre className="mt-1 whitespace-pre-wrap break-all font-mono text-[11px]">{vr.nginx_test.output}</pre>
+                )}
+              </div>
+            )}
+            {vr.reload && (
+              <div className={vr.reload.ok ? "text-dark-300" : "text-danger-400"}>
+                nginx reload: {vr.reload.ok ? "done" : "failed"}
+                {vr.reload.detail ? ` (${vr.reload.detail})` : ""}
+              </div>
+            )}
+            {vr.key_paths.length > 0 && (
+              <div className="mt-2 text-dark-400">
+                Backup destination key paths rewritten:
+                <ul className="mt-1 space-y-0.5">
+                  {vr.key_paths.map((k, i) => (
+                    <li key={`${k.destination}-${i}`} className="break-all">
+                      {k.destination}: <span className="font-mono text-dark-300">{k.from}</span> to{" "}
+                      <span className="font-mono text-dark-200">{k.to}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {vr.errors.length > 0 && (
+              <ul className="mt-2 space-y-0.5 text-danger-400">
+                {vr.errors.map((err, i) => (
+                  <li key={i} className="break-words">{err}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )
+      )}
+
+      {data.rehydrate_running && (
+        <div className="text-xs text-dark-300">Restoring sites and databases from remote backups...</div>
+      )}
+      {rh && (
+        <div className="bg-dark-900 border border-dark-700 rounded-lg px-3 py-2 text-xs">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mb-2">
+            <span className="text-dark-200 font-medium">Sites and databases</span>
+            <span className="text-dark-400">
+              Restored <span className="text-dark-200">{rh.restored}</span>
+            </span>
+            <span className="text-dark-400">
+              Failed <span className="text-dark-200">{rh.failed}</span>
+            </span>
+            <span className="text-dark-400">
+              Skipped <span className="text-dark-200">{rh.skipped}</span>
+            </span>
+            <span className="text-dark-400">
+              {rh.finished_at ? `Finished ${formatDate(rh.finished_at)}` : `Started ${formatDate(rh.started_at)}`}
+            </span>
+          </div>
+          {rh.items.length > 0 && (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-left text-dark-400 border-b border-dark-700">
+                    <th className="px-2 py-1.5 font-normal">Kind</th>
+                    <th className="px-2 py-1.5 font-normal">Name</th>
+                    <th className="px-2 py-1.5 font-normal">File</th>
+                    <th className="px-2 py-1.5 font-normal">Destination</th>
+                    <th className="px-2 py-1.5 font-normal">Status</th>
+                    <th className="px-2 py-1.5 font-normal">Detail</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rh.items.map((it, i) => (
+                    <tr key={`${it.kind}-${it.name}-${i}`} className="border-b border-dark-700/50">
+                      <td className="px-2 py-1.5 text-dark-300">{it.kind}</td>
+                      <td className="px-2 py-1.5 font-mono text-dark-200 break-all">{it.name}</td>
+                      <td className="px-2 py-1.5 font-mono text-dark-400 break-all">{it.filename || "-"}</td>
+                      <td className="px-2 py-1.5 text-dark-300">{it.destination || "-"}</td>
+                      <td className="px-2 py-1.5">
+                        <span className={`${BADGE} ${itemBadge(it.status)}`}>{it.status}</span>
+                      </td>
+                      <td className="px-2 py-1.5 text-dark-300 break-words">{it.detail}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 const ANCHOR = "#disaster-recovery";
 
 function shortFingerprint(fp: string, n = 16): string {
@@ -132,6 +450,26 @@ export default function DisasterRecoveryCard() {
   const [issued, setIssued] = useState<IssuedKey | null>(null);
   const [stored, setStored] = useState(false);
   const [copied, setCopied] = useState(false);
+
+  const [idCopied, setIdCopied] = useState(false);
+
+  // Remote restore (steps 2.5 and 2.6).
+  const [restore, setRestore] = useState<DrRestoreStatus | null>(null);
+  const [restoreUnreachable, setRestoreUnreachable] = useState(false);
+  const [restoreTrack, setRestoreTrack] = useState<RestoreTrack | null>(null);
+  const [restoreTimedOut, setRestoreTimedOut] = useState(false);
+  const [rehydrateTrack, setRehydrateTrack] = useState(false);
+  const [rehydrateConfirm, setRehydrateConfirm] = useState(false);
+  const [rehydrateStarting, setRehydrateStarting] = useState(false);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+
+  // Restore dialog. The pasted recovery identity lives only here, and is
+  // cleared on close and right after it is sent.
+  const [restoreTarget, setRestoreTarget] = useState<DrRemoteSnapshot | null>(null);
+  const [recoveryIdentity, setRecoveryIdentity] = useState("");
+  const [restoreAck, setRestoreAck] = useState(false);
+  const [restoreSubmitting, setRestoreSubmitting] = useState(false);
+  const [restoreError, setRestoreError] = useState("");
 
   const scrolledRef = useRef(false);
 
@@ -177,6 +515,99 @@ export default function DisasterRecoveryCard() {
     const id = window.setInterval(() => void load(), POLL_MS);
     return () => window.clearInterval(id);
   }, [polling, load]);
+
+  // GET /api/dr/restore. Only a 401 ends a follow: the panel stops while a
+  // restore runs, so network errors, 502/503 and other API errors mean "the
+  // panel is restarting", not "give up".
+  const fetchRestore = useCallback(async (): Promise<RestoreFetch> => {
+    try {
+      const data = await api.get<DrRestoreStatus>("/dr/restore");
+      setRestore(data);
+      setRestoreUnreachable(false);
+      return { kind: "ok", data };
+    } catch (e: unknown) {
+      if (e instanceof ApiError && e.status === 401) return { kind: "auth" };
+      setRestoreUnreachable(true);
+      return { kind: "down" };
+    }
+  }, []);
+
+  // On mount: pick up a restore or rehydrate already in flight.
+  useEffect(() => {
+    void (async () => {
+      const res = await fetchRestore();
+      if (res.kind !== "ok") return;
+      const d = res.data;
+      const p = d.progress;
+      const last = d.last_restore;
+      const verdictIsNewer =
+        !!p && !!last && new Date(last.finished_at).getTime() >= new Date(p.started_at).getTime();
+      if ((p && p.phase !== "failed" && !verdictIsNewer) || d.vhost_rebuild_pending) {
+        setRestoreTrack({
+          startedAt: Date.now(),
+          // A verdict newer than the progress is already this restore's: only
+          // the vhost rebuild remains to wait for.
+          baseline: verdictIsNewer ? null : last?.finished_at ?? null,
+          archive: null,
+        });
+      }
+      if (d.rehydrate_running) setRehydrateTrack(true);
+    })();
+  }, [fetchRestore]);
+
+  // Follow a remote restore every 3 s, for at most 20 minutes.
+  useEffect(() => {
+    if (!restoreTrack) return;
+    let cancelled = false;
+    const tick = async () => {
+      if (Date.now() - restoreTrack.startedAt > RESTORE_TRACK_MAX_MS) {
+        setRestoreTrack(null);
+        setRestoreTimedOut(true);
+        return;
+      }
+      const res = await fetchRestore();
+      if (cancelled) return;
+      if (res.kind === "auth") {
+        setRestoreTrack(null);
+        return;
+      }
+      if (res.kind !== "ok") return;
+      const d = res.data;
+      const done =
+        !!d.last_restore && d.last_restore.finished_at !== restoreTrack.baseline && !d.vhost_rebuild_pending;
+      const failed =
+        d.progress?.phase === "failed" &&
+        (restoreTrack.archive === null || d.progress.archive === restoreTrack.archive);
+      if (done || failed) {
+        setRestoreTrack(null);
+        void load();
+      }
+    };
+    void tick();
+    const id = window.setInterval(() => void tick(), RESTORE_POLL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [restoreTrack, fetchRestore, load]);
+
+  // Follow a rehydrate every 3 s while it runs.
+  useEffect(() => {
+    if (!rehydrateTrack) return;
+    let cancelled = false;
+    const tick = async () => {
+      const res = await fetchRestore();
+      if (cancelled) return;
+      if (res.kind === "auth" || (res.kind === "ok" && !res.data.rehydrate_running)) {
+        setRehydrateTrack(false);
+      }
+    };
+    const id = window.setInterval(() => void tick(), RESTORE_POLL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [rehydrateTrack, fetchRestore]);
 
   // Deep link from the Backup Orchestrator: scroll once the card has content.
   useEffect(() => {
@@ -288,6 +719,104 @@ export default function DisasterRecoveryCard() {
     }
   };
 
+  const copyInstallId = async () => {
+    if (!status?.install_id) return;
+    try {
+      await navigator.clipboard.writeText(status.install_id);
+      setIdCopied(true);
+      setTimeout(() => setIdCopied(false), 2000);
+    } catch {
+      flash("Could not copy to the clipboard. Select the Install ID instead.", "error");
+    }
+  };
+
+  const downloadRemote = async (r: DrRemoteSnapshot) => {
+    setDownloadingId(r.id);
+    try {
+      const res = await fetch(`/api/dr/remote-snapshots/${encodeURIComponent(r.id)}/download`, {
+        credentials: "same-origin",
+        headers: { "X-Requested-With": "DockPanel" },
+      });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(data.error || `Download failed (${res.status})`);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = r.filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+    } catch (e: unknown) {
+      flash(e instanceof Error ? e.message : "Could not download the archive", "error");
+    } finally {
+      setDownloadingId(null);
+    }
+  };
+
+  const openRestore = (r: DrRemoteSnapshot) => {
+    setRecoveryIdentity("");
+    setRestoreAck(false);
+    setRestoreError("");
+    setRestoreTarget(r);
+  };
+
+  const closeRestore = () => {
+    if (restoreSubmitting) return;
+    setRecoveryIdentity("");
+    setRestoreAck(false);
+    setRestoreError("");
+    setRestoreTarget(null);
+  };
+
+  const submitRestore = async () => {
+    if (!restoreTarget || !restoreAck || !recoveryIdentity.trim()) return;
+    const identity = recoveryIdentity;
+    // Cleared as soon as it is sent, whatever the outcome.
+    setRecoveryIdentity("");
+    setRestoreSubmitting(true);
+    setRestoreError("");
+    const baseline = restore?.last_restore?.finished_at ?? null;
+    try {
+      const data = await api.post<DrRestoreStarted>(
+        `/dr/remote-snapshots/${encodeURIComponent(restoreTarget.id)}/restore`,
+        { identity },
+      );
+      setRestoreAck(false);
+      setRestoreTarget(null);
+      setRestoreTimedOut(false);
+      setRestoreTrack({ startedAt: Date.now(), baseline, archive: data.archive || null });
+      flash("Restore started. The panel stops and restarts during the restore.", "success");
+    } catch (e: unknown) {
+      setRestoreError(
+        e instanceof Error ? `${e.message} Paste the recovery key again to retry.` : "Could not start the restore",
+      );
+    } finally {
+      setRestoreSubmitting(false);
+    }
+  };
+
+  const startRehydrate = async () => {
+    setRehydrateConfirm(false);
+    setRehydrateStarting(true);
+    try {
+      await api.post("/dr/rehydrate", {});
+      flash("Restore of sites and databases started.", "success");
+      setRehydrateTrack(true);
+      void fetchRestore();
+    } catch (e: unknown) {
+      if (e instanceof ApiError && e.status === 409) setRehydrateTrack(true);
+      flash(e instanceof Error ? e.message : "Could not start the restore of sites and databases", "error");
+    } finally {
+      setRehydrateStarting(false);
+    }
+  };
+
+  const cancelRehydrate = useCallback(() => setRehydrateConfirm(false), []);
+
   if (forbidden) return null;
 
   if (!status) {
@@ -303,6 +832,8 @@ export default function DisasterRecoveryCard() {
 
   const s = status.settings;
   const running = status.running || awaitingRun;
+  const rehydrateBusy = rehydrateTrack || !!restore?.rehydrate_running;
+  const restoreBusy = !!restoreTrack || rehydrateBusy;
   const lastRunTime = s.last_run_at ? new Date(s.last_run_at).getTime() : null;
   const lastRunHasCopy =
     lastRunTime !== null &&
@@ -437,6 +968,21 @@ export default function DisasterRecoveryCard() {
           </div>
         )}
       </div>
+      {/* Install ID */}
+      {status.install_id && (
+        <div className="bg-dark-900 border border-dark-700 rounded-lg px-3 py-2 mb-3 text-xs">
+          <div className="text-dark-400 mb-1">Install ID</div>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="font-mono text-dark-100 break-all select-all">{status.install_id}</span>
+            <button onClick={() => void copyInstallId()} className={SMALL_BTN}>
+              {idCopied ? "Copied" : "Copy"}
+            </button>
+          </div>
+          <div className="text-dark-400 mt-1">
+            Write it down with your recovery key: restoring on a new server asks for it.
+          </div>
+        </div>
+      )}
       {rotateConfirm && (
         <ConfirmDialog
           label={
@@ -551,6 +1097,7 @@ export default function DisasterRecoveryCard() {
                 <th className="px-2 py-1.5 font-normal">Date</th>
                 <th className="px-2 py-1.5 font-normal">Key</th>
                 <th className="px-2 py-1.5 font-normal">Status</th>
+                <th className="px-2 py-1.5 font-normal" />
               </tr>
             </thead>
             <tbody>
@@ -560,6 +1107,7 @@ export default function DisasterRecoveryCard() {
                   : r.status === "failed"
                   ? { label: "Upload failed", cls: "bg-danger-500/10 text-danger-400 border-danger-500/20" }
                   : { label: "Uploaded", cls: "bg-rust-500/10 text-rust-400 border-rust-500/20" };
+                const restorable = r.status === "uploaded" && r.deleted_at === null;
                 return (
                   <tr key={r.id} className="border-b border-dark-700/50">
                     <td className="px-2 py-1.5 font-mono text-dark-200 break-all" title={`sha256 ${r.sha256}`}>
@@ -581,6 +1129,26 @@ export default function DisasterRecoveryCard() {
                         {badge.label}
                       </span>
                     </td>
+                    <td className="px-2 py-1.5">
+                      {restorable && (
+                        <div className="flex flex-wrap justify-end gap-1">
+                          <button
+                            onClick={() => void downloadRemote(r)}
+                            disabled={downloadingId === r.id}
+                            className={SMALL_BTN}
+                          >
+                            {downloadingId === r.id ? "Downloading..." : "Download encrypted archive"}
+                          </button>
+                          <button
+                            onClick={() => openRestore(r)}
+                            disabled={restoreBusy}
+                            className={SMALL_BTN}
+                          >
+                            Restore from remote snapshot
+                          </button>
+                        </div>
+                      )}
+                    </td>
                   </tr>
                 );
               })}
@@ -589,11 +1157,119 @@ export default function DisasterRecoveryCard() {
         </div>
       )}
 
-      {status.install_id && (
-        <div className="text-[10px] text-dark-400 mt-3">
-          Install ID: <span className="font-mono">{status.install_id}</span>
+      {/* Remote restore */}
+      <div className="mt-4 pt-3 border-t border-dark-700">
+        <div className="text-sm text-dark-200 mb-2">Remote restore</div>
+        <RemoteRestoreReport
+          data={restore}
+          following={!!restoreTrack}
+          unreachable={restoreUnreachable}
+          timedOut={restoreTimedOut}
+        />
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+          <span className="text-xs text-dark-400">
+            For every site and database whose latest backup is on a remote destination, download it and restore
+            it. Run this after restoring the panel on a new server.
+          </span>
+          <button
+            onClick={() => setRehydrateConfirm(true)}
+            disabled={rehydrateStarting || rehydrateBusy || !!restoreTrack}
+            className="px-3 py-1.5 bg-dark-700 text-dark-300 hover:bg-dark-600 hover:text-dark-100 border border-dark-500 rounded-lg text-xs transition-colors disabled:opacity-50"
+          >
+            {rehydrateBusy ? "Restoring..." : rehydrateStarting ? "Starting..." : "Restore sites and databases from remote backups"}
+          </button>
         </div>
+      </div>
+      {rehydrateConfirm && (
+        <ConfirmDialog
+          label={
+            "Restore every site and database whose latest backup is on a remote destination?\n" +
+            "Their current files and data are replaced by the backup."
+          }
+          confirmLabel="Restore"
+          tone="warn"
+          onConfirm={() => void startRehydrate()}
+          onCancel={cancelRehydrate}
+        />
       )}
+
+      {/* Restore from a remote snapshot. */}
+      {restoreTarget &&
+        createPortal(
+          <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 dp-modal-overlay">
+            <div
+              role="alertdialog"
+              aria-modal="true"
+              aria-label="Restore from remote snapshot"
+              className="bg-dark-800 rounded-lg shadow-xl p-6 w-full max-w-xl dp-modal"
+            >
+              <h3 className="text-sm font-medium text-dark-100 mb-2">Restore from remote snapshot</h3>
+              <div className="text-xs text-dark-400 mb-3">
+                <div>
+                  File: <span className="font-mono text-dark-200 break-all">{restoreTarget.filename}</span>
+                </div>
+                <div>
+                  Panel version: <span className="font-mono text-dark-200">{restoreTarget.from_version}</span>
+                  {" "}(the installed panel must be the same version)
+                </div>
+                <div>
+                  Key: <span className="font-mono text-dark-200 break-all">{restoreTarget.recipient_fingerprint}</span>
+                </div>
+              </div>
+              <div className="mb-3 px-3 py-2 rounded-lg text-xs border bg-warn-500/10 text-warn-400 border-warn-500/20">
+                The panel database and /etc/dockpanel are replaced by the ones in this snapshot. The panel stops
+                and restarts during the restore, and sessions may be signed out.
+              </div>
+              <label htmlFor="dr-restore-identity" className="block text-xs text-dark-300 mb-1">
+                Paste your recovery key. It is used for this restore only and is never stored.
+              </label>
+              <textarea
+                id="dr-restore-identity"
+                value={recoveryIdentity}
+                onChange={e => setRecoveryIdentity(e.target.value)}
+                rows={4}
+                spellCheck={false}
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="off"
+                disabled={restoreSubmitting}
+                className="w-full bg-dark-900 border border-dark-600 text-dark-100 text-xs rounded-lg px-3 py-2 font-mono mb-3 resize-none"
+              />
+              {restoreError && (
+                <div role="alert" className="mb-3 px-3 py-2 rounded-lg text-xs border break-words bg-danger-500/10 text-danger-400 border-danger-500/20">
+                  {restoreError}
+                </div>
+              )}
+              <label className="flex items-center gap-2 text-xs text-dark-200 mb-4">
+                <input
+                  type="checkbox"
+                  checked={restoreAck}
+                  onChange={e => setRestoreAck(e.target.checked)}
+                  disabled={restoreSubmitting}
+                  className="rounded bg-dark-900 border-dark-600"
+                />
+                I understand that the panel is replaced by this snapshot and restarts
+              </label>
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={closeRestore}
+                  disabled={restoreSubmitting}
+                  className="px-4 py-2 bg-dark-600 text-dark-200 text-xs font-bold uppercase tracking-wider rounded hover:bg-dark-500 transition-colors disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => void submitRestore()}
+                  disabled={restoreSubmitting || !restoreAck || !recoveryIdentity.trim()}
+                  className="px-4 py-2 bg-danger-500 hover:bg-danger-600 text-white text-xs font-bold uppercase tracking-wider rounded transition-colors disabled:opacity-50"
+                >
+                  {restoreSubmitting ? "Starting..." : "Restore"}
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
 
       {/* One-time recovery key display. Deliberately not closable by Escape or
           a backdrop click: the operator must confirm the key is stored. */}
