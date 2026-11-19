@@ -1621,6 +1621,28 @@ async fn run_retention_cleanup(pool: &PgPool) {
         tracing::info!("Retention: deleted {bv_deleted} backup verifications (>{scan_days} days)");
     }
 
+    // Backup policy run history: keep the newest 100 runs of each policy. A
+    // policy on a one-minute schedule writes 1440 rows a day; by count rather
+    // than by age so a rarely-run policy keeps its whole history.
+    match sqlx::query(
+        "DELETE FROM backup_policy_runs WHERE id IN ( \
+            SELECT id FROM ( \
+                SELECT id, ROW_NUMBER() OVER (PARTITION BY policy_id ORDER BY started_at DESC) AS rn \
+                FROM backup_policy_runs \
+            ) ranked WHERE rn > 100 \
+         )"
+    )
+    .execute(pool)
+    .await
+    {
+        Ok(r) => {
+            if r.rows_affected() > 0 {
+                tracing::info!("Retention: deleted {} old backup policy runs (>100 per policy)", r.rows_affected());
+            }
+        }
+        Err(e) => tracing::warn!("Retention cleanup (backup_policy_runs) failed: {e}"),
+    }
+
     // User sessions: 24 hours since last seen (JWT expires after 2h, but clean stale records)
     let sess_deleted = sqlx::query("DELETE FROM user_sessions WHERE last_seen_at < NOW() - INTERVAL '24 hours'")
         .execute(pool).await.ok().map(|r| r.rows_affected()).unwrap_or(0);

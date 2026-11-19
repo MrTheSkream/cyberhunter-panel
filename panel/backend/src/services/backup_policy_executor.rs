@@ -83,6 +83,246 @@ pub fn derive_backup_encryption_key(jwt_secret: &str) -> String {
     derive_backup_encryption_key_for_version(CURRENT_BACKUP_KEY_VERSION, jwt_secret)
 }
 
+// ── Run history: per-target errors ─────────────────────────────────────────
+
+/// One problem met during a policy run, as stored in `backup_policy_runs.errors`
+/// and shown per target in the UI's "Run history".
+///
+/// `kind` names the leg or the step (`site`, `database`, `volume`, `upload`,
+/// `listing`, `owner`, `retention`), `subject` the target it concerns (a domain,
+/// a database name, a container), `message` what went wrong. Messages are built
+/// from agent and database errors only, never from a request body or the
+/// destination payload, and they go through [`clean_message`] before storage.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct RunError {
+    pub kind: &'static str,
+    pub subject: String,
+    pub message: String,
+}
+
+/// Longest message kept per error. A dump's stderr can be pages long, and the
+/// run row is read back in a list.
+const MAX_ERROR_MESSAGE_CHARS: usize = 500;
+
+/// Redact the given secrets from `msg` and cap its length.
+///
+/// The executor holds database passwords and the backup passphrase while it
+/// builds these messages. Nothing it formats is supposed to contain them, but an
+/// agent error that echoes its input would, so they are scrubbed rather than
+/// trusted to be absent.
+pub fn clean_message(msg: &str, secrets: &[&str]) -> String {
+    let mut out = msg.to_string();
+    for s in secrets {
+        // A short secret would turn unrelated text into stars and leak its own
+        // length; anything under 4 characters is not worth redacting by value.
+        if s.len() >= 4 {
+            out = out.replace(s, "[redacted]");
+        }
+    }
+    if out.chars().count() > MAX_ERROR_MESSAGE_CHARS {
+        out = out.chars().take(MAX_ERROR_MESSAGE_CHARS).collect::<String>() + "...";
+    }
+    out
+}
+
+/// The errors of one run, plus the secrets their messages must never carry.
+#[derive(Default)]
+struct RunLog {
+    errors: Vec<RunError>,
+    secrets: Vec<String>,
+}
+
+impl RunLog {
+    fn push(&mut self, kind: &'static str, subject: impl Into<String>, message: impl AsRef<str>) {
+        let secrets: Vec<&str> = self.secrets.iter().map(String::as_str).collect();
+        self.errors.push(RunError {
+            kind,
+            subject: subject.into(),
+            message: clean_message(message.as_ref(), &secrets),
+        });
+    }
+}
+
+/// Final status of a run.
+///
+/// "success" only when nothing at all went wrong: no failed target, no copy left
+/// off the destination, and no recorded error. A run that took every backup but
+/// could not, say, enforce remote retention or list a server's apps is not a
+/// clean success, and showing it green is the silence this history exists to
+/// end. "partial" when at least one backup was taken, "failed" otherwise.
+pub fn compute_run_status(successes: i32, failures: i32, upload_failures: i32, error_count: usize) -> &'static str {
+    if failures == 0 && upload_failures == 0 && error_count == 0 {
+        "success"
+    } else if successes > 0 {
+        "partial"
+    } else {
+        "failed"
+    }
+}
+
+/// The policy's `last_error`: the first error of the run, with a count of the
+/// others. `None` when the run recorded no error.
+pub fn summarize_errors(errors: &[RunError]) -> Option<String> {
+    let first = errors.first()?;
+    let mut s = format!("{} {}: {}", first.kind, first.subject, first.message);
+    if errors.len() > 1 {
+        s.push_str(&format!(" (and {} more)", errors.len() - 1));
+    }
+    Some(s)
+}
+
+// ── Remote retention ────────────────────────────────────────────────────────
+
+/// Agent-side budget for a prune: listing then deleting over SFTP is several
+/// ssh round trips, more than plain `post`'s 60 seconds allows on a slow link.
+pub const PRUNE_TIMEOUT_SECS: u64 = 300;
+
+/// What the agent's `/backups/prune` may delete for one resource: names equal to
+/// `name_prefix` + `[A-Za-z0-9._-]*` + one of `suffixes`.
+///
+/// Uploads land flat in the destination directory under their local file name,
+/// so the prefix is the only thing telling one resource's copies from another's.
+/// It always ends with the `-` the agent puts between the resource name and the
+/// timestamp: site `a` prunes `a-…`, which a backup of site `ab` (`ab-…`) never
+/// matches.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PruneSpec {
+    pub name_prefix: String,
+    pub suffixes: Vec<String>,
+}
+
+/// A site archive is `{domain}-{%Y%m%d-%H%M%S}.tar.gz`
+/// (agent `services/backups.rs`). Site archives are never encrypted.
+pub fn site_prune_spec(domain: &str) -> PruneSpec {
+    PruneSpec {
+        name_prefix: format!("{domain}-"),
+        suffixes: vec![".tar.gz".to_string()],
+    }
+}
+
+/// A database dump is `{db_name}-{%Y%m%d-%H%M%S}.sql.gz` for MySQL/MariaDB and
+/// PostgreSQL, `.archive.gz` for MongoDB (agent `services/database_backup.rs`),
+/// plus `.enc` when the policy encrypts (agent `routes/database_backup.rs`).
+/// Both the plain and the encrypted form are listed, so turning Encrypt on or off
+/// does not leave the copies taken under the other setting outside retention.
+pub fn database_prune_spec(db_name: &str, engine: &str) -> PruneSpec {
+    let base = match engine {
+        "mongo" | "mongodb" => ".archive.gz",
+        _ => ".sql.gz",
+    };
+    PruneSpec {
+        name_prefix: format!("{db_name}-"),
+        suffixes: vec![base.to_string(), format!("{base}.enc")],
+    }
+}
+
+/// Body of `POST /backups/prune`.
+///
+/// `domain` is the field the agent's prune has always taken. It is the domain
+/// for a site and deliberately EMPTY for a database: an agent that predates
+/// `name_prefix` would otherwise prune `{domain}-*.tar.gz`, and a database named
+/// `wp` would take the archives of a site `wp-shop.com`. With an empty domain
+/// such an agent matches nothing, and the missing `deleted` in its answer is
+/// recorded as a retention error.
+pub fn prune_body(destination: &serde_json::Value, domain: &str, spec: &PruneSpec, retention: i32) -> serde_json::Value {
+    serde_json::json!({
+        "destination": destination,
+        "domain": domain,
+        "retention": retention,
+        "name_prefix": spec.name_prefix,
+        "suffixes": spec.suffixes,
+    })
+}
+
+/// Read the agent's prune answer. It must carry an integer `deleted`; anything
+/// else (an agent without SFTP or `name_prefix` support answers `pruned` and a
+/// `message`) means retention was not enforced and is returned as the error.
+pub fn parse_prune_response(resp: &serde_json::Value) -> Result<u64, String> {
+    match resp.get("deleted").and_then(|v| v.as_u64()) {
+        Some(n) => Ok(n),
+        None => {
+            let detail = resp
+                .get("message")
+                .or_else(|| resp.get("error"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("the agent's answer has no 'deleted' count");
+            Err(format!("remote retention not confirmed by the agent: {detail}"))
+        }
+    }
+}
+
+/// Of `names`, the ones whose files would start with `prefix`.
+///
+/// Every resource of a family names its files `{name}-{timestamp}{suffix}`, so a
+/// name is caught by `prefix` when `{name}-` starts with it. The resource being
+/// pruned matches itself; any OTHER match (a second site with the same domain on
+/// another server, a site `a.com-b.org` next to `a.com`, a container named like
+/// the site) means its copies would be counted and deleted with ours.
+pub fn names_sharing_prefix(prefix: &str, names: &[String]) -> Vec<String> {
+    names
+        .iter()
+        .filter(|n| format!("{n}-").starts_with(prefix))
+        .cloned()
+        .collect()
+}
+
+/// `Some(reason)` when a site's prefix also matches another resource's copies.
+///
+/// Fleet-wide on purpose: destinations are shared by every policy and schedule,
+/// so any site or volume archive on any server can sit next to this one. Volume
+/// archives (`{container}-{volume}-{ts}.tar.gz`) share the `.tar.gz` suffix.
+pub async fn site_prune_conflict(db: &PgPool, domain: &str) -> Result<Option<String>, String> {
+    let spec = site_prune_spec(domain);
+    let names: Vec<String> = sqlx::query_scalar(
+        "SELECT domain::text FROM sites WHERE left(domain || '-', length($1)) = $1 \
+         UNION ALL \
+         SELECT DISTINCT container_name::text FROM volume_backups WHERE left(container_name || '-', length($1)) = $1",
+    )
+    .bind(&spec.name_prefix)
+    .fetch_all(db)
+    .await
+    .map_err(|e| format!("could not check which backups share the name prefix: {e}"))?;
+    Ok(conflict_reason(domain, &spec, &names))
+}
+
+/// `Some(reason)` when another database has the same name (they are unique per
+/// owner only): their dumps carry identical names on a shared destination.
+/// Database names allow neither `-` nor `.`, so no other name can extend ours.
+pub async fn database_prune_conflict(db: &PgPool, db_name: &str, engine: &str) -> Result<Option<String>, String> {
+    let spec = database_prune_spec(db_name, engine);
+    let names: Vec<String> = sqlx::query_scalar(
+        "SELECT name::text FROM databases WHERE left(name || '-', length($1)) = $1",
+    )
+    .bind(&spec.name_prefix)
+    .fetch_all(db)
+    .await
+    .map_err(|e| format!("could not check which backups share the name prefix: {e}"))?;
+    Ok(conflict_reason(db_name, &spec, &names))
+}
+
+fn conflict_reason(own: &str, spec: &PruneSpec, names: &[String]) -> Option<String> {
+    let matching = names_sharing_prefix(&spec.name_prefix, names);
+    let mut others: Vec<&str> = matching.iter().map(String::as_str).filter(|n| *n != own).collect();
+    let own_count = matching.iter().filter(|n| n.as_str() == own).count();
+    if others.is_empty() && own_count <= 1 {
+        return None;
+    }
+    others.sort_unstable();
+    others.dedup();
+    let who = if others.is_empty() {
+        format!("another resource also named '{own}'")
+    } else {
+        format!("'{}'", others.join("', '"))
+    };
+    Some(format!(
+        "remote retention skipped: the file name prefix '{}' also matches the backups of {who}, \
+         so pruning could delete them",
+        spec.name_prefix
+    ))
+}
+
+// ── Destination ─────────────────────────────────────────────────────────────
+
 /// A policy's off-site destination, resolved once per run.
 ///
 /// # Why this exists
@@ -113,8 +353,13 @@ struct ResolvedDestination {
     payload: serde_json::Value,
 }
 
-async fn resolve_destination(db: &PgPool, policy: &PolicyRow) -> Option<ResolvedDestination> {
-    let id = policy.destination_id?;
+/// `Ok(None)` when the policy has no destination; `Err` when it names one that
+/// cannot be used (deleted, or unreadable), which leaves the run's backups on
+/// this server and is recorded as an error of the run.
+async fn resolve_destination(db: &PgPool, policy: &PolicyRow) -> Result<Option<ResolvedDestination>, String> {
+    let Some(id) = policy.destination_id else {
+        return Ok(None);
+    };
 
     let row: Result<Option<(String, serde_json::Value)>, _> =
         sqlx::query_as("SELECT dtype, config FROM backup_destinations WHERE id = $1")
@@ -132,43 +377,38 @@ async fn resolve_destination(db: &PgPool, policy: &PolicyRow) -> Option<Resolved
                 "Policy '{}': destination {id} no longer exists - backups will stay on this server",
                 policy.name
             );
-            return None;
+            return Err(format!("destination {id} no longer exists - backups stay on this server"));
         }
         Err(e) => {
             tracing::error!(
                 "Policy '{}': could not read destination {id} ({e}) - backups will stay on this server",
                 policy.name
             );
-            return None;
+            return Err(format!("could not read destination {id} ({e}) - backups stay on this server"));
         }
     };
 
-    Some(ResolvedDestination {
+    Ok(Some(ResolvedDestination {
         id,
         payload: crate::routes::backup_destinations::agent_destination_payload(&dtype, &config),
-    })
+    }))
 }
 
 /// Push one finished backup file off the box.
 ///
-/// Returns `true` only when the bytes actually landed. Mirrors
-/// `backup_scheduler`'s ladder (5s / 15s / 30s) rather than inventing a second
-/// retry policy, so the two paths fail the same way.
+/// `Ok` only when the bytes actually landed; `Err` carries the last attempt's
+/// error. Mirrors `backup_scheduler`'s ladder (5s / 15s / 30s) rather than
+/// inventing a second retry policy, so the two paths fail the same way.
 ///
-/// # Known gap: remote retention covers site backups only
-///
-/// The agent's `/backups/prune` is keyed on a site `domain` and prunes that
-/// domain's remote prefix, so it can enforce retention for site archives and
-/// nothing else. Database and volume copies therefore accumulate at the
-/// destination even though their LOCAL copies are pruned by `auto_healer`.
-/// Stated here rather than left to be discovered from a storage bill; a
-/// resource-agnostic prune is the fix, and it needs an agent-side change.
+/// Remote retention for what this uploads is enforced by
+/// [`enforce_remote_retention`] for site archives and database dumps. Volume
+/// archives are not pruned remotely yet (their naming is being reworked).
 async fn upload_to_destination(
     agent: &AgentHandle,
     dest: &ResolvedDestination,
     filepath: &str,
     label: &str,
-) -> bool {
+) -> Result<(), String> {
     let body = serde_json::json!({ "filepath": filepath, "destination": dest.payload });
 
     let delays = [5u64, 15, 30];
@@ -185,7 +425,7 @@ async fn upload_to_destination(
             .post_long("/backups/upload", Some(body.clone()), 660)
             .await
         {
-            Ok(_) => return true,
+            Ok(_) => return Ok(()),
             Err(e) => {
                 last_err = e.to_string();
                 if attempt < delays.len() - 1 {
@@ -197,7 +437,44 @@ async fn upload_to_destination(
     }
 
     tracing::error!("Upload failed for {label} after {} attempts: {last_err}", delays.len());
-    false
+    Err(format!("upload failed after {} attempts: {last_err}", delays.len()))
+}
+
+/// Ask the agent to keep only the `retention` newest copies of one resource at
+/// the destination. Returns how many were deleted.
+///
+/// Refuses to prune when the prefix also matches another resource's copies (see
+/// [`site_prune_conflict`]): skipping retention is recoverable, deleting someone
+/// else's backups is not.
+async fn enforce_remote_retention(
+    db: &PgPool,
+    agent: &AgentHandle,
+    dest: &ResolvedDestination,
+    target: RetentionTarget<'_>,
+    retention: i32,
+) -> Result<u64, String> {
+    let (spec, domain_field, conflict) = match target {
+        RetentionTarget::Site { domain } => (site_prune_spec(domain), domain, site_prune_conflict(db, domain).await?),
+        RetentionTarget::Database { db_name, engine } => (
+            database_prune_spec(db_name, engine),
+            "",
+            database_prune_conflict(db, db_name, engine).await?,
+        ),
+    };
+    if let Some(reason) = conflict {
+        return Err(reason);
+    }
+    let body = prune_body(&dest.payload, domain_field, &spec, retention);
+    match agent.post_long("/backups/prune", Some(body), PRUNE_TIMEOUT_SECS).await {
+        Ok(resp) => parse_prune_response(&resp),
+        Err(e) => Err(format!("prune request failed: {e}")),
+    }
+}
+
+#[derive(Clone, Copy)]
+enum RetentionTarget<'a> {
+    Site { domain: &'a str },
+    Database { db_name: &'a str, engine: &'a str },
 }
 
 /// Run the backup policy executor loop - checks every 60 seconds for due policies.
@@ -302,13 +579,42 @@ async fn tick(db: &PgPool, agents: &AgentRegistry, jwt_secret: &str) -> Result<(
     Ok(())
 }
 
+/// Open this run's history row. `None` (logged) when it cannot be written: the
+/// backups still run, and the policy's own `last_status`/`last_error` still say
+/// how they went.
+async fn start_run(db: &PgPool, policy: &PolicyRow) -> Option<Uuid> {
+    match sqlx::query_scalar::<_, Uuid>(
+        "INSERT INTO backup_policy_runs (policy_id, status) VALUES ($1, 'running') RETURNING id"
+    )
+    .bind(policy.id)
+    .fetch_one(db)
+    .await
+    {
+        Ok(id) => Some(id),
+        Err(e) => {
+            tracing::error!("Policy '{}': could not open a run history row: {e}", policy.name);
+            None
+        }
+    }
+}
+
 async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow, jwt_secret: &str) {
     let mut successes = 0;
     let mut failures = 0;
+    let mut log = RunLog::default();
+
+    let run_id = start_run(db, policy).await;
 
     // Resolved once, not per file: a policy backing up forty sites must not run
-    // forty identical destination lookups.
-    let destination = resolve_destination(db, policy).await;
+    // forty identical destination lookups. A destination that is named but
+    // unusable leaves every backup of the run local, which the run must say.
+    let destination = match resolve_destination(db, policy).await {
+        Ok(d) => d,
+        Err(e) => {
+            log.push("upload", "destination", e);
+            None
+        }
+    };
 
     // A failed upload counts as a FAILURE (so the policy reports partial/failed
     // and the backup_failure alert fires) but the local file is still recorded.
@@ -330,7 +636,8 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
     // the next scheduled run try again from scratch.
     let mut destination_down = false;
 
-    // Remote retention is reported once per run, not once per resource.
+    // Remote retention trouble reaches system_log once per run, not once per
+    // resource; each occurrence is still a run error of its own.
     let mut remote_prune_warned = false;
 
     // Get encryption key if encrypt is enabled. Use the shared derivation (single source of
@@ -342,6 +649,9 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
     } else {
         None
     };
+    if let Some(k) = &encryption_key {
+        log.secrets.push(k.clone());
+    }
 
     // The key reaches the database dump and nothing else - the agent has no
     // encryption path for a site or volume archive, so there is nowhere to send
@@ -361,11 +671,22 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
     if policy.backup_sites {
         // `server_id` rides along: a site is archived on the host that holds its
         // files. NOT NULL, so there is no ambiguous case to default.
-        let sites: Vec<(Uuid, String, Uuid)> = sqlx::query_as(
+        //
+        // A failed query used to read as "this owner has no sites" and the run
+        // went green over nothing.
+        let sites: Vec<(Uuid, String, Uuid)> = match sqlx::query_as(
             "SELECT id, domain, server_id FROM sites WHERE user_id = $1"
         )
         .bind(policy.user_id)
-        .fetch_all(db).await.unwrap_or_default();
+        .fetch_all(db).await {
+            Ok(rows) => rows,
+            Err(e) => {
+                tracing::error!("Policy '{}': could not list sites: {e}", policy.name);
+                failures += 1;
+                log.push("listing", "sites", format!("could not list sites: {e}"));
+                Vec::new()
+            }
+        };
 
         for (site_id, domain, site_server_id) in &sites {
             // Resolve THIS site's host. Never fall back to local: archiving a member's
@@ -381,6 +702,7 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
                          is unreachable ({e}). Not archiving it on another host.",
                         policy.name
                     );
+                    log.push("site", domain.as_str(), format!("server {site_server_id} is unreachable: {e}"));
                     continue;
                 }
             };
@@ -401,6 +723,14 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
             match result {
                 Ok(resp) => {
                     let filename = resp.get("filename").and_then(|v| v.as_str()).unwrap_or("");
+                    // A 200 without a file name names no archive: recording it
+                    // would file a row no restore or upload can ever use.
+                    if filename.is_empty() {
+                        failures += 1;
+                        tracing::error!("Policy '{}': site backup for {domain} returned no file name", policy.name);
+                        log.push("site", domain.as_str(), "the agent's answer named no archive file");
+                        continue;
+                    }
                     let size_bytes = resp.get("size_bytes").and_then(|v| v.as_u64()).unwrap_or(0) as i64;
 
                     // Same read the database and volume branches below already do
@@ -421,52 +751,40 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
                     let mut uploaded = false;
                     if let (Some(dest), false) = (&destination, destination_down) {
                         let filepath = format!("/var/backups/dockpanel/{domain}/{filename}");
-                        uploaded = upload_to_destination(agent, dest, &filepath, &format!("site {domain}")).await;
-                        if uploaded {
-                            // Enforce remote retention too, or the destination grows
-                            // without bound. Same call the scheduler makes.
-                            //
-                            // The agent returns 200 with a `message` when it cannot
-                            // prune (SFTP has no supported path), so a discarded body
-                            // left the policy showing an enforced retention count over
-                            // a destination that never deletes anything. Reported once
-                            // per run - a forty-site policy should not write forty
-                            // identical rows.
-                            match agent.post("/backups/prune", Some(serde_json::json!({
-                                "destination": dest.payload,
-                                "domain": domain,
-                                "retention": policy.retention_count,
-                            }))).await {
-                                Ok(resp) => {
-                                    if let Some(msg) = resp.get("message").and_then(|v| v.as_str()) {
-                                        if !remote_prune_warned {
-                                            remote_prune_warned = true;
-                                            // "warning", not "warn" - the API filters and
-                                            // counts on the former, so a "warn" row was
-                                            // uncountable in the Warnings tile and grey in
-                                            // the list. Its sibling at backup_scheduler.rs
-                                            // already spelled it the long way twice.
-                                            crate::services::system_log::log_event(
-                                                db,
-                                                "warning",
-                                                "backup_policy_executor",
-                                                &format!("Policy '{}': remote retention was not enforced", policy.name),
-                                                Some(msg),
-                                            ).await;
-                                        }
+                        match upload_to_destination(agent, dest, &filepath, &format!("site {domain}")).await {
+                            Ok(()) => {
+                                uploaded = true;
+                                // Enforce remote retention too, or the destination grows
+                                // without bound. S3 and SFTP alike, keyed on this site's
+                                // exact file name prefix. A failure here is NOT a failed
+                                // backup - the archive was taken and shipped - but it is
+                                // an error of the run, and it reaches system_log once.
+                                if let Err(e) = enforce_remote_retention(
+                                    db, agent, dest, RetentionTarget::Site { domain }, policy.retention_count,
+                                ).await {
+                                    if !remote_prune_warned {
+                                        remote_prune_warned = true;
+                                        crate::services::system_log::log_event(
+                                            db,
+                                            "warning",
+                                            "backup_policy_executor",
+                                            &format!("Policy '{}': remote retention was not enforced", policy.name),
+                                            Some(&clean_message(&e, &[])),
+                                        ).await;
                                     }
-                                }
-                                Err(e) => {
-                                    tracing::warn!("Policy '{}': remote prune failed for {domain}: {e}", policy.name);
+                                    log.push("retention", domain.as_str(), e);
                                 }
                             }
-                        } else {
-                            upload_failures += 1;
-                            destination_down = true;
+                            Err(e) => {
+                                upload_failures += 1;
+                                destination_down = true;
+                                log.push("upload", domain.as_str(), e);
+                            }
                         }
                     } else if destination.is_some() {
                         // Breaker already open - count it, don't dial.
                         upload_failures += 1;
+                        log.push("upload", domain.as_str(), "not uploaded: the destination failed earlier in this run");
                     }
 
                     // A backup the panel cannot record is a backup the operator
@@ -491,12 +809,14 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
                         Err(e) => {
                             tracing::error!("Policy '{}': site backup for {domain} was created but could not be recorded: {e}", policy.name);
                             failures += 1;
+                            log.push("site", domain.as_str(), format!("archive created but could not be recorded: {e}"));
                         }
                     }
                 }
                 Err(e) => {
                     tracing::error!("Policy '{}': site backup failed for {domain} (after retry): {e}", policy.name);
                     failures += 1;
+                    log.push("site", domain.as_str(), format!("backup failed (after retry): {e}"));
                 }
             }
         }
@@ -514,7 +834,7 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
         // stack-owned database (site_id IS NULL for those rows since v2.242.0's
         // standalone-DB-for-stacks ship), so they got zero backup coverage,
         // scheduled or manual, with no error anywhere in the chain.
-        let databases: Vec<(Uuid, String, String, String, String, Option<Uuid>, String)> = sqlx::query_as(
+        let databases: Vec<(Uuid, String, String, String, String, Option<Uuid>, String)> = match sqlx::query_as(
             "SELECT d.id, d.name, d.engine, d.db_user, d.db_password_enc, \
              COALESCE(s.server_id, st.server_id), d.kind \
              FROM databases d \
@@ -523,7 +843,15 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
              WHERE COALESCE(s.user_id, st.user_id) = $1"
         )
         .bind(policy.user_id)
-        .fetch_all(db).await.unwrap_or_default();
+        .fetch_all(db).await {
+            Ok(rows) => rows,
+            Err(e) => {
+                tracing::error!("Policy '{}': could not list databases: {e}", policy.name);
+                failures += 1;
+                log.push("listing", "databases", format!("could not list databases: {e}"));
+                Vec::new()
+            }
+        };
 
         for (db_id, db_name, engine, user, password_enc, db_server_id, kind) in &databases {
             let Some(db_server_id) = *db_server_id else {
@@ -533,6 +861,7 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
                      stack) row has no server_id.",
                     policy.name
                 );
+                log.push("database", db_name.as_str(), "its owner (site or stack) has no server");
                 continue;
             };
             let agent = match agents.for_server(db_server_id).await {
@@ -544,6 +873,7 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
                          {db_server_id} is unreachable ({e}).",
                         policy.name
                     );
+                    log.push("database", db_name.as_str(), format!("server {db_server_id} is unreachable: {e}"));
                     continue;
                 }
             };
@@ -568,6 +898,12 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
             match result {
                 Ok(resp) => {
                     let filename = resp.get("filename").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    if filename.is_empty() {
+                        failures += 1;
+                        tracing::error!("Policy '{}': DB backup for {db_name} returned no file name", policy.name);
+                        log.push("database", db_name.as_str(), "the agent's answer named no dump file");
+                        continue;
+                    }
                     let size_bytes = resp.get("size_bytes").and_then(|v| v.as_u64()).unwrap_or(0) as i64;
                     let encrypted = encryption_key.is_some();
 
@@ -581,13 +917,40 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
                         // `database_backup::backup_dir` nests per database:
                         // /var/backups/dockpanel/databases/<db_name>/<filename>.
                         let filepath = format!("/var/backups/dockpanel/databases/{db_name}/{filename}");
-                        uploaded = upload_to_destination(agent, dest, &filepath, &format!("database {db_name}")).await;
-                        if !uploaded {
-                            upload_failures += 1;
-                            destination_down = true;
+                        match upload_to_destination(agent, dest, &filepath, &format!("database {db_name}")).await {
+                            Ok(()) => {
+                                uploaded = true;
+                                // Dumps used to accumulate at the destination for ever:
+                                // the agent's prune only knew site archives. Same rule as
+                                // the site leg - a retention error, not a failed backup.
+                                if let Err(e) = enforce_remote_retention(
+                                    db, agent, dest,
+                                    RetentionTarget::Database { db_name, engine },
+                                    policy.retention_count,
+                                ).await {
+                                    let e = clean_message(&e, &[password.as_str()]);
+                                    if !remote_prune_warned {
+                                        remote_prune_warned = true;
+                                        crate::services::system_log::log_event(
+                                            db,
+                                            "warning",
+                                            "backup_policy_executor",
+                                            &format!("Policy '{}': remote retention was not enforced", policy.name),
+                                            Some(&e),
+                                        ).await;
+                                    }
+                                    log.push("retention", db_name.as_str(), e);
+                                }
+                            }
+                            Err(e) => {
+                                upload_failures += 1;
+                                destination_down = true;
+                                log.push("upload", db_name.as_str(), clean_message(&e, &[password.as_str()]));
+                            }
                         }
                     } else if destination.is_some() {
                         upload_failures += 1;
+                        log.push("upload", db_name.as_str(), "not uploaded: the destination failed earlier in this run");
                     }
 
                     match sqlx::query(
@@ -604,12 +967,14 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
                         Err(e) => {
                             tracing::error!("Policy '{}': DB backup for {db_name} was created but could not be recorded: {e}", policy.name);
                             failures += 1;
+                            log.push("database", db_name.as_str(), format!("dump created but could not be recorded: {e}"));
                         }
                     }
                 }
                 Err(e) => {
                     tracing::error!("Policy '{}': DB backup failed for {db_name} (after retry): {e}", policy.name);
                     failures += 1;
+                    log.push("database", db_name.as_str(), clean_message(&format!("backup failed (after retry): {e}"), &[password.as_str()]));
                 }
             }
         }
@@ -619,17 +984,33 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
     // direct create_volume_backup endpoint is AdminUser, and the enumeration below is
     // fleet-wide with NO per-user scoping. Policy CRUD is now admin-gated, but guard
     // the executor too so any legacy non-admin-owned policy cannot drive volume backups.
-    let owner_is_admin: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT role = 'admin' FROM users WHERE id = $1"
-    )
-    .bind(policy.user_id)
-    .fetch_optional(db)
-    .await
-    .ok()
-    .flatten()
-    .unwrap_or(false);
-    if policy.backup_volumes && !owner_is_admin {
+    //
+    // Only asked when the policy wants volumes. A failed lookup is not "not an
+    // admin": it is an error of its own, and either way the leg is skipped with a
+    // recorded reason instead of a journal-only warning.
+    let owner_is_admin: bool = if policy.backup_volumes {
+        match sqlx::query_scalar::<_, bool>("SELECT role = 'admin' FROM users WHERE id = $1")
+            .bind(policy.user_id)
+            .fetch_optional(db)
+            .await
+        {
+            Ok(Some(is_admin)) => is_admin,
+            Ok(None) => {
+                log.push("owner", "volumes", "the policy's owner no longer exists - volume backup skipped");
+                false
+            }
+            Err(e) => {
+                tracing::error!("Policy '{}': could not read the owner's role: {e}", policy.name);
+                log.push("owner", "volumes", format!("could not read the owner's role ({e}) - volume backup skipped"));
+                false
+            }
+        }
+    } else {
+        false
+    };
+    if policy.backup_volumes && !owner_is_admin && !log.errors.iter().any(|e| e.kind == "owner") {
         tracing::warn!("Policy '{}': skipping volume backup - owner is not an admin", policy.name);
+        log.push("owner", "volumes", "the policy's owner is not an admin - volume backup skipped");
     }
     if policy.backup_volumes && owner_is_admin { 'vol: {
         // Volumes have no per-row host to read: the subject list comes from asking an
@@ -651,6 +1032,8 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
                  local server id is not yet known (setup incomplete).",
                 policy.name
             );
+            failures += 1;
+            log.push("volume", "volumes", "no server on the policy and the local server is not known yet (setup incomplete)");
             break 'vol;
         };
         let agent = match agents.for_server(vol_server_id).await {
@@ -662,6 +1045,7 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
                      unreachable ({e}). Not tarring another host's volumes under its name.",
                     policy.name
                 );
+                log.push("volume", "volumes", format!("server {vol_server_id} is unreachable: {e}"));
                 break 'vol;
             }
         };
@@ -669,78 +1053,111 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
         // Get Docker containers with volumes
         match agent.get("/apps").await {
             Ok(apps) => {
-                if let Some(apps) = apps.as_array() {
-                    for app in apps {
-                        let container_name = app.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                        let container_id = app.get("container_id").and_then(|v| v.as_str()).unwrap_or("");
+                let Some(apps) = apps.as_array() else {
+                    // An answer this code cannot read used to mean "no apps" and a
+                    // green run. It is a failure to enumerate, and counted as one.
+                    failures += 1;
+                    tracing::error!("Policy '{}': the app list from server {vol_server_id} is not a list", policy.name);
+                    log.push("listing", "apps", "the agent's app list could not be read (not a list)");
+                    break 'vol;
+                };
+                for app in apps {
+                    let container_name = app.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                    let container_id = app.get("container_id").and_then(|v| v.as_str()).unwrap_or("");
 
-                        if container_name.is_empty() { continue; }
+                    if container_name.is_empty() { continue; }
 
-                        // Get volumes for this container
-                        if let Ok(vol_resp) = agent.get(&format!("/apps/{container_id}/volumes")).await {
-                            if let Some(volumes) = vol_resp.as_array() {
-                                for vol in volumes {
-                                    let vol_name = vol.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                                    if vol_name.is_empty() { continue; }
+                    // Get volumes for this container. Both a failed call and an
+                    // answer that is not a list used to fall through without a
+                    // trace, so a container's data could go unprotected for ever
+                    // under a green policy.
+                    let vol_resp = match agent.get(&format!("/apps/{container_id}/volumes")).await {
+                        Ok(v) => v,
+                        Err(e) => {
+                            failures += 1;
+                            tracing::error!("Policy '{}': could not list volumes of {container_name}: {e}", policy.name);
+                            log.push("listing", container_name, format!("could not list volumes: {e}"));
+                            continue;
+                        }
+                    };
+                    let Some(volumes) = vol_resp.as_array() else {
+                        failures += 1;
+                        tracing::error!("Policy '{}': the volume list of {container_name} could not be read", policy.name);
+                        log.push("listing", container_name, "the agent's volume list could not be read (not a list)");
+                        continue;
+                    };
+                    for vol in volumes {
+                        let vol_name = vol.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                        if vol_name.is_empty() { continue; }
 
-                                    let body = serde_json::json!({
-                                        "volume_name": vol_name,
-                                        "container_name": container_name,
-                                    });
+                        let body = serde_json::json!({
+                            "volume_name": vol_name,
+                            "container_name": container_name,
+                        });
+                        let subject = format!("{container_name}/{vol_name}");
 
-                                    let mut result = agent.post("/volume-backups/create", Some(body.clone())).await;
-                                    // Retry once on failure
-                                    if result.is_err() {
-                                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                                        result = agent.post("/volume-backups/create", Some(body)).await;
-                                    }
-                                    match result {
-                                        Ok(resp) => {
-                                            let filename = resp.get("filename").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                                            let size_bytes = resp.get("size_bytes").and_then(|v| v.as_u64()).unwrap_or(0) as i64;
+                        let mut result = agent.post("/volume-backups/create", Some(body.clone())).await;
+                        // Retry once on failure
+                        if result.is_err() {
+                            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                            result = agent.post("/volume-backups/create", Some(body)).await;
+                        }
+                        match result {
+                            Ok(resp) => {
+                                let filename = resp.get("filename").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                if filename.is_empty() {
+                                    failures += 1;
+                                    tracing::error!("Policy '{}': volume backup for {subject} returned no file name", policy.name);
+                                    log.push("volume", subject, "the agent's answer named no archive file");
+                                    continue;
+                                }
+                                let size_bytes = resp.get("size_bytes").and_then(|v| v.as_u64()).unwrap_or(0) as i64;
 
-                                            let sha256_hash = resp.get("sha256").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                                            let previous_hash: Option<String> = sqlx::query_scalar::<_, Option<String>>(
-                                                "SELECT sha256_hash FROM volume_backups WHERE container_id = $1 AND volume_name = $2 ORDER BY created_at DESC LIMIT 1"
-                                            ).bind(container_id).bind(vol_name).fetch_optional(db).await.unwrap_or(None).flatten();
+                                let sha256_hash = resp.get("sha256").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                let previous_hash: Option<String> = sqlx::query_scalar::<_, Option<String>>(
+                                    "SELECT sha256_hash FROM volume_backups WHERE container_id = $1 AND volume_name = $2 ORDER BY created_at DESC LIMIT 1"
+                                ).bind(container_id).bind(vol_name).fetch_optional(db).await.unwrap_or(None).flatten();
 
-                                            let mut uploaded = false;
-                                            if let (Some(dest), false) = (&destination, destination_down) {
-                                                // `volume_backup::backup_dir` nests per container:
-                                                // /var/backups/dockpanel/volumes/<container>/<filename>.
-                                                let filepath = format!("/var/backups/dockpanel/volumes/{container_name}/{filename}");
-                                                uploaded = upload_to_destination(agent, dest, &filepath, &format!("volume {vol_name}")).await;
-                                                if !uploaded {
-                                                    upload_failures += 1;
-                                                    destination_down = true;
-                                                }
-                                            } else if destination.is_some() {
-                                                upload_failures += 1;
-                                            }
-
-                                            match sqlx::query(
-                                                "INSERT INTO volume_backups (container_id, container_name, server_id, volume_name, filename, size_bytes, policy_id, destination_id, uploaded, sha256_hash, previous_hash, chain_valid) \
-                                                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, TRUE)"
-                                            )
-                                            .bind(container_id).bind(container_name).bind(vol_server_id)
-                                            .bind(vol_name).bind(&filename).bind(size_bytes).bind(policy.id)
-                                            .bind(destination.as_ref().map(|d| d.id)).bind(uploaded)
-                                            .bind(if sha256_hash.is_empty() { None } else { Some(&sha256_hash) })
-                                            .bind(previous_hash.as_deref())
-                                            .execute(db).await {
-                                                Ok(_) => successes += 1,
-                                                Err(e) => {
-                                                    tracing::error!("Policy '{}': volume backup for {container_name}/{vol_name} was created but could not be recorded: {e}", policy.name);
-                                                    failures += 1;
-                                                }
-                                            }
-                                        }
+                                let mut uploaded = false;
+                                if let (Some(dest), false) = (&destination, destination_down) {
+                                    // `volume_backup::backup_dir` nests per container:
+                                    // /var/backups/dockpanel/volumes/<container>/<filename>.
+                                    let filepath = format!("/var/backups/dockpanel/volumes/{container_name}/{filename}");
+                                    match upload_to_destination(agent, dest, &filepath, &format!("volume {vol_name}")).await {
+                                        Ok(()) => uploaded = true,
                                         Err(e) => {
-                                            tracing::error!("Policy '{}': volume backup failed for {container_name}/{vol_name} (after retry): {e}", policy.name);
-                                            failures += 1;
+                                            upload_failures += 1;
+                                            destination_down = true;
+                                            log.push("upload", subject.clone(), e);
                                         }
+                                    }
+                                } else if destination.is_some() {
+                                    upload_failures += 1;
+                                    log.push("upload", subject.clone(), "not uploaded: the destination failed earlier in this run");
+                                }
+
+                                match sqlx::query(
+                                    "INSERT INTO volume_backups (container_id, container_name, server_id, volume_name, filename, size_bytes, policy_id, destination_id, uploaded, sha256_hash, previous_hash, chain_valid) \
+                                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, TRUE)"
+                                )
+                                .bind(container_id).bind(container_name).bind(vol_server_id)
+                                .bind(vol_name).bind(&filename).bind(size_bytes).bind(policy.id)
+                                .bind(destination.as_ref().map(|d| d.id)).bind(uploaded)
+                                .bind(if sha256_hash.is_empty() { None } else { Some(&sha256_hash) })
+                                .bind(previous_hash.as_deref())
+                                .execute(db).await {
+                                    Ok(_) => successes += 1,
+                                    Err(e) => {
+                                        tracing::error!("Policy '{}': volume backup for {subject} was created but could not be recorded: {e}", policy.name);
+                                        failures += 1;
+                                        log.push("volume", subject, format!("archive created but could not be recorded: {e}"));
                                     }
                                 }
+                            }
+                            Err(e) => {
+                                tracing::error!("Policy '{}': volume backup failed for {subject} (after retry): {e}", policy.name);
+                                failures += 1;
+                                log.push("volume", subject, format!("backup failed (after retry): {e}"));
                             }
                         }
                     }
@@ -749,6 +1166,7 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
             Err(e) => {
                 tracing::error!("Policy '{}': failed to list Docker apps for volume backup: {e}", policy.name);
                 failures += 1;
+                log.push("listing", "apps", format!("could not list Docker apps: {e}"));
             }
         }
     }}
@@ -757,31 +1175,52 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
     // is counted in `successes` because it was taken. It IS a disaster-recovery
     // failure, though, and reporting the run as a clean success would be exactly
     // the silence this change exists to remove. So it degrades the status and
-    // raises the alert, while the counts keep meaning "backups taken".
+    // raises the alert, while the counts keep meaning "backups taken". Any other
+    // recorded error (retention, listing, owner) degrades it the same way.
     let total_attempted = successes + failures;
-    let status = if failures == 0 && upload_failures == 0 {
-        "success"
-    } else if successes > 0 {
-        "partial"
-    } else {
-        "failed"
-    };
-    let _ = sqlx::query(
-        "UPDATE backup_policies SET last_run = NOW(), last_status = $2, updated_at = NOW() WHERE id = $1"
+    let errors = log.errors;
+    let status = compute_run_status(successes, failures, upload_failures, errors.len());
+    let last_error = summarize_errors(&errors);
+    let errors_json = serde_json::to_value(&errors).unwrap_or_else(|_| serde_json::json!([]));
+
+    if let Some(run_id) = run_id {
+        if let Err(e) = sqlx::query(
+            "UPDATE backup_policy_runs SET finished_at = NOW(), status = $2, successes = $3, \
+             failures = $4, upload_failures = $5, errors = $6 WHERE id = $1"
+        )
+        .bind(run_id).bind(status).bind(successes).bind(failures).bind(upload_failures)
+        .bind(&errors_json)
+        .execute(db).await
+        {
+            tracing::error!("Policy '{}': could not close run history row {run_id}: {e}", policy.name);
+        }
+    }
+
+    if let Err(e) = sqlx::query(
+        "UPDATE backup_policies SET last_run = NOW(), last_status = $2, last_error = $3, updated_at = NOW() WHERE id = $1"
     )
-    .bind(policy.id).bind(status)
-    .execute(db).await;
+    .bind(policy.id).bind(status).bind(last_error.as_deref())
+    .execute(db).await
+    {
+        tracing::error!("Policy '{}': could not record the run's status: {e}", policy.name);
+    }
 
     tracing::info!(
         "Policy '{}' completed: {successes} successes, {failures} failures, \
-         {upload_failures} not uploaded off-site (status: {status})",
-        policy.name
+         {upload_failures} not uploaded off-site, {} error(s) recorded (status: {status})",
+        policy.name,
+        errors.len()
     );
 
     // How to describe a run that took its backups but couldn't get them off the
     // box. Kept in one place so the incident, the alert and the log agree.
     let trouble = |kind: &str| -> String {
         match (failures, upload_failures) {
+            (0, 0) => format!(
+                "All {successes} {kind} were taken, but the run recorded {} error(s): {}",
+                errors.len(),
+                last_error.as_deref().unwrap_or("see the policy's run history")
+            ),
             (0, u) => format!(
                 "{u} of {successes} {kind} could not be uploaded to the configured destination - \
                  they exist only on this server."
@@ -810,8 +1249,9 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
         .execute(db).await;
     }
 
-    // Fire alert on failure
-    if failures > 0 || upload_failures > 0 {
+    // Fire alert on failure, and on any recorded error: a run that is not a
+    // success must not stay silent.
+    if failures > 0 || upload_failures > 0 || !errors.is_empty() {
         notifications::fire_alert(
             db, policy.user_id, policy.server_id, None,
             "backup_failure",
@@ -822,8 +1262,10 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
             if failures > 0 { "critical" } else { "warning" },
             &if failures > 0 {
                 format!("Backup policy '{}' failed", policy.name)
-            } else {
+            } else if upload_failures > 0 {
                 format!("Backup policy '{}' kept its backups on this server", policy.name)
+            } else {
+                format!("Backup policy '{}' completed with errors", policy.name)
             },
             &trouble("backup(s)"),
         ).await;
@@ -969,5 +1411,150 @@ mod tests {
         let jwt = "some-jwt-secret";
         let result = std::panic::catch_unwind(|| derive_backup_encryption_key_for_version(99, jwt));
         assert!(result.is_ok(), "an unrecognised version must not panic");
+    }
+
+    // ── Run history: status, errors, serialization ─────────────────────────
+
+    #[test]
+    fn status_is_success_only_without_any_problem() {
+        assert_eq!(compute_run_status(3, 0, 0, 0), "success");
+        // Nothing to back up and nothing went wrong stays a success.
+        assert_eq!(compute_run_status(0, 0, 0, 0), "success");
+    }
+
+    #[test]
+    fn a_recorded_error_alone_degrades_the_status() {
+        // Every backup taken, but e.g. remote retention failed: not green.
+        assert_eq!(compute_run_status(3, 0, 0, 1), "partial");
+        // Nothing taken and an error recorded (listing failed, owner not admin).
+        assert_eq!(compute_run_status(0, 0, 0, 1), "failed");
+    }
+
+    #[test]
+    fn failures_and_upload_failures_keep_their_meaning() {
+        assert_eq!(compute_run_status(2, 1, 0, 1), "partial");
+        assert_eq!(compute_run_status(2, 0, 2, 2), "partial");
+        assert_eq!(compute_run_status(0, 4, 0, 4), "failed");
+    }
+
+    #[test]
+    fn run_errors_serialize_as_kind_subject_message() {
+        let errors = vec![
+            RunError { kind: "listing", subject: "apps".into(), message: "not a list".into() },
+            RunError { kind: "retention", subject: "a.com".into(), message: "x".into() },
+        ];
+        let v = serde_json::to_value(&errors).unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!([
+                { "kind": "listing", "subject": "apps", "message": "not a list" },
+                { "kind": "retention", "subject": "a.com", "message": "x" },
+            ])
+        );
+        // An empty run serializes to the column's default.
+        assert_eq!(serde_json::to_value(Vec::<RunError>::new()).unwrap(), serde_json::json!([]));
+    }
+
+    #[test]
+    fn last_error_summarizes_the_first_error_and_counts_the_rest() {
+        assert_eq!(summarize_errors(&[]), None);
+        let one = vec![RunError { kind: "site", subject: "a.com".into(), message: "boom".into() }];
+        assert_eq!(summarize_errors(&one).as_deref(), Some("site a.com: boom"));
+        let mut three = one.clone();
+        three.push(RunError { kind: "upload", subject: "b.com".into(), message: "x".into() });
+        three.push(RunError { kind: "upload", subject: "c.com".into(), message: "y".into() });
+        assert_eq!(summarize_errors(&three).as_deref(), Some("site a.com: boom (and 2 more)"));
+    }
+
+    #[test]
+    fn messages_are_redacted_and_capped() {
+        let m = clean_message("dump failed: password=hunter2secret rejected", &["hunter2secret"]);
+        assert!(!m.contains("hunter2secret"), "{m}");
+        assert!(m.contains("[redacted]"));
+        let long = "x".repeat(2000);
+        let m = clean_message(&long, &[]);
+        assert!(m.chars().count() <= MAX_ERROR_MESSAGE_CHARS + 3);
+        // A multi-byte message is cut on a char boundary, not mid-codepoint.
+        let m = clean_message(&"é".repeat(2000), &[]);
+        assert!(m.ends_with("..."));
+    }
+
+    #[test]
+    fn run_log_scrubs_its_secrets_on_push() {
+        let mut log = RunLog::default();
+        log.secrets.push("the-backup-passphrase".into());
+        log.push("database", "wp", "openssl said: the-backup-passphrase is wrong");
+        assert!(!log.errors[0].message.contains("the-backup-passphrase"));
+    }
+
+    // ── Remote retention: prefixes and suffixes ────────────────────────────
+
+    #[test]
+    fn site_prefix_ends_with_the_separator() {
+        let a = site_prune_spec("a");
+        let ab = site_prune_spec("ab");
+        assert_eq!(a.name_prefix, "a-");
+        assert_eq!(a.suffixes, vec![".tar.gz".to_string()]);
+        // Site "a" must never catch site "ab"'s archives.
+        assert!(!"ab-20261119-020000.tar.gz".starts_with(&a.name_prefix));
+        assert!("ab-20261119-020000.tar.gz".starts_with(&ab.name_prefix));
+        assert!("a-20261119-020000.tar.gz".starts_with(&a.name_prefix));
+    }
+
+    #[test]
+    fn database_suffixes_follow_the_engine_and_cover_encryption() {
+        let pg = database_prune_spec("wp", "postgres");
+        assert_eq!(pg.name_prefix, "wp-");
+        assert_eq!(pg.suffixes, vec![".sql.gz".to_string(), ".sql.gz.enc".to_string()]);
+        let my = database_prune_spec("wp", "mariadb");
+        assert_eq!(my.suffixes, vec![".sql.gz".to_string(), ".sql.gz.enc".to_string()]);
+        let mongo = database_prune_spec("app", "mongodb");
+        assert_eq!(mongo.suffixes, vec![".archive.gz".to_string(), ".archive.gz.enc".to_string()]);
+        // "wp" does not catch "wpx".
+        assert!(!"wpx-20261119-020000.sql.gz".starts_with(&pg.name_prefix));
+    }
+
+    #[test]
+    fn prune_body_carries_the_new_contract_and_an_empty_domain_for_databases() {
+        let dest = serde_json::json!({ "type": "sftp", "host": "h" });
+        let b = prune_body(&dest, "", &database_prune_spec("wp", "postgres"), 7);
+        assert_eq!(b["domain"], "");
+        assert_eq!(b["retention"], 7);
+        assert_eq!(b["name_prefix"], "wp-");
+        assert_eq!(b["suffixes"], serde_json::json!([".sql.gz", ".sql.gz.enc"]));
+        assert_eq!(b["destination"], dest);
+        let s = prune_body(&dest, "a.com", &site_prune_spec("a.com"), 3);
+        assert_eq!(s["domain"], "a.com");
+        assert_eq!(s["name_prefix"], "a.com-");
+    }
+
+    #[test]
+    fn prune_response_must_confirm_a_deleted_count() {
+        assert_eq!(parse_prune_response(&serde_json::json!({ "deleted": 2 })), Ok(2));
+        assert_eq!(parse_prune_response(&serde_json::json!({ "deleted": 0 })), Ok(0));
+        // What an agent without the new contract answers for SFTP.
+        let old = serde_json::json!({ "pruned": 0, "message": "Automatic pruning is not supported" });
+        let e = parse_prune_response(&old).unwrap_err();
+        assert!(e.contains("not supported"), "{e}");
+        // The old S3 answer has no `deleted` either.
+        assert!(parse_prune_response(&serde_json::json!({ "pruned": 1, "total": 3 })).is_err());
+    }
+
+    #[test]
+    fn prefix_sharing_detects_other_resources_only() {
+        let names = vec!["a".to_string(), "ab".to_string(), "a-b.com".to_string()];
+        // "a-" is a prefix of "a-" (itself) and "a-b.com-": two resources.
+        assert_eq!(names_sharing_prefix("a-", &names), vec!["a".to_string(), "a-b.com".to_string()]);
+        assert_eq!(names_sharing_prefix("ab-", &names), vec!["ab".to_string()]);
+
+        let spec = site_prune_spec("ab");
+        assert_eq!(conflict_reason("ab", &spec, &names), None);
+        let spec = site_prune_spec("a");
+        let r = conflict_reason("a", &spec, &names).expect("a-b.com shares a's prefix");
+        assert!(r.contains("a-b.com"), "{r}");
+        // Same name twice (same domain on two servers, same db name for two owners).
+        let dup = vec!["wp".to_string(), "wp".to_string()];
+        assert!(conflict_reason("wp", &database_prune_spec("wp", "postgres"), &dup).is_some());
+        assert_eq!(conflict_reason("wp", &database_prune_spec("wp", "postgres"), &["wp".to_string()]), None);
     }
 }

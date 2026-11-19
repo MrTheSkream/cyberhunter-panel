@@ -1644,6 +1644,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/backup-orchestrator/policies", get(backup_orchestrator::list_policies).post(backup_orchestrator::create_policy))
         .route("/api/backup-orchestrator/policies/protect-all", post(backup_orchestrator::protect_all))
         .route("/api/backup-orchestrator/policies/{id}", put(backup_orchestrator::update_policy).delete(backup_orchestrator::delete_policy))
+        .route("/api/backup-orchestrator/policies/{id}/runs", get(backup_orchestrator::list_policy_runs))
         .route("/api/backup-orchestrator/db-backup", post(backup_orchestrator::create_db_backup))
         .route("/api/backup-orchestrator/db-backups", get(backup_orchestrator::list_db_backups))
         .route("/api/backup-orchestrator/db-backups/{id}", delete(backup_orchestrator::delete_db_backup))
