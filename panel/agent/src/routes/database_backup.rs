@@ -93,7 +93,7 @@ async fn dump(
         if !key.is_empty() {
             let filepath = database_backup::get_backup_path(&req.db_name, &info.filename)
                 .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
-            let enc_path = encryption::encrypt_file(&filepath, key)
+            let enc_path = encryption::encrypt_backup(&filepath, key)
                 .await
                 .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
             let enc_meta = std::fs::metadata(&enc_path)
@@ -153,7 +153,7 @@ async fn restore(
         if key.is_empty() {
             return Err(err(StatusCode::BAD_REQUEST, "Encryption key required for encrypted backup"));
         }
-        encryption::decrypt_file(&filepath, key)
+        encryption::decrypt_backup(&filepath, key)
             .await
             .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
     } else {
