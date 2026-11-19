@@ -193,7 +193,7 @@ pub fn stack_network_name(stack_id: Option<&str>) -> String {
 }
 
 /// Short, filesystem- and DNS-safe scope token derived from the stack id.
-fn stack_scope(stack_id: Option<&str>) -> String {
+pub(crate) fn stack_scope(stack_id: Option<&str>) -> String {
     match stack_id {
         Some(id) => {
             let cleaned: String = id

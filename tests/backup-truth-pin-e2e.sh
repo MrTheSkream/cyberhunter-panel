@@ -287,13 +287,28 @@ if grep -q "database dumps only" "$GUIDE"; then
 else
   bad "the guide promises unqualified AES-256 again"
 fi
-# If a future change gives site/volume archives a real encryption path, THIS is
-# the arm that should go red first, so the copy above gets revisited with it.
-ENC_FILES=$(grep -rl "encrypt_file" panel/agent/src/ 2>/dev/null | wc -l)
-if [ "$ENC_FILES" -le 2 ]; then
-  ok "agent-side encryption is still database-only ($ENC_FILES file(s))"
+# If a future change gives another archive kind (sites) a real encryption path,
+# THIS is the arm that should go red first, so the copy above gets revisited with
+# it. An exact allow-list of the agent files that reach services/encryption.rs:
+# database dumps (routes/database_backup.rs) and app data (services/
+# volume_backup.rs, which verify and drill also go through). Counted on
+# comment-stripped code, by any spelling of the module or of its public
+# functions, so a new caller cannot hide behind a `use` alias or a doc comment.
+# The socle's version only counted files naming `encrypt_file`, which the
+# streaming rewrite moved behind `encrypt_backup` - it measured nothing.
+ENC_ALLOWED="panel/agent/src/routes/database_backup.rs panel/agent/src/services/volume_backup.rs"
+ENC_PAT='encryption::|\b(encrypt_file|decrypt_file|verify_file|encrypt_backup|decrypt_backup|is_content_error)\b'
+ENC_USERS=""
+for f in $(find panel/agent/src -name '*.rs' ! -path '*/services/encryption.rs' | sort); do
+  if has "$(code "$f")" "$ENC_PAT"; then ENC_USERS="$ENC_USERS $f"; fi
+done
+ENC_USERS=${ENC_USERS# }
+if [ "$ENC_USERS" = "$ENC_ALLOWED" ]; then
+  ok "agent-side encryption is reached only by database dumps and app data ($ENC_USERS)"
+elif [ -z "$ENC_USERS" ]; then
+  bad "no agent file reaches services/encryption.rs any more - the arm measures nothing, re-read it"
 else
-  bad "agent encryption spread to $ENC_FILES files - re-check the Encrypt copy"
+  bad "agent encryption callers are now: $ENC_USERS (expected exactly: $ENC_ALLOWED) - re-check the Encrypt copy"
 fi
 
 echo "== §7  remote retention that is not enforced is reported =="

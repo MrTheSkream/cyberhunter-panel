@@ -61,6 +61,9 @@ async fn drill_db(
 pub struct DrillVolumeRequest {
     pub container_name: String,
     pub filename: String,
+    /// Required for a `.enc` archive.
+    #[serde(default)]
+    pub encryption_key: Option<String>,
 }
 
 /// POST /backups/drill/volume - Volume drill: scratch Docker volume + restore container + read-test probe.
@@ -70,7 +73,7 @@ async fn drill_volume(
     if req.container_name.is_empty() || req.filename.is_empty() {
         return Err(err(StatusCode::BAD_REQUEST, "container_name and filename required"));
     }
-    let result = backup_drill::drill_volume_backup(&req.container_name, &req.filename)
+    let result = backup_drill::drill_volume_backup(&req.container_name, &req.filename, req.encryption_key.as_deref())
         .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
     Ok(Json(result))

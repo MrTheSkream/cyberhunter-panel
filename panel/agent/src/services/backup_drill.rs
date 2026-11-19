@@ -542,16 +542,21 @@ async fn run_psql_scalar(container_name: &str, password: &str, db_name: &str, sq
 /// drill exercises the actual Docker volume driver / mount path that real
 /// restores use. The probe's read-test catches filesystem-level corruption
 /// that a pure file-count check would miss.
+///
+/// An encrypted archive (`.tar.gz.enc`) needs `encryption_key`: it is checked
+/// and decrypted to a hidden temporary in the same directory (which the restore
+/// container mounts), removed afterwards. A wrong tag fails the drill.
 pub async fn drill_volume_backup(
     container_name: &str,
     filename: &str,
+    encryption_key: Option<&str>,
 ) -> Result<DrillResult, String> {
     let start = std::time::Instant::now();
 
-    if !is_valid_db_name(container_name) {
+    if !crate::services::backup_targets::is_valid_owner_name(container_name) {
         return Err("Invalid container name".to_string());
     }
-    if !is_valid_db_name(filename) {
+    if !crate::services::volume_backup::is_safe_filename(filename) {
         return Err("Invalid filename".to_string());
     }
 
@@ -561,15 +566,30 @@ pub async fn drill_volume_backup(
         return Err("Backup file not found".to_string());
     }
 
+    let archive = match crate::services::volume_backup::readable_archive(
+        std::path::Path::new(&backup_dir),
+        filename,
+        encryption_key,
+    )
+    .await
+    {
+        Ok(a) => a,
+        Err(crate::services::volume_backup::VbError::Integrity(m)) => {
+            return Ok(drill_failure(start, format!("integrity check failed: {m}")));
+        }
+        Err(e) => return Err(e.to_string()),
+    };
+
     let drill_id = uuid::Uuid::new_v4().to_string();
     let scratch_volume = format!("dockpanel-drill-vol-{}", &drill_id[..8]);
     let restore_container = format!("dockpanel-drill-vrestore-{}", &drill_id[..8]);
     let probe_container = format!("dockpanel-drill-vprobe-{}", &drill_id[..8]);
 
     let result = run_volume_drill(
-        &backup_dir, filename, &scratch_volume,
+        &backup_dir, &archive.name, &scratch_volume,
         &restore_container, &probe_container, start,
     ).await;
+    drop(archive);
 
     // Best-effort cleanup on every exit path. Containers first (they hold
     // the volume open), then the volume itself.

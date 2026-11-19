@@ -55,6 +55,17 @@ fn check_target(container: &str, db_type: &str, user: &str, password: &str) -> R
     Ok(())
 }
 
+/// A failed decryption is the FILE's fault (tampered with, truncated, wrong
+/// passphrase) -> 422, so the panel relays the sentence; anything else (I/O,
+/// openssl) stays a 500.
+fn decrypt_status(e: &str) -> StatusCode {
+    if encryption::is_content_error(e) {
+        StatusCode::UNPROCESSABLE_ENTITY
+    } else {
+        StatusCode::INTERNAL_SERVER_ERROR
+    }
+}
+
 /// POST /db-backups/dump - Dump a database.
 async fn dump(
     Json(req): Json<DumpRequest>,
@@ -155,7 +166,7 @@ async fn restore(
         }
         encryption::decrypt_backup(&filepath, key)
             .await
-            .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
+            .map_err(|e| err(decrypt_status(&e), &e))?
     } else {
         filepath.clone()
     };
@@ -260,4 +271,20 @@ pub fn router() -> Router<AppState> {
         .route("/db-backups/{db_name}/{filename}", delete(remove))
         .route("/db-backups/{db_name}/{filename}/path", get(get_path))
         .route("/db-backups/{db_name}/restore/{filename}", post(restore))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_bad_archive_or_passphrase_is_422_and_a_host_failure_500() {
+        assert_eq!(
+            decrypt_status("Backup integrity check failed - the file may be corrupted or tampered with"),
+            StatusCode::UNPROCESSABLE_ENTITY
+        );
+        assert_eq!(decrypt_status("Decryption failed: bad decrypt"), StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(decrypt_status("Not an encrypted backup (missing OpenSSL salt header)"), StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(decrypt_status("Failed to run openssl: not found"), StatusCode::INTERNAL_SERVER_ERROR);
+    }
 }

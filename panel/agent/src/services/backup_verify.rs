@@ -508,24 +508,56 @@ async fn verify_postgres_restore(
 }
 
 /// Verify a volume backup: extract to temp dir, check contents.
+///
+/// An encrypted archive (`.tar.gz.enc`) needs `encryption_key`: its integrity
+/// tag is checked and it is decrypted to a hidden temporary in the same
+/// directory (removed afterwards) before `tar` reads it. A wrong tag (tampered
+/// file or wrong passphrase) is a failed `integrity` check, not an error.
 pub async fn verify_volume_backup(
     container_name: &str,
     filename: &str,
+    encryption_key: Option<&str>,
 ) -> Result<VerificationResult, String> {
     let start = std::time::Instant::now();
     let mut checks = Vec::new();
 
-    if !is_valid_name(container_name) {
+    if !crate::services::backup_targets::is_valid_owner_name(container_name) {
         return Err("Invalid container name".to_string());
     }
-    if !is_valid_name(filename) {
+    if !crate::services::volume_backup::is_safe_filename(filename) {
         return Err("Invalid filename".to_string());
     }
 
-    let backup_path = format!("/var/backups/dockpanel/volumes/{container_name}/{filename}");
-    if !std::path::Path::new(&backup_path).exists() {
+    let dir = std::path::PathBuf::from(format!("/var/backups/dockpanel/volumes/{container_name}"));
+    let stored_path = format!("/var/backups/dockpanel/volumes/{container_name}/{filename}");
+    if !std::path::Path::new(&stored_path).exists() {
         return Err("Backup file not found".to_string());
     }
+
+    let archive = match crate::services::volume_backup::readable_archive(&dir, filename, encryption_key).await {
+        Ok(a) => {
+            if filename.ends_with(".enc") {
+                checks.push(VerificationCheck {
+                    name: "integrity".into(),
+                    passed: true,
+                    message: "Integrity tag matches the passphrase; archive decrypted".into(),
+                });
+            }
+            a
+        }
+        Err(crate::services::volume_backup::VbError::Integrity(m)) => {
+            checks.push(VerificationCheck { name: "integrity".into(), passed: false, message: m });
+            return Ok(VerificationResult {
+                passed: false,
+                checks_run: 1,
+                checks_passed: 0,
+                details: checks,
+                duration_ms: start.elapsed().as_millis() as u64,
+            });
+        }
+        Err(e) => return Err(e.to_string()),
+    };
+    let backup_path = dir.join(&archive.name).to_string_lossy().to_string();
 
     // Check 1: File size
     let meta = std::fs::metadata(&backup_path)
@@ -535,13 +567,16 @@ pub async fn verify_volume_backup(
         passed: meta.len() > 50,
         message: format!("Volume backup size: {} bytes", meta.len()),
     });
+    let extract_timeout = crate::services::volume_backup::archive_timeout(meta.len())
+        .min(std::time::Duration::from_secs(3600))
+        .max(std::time::Duration::from_secs(120));
 
     // Check 2: Extract to temp dir
     let temp_dir = format!("/tmp/dockpanel-verify-{}", uuid::Uuid::new_v4());
     std::fs::create_dir_all(&temp_dir).map_err(|e| format!("Temp dir: {e}"))?;
 
     let extract_ok = tokio::time::timeout(
-        std::time::Duration::from_secs(120),
+        extract_timeout,
         safe_command("tar")
             .args(["xzf", &backup_path, "-C", &temp_dir, "--no-same-owner", "--no-same-permissions"])
             .output(),
@@ -575,6 +610,7 @@ pub async fn verify_volume_backup(
 
     // Cleanup
     std::fs::remove_dir_all(&temp_dir).ok();
+    drop(archive);
 
     let checks_run = checks.len() as i32;
     let checks_passed = checks.iter().filter(|c| c.passed).count() as i32;

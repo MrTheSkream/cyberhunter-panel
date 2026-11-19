@@ -176,8 +176,6 @@ fn timeout_error(what: &str, bytes: u64) -> String {
 }
 
 /// Result of [`verify_file`].
-// Shared API for the app-data / snapshot lots; no caller in this build yet.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TagStatus {
     /// The file carries an integrity tag and it matches the passphrase.
@@ -601,8 +599,6 @@ pub async fn decrypt_file(src: &Path, dst: &Path, passphrase: &str) -> Result<u6
 /// `Ok(Verified)`: tag present and valid for this passphrase.
 /// `Ok(Legacy)`: no tag, nothing to check short of decrypting.
 /// `Err`: not an encrypted backup, truncated, or tag mismatch.
-// Shared API for the app-data / snapshot lots; no caller in this build yet.
-#[allow(dead_code)]
 pub async fn verify_file(src: &Path, passphrase: &str) -> Result<TagStatus, String> {
     let mut f = tokio::fs::File::open(src)
         .await
@@ -624,6 +620,27 @@ pub async fn verify_file(src: &Path, passphrase: &str) -> Result<TagStatus, Stri
     } else {
         Err("Backup integrity check failed - the file may be corrupted or tampered with".to_string())
     }
+}
+
+/// Whether an error returned by this module is the FILE's fault (corrupt,
+/// truncated, tampered with, not an encrypted backup, or the wrong passphrase)
+/// rather than the host's (I/O, openssl missing, timeout). Callers answer the
+/// first with 422 and the second with 500: the panel only relays a 4xx
+/// sentence to the operator, and "the passphrase does not match" is the one
+/// thing they need to read.
+///
+/// Keyed on the exact message prefixes this module produces; the tests below
+/// run each failure for real and assert it is classified.
+pub fn is_content_error(msg: &str) -> bool {
+    const CONTENT: [&str; 6] = [
+        "Backup integrity check failed",
+        "Decryption failed",
+        "Decryption produced empty output",
+        "Encrypted backup is truncated",
+        "Not an encrypted backup",
+        "Encryption key must not be empty",
+    ];
+    CONTENT.iter().any(|p| msg.starts_with(p))
 }
 
 /// Database-dump flavour: encrypt `filepath` (confined to
@@ -978,5 +995,38 @@ mod tests {
         assert!(encrypt_file(&p, &p, FIXTURE_PASS).await.is_err());
         assert!(encrypt_file(&p, &s.path("o"), "").await.is_err());
         assert_eq!(s.entries(), vec!["same"]);
+    }
+    /// Every way the FILE can be wrong is classified as a content error (the
+    /// routes answer 422), and a host-side failure is not.
+    #[tokio::test]
+    async fn content_errors_are_classified() {
+        let s = Scratch::new();
+        let mut cases: Vec<(&str, Vec<u8>, &str)> = vec![
+            ("wrong-key-tagged", FIXTURE_CURRENT.to_vec(), "not-the-passphrase"),
+            ("wrong-key-legacy", FIXTURE_LEGACY.to_vec(), "not-the-passphrase"),
+            ("cut", FIXTURE_CURRENT[..FIXTURE_CURRENT.len() - 1].to_vec(), FIXTURE_PASS),
+            ("header-only", FIXTURE_CURRENT[..20].to_vec(), FIXTURE_PASS),
+            ("not-encrypted", FIXTURE_PLAIN.to_vec(), FIXTURE_PASS),
+            ("empty-key", FIXTURE_CURRENT.to_vec(), ""),
+        ];
+        let mut flipped = FIXTURE_CURRENT.to_vec();
+        flipped[40] ^= 0x01;
+        cases.push(("flipped", flipped, FIXTURE_PASS));
+        for (name, bytes, pass) in cases {
+            let src = s.path(name);
+            std::fs::write(&src, &bytes).unwrap();
+            let err = decrypt_file(&src, &s.path("out"), pass).await.unwrap_err();
+            assert!(is_content_error(&err), "{name}: {err}");
+            if pass != "" && name != "wrong-key-legacy" {
+                let v = verify_file(&src, pass).await;
+                if let Err(e) = v {
+                    assert!(is_content_error(&e), "{name} (verify): {e}");
+                }
+            }
+        }
+        let missing = decrypt_file(&s.path("missing"), &s.path("out"), FIXTURE_PASS).await.unwrap_err();
+        assert!(!is_content_error(&missing), "{missing}");
+        assert!(!is_content_error("Failed to run openssl: No such file or directory"));
+        assert!(!is_content_error("Decryption timed out after 600 seconds"));
     }
 }

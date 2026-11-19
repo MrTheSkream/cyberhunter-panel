@@ -1184,7 +1184,7 @@ async fn container_volumes(
             .args([
                 "inspect",
                 "--format",
-                "{{range .Mounts}}{{.Source}}|{{.Destination}}|{{.Type}}\n{{end}}",
+                "{{range .Mounts}}{{.Source}}|{{.Destination}}|{{.Type}}|{{.Name}}\n{{end}}",
                 &container_id,
             ])
             .output(),
@@ -1207,6 +1207,8 @@ async fn container_volumes(
             let source = parts[0];
             let dest = parts[1];
             let mount_type = parts[2];
+            // Docker's volume name (named or anonymous); empty for a bind.
+            let volume_name = parts.get(3).map(|n| n.trim()).filter(|n| !n.is_empty());
 
             let du = tokio::time::timeout(
                 std::time::Duration::from_secs(15),
@@ -1243,6 +1245,7 @@ async fn container_volumes(
                 "source": source,
                 "destination": dest,
                 "type": mount_type,
+                "name": volume_name,
                 "size_bytes": size,
                 "size_mb": (size as f64 / 1024.0 / 1024.0 * 10.0).round() / 10.0,
                 "listing": listing.lines().take(20).collect::<Vec<_>>().join("\n"),

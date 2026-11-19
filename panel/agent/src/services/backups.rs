@@ -65,6 +65,43 @@ pub fn secure_backup_tree() {
     secure_tree_at(&backups_root());
 }
 
+/// Remove the hidden `.*.part` temporaries left under the backup tree by an
+/// operation the agent did not finish (crash, kill, power loss): a half-written
+/// archive, an encrypted or decrypted copy in progress. Called once at startup,
+/// before the agent serves anything, so no operation can own one. Symlinks are
+/// never followed. Returns `(removed, failed)`; each failure is logged.
+pub fn remove_stale_partials(root: &Path) -> (usize, usize) {
+    let mut removed = 0;
+    let mut failed = 0;
+    if !root.exists() {
+        return (0, 0);
+    }
+    for entry in walkdir::WalkDir::new(root).follow_links(false) {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(e) => {
+                tracing::warn!("Skipping an unreadable entry while sweeping temporaries: {e}");
+                continue;
+            }
+        };
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy();
+        if !(name.starts_with('.') && name.ends_with(".part")) {
+            continue;
+        }
+        match std::fs::remove_file(entry.path()) {
+            Ok(()) => removed += 1,
+            Err(e) => {
+                failed += 1;
+                tracing::error!("Failed to remove stale temporary {}: {e}", entry.path().display());
+            }
+        }
+    }
+    (removed, failed)
+}
+
 /// The body of [`secure_backup_tree`], parameterized on the root.
 ///
 /// Split out for ONE reason: the tests must not share `backups_root()`. Nine
@@ -181,6 +218,44 @@ mod backup_perm_tests {
 
     /// It must never chmod THROUGH a symlink: a writer that dropped one in the
     /// tree could otherwise aim a root-owned `set_permissions` at any path.
+    #[test]
+    fn stale_partials_are_swept_and_nothing_else() {
+        let root = isolated_root();
+        std::fs::create_dir_all(root.join("volumes/demo")).unwrap();
+        std::fs::create_dir_all(root.join("databases/db")).unwrap();
+        let stale = [
+            "volumes/demo/.demo-v-x-20261119-033005.tar.gz.part",
+            "volumes/demo/.demo-v-x-20261119-033005.tar.gz.enc.0123456789abcdef.part",
+            "databases/db/.db.sql.gz.0123456789abcdef.part",
+        ];
+        let keep = [
+            "volumes/demo/demo-v-x-20261119-033005.tar.gz",
+            "volumes/demo/demo-v-x-20261119-033005.tar.gz.enc",
+            "volumes/demo/visible.part",
+            "databases/db/.hidden-not-part",
+        ];
+        for f in stale.iter().chain(keep.iter()) {
+            std::fs::write(root.join(f), b"x").unwrap();
+        }
+        // A symlink to a `.part` elsewhere is not followed, nor removed as a file.
+        let outside = root.with_extension("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join(".precious.part"), b"x").unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("volumes/link")).unwrap();
+
+        assert_eq!(remove_stale_partials(&root), (3, 0));
+        for f in stale {
+            assert!(!root.join(f).exists(), "{f}");
+        }
+        for f in keep {
+            assert!(root.join(f).exists(), "{f}");
+        }
+        assert!(outside.join(".precious.part").exists());
+        assert_eq!(remove_stale_partials(&root.join("nope")), (0, 0));
+        std::fs::remove_dir_all(&outside).ok();
+        std::fs::remove_dir_all(&root).ok();
+    }
+
     #[test]
     fn it_does_not_follow_a_symlink_out_of_the_tree() {
         let root = isolated_root();

@@ -82,6 +82,16 @@ async fn main() {
     // uid every hosted site's PHP runs as. Both panel services run as root, so
     // nothing legitimate loses access. See the function's own docs.
     services::backups::secure_backup_tree();
+    // Nothing runs yet, so every hidden `.part` under the backup tree is a
+    // temporary an interrupted operation left behind (half an archive, or a
+    // decrypted copy of one).
+    match services::backups::remove_stale_partials(std::path::Path::new("/var/backups/dockpanel")) {
+        (0, 0) => {}
+        (removed, 0) => tracing::info!("Removed {removed} stale temporary file(s) under /var/backups/dockpanel"),
+        (removed, failed) => tracing::error!(
+            "Removed {removed} stale temporary file(s) under /var/backups/dockpanel, failed to remove {failed}"
+        ),
+    }
     std::fs::create_dir_all("/var/www/acme/.well-known/acme-challenge").ok();
 
     // One-shot migration, idempotent: give static vhosts already on disk the denies

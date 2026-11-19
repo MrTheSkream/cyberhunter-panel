@@ -56,13 +56,16 @@ async fn verify_database(
 pub struct VerifyVolumeRequest {
     pub container_name: String,
     pub filename: String,
+    /// Required for a `.enc` archive.
+    #[serde(default)]
+    pub encryption_key: Option<String>,
 }
 
 /// POST /backups/verify/volume - Verify a volume backup.
 async fn verify_volume(
     Json(req): Json<VerifyVolumeRequest>,
 ) -> Result<Json<backup_verify::VerificationResult>, ApiErr> {
-    let result = backup_verify::verify_volume_backup(&req.container_name, &req.filename)
+    let result = backup_verify::verify_volume_backup(&req.container_name, &req.filename, req.encryption_key.as_deref())
         .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
     Ok(Json(result))
