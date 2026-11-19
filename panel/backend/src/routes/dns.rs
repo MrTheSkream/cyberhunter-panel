@@ -1799,6 +1799,15 @@ pub async fn restore_dns_backup(
                                 "message": "The DNS restore is still running on the server.",
                             }))));
                         }
+                        Err(mdb::JobWaitError::Failed(msg, code)) => {
+                            // The agent classed the failure (422 integrity or passphrase,
+                            // 400 validation, 507 disk...): same status and message as the
+                            // synchronous restores give.
+                            return Err(match mdb::job_failure_status(code) {
+                                502 => err(StatusCode::BAD_GATEWAY, &format!("DNS restore failed: {msg}")),
+                                c => err(StatusCode::from_u16(c).unwrap_or(StatusCode::BAD_GATEWAY), &msg),
+                            });
+                        }
                         Err(e) => return Err(err(StatusCode::BAD_GATEWAY, &format!("DNS restore failed: {e}"))),
                     }
                 }

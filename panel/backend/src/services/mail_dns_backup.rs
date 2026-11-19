@@ -274,7 +274,9 @@ pub fn parse_agent_start(resp: &serde_json::Value) -> Result<AgentStart, String>
 pub enum JobState {
     Running,
     Done(serde_json::Value),
-    Failed(String),
+    /// The agent's message and the HTTP status it gives the failure
+    /// (`error_code`: 422 integrity, 400 validation, 507 disk...), if any.
+    Failed(String, Option<u16>),
 }
 
 pub fn parse_job_state(resp: &serde_json::Value) -> Result<JobState, String> {
@@ -287,6 +289,7 @@ pub fn parse_job_state(resp: &serde_json::Value) -> Result<JobState, String> {
                 .filter(|s| !s.is_empty())
                 .unwrap_or("the agent reported the job as failed without a reason")
                 .to_string(),
+            resp.get("error_code").and_then(|v| v.as_u64()).and_then(|c| u16::try_from(c).ok()),
         )),
         Some(other) => Err(format!("the agent reported an unknown job status '{other}'")),
         None => Err("the agent's job answer has no status".to_string()),
@@ -296,8 +299,8 @@ pub fn parse_job_state(resp: &serde_json::Value) -> Result<JobState, String> {
 /// Why waiting for a job ended without a result.
 #[derive(Debug, Clone, PartialEq)]
 pub enum JobWaitError {
-    /// The agent says the job failed.
-    Failed(String),
+    /// The agent says the job failed: its message and its `error_code`.
+    Failed(String, Option<u16>),
     /// The budget ran out; the job may still be running on the agent.
     TimedOut,
     /// The agent no longer knows the job (restarted), or kept refusing to answer.
@@ -307,7 +310,7 @@ pub enum JobWaitError {
 impl std::fmt::Display for JobWaitError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Failed(e) => write!(f, "{e}"),
+            Self::Failed(e, _) => write!(f, "{e}"),
             Self::TimedOut => write!(f, "still running when the wait budget ran out"),
             Self::Lost(e) => write!(f, "the job was lost: {e}"),
         }
@@ -330,7 +333,7 @@ where
                 transport_errors = 0;
                 match parse_job_state(&resp) {
                     Ok(JobState::Done(v)) => return Ok(v),
-                    Ok(JobState::Failed(e)) => return Err(JobWaitError::Failed(e)),
+                    Ok(JobState::Failed(e, code)) => return Err(JobWaitError::Failed(e, code)),
                     Ok(JobState::Running) => {}
                     Err(e) => return Err(JobWaitError::Lost(e)),
                 }
@@ -352,6 +355,17 @@ where
             return Err(JobWaitError::TimedOut);
         }
         tokio::time::sleep(interval).await;
+    }
+}
+
+/// The HTTP status a restore route answers when the agent's job failed with
+/// `error_code`: the classes the synchronous restores already pass through
+/// (validation, missing file, conflict, integrity or passphrase, disk full)
+/// keep their status; anything else (500, none) is the agent's failure, 502.
+pub fn job_failure_status(error_code: Option<u16>) -> u16 {
+    match error_code {
+        Some(c @ (400 | 404 | 409 | 422 | 507)) => c,
+        _ => 502,
     }
 }
 
@@ -951,10 +965,14 @@ impl PdnsApi {
     }
 
     /// Put an exported zone back: `POST /zones` with its rrsets. A 409 (the
-    /// zone exists) re-adopts it and replaces its rrsets with a `PATCH`, so the
-    /// records really come back. Returns `(readopted, rrsets)`.
+    /// zone exists) re-adopts it: one `PATCH` replaces every exported rrset
+    /// and deletes every rrset the zone has now that the backup does not
+    /// (the SOA excepted, it is replaced), so the zone ends up as it was
+    /// saved. The SOA serial is left to PowerDNS (`soa_edit_api`): it goes up,
+    /// which is what secondaries need to pick the change. Returns
+    /// `(readopted, rrsets)`.
     pub async fn apply_zone(&self, content: &serde_json::Value) -> Result<(bool, usize), String> {
-        let (create, patch, n) = zone_restore_bodies(content)?;
+        let (create, mut patch, n) = zone_restore_bodies(content)?;
         let zone = create["name"].as_str().unwrap_or_default().to_string();
         let (client, headers) = self.client()?;
         let resp = client
@@ -972,6 +990,16 @@ impl PdnsApi {
             let body = resp.text().await.unwrap_or_default();
             tracing::warn!("PowerDNS refused to create zone {zone} ({status}): {}", body.chars().take(300).collect::<String>());
             return Err(format!("PowerDNS refused to create zone {zone} ({status})"));
+        }
+        // What the zone holds now: without it, records added after the backup
+        // would survive the restore. No fallback to a replace-only PATCH.
+        let current = self
+            .export_zone(&zone)
+            .await
+            .map_err(|e| format!("zone {zone} exists and its current records could not be read: {e}"))?;
+        let deletions = zone_rrset_deletions(&patch, &current);
+        if let Some(list) = patch.get_mut("rrsets").and_then(|v| v.as_array_mut()) {
+            list.extend(deletions);
         }
         let resp = client
             .patch(format!("{}/{zone}", self.zones_url()))
@@ -1048,6 +1076,36 @@ pub fn zone_restore_bodies(content: &serde_json::Value) -> Result<(serde_json::V
         }).collect::<Vec<_>>(),
     });
     Ok((create, patch, rrsets_in.len()))
+}
+
+/// The `DELETE` changes that make a re-adopted zone identical to its backup:
+/// one per (name, type) the zone holds now (`current`, a `GET /zones/{zone}`)
+/// and the restore `patch` does not replace. Names compare without case and
+/// trailing dot; the SOA is never deleted (it is replaced); each pair once,
+/// PowerDNS refusing a PATCH that names one twice.
+pub fn zone_rrset_deletions(patch: &serde_json::Value, current: &serde_json::Value) -> Vec<serde_json::Value> {
+    fn key(r: &serde_json::Value) -> Option<(String, String, String)> {
+        let name = r.get("name")?.as_str()?;
+        let rtype = r.get("type")?.as_str()?;
+        Some((name.trim_end_matches('.').to_ascii_lowercase(), rtype.to_ascii_uppercase(), name.to_string()))
+    }
+    let kept: std::collections::HashSet<(String, String)> = patch
+        .get("rrsets")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(key).map(|(n, t, _)| (n, t)).collect())
+        .unwrap_or_default();
+    let mut seen = std::collections::HashSet::new();
+    current
+        .get("rrsets")
+        .and_then(|v| v.as_array())
+        .map(|a| a.as_slice())
+        .unwrap_or_default()
+        .iter()
+        .filter_map(key)
+        .filter(|(n, t, _)| t != "SOA" && !kept.contains(&(n.clone(), t.clone())))
+        .filter(|(n, t, _)| seen.insert((n.clone(), t.clone())))
+        .map(|(_, t, name)| serde_json::json!({"name": name, "type": t, "changetype": "DELETE"}))
+        .collect()
 }
 
 /// Track `zone` in `dns_zones` when no row names it yet. `create_zone` writes
@@ -1172,7 +1230,11 @@ mod tests {
         assert_eq!(parse_job_state(&serde_json::json!({"status":"running","result":null})).unwrap(), JobState::Running);
         assert_eq!(
             parse_job_state(&serde_json::json!({"status":"failed","error":"disk full"})).unwrap(),
-            JobState::Failed("disk full".to_string())
+            JobState::Failed("disk full".to_string(), None)
+        );
+        assert_eq!(
+            parse_job_state(&serde_json::json!({"status":"failed","error":"disk full","error_code":507})).unwrap(),
+            JobState::Failed("disk full".to_string(), Some(507))
         );
         assert!(parse_job_state(&serde_json::json!({})).is_err());
     }
@@ -1202,8 +1264,28 @@ mod tests {
         let f = scripted(vec![Ok(serde_json::json!({"status":"failed","error":"integrity check failed"}))]);
         assert_eq!(
             poll_job(f, Duration::from_secs(5), Duration::from_millis(1)).await,
-            Err(JobWaitError::Failed("integrity check failed".to_string()))
+            Err(JobWaitError::Failed("integrity check failed".to_string(), None))
         );
+        let f = scripted(vec![Ok(serde_json::json!({"status":"failed","error":"The archive holds another mailbox","error_code":422}))]);
+        assert_eq!(
+            poll_job(f, Duration::from_secs(5), Duration::from_millis(1)).await,
+            Err(JobWaitError::Failed("The archive holds another mailbox".to_string(), Some(422)))
+        );
+        let f = scripted(vec![Ok(serde_json::json!({"status":"failed","error":"boom","error_code":null}))]);
+        assert_eq!(
+            poll_job(f, Duration::from_secs(5), Duration::from_millis(1)).await,
+            Err(JobWaitError::Failed("boom".to_string(), None))
+        );
+    }
+
+    #[test]
+    fn a_failed_job_keeps_the_status_class_the_agent_gave_it() {
+        for c in [400u16, 404, 409, 422, 507] {
+            assert_eq!(job_failure_status(Some(c)), c);
+        }
+        for c in [None, Some(500), Some(503), Some(401), Some(0)] {
+            assert_eq!(job_failure_status(c), 502, "{c:?}");
+        }
     }
 
     #[tokio::test]
@@ -1339,6 +1421,42 @@ mod tests {
         assert!(create["rrsets"][0].get("comments").is_none());
         assert_eq!(patch["rrsets"][1]["changetype"], "REPLACE");
         assert!(zone_restore_bodies(&serde_json::json!({"name":"../x"})).is_err());
+    }
+
+    #[test]
+    fn a_readopted_zone_loses_the_rrsets_added_after_its_backup() {
+        let backup = serde_json::json!({
+            "name": "a.com.",
+            "rrsets": [
+                {"name":"a.com.","type":"SOA","ttl":3600,"records":[{"content":"ns1.a.com. h.a.com. 1 10800 3600 604800 3600"}]},
+                {"name":"a.com.","type":"MX","ttl":300,"records":[{"content":"10 mail.a.com."}]},
+                {"name":"www.a.com.","type":"A","ttl":300,"records":[{"content":"192.0.2.1"}]}
+            ]
+        });
+        let (_, patch, _) = zone_restore_bodies(&backup).unwrap();
+        let current = serde_json::json!({
+            "name": "a.com.",
+            "rrsets": [
+                {"name":"a.com.","type":"SOA","ttl":3600,"records":[{"content":"ns1.a.com. h.a.com. 7 10800 3600 604800 3600"}]},
+                {"name":"A.com.","type":"MX","ttl":300,"records":[{"content":"20 other.a.com."}]},
+                {"name":"www.a.com.","type":"A","ttl":300,"records":[{"content":"192.0.2.9"}]},
+                {"name":"www.a.com.","type":"AAAA","ttl":300,"records":[{"content":"2001:db8::1"}]},
+                {"name":"new.a.com.","type":"TXT","ttl":300,"records":[{"content":"\"x\""}]},
+                {"name":"new.a.com.","type":"TXT","ttl":300,"records":[{"content":"\"y\""}]}
+            ]
+        });
+        let del = zone_rrset_deletions(&patch, &current);
+        assert_eq!(del, vec![
+            serde_json::json!({"name":"www.a.com.","type":"AAAA","changetype":"DELETE"}),
+            serde_json::json!({"name":"new.a.com.","type":"TXT","changetype":"DELETE"}),
+        ]);
+        // The SOA is never deleted, even when the backup has none.
+        let no_soa = serde_json::json!({"rrsets": []});
+        let del = zone_rrset_deletions(&no_soa, &current);
+        assert!(del.iter().all(|d| d["type"] != "SOA"));
+        assert_eq!(del.len(), 4);
+        // Nothing to delete when the zone already matches.
+        assert!(zone_rrset_deletions(&patch, &backup).is_empty());
     }
 
     #[test]

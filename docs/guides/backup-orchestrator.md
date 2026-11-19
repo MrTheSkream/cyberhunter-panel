@@ -184,7 +184,10 @@ are put back as they were, without going through domain creation.
 On the **DNS** page, **DNS backups**:
 
 - **Restore zone** applies the exported zone through the PowerDNS API. A zone
-  that still exists is kept and its records are replaced by the backup's.
+  that still exists is kept and its records are replaced by the backup's;
+  records added since the backup are deleted, so the zone ends up exactly as
+  it was saved. Its SOA serial still goes up (PowerDNS raises it on every
+  change through the API), so secondary servers pick up the restored zone.
 - **Restore full DNS database** replaces the PowerDNS database with the
   snapshot and restarts PowerDNS. This replaces every zone on the DNS server.
 
