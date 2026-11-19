@@ -1092,7 +1092,7 @@ done
 
 # Les mises à jour reçoivent aussi le fichier de taille des variables : un vhost
 # écrit avant le nom de longueur fixe garde l'ancien nom jusqu'à sa reconstruction.
-_dockpanel_stage="nginx-variables-hash"
+# Toujours dans l'étape nginx-migrations : le rechargement qui suit en fait partie.
 ensure_nginx_variables_hash
 if [ "$NGINX_VARHASH_CHANGED" = "1" ]; then
     NGINX_NEEDS_RELOAD=1
