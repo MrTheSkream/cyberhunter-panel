@@ -942,6 +942,31 @@ mod tests {
         }
     }
 
+    /// The database-dump flavour the route calls: `x` -> `x.enc` with the
+    /// plaintext removed, then `x.enc` -> `x`. Needs /var/backups/dockpanel
+    /// writable (root, as in the build container); says so when it is not.
+    #[tokio::test]
+    async fn backup_wrappers_round_trip_in_place() {
+        let dir = PathBuf::from(format!(
+            "/var/backups/dockpanel/enc-test-{:016x}",
+            rand::random::<u64>()
+        ));
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            eprintln!("SKIPPED backup_wrappers_round_trip_in_place: cannot create {}: {e}", dir.display());
+            return;
+        }
+        let s = Scratch(dir);
+        let plain = s.path("db-20261119-120000.sql.gz");
+        std::fs::write(&plain, FIXTURE_PLAIN).unwrap();
+        let plain_str = plain.to_str().unwrap().to_string();
+        let enc = encrypt_backup(&plain_str, FIXTURE_PASS).await.unwrap();
+        assert_eq!(enc, format!("{plain_str}.enc"));
+        assert_eq!(s.entries(), vec!["db-20261119-120000.sql.gz.enc"]);
+        let dec = decrypt_backup(&enc, FIXTURE_PASS).await.unwrap();
+        assert_eq!(dec, plain_str);
+        assert_eq!(std::fs::read(&dec).unwrap(), FIXTURE_PLAIN);
+    }
+
     #[tokio::test]
     async fn missing_source_and_same_path_rejected() {
         let s = Scratch::new();
