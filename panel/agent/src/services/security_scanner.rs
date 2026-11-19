@@ -579,6 +579,7 @@ async fn scan_security_headers() -> Vec<Finding> {
         if !filename.ends_with(".conf")
             || filename == "dockpanel.dev.conf"
             || filename == super::default_vhost::DEFAULT_VHOST_FILE
+            || filename == super::vhost_extras::VARIABLES_HASH_FILE
         {
             continue;
         }

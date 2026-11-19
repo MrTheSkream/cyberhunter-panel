@@ -171,6 +171,7 @@ fn scan_nginx_sites() -> Vec<SiteExport> {
         if filename == "dockpanel-panel.conf"
             || filename == "dockpanel.dev.conf"
             || filename == crate::services::default_vhost::DEFAULT_VHOST_FILE
+            || filename == crate::services::vhost_extras::VARIABLES_HASH_FILE
             || filename == "default"
         {
             continue;

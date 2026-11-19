@@ -143,6 +143,7 @@ async fn check_nginx() -> Vec<DiagnosticFinding> {
                 || filename == "dockpanel-panel.conf"
                 || filename == "dockpanel.dev.conf"
                 || filename == super::default_vhost::DEFAULT_VHOST_FILE
+                || filename == super::vhost_extras::VARIABLES_HASH_FILE
             {
                 continue;
             }

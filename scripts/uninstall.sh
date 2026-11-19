@@ -82,6 +82,18 @@ echo -e "${GREEN}[+]${NC} Removing nginx config..."
 rm -f /etc/nginx/sites-enabled/dockpanel-panel.conf
 rm -f /etc/nginx/conf.d/dockpanel-panel.conf
 rm -f /etc/nginx/conf.d/dockpanel-default-vhost.conf
+# Les vhosts de sites restent en place : si l'un d'eux porte encore un ancien nom
+# de variable long, nginx a besoin de ce fichier, qui est alors conservé.
+VARHASH_CONF=/etc/nginx/conf.d/dockpanel-variables-hash.conf
+if [ -f "$VARHASH_CONF" ]; then
+    mv -f "$VARHASH_CONF" "$VARHASH_CONF.old"
+    if nginx -t > /dev/null 2>&1; then
+        rm -f "$VARHASH_CONF.old"
+    else
+        mv -f "$VARHASH_CONF.old" "$VARHASH_CONF"
+        echo -e "${YELLOW}[!]${NC} Kept $VARHASH_CONF: nginx -t fails without it (a site vhost still needs it)"
+    fi
+fi
 nginx -t > /dev/null 2>&1 && (nginx -s reload 2>/dev/null || systemctl reload nginx 2>/dev/null) || true
 
 # Remove CLI binary

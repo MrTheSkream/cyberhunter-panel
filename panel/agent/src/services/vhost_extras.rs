@@ -180,10 +180,23 @@ pub const STRICT_FORWARDED_FOR: &str = "$remote_addr";
 /// Historical value: the client's own header, extended.
 pub const APPENDED_FORWARDED_FOR: &str = "$proxy_add_x_forwarded_for";
 
-/// The name of the per-site Permissions-Policy variable (a domain's dots and
-/// hyphens are not valid in an nginx variable name).
+/// Fichier de conf.d où `setup.sh` et `update.sh` relèvent la taille des cases
+/// de la table des variables d'nginx. Sur la famille RHEL, conf.d est aussi le
+/// répertoire des sites : les scanners le sautent comme le vhost par défaut.
+pub const VARIABLES_HASH_FILE: &str = "dockpanel-variables-hash.conf";
+
+/// Nom de la variable Permissions-Policy propre à un site.
+///
+/// Longueur fixe : `ch_sec_pp_` puis 16 caractères hexadécimaux de l'empreinte
+/// sha256 du domaine. L'ancien nom recopiait le domaine (points et tirets en
+/// `_`) : au-delà d'environ 36 caractères de domaine, il ne tenait plus dans
+/// une case de 64 octets (`variables_hash_bucket_size` par défaut) et nginx -t
+/// refusait le vhost. Le nom est stable pour un même domaine ; un vhost écrit
+/// avec l'ancien nom reste valide jusqu'à sa reconstruction.
 pub fn permissions_variable(domain: &str) -> String {
-    format!("ch_sec_pp_{}", domain.replace(['.', '-'], "_"))
+    use sha2::Digest;
+    let digest = hex::encode(sha2::Sha256::digest(domain.as_bytes()));
+    format!("ch_sec_pp_{}", &digest[..16])
 }
 
 /// `map` blocks giving each default security header of a proxied site an empty
@@ -300,6 +313,31 @@ fn printable(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_permissions_variable_has_a_fixed_length() {
+        // Vecteur connu : printf %s my-app.example.com | sha256sum
+        assert_eq!(permissions_variable("my-app.example.com"), "ch_sec_pp_88f5d42492853ffe");
+        let long = format!("{}.com", ["a".repeat(63), "b".repeat(63), "c".repeat(63), "d".repeat(57)].join("."));
+        assert_eq!(long.len(), 253);
+        for d in ["a.io", "casinosbelges.apps.bastiencordier.pro", long.as_str()] {
+            let v = permissions_variable(d);
+            assert_eq!(v.len(), 26, "{d}");
+            assert!(v.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_'), "{v}");
+            assert_eq!(v, permissions_variable(d), "stable for {d}");
+        }
+    }
+
+    #[test]
+    fn two_domains_never_share_a_permissions_variable() {
+        // L'ancien nom les confondait : ch_sec_pp_a_b_com.
+        assert_ne!(permissions_variable("a-b.com"), permissions_variable("a.b.com"));
+        assert_ne!(permissions_variable("example.com"), permissions_variable("www.example.com"));
+        let d = "casinosbelges.apps.bastiencordier.pro";
+        let maps = upstream_header_maps(d, "camera=()");
+        assert!(maps.contains(&format!("map $upstream_http_permissions_policy ${} {{", permissions_variable(d))));
+        assert!(!maps.contains("bastiencordier"));
+    }
 
     fn v(items: &[&str]) -> Vec<String> {
         items.iter().map(|s| s.to_string()).collect()

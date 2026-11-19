@@ -2514,15 +2514,27 @@ server {").unwrap();
     fn a_proxied_site_never_doubles_a_header_the_app_sent() {
         let t = init_templates();
         let out = render_site_config_including(&t, "my-app.example.com", &proxied(true), None, SiteIncludes::default()).unwrap();
+        let pp = crate::services::vhost_extras::permissions_variable("my-app.example.com");
         for (upstream, var) in [
             ("strict_transport_security", "ch_sec_hsts"),
             ("x_content_type_options", "ch_sec_nosniff"),
             ("x_frame_options", "ch_sec_frame"),
             ("referrer_policy", "ch_sec_referrer"),
-            ("permissions_policy", "ch_sec_pp_my_app_example_com"),
+            ("permissions_policy", pp.as_str()),
         ] {
             assert!(out.contains(&format!("map $upstream_http_{upstream} ${var} {{")), "{var}");
             assert!(out.contains(&format!(" ${var} always;")), "{var}");
+        }
+        // Le nom ne recopie plus le domaine : il tient dans une case de 64 octets.
+        assert!(!out.contains("ch_sec_pp_my_app_example_com"));
+        // Domaine long : même nom dans le map et dans add_header, avec et sans SSL.
+        let long = "casinosbelges.apps.bastiencordier.pro";
+        let var = crate::services::vhost_extras::permissions_variable(long);
+        for ssl in [false, true] {
+            let o = render_site_config_including(&t, long, &proxied(ssl), None, SiteIncludes::default()).unwrap();
+            assert!(o.contains(&format!("map $upstream_http_permissions_policy ${var} {{")), "ssl={ssl}");
+            assert!(o.contains(&format!("add_header Permissions-Policy ${var} always;")), "ssl={ssl}");
+            assert!(!o.contains("ch_sec_pp_casinosbelges"), "ssl={ssl}");
         }
         assert!(!out.contains("add_header X-Frame-Options \"SAMEORIGIN\""));
         // Every other runtime keeps its literal headers and no map.

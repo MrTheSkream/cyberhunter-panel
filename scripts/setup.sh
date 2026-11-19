@@ -790,6 +790,109 @@ install_nginx() {
     svc_ok "Nginx${nv:+ $nv}"
 }
 
+# ── Taille des cases de la table des variables d'nginx ──────────────────
+# Le vhost d'un site proxifié déclare ses en-têtes par `map`. nginx range les
+# noms de variables dans des cases de variables_hash_bucket_size octets (64 par
+# défaut sur x86_64) : un nom trop long fait échouer nginx -t avec "could not
+# build variables_hash". L'agent donne désormais un nom de longueur fixe, mais
+# un vhost écrit avant garde l'ancien nom (qui recopiait le domaine) jusqu'à sa
+# reconstruction. Ce fichier relève donc les deux tailles, chacune seulement si
+# aucun autre fichier ne la déclare : une directive en double fait échouer
+# nginx -t (un 11-variables-hash.conf posé à la main est ainsi respecté).
+# Si nginx refuse le résultat, le fichier est retiré et l'installation continue.
+# Fonction identique dans setup.sh et update.sh : tests/variables-hash-pin-e2e.sh
+# les compare. Elle positionne NGINX_VARHASH_CHANGED=1 quand un rechargement
+# d'nginx est nécessaire.
+ensure_nginx_variables_hash() {
+    local dir="${1:-/etc/nginx/conf.d}"
+    local file="$dir/dockpanel-variables-hash.conf"
+    local backup="$dir/dockpanel-variables-hash.conf.old"
+    local dump="" present="" want="" body="" err="cannot write $file" had=0 backup_ok=0
+    NGINX_VARHASH_CHANGED=0
+    if ! command -v nginx > /dev/null 2>&1; then
+        return 0
+    fi
+    if [ ! -d "$dir" ]; then
+        warn "nginx variables hash: $dir is missing, nginx defaults kept"
+        return 0
+    fi
+    if [ -f "$file" ]; then
+        had=1
+    fi
+    rm -f "$backup"
+
+    # La configuration actuelle. Si elle échoue alors que notre fichier existe,
+    # il peut être la cause (directive ajoutée ailleurs depuis) : relire sans lui.
+    if ! dump=$(nginx -T 2>/dev/null); then
+        if [ "$had" = "1" ] && mv -f "$file" "$backup" && dump=$(nginx -T 2>/dev/null); then
+            rm -f "$backup"
+        else
+            if [ -f "$backup" ]; then
+                mv -f "$backup" "$file"
+            fi
+            warn "nginx variables hash: nginx -T fails, sizes not checked (run nginx -t)"
+            return 0
+        fi
+    elif [ "$had" = "1" ]; then
+        backup_ok=1
+    fi
+
+    # Ce que déclare le reste de la configuration, sans notre fichier ni les
+    # commentaires. Chaque directive est décidée à part.
+    present=$(awk -v own="# configuration file $file:" '
+        /^# configuration file / { skip = ($0 == own); next }
+        skip { next }
+        { sub(/#.*/, ""); print }' <<< "$dump")
+    if ! grep -Eq '(^|[[:space:];{])variables_hash_bucket_size[[:space:]]' <<< "$present"; then
+        want="variables_hash_bucket_size 128;"$'\n'
+    fi
+    if ! grep -Eq '(^|[[:space:];{])variables_hash_max_size[[:space:]]' <<< "$present"; then
+        want="${want}variables_hash_max_size 2048;"$'\n'
+    fi
+
+    if [ -z "$want" ]; then
+        rm -f "$file"
+        if [ "$had" = "1" ]; then
+            NGINX_VARHASH_CHANGED=1
+            log "nginx variables hash: both sizes set elsewhere, $file removed"
+        else
+            log "nginx variables hash: both sizes already set elsewhere"
+        fi
+        return 0
+    fi
+
+    body="# Managed by CyberHunter - Panel - do not edit; rewritten by setup.sh/update.sh.
+# Holds only the sizes no other file sets: a directive declared twice fails nginx -t.
+${want}"
+    if [ "$backup_ok" = "1" ] && [ "$(cat "$file")" = "${body%$'\n'}" ]; then
+        return 0
+    fi
+    if [ "$backup_ok" = "1" ] && ! mv -f "$file" "$backup"; then
+        warn "nginx variables hash: cannot replace $file, left as is"
+        return 0
+    fi
+    if printf '%s' "$body" > "$file" && err=$(nginx -t 2>&1); then
+        rm -f "$backup"
+        NGINX_VARHASH_CHANGED=1
+        log "nginx variables hash: ${want//$'\n'/ }written to $file"
+        return 0
+    fi
+
+    # nginx refuse le fichier : le retirer, et remettre l'ancien s'il était valide.
+    rm -f "$file"
+    if [ "$backup_ok" = "1" ]; then
+        mv -f "$backup" "$file"
+        warn "nginx variables hash: nginx -t rejected the new $file, previous one restored: ${err%%$'\n'*}"
+    else
+        if [ "$had" = "1" ]; then
+            NGINX_VARHASH_CHANGED=1
+        fi
+        warn "nginx variables hash: nginx -t rejected $file, removed it: ${err%%$'\n'*}"
+        warn "Sites with a long domain may need variables_hash_bucket_size raised by hand."
+    fi
+    return 0
+}
+
 install_node() {
     header "Node.js (for frontend build)"
 
@@ -2562,6 +2665,8 @@ main() {
     # Before nginx is asked to proxy anything: on Enforcing SELinux it may not
     # open the socket to the API at all, and the denial is silent.
     configure_selinux
+    # Avant le vhost du panel : son nginx -t final valide aussi ce fichier.
+    ensure_nginx_variables_hash
     configure_nginx
     create_services
 
