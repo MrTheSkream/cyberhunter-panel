@@ -1341,7 +1341,7 @@ export default function Telemetry() {
               </div>
             )}
             <div className="text-xs text-dark-400 mt-3">
-              Retained 7 days (min 3 always kept). Stored under /var/backups/dockpanel/snapshots/.
+              Retained 7 days (min 3 always kept); scheduled off-site runs keep their newest 3 locally. Stored under /var/backups/dockpanel/snapshots/.
             </div>
           </div>
 

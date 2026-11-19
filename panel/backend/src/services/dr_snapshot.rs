@@ -370,7 +370,9 @@ pub fn build_dr_archive(
             .arg(staging)
             .arg("-xzf")
             .arg(snapshot)
-            .args(["--exclude=./binaries", "--exclude=./frontend", "--exclude=binaries", "--exclude=frontend"])
+            // Anchored: only the top-level trees. Unanchored, `frontend` would
+            // also drop any `etc/.../frontend` and the archive would lose files.
+            .args(["--anchored", "--exclude=./binaries", "--exclude=./frontend"])
             .status()
             .map_err(|e| format!("cannot start tar: {e}"))?;
         if !status.success() {
@@ -916,6 +918,11 @@ pub async fn run_once(db: &PgPool, agents: &AgentRegistry, operator: Option<Stri
     }
 
     let outbox = Path::new(DR_OUTBOX);
+    // A crashed run can leave plaintext staging behind: sweep it first.
+    if let Err(e) = purge_outbox(Path::new(DR_STAGING_PARENT)) {
+        finish_run(db, "failed", &[format!("cannot sweep the staging directory: {e}")]).await;
+        return;
+    }
     if let Err(e) = purge_outbox(outbox) {
         finish_run(db, "failed", &[format!("cannot prepare the outbox: {e}")]).await;
         return;
@@ -1139,6 +1146,17 @@ pub fn alert_due(stale: bool, last_alert_at: Option<DateTime<Utc>>, now: DateTim
 /// Background task: start the scheduled run, raise the 48 h alert.
 pub async fn run(db: PgPool, agents: AgentRegistry, mut shutdown_rx: tokio::sync::broadcast::Receiver<()>) {
     tracing::info!("Off-site panel snapshot scheduler started");
+    // A restart during a run leaves `running` behind; no run survives a restart.
+    if !is_running() {
+        if let Err(e) = sqlx::query(
+            "UPDATE dr_settings SET last_status = 'failed',              last_error = 'Interrupted: the panel restarted during the off-site snapshot'              WHERE id = 1 AND last_status = 'running'",
+        )
+        .execute(&db)
+        .await
+        {
+            tracing::error!("Off-site snapshot: could not clear an interrupted run: {e}");
+        }
+    }
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
     loop {
         tokio::select! {
@@ -1328,7 +1346,13 @@ mod tests {
 
         // Every cut is detected once the reader is drained: inside the last
         // chunk, mid-file, and right after the header.
-        for cut in [ct.len() - 1, ct.len() - 100, ct.len() / 2, 300] {
+        // The payload starts after the header, and each 64 KiB chunk is 65 536 +
+        // 16 bytes: also cut exactly on chunk boundaries, the case the final-
+        // chunk flag of the age stream exists for.
+        let payload_start = ct.len() - (200_000 + 16 * 4) - 16; // nonce (16) + 4 chunks
+        let mut cuts = vec![ct.len() - 1, ct.len() - 100, ct.len() / 2, 300];
+        cuts.extend((1..=3).map(|k| payload_start + 16 + 65_552 * k));
+        for cut in cuts {
             let r = decrypt_stream(&k.identity_file, &ct[..cut], &mut Vec::new());
             assert!(r.is_err(), "a stream cut at {cut} of {} must be refused", ct.len());
         }
@@ -1552,12 +1576,14 @@ mod tests {
         use std::process::Command;
         let dir = tmp("archive");
         let src = dir.join("src");
-        for d in ["binaries", "frontend/dist", "db", "etc/ssl"] {
+        for d in ["binaries", "frontend/dist", "db", "etc/ssl", "etc/deploy-keys/frontend"] {
             std::fs::create_dir_all(src.join(d)).unwrap();
         }
         std::fs::write(src.join("binaries/dockpanel-api"), b"ELF").unwrap();
         std::fs::write(src.join("frontend/dist/index.html"), b"<html>").unwrap();
         std::fs::write(src.join("db/dump.sql.gz"), b"gz").unwrap();
+        std::fs::write(src.join("etc/deploy-keys/frontend/id"), b"k").unwrap();
+        std::fs::write(src.join("etc/deploy-keys/binaries"), b"k").unwrap();
         std::fs::write(src.join("etc/api.env"), b"JWT_SECRET=s3cr3t-value\n").unwrap();
         std::fs::write(src.join("metadata.json"), br#"{"snapshot_id":"s","from_version":"3.0.0"}"#).unwrap();
         let snap = dir.join("panel-snapshot.tar.gz");
@@ -1581,7 +1607,12 @@ mod tests {
         let list = Command::new("tar").arg("-tzf").arg(&tgz).output().unwrap();
         let list = String::from_utf8_lossy(&list.stdout);
         assert!(list.contains("db/dump.sql.gz") && list.contains("etc/api.env"), "{list}");
-        assert!(!list.contains("binaries") && !list.contains("frontend"), "{list}");
+        for l in list.lines() {
+            assert!(!l.starts_with("./binaries") && !l.starts_with("./frontend"), "{list}");
+        }
+        // Only the top-level trees go: a nested `frontend` or `binaries` stays.
+        assert!(list.contains("./etc/deploy-keys/frontend/id"), "{list}");
+        assert!(list.contains("./etc/deploy-keys/binaries"), "{list}");
         let x = dir.join("x");
         std::fs::create_dir_all(&x).unwrap();
         assert!(Command::new("tar").arg("-C").arg(&x).arg("-xzf").arg(&tgz).status().unwrap().success());
