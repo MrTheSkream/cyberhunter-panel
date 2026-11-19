@@ -107,14 +107,30 @@ async fn dump(
             let enc_path = encryption::encrypt_backup(&filepath, key)
                 .await
                 .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
-            let enc_meta = std::fs::metadata(&enc_path)
-                .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &format!("Encrypted file: {e}")))?;
-            info.filename = format!("{}.enc", info.filename);
-            info.size_bytes = enc_meta.len();
+            describe_encrypted(&mut info, std::path::Path::new(&enc_path))
+                .await
+                .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
         }
     }
 
     Ok(Json(info))
+}
+
+/// Point `info` at the encrypted file that replaced the plaintext dump: its
+/// name, its size and ITS sha256. The hash the dump function computed is the
+/// plaintext's, a file that no longer exists; recorded as is, every later
+/// check of the stored file (the off-site rehydration compares the download
+/// with it) would fail. Same rule as app data archives: the hash describes the
+/// file kept. A hash that cannot be computed is an error, never the stale one.
+async fn describe_encrypted(info: &mut BackupInfo, enc_path: &std::path::Path) -> Result<(), String> {
+    let meta = std::fs::metadata(enc_path).map_err(|e| format!("Encrypted file: {e}"))?;
+    let sha256 = crate::services::backups::compute_file_sha256(&enc_path.to_string_lossy())
+        .await
+        .ok_or("Failed to hash the encrypted dump")?;
+    info.filename = format!("{}.enc", info.filename);
+    info.size_bytes = meta.len();
+    info.sha256 = Some(sha256);
+    Ok(())
 }
 
 /// GET /db-backups/{db_name}/list - List database backups.
@@ -286,5 +302,36 @@ mod tests {
         assert_eq!(decrypt_status("Decryption failed: bad decrypt"), StatusCode::UNPROCESSABLE_ENTITY);
         assert_eq!(decrypt_status("Not an encrypted backup (missing OpenSSL salt header)"), StatusCode::UNPROCESSABLE_ENTITY);
         assert_eq!(decrypt_status("Failed to run openssl: not found"), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    /// The recorded sha256 of an encrypted dump is the `.enc` file's, not the
+    /// plaintext's the dump function computed before the encryption.
+    #[tokio::test]
+    async fn an_encrypted_dump_is_described_by_the_hash_of_the_encrypted_file() {
+        let dir = std::env::temp_dir().join(format!("dbb-enc-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let plain = dir.join("wp-20261119-030000.sql.gz");
+        let enc = dir.join("wp-20261119-030000.sql.gz.enc");
+        std::fs::write(&plain, b"-- a dump that is long enough to be encrypted\nSELECT 1;\n").unwrap();
+        let plain_sha = crate::services::backups::compute_file_sha256(&plain.to_string_lossy()).await.unwrap();
+        encryption::encrypt_file(&plain, &enc, "a-test-passphrase").await.unwrap();
+        let enc_sha = crate::services::backups::compute_file_sha256(&enc.to_string_lossy()).await.unwrap();
+
+        let mut info = BackupInfo {
+            filename: "wp-20261119-030000.sql.gz".into(),
+            size_bytes: 1,
+            sha256: Some(plain_sha.clone()),
+            ..Default::default()
+        };
+        describe_encrypted(&mut info, &enc).await.unwrap();
+        assert_eq!(info.filename, "wp-20261119-030000.sql.gz.enc");
+        assert_eq!(info.size_bytes, std::fs::metadata(&enc).unwrap().len());
+        assert_eq!(info.sha256.as_deref(), Some(enc_sha.as_str()));
+        assert_ne!(enc_sha, plain_sha);
+
+        // A file that cannot be read is an error, and the stale hash is not kept.
+        let mut gone = BackupInfo { filename: "x.sql.gz".into(), sha256: Some(plain_sha), ..Default::default() };
+        assert!(describe_encrypted(&mut gone, &dir.join("missing.enc")).await.is_err());
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

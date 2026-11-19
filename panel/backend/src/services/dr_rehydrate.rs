@@ -10,7 +10,9 @@
 //!    somewhere to go;
 //! 2. downloads the archive through the agent (`/backups/list` on the file
 //!    name, `/backups/download` into the restore inbox), checks it against the
-//!    row's sha256, and moves it where the existing restore expects it
+//!    row's sha256 (an encrypted dump whose recorded hash is the plaintext's,
+//!    as older agents wrote it, is a warning: the HMAC of its decryption
+//!    checks it at the restore), and moves it where the existing restore expects it
 //!    (`/var/backups/dockpanel/<domain>/` or `.../databases/<db>/`);
 //! 3. restores it with the same agent calls as the existing restore routes;
 //! 4. reports per item (`restored`, `failed`, `skipped`).
@@ -129,6 +131,27 @@ pub fn plain_file_name(name: &str) -> bool {
         && name.len() <= 255
         && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
         && !name.contains("..")
+}
+
+/// What a downloaded file's sha256 says against the one its backup row
+/// recorded: `Ok(None)` when they agree (or nothing was recorded), an error
+/// when a plaintext file differs, and `Ok(Some(warning))` when an ENCRYPTED
+/// dump (`.enc`) differs. Agents before the fix recorded the sha256 of the
+/// plaintext dump for an encrypted one, so on those rows a mismatch says
+/// nothing about the file. Its integrity is then proved by the agent at the
+/// restore itself: `/db-backups/.../restore` checks the HMAC of the whole
+/// `.enc` before decrypting, and refuses a corrupted or tampered file (422).
+pub fn checksum_verdict(filename: &str, recorded: Option<&str>, got: &str) -> Result<Option<String>, String> {
+    let Some(want) = recorded.filter(|s| !s.is_empty()) else { return Ok(None) };
+    if got.eq_ignore_ascii_case(want) {
+        return Ok(None);
+    }
+    if filename.ends_with(".enc") {
+        return Ok(Some(format!(
+            "the downloaded sha256 {got} differs from the one recorded ({want}); older agents recorded the hash of the              unencrypted dump for an encrypted one, so the file is checked instead by the integrity check (HMAC) of its              decryption at the restore"
+        )));
+    }
+    Err(format!("checksum mismatch: downloaded sha256 {got}, the backup row says {want}"))
 }
 
 /// Where the existing restore reads a site archive and a database dump.
@@ -343,11 +366,15 @@ async fn fetch(
     let (dtype, config) = row.ok_or("the destination no longer exists")?;
     let payload = crate::routes::backup_destinations::agent_destination_payload(&dtype, &config);
     let (path, _size, got) = dr_restore::download(agent, &payload, filename, filename).await?;
-    if let Some(want) = sha256.filter(|s| !s.is_empty()) {
-        if !got.eq_ignore_ascii_case(want) {
+    let warning = match checksum_verdict(filename, sha256, &got) {
+        Ok(w) => w,
+        Err(e) => {
             let _ = std::fs::remove_file(&path);
-            return Err(format!("checksum mismatch: downloaded sha256 {got}, the backup row says {want}"));
+            return Err(e);
         }
+    };
+    if let Some(w) = &warning {
+        tracing::warn!("Rehydration: {filename}: {w}");
     }
     let parent = target.parent().ok_or("no parent directory")?;
     if let Err(e) = std::fs::create_dir_all(parent) {
@@ -358,7 +385,10 @@ async fn fetch(
         let _ = std::fs::remove_file(&path);
         return Err(format!("cannot move the download to {}: {e}", target.display()));
     }
-    Ok("downloaded; ".into())
+    Ok(match warning {
+        Some(w) => format!("downloaded; WARNING: {w}; "),
+        None => "downloaded; ".into(),
+    })
 }
 
 async fn restore_site(
@@ -541,6 +571,20 @@ mod tests {
             PathBuf::from("/var/backups/dockpanel/example.com/f.tar.gz")
         );
         assert_eq!(db_backup_path("wp", "d.sql.gz"), PathBuf::from("/var/backups/dockpanel/databases/wp/d.sql.gz"));
+    }
+
+    #[test]
+    fn a_checksum_mismatch_fails_a_plain_file_and_warns_on_an_encrypted_one() {
+        let (a, b) = ("a".repeat(64), "b".repeat(64));
+        assert_eq!(checksum_verdict("wp.sql.gz", Some(&a), &a.to_uppercase()), Ok(None));
+        assert_eq!(checksum_verdict("wp.sql.gz", None, &a), Ok(None));
+        assert_eq!(checksum_verdict("wp.sql.gz", Some(""), &a), Ok(None));
+        let e = checksum_verdict("wp.sql.gz", Some(&a), &b).unwrap_err();
+        assert!(e.contains("checksum mismatch"), "{e}");
+        assert!(checksum_verdict("example.com.tar.gz", Some(&a), &b).is_err());
+        let w = checksum_verdict("wp.sql.gz.enc", Some(&a), &b).unwrap().expect("a warning");
+        assert!(w.contains("HMAC") && w.contains(&a) && w.contains(&b), "{w}");
+        assert_eq!(checksum_verdict("wp.sql.gz.enc", Some(&a), &a), Ok(None));
     }
 
     #[test]
