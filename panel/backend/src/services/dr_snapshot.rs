@@ -643,9 +643,31 @@ pub fn schedule_due(enabled: bool, schedule: &str, last_run_at: Option<DateTime<
         && last_run_at.is_none_or(|t| (now - t).num_seconds() >= 90)
 }
 
-/// A schedule the scheduler can run: exactly 5 valid fields.
+/// A schedule the scheduler can run: exactly 5 valid fields, each value within
+/// its field's range (minute 0-59, hour 0-23, day 1-31, month 1-12, weekday
+/// 0-7). A value out of range would be accepted by a format check and then
+/// never fire, which shows up only as the 48 h overdue alert.
 pub fn valid_schedule(s: &str) -> bool {
-    s.split_whitespace().count() == 5 && crate::routes::git_deploys::is_valid_cron(s)
+    const BOUNDS: [(u32, u32); 5] = [(0, 59), (0, 23), (1, 31), (1, 12), (0, 7)];
+    let fields: Vec<&str> = s.split_whitespace().collect();
+    fields.len() == 5
+        && crate::routes::git_deploys::is_valid_cron(s)
+        && fields.iter().zip(BOUNDS).all(|(f, b)| cron_field_in_bounds(f, b))
+}
+
+fn cron_field_in_bounds(field: &str, (lo, hi): (u32, u32)) -> bool {
+    let within = |v: &str| v.parse::<u32>().is_ok_and(|n| n >= lo && n <= hi);
+    field.split(',').filter(|p| !p.is_empty()).all(|part| {
+        if part == "*" {
+            true
+        } else if let Some(step) = part.strip_prefix("*/") {
+            step.parse::<u32>().is_ok_and(|n| n >= 1 && n <= hi.max(1))
+        } else if let Some((a, b)) = part.split_once('-') {
+            within(a) && within(b) && a.parse::<u32>().ok() <= b.parse::<u32>().ok()
+        } else {
+            within(part)
+        }
+    })
 }
 
 // ── Database rows ───────────────────────────────────────────────────────────
@@ -1220,6 +1242,13 @@ pub fn alert_due(stale: bool, last_alert_at: Option<DateTime<Utc>>, now: DateTim
 /// Background task: start the scheduled run, raise the 48 h alert.
 pub async fn run(db: PgPool, agents: AgentRegistry, mut shutdown_rx: tokio::sync::broadcast::Receiver<()>) {
     tracing::info!("Off-site panel snapshot scheduler started");
+    // A run killed while building its archive leaves the decrypted snapshot in
+    // the staging directory: remove it now rather than at the next run.
+    match purge_outbox(Path::new(DR_STAGING_PARENT)) {
+        Ok(0) => {}
+        Ok(n) => tracing::warn!("Off-site snapshot: removed {n} leftover staging item(s) of an interrupted run"),
+        Err(e) => tracing::error!("Off-site snapshot: cannot sweep the staging directory: {e}"),
+    }
     // A restart during a run leaves `running` behind; no run survives a restart.
     if !is_running() {
         if let Err(e) = sqlx::query(
@@ -1564,6 +1593,14 @@ mod tests {
         assert!(!valid_schedule("30 3 * *"));
         assert!(!valid_schedule("0 30 3 * * *"));
         assert!(!valid_schedule("a b c d e"));
+        // In format, out of range: would never fire.
+        assert!(!valid_schedule("61 3 * * *"));
+        assert!(!valid_schedule("30 24 * * *"));
+        assert!(!valid_schedule("30 3 0 * *"));
+        assert!(!valid_schedule("30 3 * 13 *"));
+        assert!(!valid_schedule("30 3 * * 8"));
+        assert!(!valid_schedule("30 5-3 * * *"));
+        assert!(valid_schedule("0,30 0-23 1-31 1-12 0-7"));
     }
 
     #[test]
