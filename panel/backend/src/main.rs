@@ -492,8 +492,8 @@ async fn main() {
 
     // Every verifier query is fleet-wide, so it gets the registry: an archive is read
     // on the host that wrote it. See `verify_one`.
-    let (s_db, s_agents) = (state.db.clone(), state.agents.clone());
-    spawn_supervised("backup_verifier", &shutdown_tx, move |rx| services::backup_verifier::run(s_db.clone(), s_agents.clone(), rx));
+    let (s_db, s_agents, s_jwt) = (state.db.clone(), state.agents.clone(), state.config.jwt_secret.clone());
+    spawn_supervised("backup_verifier", &shutdown_tx, move |rx| services::backup_verifier::run(s_db.clone(), s_agents.clone(), s_jwt.clone(), rx));
 
     // Each leg resolves its own host: sites and databases per row, volumes per policy.
     // See `execute_policy`.
@@ -502,8 +502,8 @@ async fn main() {
 
     // A drill restores a backup on the server that owns it - running one elsewhere
     // certifies DR for a machine it never tested. See `dispatch_policy_drills`.
-    let (s_db, s_agents) = (state.db.clone(), state.agents.clone());
-    spawn_supervised("drill_scheduler", &shutdown_tx, move |rx| services::drill_scheduler::run(s_db.clone(), s_agents.clone(), rx));
+    let (s_db, s_agents, s_jwt) = (state.db.clone(), state.agents.clone(), state.config.jwt_secret.clone());
+    spawn_supervised("drill_scheduler", &shutdown_tx, move |rx| services::drill_scheduler::run(s_db.clone(), s_agents.clone(), s_jwt.clone(), rx));
 
     // Each site's access log lives on the server that owns it, so this too takes
     // the registry. See `traffic_accounting_scheduler::collect_one`.

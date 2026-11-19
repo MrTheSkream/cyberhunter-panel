@@ -165,7 +165,7 @@ else
 fi
 
 TICK_BODY=$(fnbody "$DRILL_SCHED_C" "tick")
-if has "$TICK_BODY" 'if dispatch_policy_drills\(db, agents, policy\)\.await \{'; then
+if has "$TICK_BODY" 'if dispatch_policy_drills\(db, agents, policy(, jwt_secret)?\)\.await \{'; then
   ok "B3 tick() gates the last_drill_at UPDATE on dispatch_policy_drills actually returning true"
 else
   bad "B3 tick() no longer gates on dispatch_policy_drills' return value"

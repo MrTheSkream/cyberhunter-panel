@@ -31,9 +31,12 @@ struct DuePolicy {
 /// disaster recovery for a machine it never touched - and because the Drills tab has
 /// no server column and nothing alerts on drill outcomes, that certification is the
 /// only artifact anyone sees. It also feeds the chain-of-trust compliance report.
+///
+/// `jwt_secret` derives the passphrase of an encrypted app data archive.
 pub async fn run(
     db: PgPool,
     agents: AgentRegistry,
+    jwt_secret: String,
     mut shutdown_rx: tokio::sync::broadcast::Receiver<()>,
 ) {
     tracing::info!("Drill scheduler started");
@@ -43,7 +46,7 @@ pub async fn run(
     loop {
         tokio::select! {
             _ = interval.tick() => {
-                if let Err(e) = tick(&db, &agents).await {
+                if let Err(e) = tick(&db, &agents, &jwt_secret).await {
                     tracing::error!("Drill scheduler error: {e}");
                 }
             }
@@ -55,7 +58,7 @@ pub async fn run(
     }
 }
 
-async fn tick(db: &PgPool, agents: &AgentRegistry) -> Result<(), String> {
+async fn tick(db: &PgPool, agents: &AgentRegistry, jwt_secret: &str) -> Result<(), String> {
     let now = chrono::Utc::now();
 
     let policies: Vec<DuePolicy> = sqlx::query_as(
@@ -87,7 +90,7 @@ async fn tick(db: &PgPool, agents: &AgentRegistry) -> Result<(), String> {
         // The double-fire this used to guard against is already prevented by
         // `has_running_drill_for_server`'s own `backup_drills` row, inserted synchronously
         // inside `enqueue_drill` before the slow agent call is even spawned.
-        if dispatch_policy_drills(db, agents, policy).await {
+        if dispatch_policy_drills(db, agents, policy, jwt_secret).await {
             let _ = sqlx::query(
                 "UPDATE backup_policies SET last_drill_at = NOW() WHERE id = $1"
             ).bind(policy.id).execute(db).await;
@@ -109,7 +112,7 @@ async fn tick(db: &PgPool, agents: &AgentRegistry) -> Result<(), String> {
 /// again, once per week, silently. Checking once per policy keeps the cap the comment
 /// always claimed (one policy's drills in flight per server) without a leg starving
 /// its own sibling.
-async fn dispatch_policy_drills(db: &PgPool, agents: &AgentRegistry, policy: &DuePolicy) -> bool {
+async fn dispatch_policy_drills(db: &PgPool, agents: &AgentRegistry, policy: &DuePolicy, jwt_secret: &str) -> bool {
     let db_row: Option<(Uuid, Option<Uuid>, String, String, String)> = sqlx::query_as(
         "SELECT id, server_id, db_type, db_name, filename \
          FROM database_backups \
@@ -117,8 +120,8 @@ async fn dispatch_policy_drills(db: &PgPool, agents: &AgentRegistry, policy: &Du
          ORDER BY created_at DESC LIMIT 1"
     ).bind(policy.id).fetch_optional(db).await.ok().flatten();
 
-    let vol_row: Option<(Uuid, Option<Uuid>, String, String)> = sqlx::query_as(
-        "SELECT id, server_id, container_name, filename \
+    let vol_row: Option<(Uuid, Option<Uuid>, String, String, bool, i16)> = sqlx::query_as(
+        "SELECT id, server_id, container_name, filename, encrypted, encryption_key_version \
          FROM volume_backups \
          WHERE policy_id = $1 \
          ORDER BY created_at DESC LIMIT 1"
@@ -186,13 +189,13 @@ async fn dispatch_policy_drills(db: &PgPool, agents: &AgentRegistry, policy: &Du
         dispatched = true;
     }
 
-    if let Some((backup_id, _, container_name, filename)) = vol_row {
+    if let Some((backup_id, _, container_name, filename, encrypted, key_version)) = vol_row {
+        // An encrypted archive carries its passphrase, from the row's own key version.
         enqueue_drill(
             db, &agent, "volume", backup_id, server_id,
-            serde_json::json!({
-                "container_name": container_name,
-                "filename": filename,
-            }),
+            crate::services::backup_policy_executor::volume_check_body(
+                &container_name, &filename, encrypted, key_version, jwt_secret,
+            ),
             "/backups/drill/volume",
         ).await;
         dispatched = true;

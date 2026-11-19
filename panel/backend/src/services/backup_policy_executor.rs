@@ -24,6 +24,8 @@ struct PolicyRow {
     retention_count: i32,
     encrypt: bool,
     verify_after_backup: bool,
+    /// Stop the containers that use an app's data while it is archived.
+    stop_apps: bool,
     last_run: Option<chrono::DateTime<chrono::Utc>>,
 }
 
@@ -277,12 +279,19 @@ pub fn names_sharing_prefix(prefix: &str, names: &[String]) -> Vec<String> {
 /// archives (`{container}-{volume}-{ts}.tar.gz`) share the `.tar.gz` suffix.
 pub async fn site_prune_conflict(db: &PgPool, domain: &str) -> Result<Option<String>, String> {
     let spec = site_prune_spec(domain);
+    // An app data archive `{owner}-{v|b}-{slug}-{stamp}.tar.gz` whose family
+    // `{owner}-{v|b}-{slug}` equals this domain is, to the stamp-only prune, a
+    // copy of this site: same prefix, same stamp shape, same suffix. Each server
+    // holding such a family counts as one more resource of that name.
     let names: Vec<String> = sqlx::query_scalar(
         "SELECT domain::text FROM sites WHERE left(domain || '-', length($1)) = $1 \
          UNION ALL \
-         SELECT DISTINCT container_name::text FROM volume_backups WHERE left(container_name || '-', length($1)) = $1",
+         SELECT DISTINCT ON (server_id) regexp_replace(filename, '-[0-9]{8}-[0-9]{6}\\.tar\\.gz(\\.enc)?$', '') \
+           FROM volume_backups \
+          WHERE regexp_replace(filename, '-[0-9]{8}-[0-9]{6}\\.tar\\.gz(\\.enc)?$', '') = $2",
     )
     .bind(&spec.name_prefix)
+    .bind(domain)
     .fetch_all(db)
     .await
     .map_err(|e| format!("could not check which backups share the name prefix: {e}"))?;
@@ -318,6 +327,396 @@ fn conflict_reason(own: &str, spec: &PruneSpec, names: &[String]) -> Option<Stri
         "remote retention skipped: the file name prefix '{}' also matches the backups of          another resource also named '{own}', so pruning could delete them",
         spec.name_prefix
     ))
+}
+
+// ── App data (Docker volumes and bind mounts) ───────────────────────────────
+
+/// Budget of one app data archive taken by the policy executor: stopping the
+/// containers, `du`, tar of the whole volume or directory, encryption, then the
+/// restart. An app's data can weigh gigabytes, which plain `post`'s 60 seconds
+/// never covered. The executor runs in the background (no HTTP ceiling), so the
+/// only cost of headroom is how long a stuck agent holds this policy's run.
+pub const APP_DATA_BACKUP_TIMEOUT_SECS: u64 = 1800;
+
+/// Budget of an app data create or restore started from the UI. These routes sit
+/// under the server's 300 s `TimeoutLayer` and nginx's `proxy_read_timeout 300s`,
+/// so waiting longer would only turn our own timeout into a bodyless 504. Same
+/// reasoning as `agent::DB_RESTORE_TIMEOUT_SECS`.
+pub const APP_DATA_ROUTE_TIMEOUT_SECS: u64 = 270;
+
+/// What one backup target is: a Docker volume (named or anonymous) or a bind
+/// mount under the app data directories.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MountKind {
+    Volume,
+    Bind,
+}
+
+impl MountKind {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "volume" => Some(Self::Volume),
+            "bind" => Some(Self::Bind),
+            _ => None,
+        }
+    }
+
+    /// The value of `volume_backups.mount_type` and of the agent's `kind`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Volume => "volume",
+            Self::Bind => "bind",
+        }
+    }
+
+    /// The letter the agent puts in the archive name: `{owner}-{v|b}-{slug}-{ts}`.
+    pub fn letter(self) -> &'static str {
+        match self {
+            Self::Volume => "v",
+            Self::Bind => "b",
+        }
+    }
+}
+
+/// One entry of the agent's `GET /backup-targets`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BackupTarget {
+    pub kind: MountKind,
+    /// The Docker volume name (kind volume only).
+    pub volume_name: Option<String>,
+    /// The bind mount's host directory (kind bind only).
+    pub source_path: Option<String>,
+    /// Stable owner of the data: template container, compose project, Git app.
+    pub owner_name: String,
+    /// The agent's slug, used verbatim in the archive name. Never re-derived
+    /// here: a slug computed twice in two languages is a prune that misses.
+    pub slug: String,
+    pub app_type: String,
+    pub stack_id: Option<String>,
+    /// Ids of the containers that mount the target. Informational only: a
+    /// container id changes every time the container is recreated.
+    pub container_ids: Vec<String>,
+}
+
+impl BackupTarget {
+    /// `<owner>/<slug>`, the subject of this target's run errors.
+    pub fn subject(&self) -> String {
+        format!("{}/{}", self.owner_name, self.slug)
+    }
+
+    /// What `volume_backups.volume_name` holds: the volume's name, or the slug
+    /// for a bind mount.
+    pub fn row_volume_name(&self) -> &str {
+        match self.kind {
+            MountKind::Volume => self.volume_name.as_deref().unwrap_or(&self.slug),
+            MountKind::Bind => &self.slug,
+        }
+    }
+}
+
+/// The targets of one server, plus the entries that could not be read.
+#[derive(Debug, Default, PartialEq)]
+pub struct ParsedTargets {
+    pub targets: Vec<BackupTarget>,
+    /// `(subject, reason)` of each entry this code refuses. Each one is a
+    /// counted failure: data the agent says exists and that we do not archive.
+    pub invalid: Vec<(String, String)>,
+    /// How many mounts the agent left out on purpose (docker.sock, /etc, ...).
+    /// Not errors.
+    pub excluded: usize,
+}
+
+/// `^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`, the agent's own rule for `owner_name`.
+/// It becomes a directory name on the agent and a file name prefix at the
+/// destination, so it is checked again here.
+pub fn is_valid_owner_name(s: &str) -> bool {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphanumeric() => {}
+        _ => return false,
+    }
+    s.len() <= 128 && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
+}
+
+/// Docker's own rule for a volume name: `[a-zA-Z0-9][a-zA-Z0-9_.-]*`, at most 255.
+pub fn is_valid_volume_name(s: &str) -> bool {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphanumeric() => {}
+        _ => return false,
+    }
+    s.len() <= 255 && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
+}
+
+/// A slug is `[A-Za-z0-9_.-]`, never `.` or `..`.
+pub fn is_valid_slug(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= 128
+        && s != "."
+        && s != ".."
+        && s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
+}
+
+/// The directories whose bind mounts are app data. Same three prefixes the
+/// agent confines both backup and restore to.
+pub const APP_DATA_PREFIXES: [&str; 3] = [
+    "/var/lib/dockpanel/apps/",
+    "/var/lib/dockpanel/compose/",
+    "/var/lib/dockpanel/git-data/",
+];
+
+/// A bind source the panel will ask the agent to archive or overwrite: an
+/// absolute path strictly under one of [`APP_DATA_PREFIXES`], with no `.` or
+/// `..` component and no NUL. The agent canonicalizes and checks again; this
+/// is so the panel never even sends anything else.
+pub fn is_valid_bind_source(p: &str) -> bool {
+    if p.contains('\0') || p.len() > 4096 {
+        return false;
+    }
+    let Some(rest) = APP_DATA_PREFIXES.iter().find_map(|pre| p.strip_prefix(pre)) else {
+        return false;
+    };
+    let rest = rest.strip_suffix('/').unwrap_or(rest);
+    !rest.is_empty() && rest.split('/').all(|c| !c.is_empty() && c != "." && c != "..")
+}
+
+/// Read the agent's `GET /backup-targets` answer.
+///
+/// `Err` when it is not the expected shape at all (no `targets` list, which is
+/// also what the old `/apps/{id}/volumes` answer `{"volumes": ...}` looks like):
+/// the caller records it as a failure to list, never as "no app data". An
+/// individual entry that is unusable lands in `invalid`, each one a failure.
+pub fn parse_backup_targets(resp: &serde_json::Value) -> Result<ParsedTargets, String> {
+    let Some(list) = resp.get("targets").and_then(|v| v.as_array()) else {
+        return Err("the agent's answer to GET /backup-targets has no 'targets' list".to_string());
+    };
+    let mut out = ParsedTargets {
+        excluded: resp.get("excluded").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0),
+        ..Default::default()
+    };
+    for (i, t) in list.iter().enumerate() {
+        let s = |k: &str| t.get(k).and_then(|v| v.as_str()).map(str::to_string);
+        let owner = s("owner_name").unwrap_or_default();
+        let slug = s("slug").unwrap_or_default();
+        let subject = if owner.is_empty() && slug.is_empty() {
+            format!("target #{}", i + 1)
+        } else {
+            format!("{owner}/{slug}")
+        };
+        let reject = |out: &mut ParsedTargets, why: &str| out.invalid.push((subject.clone(), why.to_string()));
+
+        let Some(kind) = s("kind").as_deref().and_then(MountKind::parse) else {
+            reject(&mut out, "the agent listed a target of an unknown kind");
+            continue;
+        };
+        if !is_valid_owner_name(&owner) {
+            reject(&mut out, "the agent listed a target with an invalid owner name");
+            continue;
+        }
+        if !is_valid_slug(&slug) {
+            reject(&mut out, "the agent listed a target with an invalid slug");
+            continue;
+        }
+        let volume_name = s("volume_name");
+        let source_path = s("source_path");
+        match kind {
+            MountKind::Volume if !volume_name.as_deref().is_some_and(is_valid_volume_name) => {
+                reject(&mut out, "the agent listed a volume without a valid volume name");
+                continue;
+            }
+            MountKind::Bind if !source_path.as_deref().is_some_and(is_valid_bind_source) => {
+                reject(&mut out, "the agent listed a bind mount outside the app data directories");
+                continue;
+            }
+            _ => {}
+        }
+        let container_ids = t
+            .get("containers")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|c| c.get("id").and_then(|v| v.as_str()).map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        out.targets.push(BackupTarget {
+            kind,
+            volume_name: if kind == MountKind::Volume { volume_name } else { None },
+            source_path: if kind == MountKind::Bind { source_path } else { None },
+            owner_name: owner,
+            slug,
+            app_type: s("app_type").unwrap_or_default(),
+            stack_id: s("stack_id").filter(|v| !v.is_empty()),
+            container_ids,
+        });
+    }
+    Ok(out)
+}
+
+/// Body of `POST /volume-backups/create` for one target.
+///
+/// `encryption_key` is left out entirely when the archive is not to be
+/// encrypted; it is the passphrase, and is never logged.
+pub fn app_data_create_body(t: &BackupTarget, stop_containers: bool, encryption_key: Option<&str>) -> serde_json::Value {
+    let mut b = serde_json::json!({
+        "kind": t.kind.as_str(),
+        "volume_name": t.volume_name,
+        "source_path": t.source_path,
+        "owner_name": t.owner_name,
+        "stop_containers": stop_containers,
+    });
+    if let Some(k) = encryption_key {
+        b["encryption_key"] = serde_json::Value::String(k.to_string());
+    }
+    b
+}
+
+/// Body of `POST /volume-backups/{owner}/restore/{filename}` for one row.
+/// For a bind mount `volume_name` (which holds the slug in the row) is sent as
+/// null: the agent restores the bind from `source_path` only.
+pub fn app_data_restore_body(
+    kind: MountKind,
+    volume_name: &str,
+    source_path: Option<&str>,
+    encryption_key: Option<&str>,
+) -> serde_json::Value {
+    let mut b = match kind {
+        MountKind::Volume => serde_json::json!({
+            "kind": "volume",
+            "volume_name": volume_name,
+            "source_path": null,
+        }),
+        MountKind::Bind => serde_json::json!({
+            "kind": "bind",
+            "volume_name": null,
+            "source_path": source_path,
+        }),
+    };
+    if let Some(k) = encryption_key {
+        b["encryption_key"] = serde_json::Value::String(k.to_string());
+    }
+    b
+}
+
+/// The passphrase of an existing app data archive: only for an encrypted row,
+/// derived with the row's OWN recorded version (see
+/// [`derive_backup_encryption_key_for_version`]).
+pub fn row_encryption_key(encrypted: bool, key_version: i16, jwt_secret: &str) -> Option<String> {
+    encrypted.then(|| derive_backup_encryption_key_for_version(key_version, jwt_secret))
+}
+
+/// Budget of `/backups/verify/volume`: an encrypted archive is first checked
+/// and decrypted to a temporary file, then listed. Always called detached (the
+/// verifier service, or a task spawned by the Verify button).
+pub const APP_DATA_VERIFY_TIMEOUT_SECS: u64 = 900;
+
+/// Body of `/backups/verify/volume` and `/backups/drill/volume` for one row:
+/// `{container_name, filename}`, plus `encryption_key` (from the row's own key
+/// version) when the archive is encrypted.
+pub fn volume_check_body(
+    container_name: &str,
+    filename: &str,
+    encrypted: bool,
+    key_version: i16,
+    jwt_secret: &str,
+) -> serde_json::Value {
+    let mut b = serde_json::json!({
+        "container_name": container_name,
+        "filename": filename,
+    });
+    if let Some(k) = row_encryption_key(encrypted, key_version, jwt_secret) {
+        b["encryption_key"] = serde_json::Value::String(k);
+    }
+    b
+}
+
+/// What the agent reports about an archive it just wrote.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CreatedArchive {
+    pub filename: String,
+    pub size_bytes: i64,
+    pub sha256: String,
+    pub encrypted: bool,
+}
+
+/// Read the agent's answer to `POST /volume-backups/create`.
+///
+/// The file name must be a plain name of this target's family
+/// (`{owner}-{v|b}-{slug}-...tar.gz[.enc]`): retention, the upload path and
+/// restore all derive from it. `encrypted` is the agent's word, checked
+/// against the `.enc` suffix, never inferred from what was asked.
+pub fn parse_app_data_create_response(resp: &serde_json::Value, t: &BackupTarget) -> Result<CreatedArchive, String> {
+    let filename = resp.get("filename").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    if filename.is_empty() {
+        return Err("the agent's answer named no archive file".to_string());
+    }
+    if filename.contains('/') || filename.contains("..") || filename.contains('\0') {
+        return Err("the agent's answer named an unsafe archive file".to_string());
+    }
+    let prefix = volume_prune_spec(&t.owner_name, t.kind, &t.slug).name_prefix;
+    let enc_suffix = filename.ends_with(".tar.gz.enc");
+    if !filename.starts_with(&prefix) || !(enc_suffix || filename.ends_with(".tar.gz")) {
+        return Err(format!("the agent's archive name '{filename}' is not of the form {prefix}<timestamp>.tar.gz[.enc]"));
+    }
+    let encrypted = resp.get("encrypted").and_then(|v| v.as_bool()).unwrap_or(false);
+    if encrypted != enc_suffix {
+        return Err(format!("the agent's answer says encrypted={encrypted} for '{filename}'"));
+    }
+    Ok(CreatedArchive {
+        filename,
+        size_bytes: resp.get("size_bytes").and_then(|v| v.as_u64()).unwrap_or(0) as i64,
+        sha256: resp.get("sha256").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        encrypted,
+    })
+}
+
+/// `{owner}-{v|b}-{slug}`, the name every archive of one target starts with.
+pub fn app_data_family(owner: &str, kind: MountKind, slug: &str) -> String {
+    format!("{owner}-{}-{slug}", kind.letter())
+}
+
+/// App data archives are `{owner}-{v|b}-{slug}-{%Y%m%d-%H%M%S}.tar.gz`, plus
+/// `.enc` when encrypted. Both forms are listed, like database dumps, so turning
+/// Encrypt on or off leaves no copy outside retention. With `stamp_only`, owner
+/// `a` never takes owner `ab`'s copies, and slug `data` never takes `data-old`'s.
+pub fn volume_prune_spec(owner: &str, kind: MountKind, slug: &str) -> PruneSpec {
+    PruneSpec {
+        name_prefix: format!("{}-", app_data_family(owner, kind, slug)),
+        suffixes: vec![".tar.gz".to_string(), ".tar.gz.enc".to_string()],
+    }
+}
+
+/// `Some(reason)` when another resource writes the same file names as this
+/// target to a shared destination: the same family on another server (two
+/// servers running a compose project of the same name), or a site whose domain
+/// equals the family (`a-v-x.com` archives `a-v-x.com-<stamp>.tar.gz`).
+pub fn app_data_conflict_reason(family: &str, sites_with_that_name: i64, other_servers: i64) -> Option<String> {
+    if sites_with_that_name == 0 && other_servers == 0 {
+        return None;
+    }
+    let who = match (sites_with_that_name > 0, other_servers > 0) {
+        (true, true) => "a site and app data on another server",
+        (true, false) => "a site",
+        _ => "app data on another server",
+    };
+    Some(format!(
+        "remote retention skipped: the file name prefix '{family}-' is also used by {who}, so pruning could delete their backups"
+    ))
+}
+
+async fn app_data_prune_conflict(db: &PgPool, server_id: Uuid, family: &str) -> Result<Option<String>, String> {
+    let (sites, others): (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT COUNT(*) FROM sites WHERE domain = $1), \
+                (SELECT COUNT(DISTINCT server_id) FROM volume_backups \
+                  WHERE server_id IS DISTINCT FROM $2 \
+                    AND regexp_replace(filename, '-[0-9]{8}-[0-9]{6}\\.tar\\.gz(\\.enc)?$', '') = $1)",
+    )
+    .bind(family)
+    .bind(server_id)
+    .fetch_one(db)
+    .await
+    .map_err(|e| format!("could not check which backups share the name prefix: {e}"))?;
+    Ok(app_data_conflict_reason(family, sites, others))
 }
 
 // ── Destination ─────────────────────────────────────────────────────────────
@@ -400,8 +799,8 @@ async fn resolve_destination(db: &PgPool, policy: &PolicyRow) -> Result<Option<R
 /// inventing a second retry policy, so the two paths fail the same way.
 ///
 /// Remote retention for what this uploads is enforced by
-/// [`enforce_remote_retention`] for site archives and database dumps. Volume
-/// archives are not pruned remotely yet (their naming is being reworked).
+/// [`enforce_remote_retention`] for site archives, database dumps and app data
+/// archives (volumes and bind mounts).
 async fn upload_to_destination(
     agent: &AgentHandle,
     dest: &ResolvedDestination,
@@ -459,6 +858,13 @@ async fn enforce_remote_retention(
             "",
             database_prune_conflict(db, db_name, engine).await?,
         ),
+        // Empty `domain` for the same reason as a database: an agent without
+        // `name_prefix` must match nothing rather than `{domain}-*.tar.gz`.
+        RetentionTarget::AppData { server_id, owner, kind, slug } => (
+            volume_prune_spec(owner, kind, slug),
+            "",
+            app_data_prune_conflict(db, server_id, &app_data_family(owner, kind, slug)).await?,
+        ),
     };
     if let Some(reason) = conflict {
         return Err(reason);
@@ -474,6 +880,7 @@ async fn enforce_remote_retention(
 enum RetentionTarget<'a> {
     Site { domain: &'a str },
     Database { db_name: &'a str, engine: &'a str },
+    AppData { server_id: Uuid, owner: &'a str, kind: MountKind, slug: &'a str },
 }
 
 /// Run the backup policy executor loop - checks every 60 seconds for due policies.
@@ -515,7 +922,7 @@ async fn tick(db: &PgPool, agents: &AgentRegistry, jwt_secret: &str) -> Result<(
     // Fetch all enabled policies
     let policies: Vec<PolicyRow> = sqlx::query_as(
         "SELECT id, user_id, server_id, name, backup_sites, backup_databases, backup_volumes, \
-         schedule, destination_id, retention_count, encrypt, verify_after_backup, last_run \
+         schedule, destination_id, retention_count, encrypt, verify_after_backup, stop_apps, last_run \
          FROM backup_policies WHERE enabled = TRUE"
     )
     .fetch_all(db).await.map_err(|e| e.to_string())?;
@@ -652,16 +1059,16 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
         log.secrets.push(k.clone());
     }
 
-    // The key reaches the database dump and nothing else - the agent has no
-    // encryption path for a site or volume archive, so there is nowhere to send
-    // it. Say so per run rather than letting the flag imply cover it does not
-    // give: a site archive is the whole webroot, and since v2.34.0 it also
-    // carries a dump of every database attached to that site, which means an
-    // encrypted policy ships an encrypted copy of that data and an unencrypted
-    // one to the same destination.
-    if policy.encrypt && (policy.backup_sites || policy.backup_volumes) {
+    // The key reaches database dumps and app data archives (volumes and bind
+    // mounts), and nothing else - the agent has no encryption path for a site
+    // archive, so there is nowhere to send it. Say so per run rather than letting
+    // the flag imply cover it does not give: a site archive is the whole webroot,
+    // and since v2.34.0 it also carries a dump of every database attached to that
+    // site, which means an encrypted policy ships an encrypted copy of that data
+    // and an unencrypted one to the same destination.
+    if policy.encrypt && policy.backup_sites {
         tracing::warn!(
-            "Policy '{}': encryption applies to database dumps only - this policy's site/volume archives are stored and uploaded unencrypted",
+            "Policy '{}': encryption does not cover site archives - this policy's site archives are stored and uploaded unencrypted",
             policy.name
         );
     }
@@ -1057,123 +1464,166 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
             }
         };
         let agent = &agent;
-        // Get Docker containers with volumes
-        match agent.get("/apps").await {
-            Ok(apps) => {
-                let Some(apps) = apps.as_array() else {
-                    // An answer this code cannot read used to mean "no apps" and a
-                    // green run. It is a failure to enumerate, and counted as one.
+        // What to archive comes from the agent's GET /backup-targets: every
+        // volume (named or anonymous) and every bind mount under the app data
+        // directories, of every managed container (template, compose, Git),
+        // deduplicated by the agent. The old walk over `/apps` and
+        // `/apps/{id}/volumes` read a field that answer never had and saw no
+        // compose or Git app at all, so it archived nothing, in green.
+        let parsed = match agent.get("/backup-targets").await {
+            Ok(resp) => match parse_backup_targets(&resp) {
+                Ok(p) => p,
+                Err(e) => {
                     failures += 1;
-                    tracing::error!("Policy '{}': the app list from server {vol_server_id} is not a list", policy.name);
-                    log.push("listing", "apps", "the agent's app list could not be read (not a list)");
+                    tracing::error!("Policy '{}': the app data targets of server {vol_server_id} could not be read: {e}", policy.name);
+                    log.push("listing", "backup-targets", e);
                     break 'vol;
-                };
-                for app in apps {
-                    let container_name = app.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                    let container_id = app.get("container_id").and_then(|v| v.as_str()).unwrap_or("");
+                }
+            },
+            Err(e) => {
+                failures += 1;
+                tracing::error!("Policy '{}': could not list the app data of server {vol_server_id}: {e}", policy.name);
+                log.push("listing", "backup-targets", format!("could not list the app data to back up: {e}"));
+                break 'vol;
+            }
+        };
+        if parsed.excluded > 0 {
+            tracing::info!(
+                "Policy '{}': {} mount(s) left out by the agent (outside the app data directories)",
+                policy.name, parsed.excluded
+            );
+        }
+        for (subject, why) in &parsed.invalid {
+            failures += 1;
+            tracing::error!("Policy '{}': app data target {subject} skipped: {why}", policy.name);
+            log.push("volume", subject.clone(), why);
+        }
 
-                    if container_name.is_empty() { continue; }
+        for target in &parsed.targets {
+            let subject = target.subject();
+            let body = app_data_create_body(target, policy.stop_apps, encryption_key.as_deref());
 
-                    // Get volumes for this container. Both a failed call and an
-                    // answer that is not a list used to fall through without a
-                    // trace, so a container's data could go unprotected for ever
-                    // under a green policy.
-                    let vol_resp = match agent.get(&format!("/apps/{container_id}/volumes")).await {
-                        Ok(v) => v,
-                        Err(e) => {
-                            failures += 1;
-                            tracing::error!("Policy '{}': could not list volumes of {container_name}: {e}", policy.name);
-                            log.push("listing", container_name, format!("could not list volumes: {e}"));
-                            continue;
-                        }
-                    };
-                    let Some(volumes) = vol_resp.as_array() else {
-                        failures += 1;
-                        tracing::error!("Policy '{}': the volume list of {container_name} could not be read", policy.name);
-                        log.push("listing", container_name, "the agent's volume list could not be read (not a list)");
-                        continue;
-                    };
-                    for vol in volumes {
-                        let vol_name = vol.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                        if vol_name.is_empty() { continue; }
+            // One retry, and only when the request never reached the agent. After
+            // a timeout or an agent error the first attempt may still be running,
+            // with the app stopped, and a refusal (400, 507) would not change.
+            let mut result = agent
+                .post_long("/volume-backups/create", Some(body.clone()), APP_DATA_BACKUP_TIMEOUT_SECS)
+                .await;
+            if matches!(result, Err(crate::services::agent::AgentError::Connection(_))) {
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                result = agent
+                    .post_long("/volume-backups/create", Some(body), APP_DATA_BACKUP_TIMEOUT_SECS)
+                    .await;
+            }
+            let resp = match result {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::error!("Policy '{}': app data backup failed for {subject}: {e}", policy.name);
+                    failures += 1;
+                    log.push("volume", subject, format!("backup failed: {e}"));
+                    continue;
+                }
+            };
+            let archive = match parse_app_data_create_response(&resp, target) {
+                Ok(a) => a,
+                Err(e) => {
+                    tracing::error!("Policy '{}': app data backup for {subject}: {e}", policy.name);
+                    failures += 1;
+                    log.push("volume", subject, e);
+                    continue;
+                }
+            };
+            // Asked to encrypt and handed back a clear archive: the policy's
+            // promise was not kept. The file is recorded (it exists, retention
+            // must see it) but not shipped off-site, and the backup counts as
+            // failed rather than as a success.
+            let encryption_broken = encryption_key.is_some() && !archive.encrypted;
+            if encryption_broken {
+                tracing::error!("Policy '{}': the agent stored {subject} unencrypted although the policy encrypts", policy.name);
+                log.push("volume", subject.clone(), "the archive was stored unencrypted although the policy encrypts - not uploaded");
+            }
 
-                        let body = serde_json::json!({
-                            "volume_name": vol_name,
-                            "container_name": container_name,
-                        });
-                        let subject = format!("{container_name}/{vol_name}");
+            let row_volume_name = target.row_volume_name();
+            let previous_hash: Option<String> = sqlx::query_scalar::<_, Option<String>>(
+                "SELECT sha256_hash FROM volume_backups \
+                 WHERE server_id = $1 AND container_name = $2 AND mount_type = $3 AND volume_name = $4 \
+                   AND source_path IS NOT DISTINCT FROM $5 \
+                 ORDER BY created_at DESC LIMIT 1"
+            )
+            .bind(vol_server_id).bind(&target.owner_name).bind(target.kind.as_str())
+            .bind(row_volume_name).bind(target.source_path.as_deref())
+            .fetch_optional(db).await.unwrap_or(None).flatten();
 
-                        let mut result = agent.post("/volume-backups/create", Some(body.clone())).await;
-                        // Retry once on failure
-                        if result.is_err() {
-                            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                            result = agent.post("/volume-backups/create", Some(body)).await;
-                        }
-                        match result {
-                            Ok(resp) => {
-                                let filename = resp.get("filename").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                                if filename.is_empty() {
-                                    failures += 1;
-                                    tracing::error!("Policy '{}': volume backup for {subject} returned no file name", policy.name);
-                                    log.push("volume", subject, "the agent's answer named no archive file");
-                                    continue;
-                                }
-                                let size_bytes = resp.get("size_bytes").and_then(|v| v.as_u64()).unwrap_or(0) as i64;
-
-                                let sha256_hash = resp.get("sha256").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                                let previous_hash: Option<String> = sqlx::query_scalar::<_, Option<String>>(
-                                    "SELECT sha256_hash FROM volume_backups WHERE container_id = $1 AND volume_name = $2 ORDER BY created_at DESC LIMIT 1"
-                                ).bind(container_id).bind(vol_name).fetch_optional(db).await.unwrap_or(None).flatten();
-
-                                let mut uploaded = false;
-                                if let (Some(dest), false) = (&destination, destination_down) {
-                                    // `volume_backup::backup_dir` nests per container:
-                                    // /var/backups/dockpanel/volumes/<container>/<filename>.
-                                    let filepath = format!("/var/backups/dockpanel/volumes/{container_name}/{filename}");
-                                    match upload_to_destination(agent, dest, &filepath, &format!("volume {vol_name}")).await {
-                                        Ok(()) => uploaded = true,
-                                        Err(e) => {
-                                            upload_failures += 1;
-                                            destination_down = true;
-                                            log.push("upload", subject.clone(), e);
-                                        }
-                                    }
-                                } else if destination.is_some() {
-                                    upload_failures += 1;
-                                    log.push("upload", subject.clone(), "not uploaded: the destination failed earlier in this run");
-                                }
-
-                                match sqlx::query(
-                                    "INSERT INTO volume_backups (container_id, container_name, server_id, volume_name, filename, size_bytes, policy_id, destination_id, uploaded, sha256_hash, previous_hash, chain_valid) \
-                                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, TRUE)"
-                                )
-                                .bind(container_id).bind(container_name).bind(vol_server_id)
-                                .bind(vol_name).bind(&filename).bind(size_bytes).bind(policy.id)
-                                .bind(destination.as_ref().map(|d| d.id)).bind(uploaded)
-                                .bind(if sha256_hash.is_empty() { None } else { Some(&sha256_hash) })
-                                .bind(previous_hash.as_deref())
-                                .execute(db).await {
-                                    Ok(_) => successes += 1,
-                                    Err(e) => {
-                                        tracing::error!("Policy '{}': volume backup for {subject} was created but could not be recorded: {e}", policy.name);
-                                        failures += 1;
-                                        log.push("volume", subject, format!("archive created but could not be recorded: {e}"));
-                                    }
-                                }
+            let mut uploaded = false;
+            if encryption_broken {
+                // Never upload a clear copy of data the policy says to encrypt.
+            } else if let (Some(dest), false) = (&destination, destination_down) {
+                // `volume_backup::backup_dir` nests per owner:
+                // /var/backups/dockpanel/volumes/<owner>/<filename>.
+                let filepath = format!("/var/backups/dockpanel/volumes/{}/{}", target.owner_name, archive.filename);
+                match upload_to_destination(agent, dest, &filepath, &format!("app data {subject}")).await {
+                    Ok(()) => {
+                        uploaded = true;
+                        // Same rule as sites and databases: a retention error, not
+                        // a failed backup.
+                        if let Err(e) = enforce_remote_retention(
+                            db, agent, dest,
+                            RetentionTarget::AppData {
+                                server_id: vol_server_id,
+                                owner: &target.owner_name,
+                                kind: target.kind,
+                                slug: &target.slug,
+                            },
+                            policy.retention_count,
+                        ).await {
+                            if !remote_prune_warned {
+                                remote_prune_warned = true;
+                                crate::services::system_log::log_event(
+                                    db,
+                                    "warning",
+                                    "backup_policy_executor",
+                                    &format!("Policy '{}': remote retention was not enforced", policy.name),
+                                    Some(&clean_message(&e, &[])),
+                                ).await;
                             }
-                            Err(e) => {
-                                tracing::error!("Policy '{}': volume backup failed for {subject} (after retry): {e}", policy.name);
-                                failures += 1;
-                                log.push("volume", subject, format!("backup failed (after retry): {e}"));
-                            }
+                            log.push("retention", subject.clone(), e);
                         }
                     }
+                    Err(e) => {
+                        upload_failures += 1;
+                        destination_down = true;
+                        log.push("upload", subject.clone(), e);
+                    }
                 }
+            } else if destination.is_some() {
+                upload_failures += 1;
+                log.push("upload", subject.clone(), "not uploaded: the destination failed earlier in this run");
             }
-            Err(e) => {
-                tracing::error!("Policy '{}': failed to list Docker apps for volume backup: {e}", policy.name);
-                failures += 1;
-                log.push("listing", "apps", format!("could not list Docker apps: {e}"));
+
+            // `container_id` keeps the first container that mounts the target, as
+            // information only: it changes whenever the container is recreated, so
+            // nothing (chain, retention, restore) is keyed on it.
+            let container_id: String = target.container_ids.first().map(|s| s.chars().take(64).collect()).unwrap_or_default();
+            match sqlx::query(
+                "INSERT INTO volume_backups (container_id, container_name, server_id, volume_name, filename, size_bytes, policy_id, destination_id, uploaded, sha256_hash, previous_hash, chain_valid, \
+                 mount_type, source_path, stack_id, encrypted, encryption_key_version) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, TRUE, $12, $13, $14, $15, $16)"
+            )
+            .bind(&container_id).bind(&target.owner_name).bind(vol_server_id)
+            .bind(row_volume_name).bind(&archive.filename).bind(archive.size_bytes).bind(policy.id)
+            .bind(destination.as_ref().map(|d| d.id)).bind(uploaded)
+            .bind(if archive.sha256.is_empty() { None } else { Some(&archive.sha256) })
+            .bind(previous_hash.as_deref())
+            .bind(target.kind.as_str()).bind(target.source_path.as_deref()).bind(target.stack_id.as_deref())
+            .bind(archive.encrypted).bind(CURRENT_BACKUP_KEY_VERSION)
+            .execute(db).await {
+                Ok(_) if encryption_broken => failures += 1,
+                Ok(_) => successes += 1,
+                Err(e) => {
+                    tracing::error!("Policy '{}': app data backup for {subject} was created but could not be recorded: {e}", policy.name);
+                    failures += 1;
+                    log.push("volume", subject, format!("archive created but could not be recorded: {e}"));
+                }
             }
         }
     }}
@@ -1567,5 +2017,272 @@ mod tests {
         let dup = vec!["wp".to_string(), "wp".to_string()];
         assert!(conflict_reason("wp", &database_prune_spec("wp", "postgres"), &dup).is_some());
         assert_eq!(conflict_reason("wp", &database_prune_spec("wp", "postgres"), &["wp".to_string()]), None);
+    }
+
+    // ── App data: GET /backup-targets, bodies, retention, key version ──────
+
+    /// The bind mount directory of the fixture below.
+    const DEMO_BIND_DIR: &str = "/var/lib/dockpanel/compose/demo/uploads";
+
+    fn targets_fixture() -> serde_json::Value {
+        serde_json::json!({
+            "targets": [
+                {"kind":"volume","volume_name":"demo_pgdata","source_path":null,
+                 "source":"/var/lib/docker/volumes/demo_pgdata/_data","owner_name":"demo",
+                 "slug":"demo_pgdata","app_type":"compose","stack_id":"st-1",
+                 "containers":[{"id":"abc","name":"demo-db-1","running":true}]},
+                {"kind":"bind","volume_name":null,
+                 "source_path":"/var/lib/dockpanel/compose/demo/uploads",
+                 "source":"/var/lib/dockpanel/compose/demo/uploads","owner_name":"demo",
+                 "slug":"uploads-1a2b3c4d","app_type":"compose","stack_id":null,
+                 "containers":[{"id":"def","name":"demo-app-1","running":true},
+                               {"id":"ghi","name":"demo-worker-1","running":false}]}
+            ],
+            "excluded": [{"container":"demo-app-1","source":"/etc/localtime","reason":"bind outside the app data directories"}]
+        })
+    }
+
+    #[test]
+    fn backup_targets_are_parsed_with_their_kind_owner_and_slug() {
+        let p = parse_backup_targets(&targets_fixture()).unwrap();
+        assert!(p.invalid.is_empty(), "{:?}", p.invalid);
+        assert_eq!(p.excluded, 1, "an excluded mount is counted, not an error");
+        assert_eq!(p.targets.len(), 2);
+        let v = &p.targets[0];
+        assert_eq!(v.kind, MountKind::Volume);
+        assert_eq!(v.volume_name.as_deref(), Some("demo_pgdata"));
+        assert_eq!(v.source_path, None);
+        assert_eq!(v.subject(), "demo/demo_pgdata");
+        assert_eq!(v.row_volume_name(), "demo_pgdata");
+        assert_eq!(v.stack_id.as_deref(), Some("st-1"));
+        assert_eq!(v.container_ids, vec!["abc".to_string()]);
+        let b = &p.targets[1];
+        assert_eq!(b.kind, MountKind::Bind);
+        assert_eq!(b.volume_name, None);
+        assert_eq!(b.source_path.as_deref(), Some(DEMO_BIND_DIR));
+        assert_eq!(b.row_volume_name(), "uploads-1a2b3c4d", "a bind row stores its slug as volume_name");
+        assert_eq!(b.stack_id, None);
+        assert_eq!(b.container_ids.len(), 2);
+    }
+
+    #[test]
+    fn an_unreadable_targets_answer_is_an_error_not_an_empty_list() {
+        // The old /apps/{id}/volumes shape (regression C1): no `targets` list.
+        let old = serde_json::json!({"volumes":[{"source":"/var/lib/docker/volumes/x/_data","type":"volume"}]});
+        assert!(parse_backup_targets(&old).is_err());
+        assert!(parse_backup_targets(&serde_json::json!([])).is_err());
+        assert!(parse_backup_targets(&serde_json::json!({"targets": "nope"})).is_err());
+        assert!(parse_backup_targets(&serde_json::Value::Null).is_err());
+    }
+
+    #[test]
+    fn no_target_at_all_is_a_clean_success() {
+        let p = parse_backup_targets(&serde_json::json!({"targets": [], "excluded": []})).unwrap();
+        assert!(p.targets.is_empty() && p.invalid.is_empty());
+        // Nothing to back up, nothing went wrong: the run's counters stay 0/0.
+        assert_eq!(compute_run_status(0, 0, 0, 0), "success");
+    }
+
+    #[test]
+    fn a_failed_target_degrades_the_run() {
+        // One target archived, one failed: partial. The only target failed: failed.
+        assert_eq!(compute_run_status(1, 1, 0, 1), "partial");
+        assert_eq!(compute_run_status(0, 1, 0, 1), "failed");
+        // Listing failed (GET /backup-targets): one failure, one error.
+        assert_eq!(compute_run_status(0, 1, 0, 1), "failed");
+    }
+
+    #[test]
+    fn unusable_entries_are_counted_never_skipped() {
+        let resp = serde_json::json!({"targets": [
+            {"kind":"tmpfs","owner_name":"a","slug":"x"},
+            {"kind":"volume","volume_name":"ok","owner_name":"../etc","slug":"x"},
+            {"kind":"volume","volume_name":"ok","owner_name":"a","slug":"x/y"},
+            {"kind":"volume","volume_name":null,"owner_name":"a","slug":"v"},
+            {"kind":"bind","source_path":"/etc","owner_name":"a","slug":"etc-12345678"},
+            {"kind":"bind","source_path":"/var/lib/dockpanel/apps/a/../../../etc","owner_name":"a","slug":"etc-12345678"},
+            {},
+            {"kind":"volume","volume_name":"good","owner_name":"a","slug":"good"}
+        ]});
+        let p = parse_backup_targets(&resp).unwrap();
+        assert_eq!(p.targets.len(), 1);
+        assert_eq!(p.invalid.len(), 7, "{:?}", p.invalid);
+        assert_eq!(p.invalid[6].0, "target #7", "an entry with no name still has a subject");
+        assert_eq!(p.invalid[0].0, "a/x");
+    }
+
+    #[test]
+    fn name_validators_follow_the_contract() {
+        assert!(is_valid_owner_name("demo"));
+        assert!(is_valid_owner_name("my.app_1-x"));
+        assert!(!is_valid_owner_name(""));
+        assert!(!is_valid_owner_name("-x"));
+        assert!(!is_valid_owner_name(".x"));
+        assert!(!is_valid_owner_name("a/b"));
+        assert!(!is_valid_owner_name(&"a".repeat(129)));
+        assert!(is_valid_owner_name(&"a".repeat(128)));
+        assert!(is_valid_volume_name(&"v".repeat(255)));
+        assert!(!is_valid_volume_name(&"v".repeat(256)));
+        assert!(!is_valid_volume_name("_v"));
+        assert!(!is_valid_slug(".."));
+        assert!(!is_valid_slug(""));
+        assert!(is_valid_slug("uploads-1a2b3c4d"));
+        assert!(is_valid_bind_source("/var/lib/dockpanel/compose/demo/uploads"));
+        assert!(is_valid_bind_source("/var/lib/dockpanel/git-data/app/data/"));
+        assert!(is_valid_bind_source("/var/lib/dockpanel/apps/wp"));
+        assert!(!is_valid_bind_source("/var/lib/dockpanel/apps/"));
+        assert!(!is_valid_bind_source("/var/lib/dockpanel/apps"));
+        assert!(!is_valid_bind_source("/var/lib/dockpanel/appsx/y"));
+        assert!(!is_valid_bind_source("/var/lib/dockpanel/apps/a/../b"));
+        assert!(!is_valid_bind_source("/var/lib/dockpanel/apps/a//b"));
+        assert!(!is_valid_bind_source("/etc"));
+        assert!(!is_valid_bind_source("var/lib/dockpanel/apps/a"));
+    }
+
+    fn sample_target(kind: MountKind) -> BackupTarget {
+        let p = parse_backup_targets(&targets_fixture()).unwrap();
+        p.targets.into_iter().find(|t| t.kind == kind).unwrap()
+    }
+
+    #[test]
+    fn create_body_carries_the_contract_with_and_without_encryption() {
+        let v = sample_target(MountKind::Volume);
+        assert_eq!(
+            app_data_create_body(&v, true, None),
+            serde_json::json!({"kind":"volume","volume_name":"demo_pgdata","source_path":null,
+                               "owner_name":"demo","stop_containers":true})
+        );
+        let b = sample_target(MountKind::Bind);
+        assert_eq!(
+            app_data_create_body(&b, false, Some("k3y-passphrase")),
+            serde_json::json!({"kind":"bind","volume_name":null,
+                               "source_path":"/var/lib/dockpanel/compose/demo/uploads",
+                               "owner_name":"demo","stop_containers":false,
+                               "encryption_key":"k3y-passphrase"})
+        );
+    }
+
+    #[test]
+    fn restore_body_carries_the_contract_with_and_without_encryption() {
+        assert_eq!(
+            app_data_restore_body(MountKind::Volume, "demo_pgdata", None, None),
+            serde_json::json!({"kind":"volume","volume_name":"demo_pgdata","source_path":null})
+        );
+        assert_eq!(
+            app_data_restore_body(MountKind::Bind, "uploads-1a2b3c4d", Some(DEMO_BIND_DIR), Some("pw")),
+            serde_json::json!({"kind":"bind","volume_name":null,
+                               "source_path":"/var/lib/dockpanel/compose/demo/uploads",
+                               "encryption_key":"pw"})
+        );
+    }
+
+    #[test]
+    fn a_row_is_decrypted_with_its_own_key_version() {
+        let jwt = "abcdefghijklmnopqrstuvwxyz0123456789EXTRA";
+        assert_eq!(row_encryption_key(false, 2, jwt), None, "a clear archive gets no key");
+        assert_eq!(row_encryption_key(true, 2, jwt), Some(derive_backup_encryption_key(jwt)));
+        assert_eq!(
+            row_encryption_key(true, 1, jwt).as_deref(),
+            Some("backup-enc-abcdefghijklmnopqrstuvwxyz012345"),
+            "a v1 row must get the v1 key, not the current one"
+        );
+        assert_eq!(CURRENT_BACKUP_KEY_VERSION, 2, "new app data archives are written with v2");
+    }
+
+    #[test]
+    fn verify_and_drill_bodies_carry_the_key_only_for_an_encrypted_row() {
+        let jwt = "abcdefghijklmnopqrstuvwxyz0123456789EXTRA";
+        assert_eq!(
+            volume_check_body("demo", "demo-v-db-20261119-020000.tar.gz", false, 2, jwt),
+            serde_json::json!({"container_name":"demo","filename":"demo-v-db-20261119-020000.tar.gz"})
+        );
+        let b = volume_check_body("demo", "demo-v-db-20261119-020000.tar.gz.enc", true, 1, jwt);
+        assert_eq!(b["encryption_key"], "backup-enc-abcdefghijklmnopqrstuvwxyz012345");
+        let b = volume_check_body("demo", "demo-v-db-20261119-020000.tar.gz.enc", true, 2, jwt);
+        assert_eq!(b["encryption_key"].as_str(), Some(derive_backup_encryption_key(jwt).as_str()));
+    }
+
+    /// What the agent's `stamp_only` prune accepts: exactly
+    /// `<prefix><%Y%m%d-%H%M%S><suffix>`.
+    fn stamp_only_matches(spec: &PruneSpec, name: &str) -> bool {
+        let Some(rest) = name.strip_prefix(&spec.name_prefix) else { return false };
+        spec.suffixes.iter().any(|suf| {
+            rest.strip_suffix(suf.as_str()).is_some_and(|stamp| {
+                let b = stamp.as_bytes();
+                b.len() == 15
+                    && b[8] == b'-'
+                    && b.iter().enumerate().all(|(i, c)| i == 8 || c.is_ascii_digit())
+            })
+        })
+    }
+
+    #[test]
+    fn app_data_prune_spec_keeps_owners_and_slugs_apart() {
+        let a = volume_prune_spec("a", MountKind::Volume, "data");
+        assert_eq!(a.name_prefix, "a-v-data-");
+        assert_eq!(a.suffixes, vec![".tar.gz".to_string(), ".tar.gz.enc".to_string()]);
+        assert!(stamp_only_matches(&a, "a-v-data-20261119-020000.tar.gz"));
+        assert!(stamp_only_matches(&a, "a-v-data-20261119-020000.tar.gz.enc"));
+        // Owner "ab" is never caught by owner "a": the prefix differs.
+        let ab = volume_prune_spec("ab", MountKind::Volume, "data");
+        assert_eq!(ab.name_prefix, "ab-v-data-");
+        assert!(!stamp_only_matches(&a, "ab-v-data-20261119-020000.tar.gz"));
+        // Slug "data-old" STARTS with a's prefix; only stamp_only keeps it out.
+        assert!("a-v-data-old-20261119-020000.tar.gz".starts_with(&a.name_prefix));
+        assert!(!stamp_only_matches(&a, "a-v-data-old-20261119-020000.tar.gz"));
+        let old = volume_prune_spec("a", MountKind::Volume, "data-old");
+        assert!(stamp_only_matches(&old, "a-v-data-old-20261119-020000.tar.gz"));
+        // A volume and a bind with the same slug are distinct families.
+        let b = volume_prune_spec("a", MountKind::Bind, "data");
+        assert_eq!(b.name_prefix, "a-b-data-");
+        assert!(!stamp_only_matches(&b, "a-v-data-20261119-020000.tar.gz"));
+        // The body sent to the agent: empty domain, stamp_only, both suffixes.
+        let body = prune_body(&serde_json::json!({"type":"sftp"}), "", &a, 5);
+        assert_eq!(body["domain"], "");
+        assert_eq!(body["name_prefix"], "a-v-data-");
+        assert_eq!(body["suffixes"], serde_json::json!([".tar.gz", ".tar.gz.enc"]));
+        assert_eq!(body["stamp_only"], true);
+        assert_eq!(body["retention"], 5);
+    }
+
+    #[test]
+    fn app_data_retention_conflicts_with_a_site_or_another_server_only() {
+        assert_eq!(app_data_conflict_reason("a-v-data", 0, 0), None);
+        let r = app_data_conflict_reason("a-v-x.com", 1, 0).unwrap();
+        assert!(r.contains("'a-v-x.com-'") && r.contains("a site"), "{r}");
+        let r = app_data_conflict_reason("demo-v-db", 0, 1).unwrap();
+        assert!(r.contains("another server"), "{r}");
+        assert!(app_data_conflict_reason("f", 2, 3).is_some());
+    }
+
+    #[test]
+    fn create_response_must_name_an_archive_of_this_target() {
+        let v = sample_target(MountKind::Volume);
+        let ok = serde_json::json!({"filename":"demo-v-demo_pgdata-20261119-020000.tar.gz.enc",
+            "size_bytes": 42, "sha256":"ab12", "encrypted": true, "kind":"volume",
+            "volume_name":"demo_pgdata","source_path":null,"owner_name":"demo","stopped":["demo-db-1"]});
+        let a = parse_app_data_create_response(&ok, &v).unwrap();
+        assert_eq!(a.filename, "demo-v-demo_pgdata-20261119-020000.tar.gz.enc");
+        assert_eq!((a.size_bytes, a.sha256.as_str(), a.encrypted), (42, "ab12", true));
+
+        let clear = serde_json::json!({"filename":"demo-v-demo_pgdata-20261119-020000.tar.gz","encrypted":false});
+        assert!(!parse_app_data_create_response(&clear, &v).unwrap().encrypted);
+        // `encrypted` missing on a clear archive reads as false.
+        let clear = serde_json::json!({"filename":"demo-v-demo_pgdata-20261119-020000.tar.gz"});
+        assert!(!parse_app_data_create_response(&clear, &v).unwrap().encrypted);
+
+        for bad in [
+            serde_json::json!({}),
+            serde_json::json!({"filename":""}),
+            serde_json::json!({"filename":"../demo-v-demo_pgdata-20261119-020000.tar.gz"}),
+            serde_json::json!({"filename":"other-v-demo_pgdata-20261119-020000.tar.gz"}),
+            serde_json::json!({"filename":"demo-b-demo_pgdata-20261119-020000.tar.gz"}),
+            serde_json::json!({"filename":"demo-v-demo_pgdata-20261119-020000.zip"}),
+            // The flag and the suffix disagree.
+            serde_json::json!({"filename":"demo-v-demo_pgdata-20261119-020000.tar.gz","encrypted":true}),
+            serde_json::json!({"filename":"demo-v-demo_pgdata-20261119-020000.tar.gz.enc","encrypted":false}),
+        ] {
+            assert!(parse_app_data_create_response(&bad, &v).is_err(), "{bad}");
+        }
     }
 }

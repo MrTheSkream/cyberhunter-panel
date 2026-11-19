@@ -267,23 +267,31 @@ if S=$(subj "$PREREQ"); then
 fi
 
 echo "== §6  Encrypt promises only what the agent can deliver =="
+# Database dumps and app data archives (volumes, bind mounts) are encrypted;
+# site archives are not. Each surface must keep saying where the cover stops.
 if S=$(subj "$EXEC"); then
-  if has "$S" "encryption applies to database dumps only"; then
-    ok "the executor says so when a policy encrypts and also covers sites/volumes"
+  if has "$S" "encryption does not cover site archives"; then
+    ok "the executor says so when a policy encrypts and also covers sites"
   else
-    bad "the executor is silent about unencrypted site/volume archives again"
+    bad "the executor is silent about unencrypted site archives again"
+  fi
+  # The app data leg must actually hand the key over, or the copy above lies.
+  if has "$S" "app_data_create_body\(target, policy.stop_apps, encryption_key.as_deref\(\)\)"; then
+    ok "the app data leg sends the policy's key with every archive"
+  else
+    bad "the app data leg no longer sends the encryption key"
   fi
 fi
 if S=$(subj "$UI"); then
-  if has "$S" "Encrypt DB dumps"; then
+  if has "$S" "Encrypts database dumps and app data archives. Site archives are not encrypted yet."; then
     ok "the checkbox names its scope"
   else
     bad "the checkbox promises unqualified encryption again"
   fi
 fi
 # The guide is prose, so it is read raw on purpose.
-if grep -q "database dumps only" "$GUIDE"; then
-  ok "the guide scopes encryption to database dumps"
+if grep -q "database dumps and app data archives" "$GUIDE" && grep -q "site archives are not encrypted yet" "$GUIDE"; then
+  ok "the guide scopes encryption to database dumps and app data"
 else
   bad "the guide promises unqualified AES-256 again"
 fi

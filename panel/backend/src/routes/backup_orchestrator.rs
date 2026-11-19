@@ -27,6 +27,8 @@ pub struct BackupPolicy {
     pub retention_count: i32,
     pub encrypt: bool,
     pub verify_after_backup: bool,
+    /// Stop the containers that use an app's data while it is archived.
+    pub stop_apps: bool,
     pub enabled: bool,
     pub drill_enabled: bool,
     pub drill_schedule: String,
@@ -82,6 +84,7 @@ pub struct CreatePolicyRequest {
     pub retention_count: Option<i32>,
     pub encrypt: Option<bool>,
     pub verify_after_backup: Option<bool>,
+    pub stop_apps: Option<bool>,
     pub enabled: Option<bool>,
     pub drill_enabled: Option<bool>,
     pub drill_schedule: Option<String>,
@@ -120,6 +123,7 @@ pub struct UpdatePolicyRequest {
     pub retention_count: Option<i32>,
     pub encrypt: Option<bool>,
     pub verify_after_backup: Option<bool>,
+    pub stop_apps: Option<bool>,
     pub enabled: Option<bool>,
     pub drill_enabled: Option<bool>,
     pub drill_schedule: Option<String>,
@@ -169,6 +173,14 @@ pub struct VolumeBackup {
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub sha256_hash: Option<String>,
     pub previous_hash: Option<String>,
+    /// `volume` (Docker volume, named or anonymous) or `bind` (bind mount).
+    pub mount_type: String,
+    /// The bind mount's host directory; NULL for a volume.
+    pub source_path: Option<String>,
+    pub stack_id: Option<String>,
+    /// Derivation version of the passphrase of an encrypted archive. Restore,
+    /// verify and drill recompute the key with THIS version.
+    pub encryption_key_version: i16,
 }
 
 #[derive(serde::Serialize, sqlx::FromRow)]
@@ -774,8 +786,8 @@ pub async fn create_policy(
     let policy: BackupPolicy = sqlx::query_as(
         "INSERT INTO backup_policies (user_id, server_id, name, backup_sites, backup_databases, backup_volumes, \
          schedule, destination_id, retention_count, encrypt, verify_after_backup, enabled, \
-         drill_enabled, drill_schedule) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) \
+         drill_enabled, drill_schedule, stop_apps) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) \
          RETURNING *"
     )
     .bind(claims.sub)
@@ -792,6 +804,7 @@ pub async fn create_policy(
     .bind(req.enabled.unwrap_or(true))
     .bind(req.drill_enabled.unwrap_or(false))
     .bind(&drill_schedule)
+    .bind(req.stop_apps.unwrap_or(true))
     .fetch_one(&state.db)
     .await
     .map_err(|e| internal_error("create policy", e))?;
@@ -863,6 +876,7 @@ pub async fn update_policy(
          enabled = COALESCE($12, enabled), \
          drill_enabled = COALESCE($13, drill_enabled), \
          drill_schedule = COALESCE(NULLIF($14, ''), drill_schedule), \
+         stop_apps = COALESCE($15, stop_apps), \
          updated_at = NOW() \
          WHERE id = $1 RETURNING *"
     )
@@ -880,6 +894,7 @@ pub async fn update_policy(
     .bind(req.enabled)
     .bind(req.drill_enabled)
     .bind(req.drill_schedule.as_deref().unwrap_or(""))
+    .bind(req.stop_apps)
     .fetch_one(&state.db)
     .await
     .map_err(|e| internal_error("update policy", e))?;
@@ -1274,38 +1289,131 @@ pub async fn restore_db_backup(
 
 // ── Volume Backups ──────────────────────────────────────────────────────────
 
+/// Body of POST /volume-backup.
+///
+/// The target is named the way the agent's GET /backup-targets names it:
+/// `{kind, volume_name | source_path, owner_name}`. The legacy body
+/// `{container_id, container_name, volume_name}` is still accepted and means a
+/// Docker volume.
 #[derive(serde::Deserialize)]
 pub struct CreateVolumeBackupRequest {
-    pub container_id: String,
-    pub container_name: String,
-    pub volume_name: String,
+    /// `volume` (default) or `bind`.
+    pub kind: Option<String>,
+    pub volume_name: Option<String>,
+    pub source_path: Option<String>,
+    pub owner_name: Option<String>,
+    /// Legacy body only.
+    pub container_id: Option<String>,
+    /// Legacy body only.
+    pub container_name: Option<String>,
 }
 
-/// POST /api/backup-orchestrator/volume-backup - Create a volume backup.
+/// The agent's own timeout and its refusals, said truthfully for an app data
+/// create or restore started from the UI.
+///
+/// A timeout here is ours (see `APP_DATA_ROUTE_TIMEOUT_SECS`): the agent keeps
+/// working, and for a restore it restarts the app's containers when it ends. A
+/// 507 (not enough disk space) carries a message the operator can act on, so
+/// it is passed through instead of becoming an incident reference.
+fn app_data_agent_error(context: &str, still_running: &str, e: crate::services::agent::AgentError) -> ApiError {
+    use crate::services::agent::AgentError;
+    match e {
+        AgentError::Request(ref detail) if detail.contains("timed out") => {
+            tracing::warn!(error = %e, "{context}");
+            err(StatusCode::GATEWAY_TIMEOUT, still_running)
+        }
+        AgentError::Status(507, ref body) => {
+            let msg = crate::error::agent_message(body);
+            tracing::warn!(agent_status = 507, error = %msg, "{context}");
+            err(StatusCode::INSUFFICIENT_STORAGE, &msg)
+        }
+        other => agent_error(context, other),
+    }
+}
+
+/// POST /api/backup-orchestrator/volume-backup - Back up one app data target
+/// (a Docker volume or a bind mount under the app data directories) now.
+///
+/// The target must be one the agent currently lists in GET /backup-targets:
+/// that is where its owner, slug and stack come from, and the agent refuses
+/// anything else anyway. The containers using the data are stopped for the
+/// copy, as a policy does by default. A manual archive is not encrypted.
 pub async fn create_volume_backup(
     State(state): State<AppState>,
     AdminUser(claims): AdminUser,
     ServerScope(scope_server_id, agent): ServerScope,
     Json(req): Json<CreateVolumeBackupRequest>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
-    // Validate container/volume names to prevent path traversal in agent URLs
-    if req.container_name.contains('/') || req.container_name.contains("..") || req.container_name.contains('\0') || req.container_name.len() > 128 {
-        return Err(err(StatusCode::BAD_REQUEST, "Invalid container name"));
+    use crate::services::backup_policy_executor as bpe;
+
+    let kind = match req.kind.as_deref() {
+        None => bpe::MountKind::Volume,
+        Some(k) => bpe::MountKind::parse(k)
+            .ok_or_else(|| err(StatusCode::BAD_REQUEST, "kind must be 'volume' or 'bind'"))?,
+    };
+    // `owner_name`, or for the legacy body the container name it carried.
+    let owner_hint = req.owner_name.as_deref().or(req.container_name.as_deref());
+    if let Some(o) = owner_hint {
+        if !bpe::is_valid_owner_name(o) {
+            return Err(err(StatusCode::BAD_REQUEST, "Invalid owner name"));
+        }
     }
-    if req.volume_name.contains('/') || req.volume_name.contains("..") || req.volume_name.contains('\0') || req.volume_name.len() > 128 {
-        return Err(err(StatusCode::BAD_REQUEST, "Invalid volume name"));
+    match kind {
+        bpe::MountKind::Volume => {
+            if !req.volume_name.as_deref().is_some_and(bpe::is_valid_volume_name) {
+                return Err(err(StatusCode::BAD_REQUEST, "Invalid volume name"));
+            }
+        }
+        bpe::MountKind::Bind => {
+            if !req.source_path.as_deref().is_some_and(bpe::is_valid_bind_source) {
+                return Err(err(
+                    StatusCode::BAD_REQUEST,
+                    "source_path must be a directory under /var/lib/dockpanel/apps, compose or git-data",
+                ));
+            }
+        }
     }
 
-    let body = serde_json::json!({
-        "volume_name": req.volume_name,
-        "container_name": req.container_name,
+    let listed = agent.get("/backup-targets").await
+        .map_err(|e| agent_error("List app data targets", e))?;
+    let parsed = bpe::parse_backup_targets(&listed).map_err(|e| {
+        tracing::error!("create_volume_backup: {e}");
+        err(StatusCode::BAD_GATEWAY, "The agent's list of app data could not be read")
+    })?;
+    let target = parsed.targets.into_iter().find(|t| {
+        t.kind == kind
+            && match kind {
+                bpe::MountKind::Volume => t.volume_name == req.volume_name,
+                bpe::MountKind::Bind => t.source_path == req.source_path,
+            }
     });
+    let Some(target) = target else {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "This volume or directory is not app data of a managed container on this server",
+        ));
+    };
+    // A legacy body names a container, which is the owner of a template app but
+    // not of a compose or Git one; only an explicit `owner_name` must match.
+    if let Some(o) = req.owner_name.as_deref() {
+        if o != target.owner_name {
+            return Err(err(StatusCode::BAD_REQUEST, "owner_name does not match the app that uses this data"));
+        }
+    }
 
-    let result = agent.post("/volume-backups/create", Some(body)).await
-        .map_err(|e| agent_error("Volume backup", e))?;
-
-    let filename = result.get("filename").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let size_bytes = result.get("size_bytes").and_then(|v| v.as_u64()).unwrap_or(0) as i64;
+    let body = bpe::app_data_create_body(&target, true, None);
+    let result = agent
+        .post_long("/volume-backups/create", Some(body), bpe::APP_DATA_ROUTE_TIMEOUT_SECS)
+        .await
+        .map_err(|e| app_data_agent_error(
+            "App data backup",
+            "The backup is taking longer than this request can wait. It goes on on the server but will not be listed here; use a backup policy for data this large.",
+            e,
+        ))?;
+    let archive = bpe::parse_app_data_create_response(&result, &target).map_err(|e| {
+        tracing::error!("create_volume_backup: {e}");
+        err(StatusCode::BAD_GATEWAY, &e)
+    })?;
 
     // The row records the server the archive was actually written on, which is the
     // one `ServerScope` just resolved the agent for - NOT "some online server".
@@ -1314,33 +1422,52 @@ pub async fn create_volume_backup(
     // verifier looks for the file there, and the drill scheduler restores from it.
     let server_id: Option<Uuid> = Some(scope_server_id);
 
-    // v2.8.2: integrity chain. Scope previous_hash by (container_id, volume_name)
-    // so re-creating the same logical volume re-chains rather than forking.
-    let sha256_hash = result.get("sha256").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    // v2.8.2: integrity chain, keyed on the target's stable identity (server,
+    // owner, kind, volume or slug, source) - not on a container id, which changes
+    // every time the container is recreated.
+    let row_volume_name = target.row_volume_name().to_string();
     let previous_hash: Option<String> = sqlx::query_scalar::<_, Option<String>>(
-        "SELECT sha256_hash FROM volume_backups WHERE container_id = $1 AND volume_name = $2 ORDER BY created_at DESC LIMIT 1"
-    ).bind(&req.container_id).bind(&req.volume_name).fetch_optional(&state.db).await.unwrap_or(None).flatten();
+        "SELECT sha256_hash FROM volume_backups \
+         WHERE server_id = $1 AND container_name = $2 AND mount_type = $3 AND volume_name = $4 \
+           AND source_path IS NOT DISTINCT FROM $5 \
+         ORDER BY created_at DESC LIMIT 1"
+    )
+    .bind(server_id).bind(&target.owner_name).bind(kind.as_str())
+    .bind(&row_volume_name).bind(target.source_path.as_deref())
+    .fetch_optional(&state.db).await.unwrap_or(None).flatten();
+
+    // Informational only, see the policy executor.
+    let container_id: String = req.container_id.clone()
+        .or_else(|| target.container_ids.first().cloned())
+        .unwrap_or_default()
+        .chars().take(64).collect();
 
     let backup: VolumeBackup = sqlx::query_as(
-        "INSERT INTO volume_backups (container_id, container_name, server_id, volume_name, filename, size_bytes, sha256_hash, previous_hash, chain_valid) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, TRUE) RETURNING *"
+        "INSERT INTO volume_backups (container_id, container_name, server_id, volume_name, filename, size_bytes, sha256_hash, previous_hash, chain_valid, \
+         mount_type, source_path, stack_id, encrypted, encryption_key_version) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, TRUE, $9, $10, $11, $12, $13) RETURNING *"
     )
-    .bind(&req.container_id).bind(&req.container_name).bind(server_id)
-    .bind(&req.volume_name).bind(&filename).bind(size_bytes)
-    .bind(if sha256_hash.is_empty() { None } else { Some(&sha256_hash) })
+    .bind(&container_id).bind(&target.owner_name).bind(server_id)
+    .bind(&row_volume_name).bind(&archive.filename).bind(archive.size_bytes)
+    .bind(if archive.sha256.is_empty() { None } else { Some(&archive.sha256) })
     .bind(previous_hash.as_deref())
+    .bind(kind.as_str()).bind(target.source_path.as_deref()).bind(target.stack_id.as_deref())
+    .bind(archive.encrypted).bind(bpe::CURRENT_BACKUP_KEY_VERSION)
     .fetch_one(&state.db).await
     .map_err(|e| internal_error("create volume backup", e))?;
 
     activity::log_activity(
         &state.db, claims.sub, &claims.email, "volume_backup.create",
-        Some("volume"), Some(&req.container_name), Some(&filename), None, claims.key_id,
+        Some("volume"), Some(&target.owner_name), Some(&archive.filename), None, claims.key_id,
     ).await;
 
     Ok((StatusCode::CREATED, Json(serde_json::json!({
         "id": backup.id,
-        "filename": filename,
-        "size_bytes": size_bytes,
+        "filename": archive.filename,
+        "size_bytes": archive.size_bytes,
+        "kind": kind.as_str(),
+        "owner_name": target.owner_name,
+        "stopped": result.get("stopped").cloned().unwrap_or(serde_json::json!([])),
     }))))
 }
 
@@ -1443,12 +1570,45 @@ pub async fn restore_volume_backup(
     // The volume drill cannot catch this: `services/backup_drill.rs` re-implements
     // the restore rather than calling this path, so a green drill says nothing
     // about whether the real restore runs.
+    //
+    // The body names the target the way the row recorded it: `kind` from
+    // `mount_type`, the volume name or the bind mount's directory, and the
+    // passphrase of an encrypted archive, derived with the row's OWN key version.
+    // The agent stops the app's running containers that use the data, restores,
+    // and restarts them whatever happens.
+    use crate::services::backup_policy_executor as bpe;
+    let kind = bpe::MountKind::parse(&backup.mount_type)
+        .ok_or_else(|| err(StatusCode::CONFLICT, "This backup has an unknown mount type"))?;
+    if !bpe::is_valid_owner_name(&backup.container_name)
+        || backup.filename.contains('/') || backup.filename.contains("..") || backup.filename.contains('\0')
+    {
+        return Err(err(StatusCode::BAD_REQUEST, "Invalid backup path"));
+    }
+    match kind {
+        bpe::MountKind::Volume if !bpe::is_valid_volume_name(&backup.volume_name) => {
+            return Err(err(StatusCode::BAD_REQUEST, "Invalid volume name"));
+        }
+        bpe::MountKind::Bind if !backup.source_path.as_deref().is_some_and(bpe::is_valid_bind_source) => {
+            return Err(err(StatusCode::BAD_REQUEST, "This backup's directory is outside the app data directories"));
+        }
+        _ => {}
+    }
+    let encryption_key = bpe::row_encryption_key(
+        backup.encrypted, backup.encryption_key_version, &state.config.jwt_secret,
+    );
+    let body = bpe::app_data_restore_body(
+        kind, &backup.volume_name, backup.source_path.as_deref(), encryption_key.as_deref(),
+    );
     let agent_path = format!("/volume-backups/{}/restore/{}", backup.container_name, backup.filename);
-    let result = agent.post(
-        &agent_path,
-        Some(serde_json::json!({ "volume_name": backup.volume_name })),
-    ).await
-        .map_err(|e| agent_error("Volume restore", e))?;
+    // `post` gave a restore of any real app 60 seconds. The route sits under the
+    // 300 s request ceiling, so the budget is just below it; past that the agent
+    // carries on and restarts the containers itself.
+    let result = agent.post_long(&agent_path, Some(body), bpe::APP_DATA_ROUTE_TIMEOUT_SECS).await
+        .map_err(|e| app_data_agent_error(
+            "Volume restore",
+            "The restore is taking longer than this request can wait. It goes on on the server, and the app's containers restart when it ends. Check the app before trying again.",
+            e,
+        ))?;
 
     let ip = crate::routes::client_ip(&headers);
 
@@ -1566,6 +1726,9 @@ pub async fn trigger_verify(
     let db = state.db.clone();
     let backup_type = req.backup_type.clone();
     let backup_id = req.backup_id;
+    // An encrypted app data archive is read through its passphrase, derived
+    // with the row's own key version.
+    let jwt_secret = state.config.jwt_secret.clone();
 
     // Run verification async
     tokio::spawn(async move {
@@ -1605,14 +1768,18 @@ pub async fn trigger_verify(
                 }
             }
             "volume" => {
-                let row = sqlx::query_as::<_, (String, String)>(
-                    "SELECT container_name, filename FROM volume_backups WHERE id = $1"
+                let row = sqlx::query_as::<_, (String, String, bool, i16)>(
+                    "SELECT container_name, filename, encrypted, encryption_key_version FROM volume_backups WHERE id = $1"
                 ).bind(backup_id).fetch_optional(&db).await;
 
                 match row {
-                    Ok(Some((container_name, filename))) => {
-                        let body = serde_json::json!({ "container_name": container_name, "filename": filename });
-                        agent.post("/backups/verify/volume", Some(body)).await.map_err(|e| e.to_string())
+                    Ok(Some((container_name, filename, encrypted, key_version))) => {
+                        let body = crate::services::backup_policy_executor::volume_check_body(
+                            &container_name, &filename, encrypted, key_version, &jwt_secret,
+                        );
+                        // Decrypting a large archive before reading it outlasts
+                        // plain `post`'s 60 seconds; this runs detached.
+                        agent.post_long("/backups/verify/volume", Some(body), crate::services::backup_policy_executor::APP_DATA_VERIFY_TIMEOUT_SECS).await.map_err(|e| e.to_string())
                     }
                     Ok(None) => Err("Volume backup not found".to_string()),
                     Err(e) => {
@@ -1757,6 +1924,9 @@ pub async fn trigger_drill(
     let db = state.db.clone();
     let backup_type = req.backup_type.clone();
     let backup_id = req.backup_id;
+    // An encrypted app data archive is read through its passphrase, derived
+    // with the row's own key version.
+    let jwt_secret = state.config.jwt_secret.clone();
 
     // Run drill async. Uses post_long: a plain `post` caps the whole round trip at 60s,
     // but the agent-side restore this triggers is budgeted 220s (database) to 360s
@@ -1805,16 +1975,15 @@ pub async fn trigger_drill(
                 }
             }
             "volume" => {
-                let row = sqlx::query_as::<_, (String, String)>(
-                    "SELECT container_name, filename FROM volume_backups WHERE id = $1"
+                let row = sqlx::query_as::<_, (String, String, bool, i16)>(
+                    "SELECT container_name, filename, encrypted, encryption_key_version FROM volume_backups WHERE id = $1"
                 ).bind(backup_id).fetch_optional(&db).await;
 
                 match row {
-                    Ok(Some((container_name, filename))) => {
-                        let body = serde_json::json!({
-                            "container_name": container_name,
-                            "filename": filename,
-                        });
+                    Ok(Some((container_name, filename, encrypted, key_version))) => {
+                        let body = crate::services::backup_policy_executor::volume_check_body(
+                            &container_name, &filename, encrypted, key_version, &jwt_secret,
+                        );
                         agent.post_long("/backups/drill/volume", Some(body), crate::services::agent::DRILL_TIMEOUT_SECS).await.map_err(|e| e.to_string())
                     }
                     Ok(None) => Err("Volume backup not found".to_string()),

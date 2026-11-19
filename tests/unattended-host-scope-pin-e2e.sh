@@ -378,7 +378,7 @@ fi
 
 # E6 - retention must be per resource. OFFSET over a policy's whole history kept
 # n backups in TOTAL across every database it covered.
-if has "$AH_S" "PARTITION BY database_id" && has "$AH_S" "PARTITION BY container_id"; then
+if has "$AH_S" "PARTITION BY database_id" && has "$AH_S" "PARTITION BY server_id, container_name, mount_type, volume_name, source_path"; then
   ok "E6 policy retention_count is applied per resource, not per policy"
 else
   bad "E6 policy retention still uses a policy-wide OFFSET - most resources keep zero backups"

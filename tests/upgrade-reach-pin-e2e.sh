@@ -208,10 +208,13 @@ if S=$(subj code "$ORCH"); then
     # function already spells `backup.volume_name` in the label it passes to
     # `agent_for_site_server`, an unrelated use. That false green sat inside a
     # batch of twelve reds, which is precisely where one hides (lesson #330).
-    POSTCALL=$(awk '/let result = agent\.post\(/{inside=1} inside{print} inside && /\.await/{exit}' <<< "$BODY")
+    POSTCALL=$(awk '/let result = agent\.post(_long)?\(/{inside=1} inside{print} inside && /\.await/{exit}' <<< "$BODY")
+    # Since lot 1 the body is built just above the call, from the row:
+    # `app_data_restore_body(kind, &backup.volume_name, backup.source_path...)`.
+    BODYBUILD=$(grep -A2 'app_data_restore_body(' <<< "$BODY" || true)
     if [ -z "$POSTCALL" ]; then
       bad "the volume restore POST call was not found - C2 is measuring nothing"
-    elif has "$POSTCALL" 'volume_name'; then
+    elif has "$POSTCALL" 'volume_name' || { has "$POSTCALL" 'Some\(body\)' && has "$BODYBUILD" 'backup\.volume_name'; }; then
       ok "the restore body carries volume_name, the agent's required field"
     else
       bad "the restore body omits volume_name - the agent rejects it"

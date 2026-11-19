@@ -10,7 +10,10 @@ use crate::services::notifications;
 /// read on the host that wrote it. Verifying a member's backup against the panel's disk
 /// finds nothing, marks a good archive `failed`, and - because the driving queries skip
 /// any backup that already has a verification row - never looks at it again.
-pub async fn run(db: PgPool, agents: AgentRegistry, mut shutdown_rx: tokio::sync::broadcast::Receiver<()>) {
+///
+/// `jwt_secret` derives the passphrase of an encrypted app data archive, which
+/// cannot be read without it (see `backup_policy_executor::volume_check_body`).
+pub async fn run(db: PgPool, agents: AgentRegistry, jwt_secret: String, mut shutdown_rx: tokio::sync::broadcast::Receiver<()>) {
     tracing::info!("Backup verifier started");
 
     // Initial delay: 5 minutes after startup
@@ -27,7 +30,7 @@ pub async fn run(db: PgPool, agents: AgentRegistry, mut shutdown_rx: tokio::sync
     loop {
         tokio::select! {
             _ = interval.tick() => {
-                if let Err(e) = tick(&db, &agents).await {
+                if let Err(e) = tick(&db, &agents, &jwt_secret).await {
                     tracing::error!("Backup verifier error: {e}");
                 }
             }
@@ -39,7 +42,7 @@ pub async fn run(db: PgPool, agents: AgentRegistry, mut shutdown_rx: tokio::sync
     }
 }
 
-async fn tick(db: &PgPool, agents: &AgentRegistry) -> Result<(), String> {
+async fn tick(db: &PgPool, agents: &AgentRegistry, jwt_secret: &str) -> Result<(), String> {
     // Find policies that have verify_after_backup enabled
     let policies_exist: (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM backup_policies WHERE verify_after_backup = TRUE AND enabled = TRUE"
@@ -65,7 +68,7 @@ async fn tick(db: &PgPool, agents: &AgentRegistry) -> Result<(), String> {
     .fetch_all(db).await.map_err(|e| e.to_string())?;
 
     for (backup_id, domain, filename, server_id) in &site_backups {
-        verify_one(db, agents, *server_id, "site", *backup_id, domain, filename, None, None).await;
+        verify_one(db, agents, *server_id, "site", *backup_id, domain, filename, None, None, None).await;
     }
 
     // Database backups resolve their server through the site that owns the database,
@@ -83,22 +86,22 @@ async fn tick(db: &PgPool, agents: &AgentRegistry) -> Result<(), String> {
     .fetch_all(db).await.map_err(|e| e.to_string())?;
 
     for (backup_id, db_type, db_name, filename, server_id) in &db_backups {
-        verify_one(db, agents, *server_id, "database", *backup_id, db_name, filename, Some(db_type), None).await;
+        verify_one(db, agents, *server_id, "database", *backup_id, db_name, filename, Some(db_type), None, None).await;
     }
 
     // A volume backup has no site to join through, so `vb.server_id` is the only
     // handle - which is why `create_volume_backup` had to stop stamping it from
     // "some online server". Rows written before that fix may still carry a wrong or
     // NULL id; NULL ones are skipped below rather than silently verified here.
-    let vol_backups: Vec<(Uuid, String, String, Option<Uuid>)> = sqlx::query_as(
-        "SELECT vb.id, vb.container_name, vb.filename, vb.server_id FROM volume_backups vb \
+    let vol_backups: Vec<(Uuid, String, String, Option<Uuid>, bool, i16)> = sqlx::query_as(
+        "SELECT vb.id, vb.container_name, vb.filename, vb.server_id, vb.encrypted, vb.encryption_key_version FROM volume_backups vb \
          LEFT JOIN backup_verifications bv ON bv.backup_type = 'volume' AND bv.backup_id = vb.id \
          WHERE bv.id IS NULL AND vb.created_at > NOW() - INTERVAL '7 days' \
          ORDER BY vb.created_at DESC LIMIT 2"
     )
     .fetch_all(db).await.map_err(|e| e.to_string())?;
 
-    for (backup_id, container_name, filename, server_id) in &vol_backups {
+    for (backup_id, container_name, filename, server_id, encrypted, key_version) in &vol_backups {
         let Some(sid) = server_id else {
             // Deliberately NOT `for_server_or_local`. An unscoped volume backup is a
             // row we cannot place, and defaulting it to this host is exactly the
@@ -109,7 +112,10 @@ async fn tick(db: &PgPool, agents: &AgentRegistry) -> Result<(), String> {
             );
             continue;
         };
-        verify_one(db, agents, *sid, "volume", *backup_id, container_name, filename, None, Some(container_name.as_str())).await;
+        // An encrypted archive is decrypted by the agent before it is read: the
+        // passphrase comes from the row's own key version.
+        let key = crate::services::backup_policy_executor::row_encryption_key(*encrypted, *key_version, jwt_secret);
+        verify_one(db, agents, *sid, "volume", *backup_id, container_name, filename, None, Some(container_name.as_str()), key.as_deref()).await;
     }
 
     // "considered", not "verified": a row whose server is unreachable is skipped
@@ -133,6 +139,7 @@ async fn verify_one(
     filename: &str,
     db_type: Option<&str>,
     container_name: Option<&str>,
+    encryption_key: Option<&str>,
 ) {
     // Resolve BEFORE inserting the record. A verification row is written 'running'
     // and the driving queries skip any backup that already has one, so a row created
@@ -178,11 +185,19 @@ async fn verify_one(
             agent.post("/backups/verify/database", Some(body)).await
         }
         "volume" => {
-            let body = serde_json::json!({
+            let mut body = serde_json::json!({
                 "container_name": container_name.unwrap_or(name),
                 "filename": filename,
             });
-            agent.post("/backups/verify/volume", Some(body)).await
+            if let Some(k) = encryption_key {
+                body["encryption_key"] = serde_json::Value::String(k.to_string());
+            }
+            // Decrypting then listing a large archive outlasts plain `post`'s 60s.
+            agent.post_long(
+                "/backups/verify/volume",
+                Some(body),
+                crate::services::backup_policy_executor::APP_DATA_VERIFY_TIMEOUT_SECS,
+            ).await
         }
         _ => return,
     };
