@@ -104,6 +104,7 @@ async fn main() {
             "Removed {removed} stale temporary file(s) under /var/backups/dockpanel, failed to remove {failed}"
         ),
     }
+    services::mail_backup::report_stale_restores();
     std::fs::create_dir_all("/var/www/acme/.well-known/acme-challenge").ok();
 
     // One-shot migration, idempotent: give static vhosts already on disk the denies
@@ -257,6 +258,7 @@ async fn main() {
         .merge(routes::panel_update::router())
         .merge(routes::diagnostics::router())
         .merge(routes::mail::router())
+        .merge(routes::dns_backup::router())
         .merge(routes::sftp::router())
         .merge(routes::migration::router())
         .merge(routes::service_installer::router())

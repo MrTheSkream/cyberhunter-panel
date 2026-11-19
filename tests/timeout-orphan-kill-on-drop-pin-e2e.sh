@@ -72,6 +72,7 @@ BACKUPS_SVC="$REPO/panel/agent/src/services/backups.rs"
 REMOTE_BACKUP_SVC="$REPO/panel/agent/src/services/remote_backup.rs"
 DATABASE_BACKUP_SVC="$REPO/panel/agent/src/services/database_backup.rs"
 MAIL_ROUTE="$REPO/panel/agent/src/routes/mail.rs"
+MAIL_BACKUP_SVC="$REPO/panel/agent/src/services/mail_backup.rs"
 WORDPRESS_SVC="$REPO/panel/agent/src/services/wordpress.rs"
 WORDPRESS_ROUTE="$REPO/panel/agent/src/routes/wordpress.rs"
 BACKUPS_ROUTE="$REPO/panel/agent/src/routes/backups.rs"
@@ -201,11 +202,23 @@ scopedChainHasKillOnDrop "$DATABASE_BACKUP_SVC" 'pub async fn restore_mongo(' 'p
   "restore_mongo's docker exec (mongorestore) carries kill_on_drop(true)"
 
 echo
-echo "== G. mail.rs: the mailbox backup/restore tar children are annotated (found off-menu by the s451 completeness critic - inlined in a route handler, invisible to every services/-scoped grep for this bug class) =="
-windowHasKillOnDrop "$MAIL_ROUTE" '"czf", &backup_file,' \
-  "mail.rs's mailbox_backup tar czf carries kill_on_drop(true)"
-windowHasKillOnDrop "$MAIL_ROUTE" '"xzf", backup_file,' \
-  "mail.rs's mailbox_restore tar xzf carries kill_on_drop(true)"
+echo "== G. mailbox backup/restore tar children are annotated (found off-menu by the s451 completeness critic in mail.rs; since lot 3 the code lives in services/mail_backup.rs and every tar goes through its run() helper) =="
+windowHasKillOnDrop "$MAIL_BACKUP_SVC" 'async fn run(cmd: &mut tokio::process::Command' \
+  "mail_backup.rs's run() helper (every mailbox tar) carries kill_on_drop(true)"
+# The tar sites must go through run(): an anchor on the tar flag, run( within
+# the 8 lines before it. A tar built and awaited by hand would lose the guard.
+throughRun() {
+  local file="$1" anchor="$2" label="$3"
+  if grep -B8 -F -- "$anchor" "$file" 2>/dev/null | grep -c 'run(' >/dev/null; then
+    ok "$label"
+  else
+    bad "$label"
+  fi
+}
+throughRun "$MAIL_BACKUP_SVC" '.arg("-czf")' \
+  "mail_backup.rs's mailbox archive tar czf goes through run() (kill_on_drop)"
+throughRun "$MAIL_BACKUP_SVC" '.arg("-xzf")' \
+  "mail_backup.rs's mailbox restore tar xzf goes through run() (kill_on_drop)"
 
 echo
 echo "== H. wordpress.rs: the crate's single wp-cli choke point + its own 5 pre-existing subprocess sites are all annotated (s452 dockpanel-fanout run wf_72e4e04f-373, rotation target wp_vulnerability.rs) =="

@@ -59,7 +59,7 @@ impl VbError {
     }
 
     /// An error from `services::encryption`: the file's fault (422) or the host's (500).
-    fn from_crypto(e: String) -> Self {
+    pub(crate) fn from_crypto(e: String) -> Self {
         if encryption::is_content_error(&e) { Self::Integrity(e) } else { Self::Internal(e) }
     }
 }
@@ -299,7 +299,7 @@ fn free_bytes(dir: &Path) -> Result<u64, String> {
     Ok((st.f_bavail as u64).saturating_mul(st.f_frsize as u64))
 }
 
-async fn du_bytes(path: &str) -> Result<u64, String> {
+pub(crate) async fn du_bytes(path: &str) -> Result<u64, String> {
     let out = tokio::time::timeout(
         std::time::Duration::from_secs(600),
         safe_command("du").args(["-sb", path]).output(),
@@ -340,7 +340,7 @@ async fn remove_helper(name: &str) {
     }
 }
 
-fn check_space(dir: &Path, need: u64, what: &str) -> Result<(), VbError> {
+pub(crate) fn check_space(dir: &Path, need: u64, what: &str) -> Result<(), VbError> {
     let free = free_bytes(dir).map_err(VbError::Internal)?;
     if free < need {
         return Err(VbError::NoSpace(format!(

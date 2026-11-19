@@ -5,6 +5,7 @@ use axum::{
 };
 use serde::Deserialize;
 use crate::safe_cmd::{safe_command, safe_command_unsandboxed};
+use crate::services::mail_backup;
 use std::path::Path;
 
 use super::AppState;
@@ -161,7 +162,8 @@ pub fn router() -> Router<AppState> {
         .route("/mail/rate-limit/set", post(rate_limit_set))
         .route("/mail/rate-limit/status", get(rate_limit_status))
         .route("/mail/rate-limit/remove", post(rate_limit_remove))
-        // Mailbox Backup/Restore
+        // Mailbox Backup/Restore (lot 3: archive/restore jobs, polled at /backup-jobs/{id})
+        .route("/mail/archive", post(mail_archive).layer(axum::extract::DefaultBodyLimit::max(super::dns_backup::BACKUP_BODY_LIMIT)))
         .route("/mail/backup", post(mailbox_backup))
         .route("/mail/restore", post(mailbox_restore))
         .route("/mail/backups", get(mailbox_backups))
@@ -2656,150 +2658,171 @@ async fn rate_limit_remove() -> Result<Json<serde_json::Value>, ApiErr> {
 }
 
 // ── Mailbox Backup/Restore ──────────────────────────────────────────────
+//
+// Lot 3: the archives live in /var/backups/dockpanel/mail (so a policy can
+// send them away) and the work is in services::mail_backup. `/mail/archive`
+// and `/mail/restore` with `kind` answer 202 `{job_id}` (polled through
+// `GET /backup-jobs/{id}`); the pre-lot-3 shapes (`/mail/backup {email}`,
+// `/mail/restore {email, file}`) run the same code, wait up to
+// LEGACY_WAIT_SECS for it and answer as before, or 202 with the job id when
+// the mailbox is too big to finish in time (the job still goes to the end).
 
-/// POST /mail/backup - Create a backup of a mailbox (tar.gz of maildir).
-async fn mailbox_backup(Json(body): Json<MailboxBackupRequest>) -> Result<Json<serde_json::Value>, ApiErr> {
-    let email = body.email.trim();
-    if email.is_empty() || !email.contains('@') { return Err(err(StatusCode::BAD_REQUEST, "Invalid email")); }
+/// Under the panel's ~60 s agent call.
+const LEGACY_WAIT_SECS: u64 = 50;
 
-    let parts: Vec<&str> = email.splitn(2, '@').collect();
-    let (user, domain) = (parts[0], parts[1]);
-
-    if user.contains('/') || user.contains('\\') || user.contains("..")
-        || domain.contains('/') || domain.contains('\\') || domain.contains("..") {
-        return Err(err(StatusCode::BAD_REQUEST, "Invalid email format"));
-    }
-
-    let maildir = format!("/var/vmail/{domain}/{user}");
-
-    if !Path::new(&maildir).exists() {
-        return Err(err(StatusCode::NOT_FOUND, "Mailbox directory not found"));
-    }
-
-    let backup_dir = "/var/lib/dockpanel/mail-backups";
-    tokio::fs::create_dir_all(backup_dir).await.ok();
-    // The tarballs contain plaintext mail - keep the directory owner-only (0700).
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = tokio::fs::set_permissions(backup_dir, std::fs::Permissions::from_mode(0o700)).await;
-    }
-
-    let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
-    let backup_file = format!("{backup_dir}/{user}_{domain}_{timestamp}.tar.gz");
-
-    // `--` ends option parsing so a local-part beginning with '-' can't be read as a tar flag.
-    let output = tokio::time::timeout(
-        std::time::Duration::from_secs(300),
-        safe_command("tar").args(["czf", &backup_file, "-C", &format!("/var/vmail/{domain}"), "--", user])
-            .kill_on_drop(true)
-            .output()
-    ).await
-        .map_err(|_| err(StatusCode::GATEWAY_TIMEOUT, "Backup timed out"))?
-        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &format!("Backup failed: {e}")))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(err(StatusCode::INTERNAL_SERVER_ERROR, &format!("Backup failed: {stderr}")));
-    }
-
-    // 0600: the archive is a full copy of the mailbox's plaintext mail - never world-readable.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = tokio::fs::set_permissions(&backup_file, std::fs::Permissions::from_mode(0o600)).await;
-    }
-
-    // Get file size
-    let size = tokio::fs::metadata(&backup_file).await.map(|m| m.len()).unwrap_or(0);
-
-    tracing::info!("Mailbox backed up: {email} -> {backup_file} ({size} bytes)");
-    Ok(Json(serde_json::json!({ "ok": true, "file": backup_file, "size": size })))
+fn backup_err(e: crate::services::volume_backup::VbError) -> ApiErr {
+    super::dns_backup::vb_err(e)
 }
 
-/// POST /mail/restore - Restore a mailbox from backup.
-async fn mailbox_restore(Json(body): Json<serde_json::Value>) -> Result<Json<serde_json::Value>, ApiErr> {
-    let email = body.get("email").and_then(|v| v.as_str()).unwrap_or("");
-    let backup_file = body.get("file").and_then(|v| v.as_str()).unwrap_or("");
-
-    if email.is_empty() || !email.contains('@') { return Err(err(StatusCode::BAD_REQUEST, "Invalid email")); }
-    if backup_file.is_empty() || !backup_file.starts_with("/var/lib/dockpanel/mail-backups/") {
-        return Err(err(StatusCode::BAD_REQUEST, "Invalid backup file path"));
-    }
-    if backup_file.contains("..") { return Err(err(StatusCode::BAD_REQUEST, "Path traversal not allowed")); }
-    if !Path::new(backup_file).exists() { return Err(err(StatusCode::NOT_FOUND, "Backup file not found")); }
-
-    let parts: Vec<&str> = email.splitn(2, '@').collect();
-    if parts.len() != 2 { return Err(err(StatusCode::BAD_REQUEST, "Invalid email format")); }
-    let (user, domain) = (parts[0], parts[1]);
-    // Reject path traversal in the email - otherwise `maildir` below could escape /var/vmail into
-    // an agent-writable root-daemon config dir (the tar `-C` target + the recursive chown). This
-    // mirrors the guard the sibling mailbox_backup already applies.
-    if user.is_empty() || domain.is_empty()
-        || user.contains('/') || user.contains('\\') || user.contains("..")
-        || domain.contains('/') || domain.contains('\\') || domain.contains("..") {
-        return Err(err(StatusCode::BAD_REQUEST, "Invalid email format"));
-    }
-    let maildir = format!("/var/vmail/{domain}");
-
-    // Restore
-    let output = tokio::time::timeout(
-        std::time::Duration::from_secs(300),
-        safe_command("tar").args(["xzf", backup_file, "-C", &maildir])
-            .kill_on_drop(true)
-            .output()
-    ).await
-        .map_err(|_| err(StatusCode::GATEWAY_TIMEOUT, "Restore timed out"))?
-        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &format!("Restore failed: {e}")))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(err(StatusCode::INTERNAL_SERVER_ERROR, &format!("Restore failed: {stderr}")));
-    }
-
-    // Fix permissions
-    let _ = safe_command("chown").args(["-R", "vmail:vmail", &format!("{maildir}/{user}")]).output().await;
-
-    tracing::info!("Mailbox restored: {email} from {backup_file}");
-    Ok(ok(&format!("Mailbox {email} restored")))
+fn to_value<T: serde::Serialize>(v: T) -> Result<serde_json::Value, crate::services::volume_backup::VbError> {
+    serde_json::to_value(v).map_err(|e| crate::services::volume_backup::VbError::Internal(e.to_string()))
 }
 
-/// GET /mail/backups - List available mailbox backups.
-async fn mailbox_backups() -> Result<Json<serde_json::Value>, ApiErr> {
-    let backup_dir = "/var/lib/dockpanel/mail-backups";
-    let mut backups = Vec::new();
+/// Wait for a job a legacy route started: `Ok(Some(result))` when done in
+/// time, `Ok(None)` while it still runs, the job's own error otherwise.
+async fn wait_job(job_id: &str) -> Result<Option<serde_json::Value>, ApiErr> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(LEGACY_WAIT_SECS);
+    loop {
+        let v = crate::services::backup_jobs::get(job_id)
+            .ok_or_else(|| err(StatusCode::INTERNAL_SERVER_ERROR, "The backup job vanished"))?;
+        match v["status"].as_str() {
+            Some("done") => return Ok(Some(v["result"].clone())),
+            Some("failed") => {
+                let code = v["error_code"].as_u64().and_then(|c| StatusCode::from_u16(c as u16).ok());
+                return Err(err(
+                    code.unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+                    v["error"].as_str().unwrap_or("Backup job failed"),
+                ));
+            }
+            _ => {}
+        }
+        if std::time::Instant::now() >= deadline {
+            return Ok(None);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+}
 
-    let mut entries = match tokio::fs::read_dir(backup_dir).await {
-        Ok(e) => e,
-        Err(_) => return Ok(Json(serde_json::json!({ "backups": [] }))),
+fn still_running(job_id: &str, what: &str) -> (StatusCode, Json<serde_json::Value>) {
+    (
+        StatusCode::ACCEPTED,
+        Json(serde_json::json!({ "ok": true, "job_id": job_id, "message": format!("{what} is still running") })),
+    )
+}
+
+/// POST /mail/archive - Lot 3: archive one mailbox or the mail config (job).
+async fn mail_archive(
+    Json(body): Json<mail_backup::MailArchiveRequest>,
+) -> Result<(StatusCode, Json<serde_json::Value>), ApiErr> {
+    let plan = mail_backup::plan_archive(body).map_err(backup_err)?;
+    if !mail_backup::mail_installed().await {
+        return Ok(super::dns_backup::skipped());
+    }
+    let job_id = match plan {
+        mail_backup::ArchivePlan::Mailbox { mailbox, key } => {
+            mail_backup::require_maildir(&mailbox).map_err(backup_err)?;
+            crate::services::backup_jobs::spawn("mail-archive", async move {
+                to_value(mail_backup::archive_mailbox(mailbox, key).await?)
+            })
+        }
+        mail_backup::ArchivePlan::Config { manifest, key } => {
+            crate::services::backup_jobs::spawn("mail-config-archive", async move {
+                to_value(mail_backup::archive_config(manifest, key).await?)
+            })
+        }
     };
-
-    while let Ok(Some(entry)) = entries.next_entry().await {
-        let name = entry.file_name().to_string_lossy().to_string();
-        if !name.ends_with(".tar.gz") { continue; }
-        let size = entry.metadata().await.map(|m| m.len()).unwrap_or(0);
-        let path = entry.path().to_string_lossy().to_string();
-
-        // Parse email from filename: user_domain_timestamp.tar.gz
-        let parts: Vec<&str> = name.trim_end_matches(".tar.gz").rsplitn(2, '_').collect();
-        let email_hint = if parts.len() >= 2 { parts[1].replacen('_', "@", 1) } else { name.clone() };
-
-        backups.push(serde_json::json!({ "file": path, "name": name, "email": email_hint, "size": size }));
-    }
-
-    // Sort by name (timestamp in filename = chronological)
-    backups.sort_by(|a, b| b["name"].as_str().unwrap_or("").cmp(a["name"].as_str().unwrap_or("")));
-
-    Ok(Json(serde_json::json!({ "backups": backups })))
+    Ok(super::dns_backup::accepted(job_id))
 }
 
-/// POST /mail/backups/delete - Delete a backup file.
+/// POST /mail/backup - Manual backup of one mailbox (pre-lot-3 shape), through
+/// the lot 3 code: hot tar whose exit code 1 is accepted, new name, new
+/// directory, unencrypted.
+async fn mailbox_backup(
+    Json(body): Json<MailboxBackupRequest>,
+) -> Result<(StatusCode, Json<serde_json::Value>), ApiErr> {
+    let mailbox = mail_backup::Mailbox::from_email(&body.email).map_err(backup_err)?;
+    mail_backup::require_maildir(&mailbox).map_err(backup_err)?;
+    let job_id = crate::services::backup_jobs::spawn("mail-archive", async move {
+        to_value(mail_backup::archive_mailbox(mailbox, None).await?)
+    });
+    let Some(info) = wait_job(&job_id).await? else {
+        return Ok(still_running(&job_id, "The backup"));
+    };
+    let filename = info["filename"].as_str().unwrap_or_default().to_string();
+    Ok((
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "ok": true,
+            "file": format!("{}/{filename}", mail_backup::MAIL_BACKUP_DIR),
+            "size": info["size_bytes"],
+            "filename": filename,
+            "size_bytes": info["size_bytes"],
+            "sha256": info["sha256"],
+            "encrypted": false,
+        })),
+    ))
+}
+
+/// POST /mail/restore - Lot 3 (`kind` present): a mailbox (job) or the
+/// manifest of a config archive (200). Pre-lot-3 (`{email, file}`): the
+/// archive must belong to that address, merged, then force-resync.
+async fn mailbox_restore(
+    Json(body): Json<mail_backup::MailRestoreRequest>,
+) -> Result<(StatusCode, Json<serde_json::Value>), ApiErr> {
+    let plan = mail_backup::plan_restore(body).map_err(backup_err)?;
+    if !mail_backup::mail_installed().await {
+        return Ok(super::dns_backup::skipped());
+    }
+    match plan {
+        mail_backup::RestorePlan::Mailbox { mailbox, filename, mode, key } => {
+            let dir = mail_backup::locate(Path::new(mail_backup::MAIL_BACKUP_DIR), &filename).map_err(backup_err)?;
+            let job_id = crate::services::backup_jobs::spawn("mail-restore", async move {
+                mail_backup::restore_mailbox(mailbox, dir, filename, mode, key).await
+            });
+            Ok(super::dns_backup::accepted(job_id))
+        }
+        mail_backup::RestorePlan::Config { filename, key } => {
+            let manifest = mail_backup::read_config_manifest(filename, key).await.map_err(backup_err)?;
+            Ok((StatusCode::OK, Json(serde_json::json!({ "manifest": manifest }))))
+        }
+        mail_backup::RestorePlan::Legacy { mailbox, dir, filename } => {
+            if !dir.join(&filename).is_file() {
+                return Err(err(StatusCode::NOT_FOUND, "Backup file not found"));
+            }
+            let email = mailbox.addr();
+            let job_id = crate::services::backup_jobs::spawn("mail-restore", async move {
+                mail_backup::restore_mailbox(mailbox, dir, filename, mail_backup::RestoreMode::Merge, None).await
+            });
+            let Some(result) = wait_job(&job_id).await? else {
+                return Ok(still_running(&job_id, "The restore"));
+            };
+            let mut v = serde_json::json!({ "ok": true, "message": format!("Mailbox {email} restored") });
+            v["messages"] = result["messages"].clone();
+            v["warnings"] = result["warnings"].clone();
+            Ok((StatusCode::OK, Json(v)))
+        }
+    }
+}
+
+/// GET /mail/backups - Lot 3 `{files: [...]}` (new directory), plus the
+/// pre-lot-3 `{backups: [...]}` shape the Mail page reads.
+async fn mailbox_backups() -> Result<Json<serde_json::Value>, ApiErr> {
+    let files = mail_backup::list_backups(Path::new(mail_backup::MAIL_BACKUP_DIR));
+    let backups = mail_backup::list_legacy_shape(&files);
+    Ok(Json(serde_json::json!({ "files": files, "backups": backups })))
+}
+
+/// POST /mail/backups/delete - Delete a backup file (either directory).
 async fn mailbox_backup_delete(Json(body): Json<serde_json::Value>) -> Result<Json<serde_json::Value>, ApiErr> {
     let file = body.get("file").and_then(|v| v.as_str()).unwrap_or("");
-    if file.is_empty() || !file.starts_with("/var/lib/dockpanel/mail-backups/") || file.contains("..") {
-        return Err(err(StatusCode::BAD_REQUEST, "Invalid backup file"));
-    }
-    tokio::fs::remove_file(file).await.map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &format!("Delete failed: {e}")))?;
+    let path = mail_backup::deletable_path(file).ok_or_else(|| err(StatusCode::BAD_REQUEST, "Invalid backup file"))?;
+    tokio::fs::remove_file(&path).await.map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            err(StatusCode::NOT_FOUND, "Backup file not found")
+        } else {
+            err(StatusCode::INTERNAL_SERVER_ERROR, &format!("Delete failed: {e}"))
+        }
+    })?;
     Ok(ok("Backup deleted"))
 }
 

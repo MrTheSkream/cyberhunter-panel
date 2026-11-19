@@ -299,12 +299,13 @@ fi
 # THIS is the arm that should go red first, so the copy above gets revisited with
 # it. An exact allow-list of the agent files that reach services/encryption.rs:
 # database dumps (routes/database_backup.rs) and app data (services/
-# volume_backup.rs, which verify and drill also go through). Counted on
+# volume_backup.rs, which verify and drill also go through), mail and DNS
+# backups (services/mail_backup.rs, lot 3; dns_backup.rs goes through it). Counted on
 # comment-stripped code, by any spelling of the module or of its public
 # functions, so a new caller cannot hide behind a `use` alias or a doc comment.
 # The socle's version only counted files naming `encrypt_file`, which the
 # streaming rewrite moved behind `encrypt_backup` - it measured nothing.
-ENC_ALLOWED="panel/agent/src/routes/database_backup.rs panel/agent/src/services/volume_backup.rs"
+ENC_ALLOWED="panel/agent/src/routes/database_backup.rs panel/agent/src/services/mail_backup.rs panel/agent/src/services/volume_backup.rs"
 ENC_PAT='encryption::|\b(encrypt_file|decrypt_file|verify_file|encrypt_backup|decrypt_backup|is_content_error)\b'
 ENC_USERS=""
 for f in $(find panel/agent/src -name '*.rs' ! -path '*/services/encryption.rs' | sort); do
@@ -312,7 +313,7 @@ for f in $(find panel/agent/src -name '*.rs' ! -path '*/services/encryption.rs' 
 done
 ENC_USERS=${ENC_USERS# }
 if [ "$ENC_USERS" = "$ENC_ALLOWED" ]; then
-  ok "agent-side encryption is reached only by database dumps and app data ($ENC_USERS)"
+  ok "agent-side encryption is reached only by database dumps, app data and mail/DNS backups ($ENC_USERS)"
 elif [ -z "$ENC_USERS" ]; then
   bad "no agent file reaches services/encryption.rs any more - the arm measures nothing, re-read it"
 else
