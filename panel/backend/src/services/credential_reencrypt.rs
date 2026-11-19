@@ -90,6 +90,11 @@ pub const COVERED_MODULES: &[(&str, &str)] = &[
     ("sites", "databases.db_password_enc"),
     ("migration", "databases.db_password_enc"),
     ("mail", "mail_domains.dkim_private_key"),
+    // The mail backup manifest encrypts a LEGACY clear `dkim_private_key` it
+    // copies out of this column, so no PEM ever lands in an archive. It writes
+    // no column of its own: the archive copy is not re-keyed by the sweep, and
+    // a restore that cannot decrypt it reports so instead of installing it.
+    ("mail_dns_backup", "mail_domains.dkim_private_key"),
     ("dns", "dns_zones.cf_api_token"),
     ("backup_destinations", "backup_destinations.config"),
     ("auth", "users.totp_secret"),

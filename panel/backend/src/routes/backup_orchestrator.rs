@@ -29,6 +29,10 @@ pub struct BackupPolicy {
     pub verify_after_backup: bool,
     /// Stop the containers that use an app's data while it is archived.
     pub stop_apps: bool,
+    /// Every mailbox and the mail config of the policy's server (admin only).
+    pub backup_mail: bool,
+    /// Every PowerDNS zone and a snapshot of its database (admin only).
+    pub backup_dns: bool,
     pub enabled: bool,
     pub drill_enabled: bool,
     pub drill_schedule: String,
@@ -85,6 +89,8 @@ pub struct CreatePolicyRequest {
     pub encrypt: Option<bool>,
     pub verify_after_backup: Option<bool>,
     pub stop_apps: Option<bool>,
+    pub backup_mail: Option<bool>,
+    pub backup_dns: Option<bool>,
     pub enabled: Option<bool>,
     pub drill_enabled: Option<bool>,
     pub drill_schedule: Option<String>,
@@ -124,6 +130,8 @@ pub struct UpdatePolicyRequest {
     pub encrypt: Option<bool>,
     pub verify_after_backup: Option<bool>,
     pub stop_apps: Option<bool>,
+    pub backup_mail: Option<bool>,
+    pub backup_dns: Option<bool>,
     pub enabled: Option<bool>,
     pub drill_enabled: Option<bool>,
     pub drill_schedule: Option<String>,
@@ -135,6 +143,16 @@ pub struct UpdatePolicyRequest {
 fn is_valid_cron_5(field: &str) -> bool {
     let parts: Vec<&str> = field.split_whitespace().collect();
     parts.len() == 5 && parts.iter().all(|p| !p.is_empty() && p.len() <= 32)
+}
+
+/// The mail and DNS legs are reserved to an administrator's policies: mail and
+/// DNS are shared by every tenant of their host. Turning either on as anyone
+/// else is a 403 that says so, before the generic admin gate.
+fn mail_dns_access(role: &str, backup_mail: Option<bool>, backup_dns: Option<bool>) -> Result<(), ApiError> {
+    if role != "admin" && (backup_mail == Some(true) || backup_dns == Some(true)) {
+        return Err(err(StatusCode::FORBIDDEN, "Mail and DNS backups are reserved to administrators"));
+    }
+    Ok(())
 }
 
 #[derive(serde::Serialize, sqlx::FromRow)]
@@ -319,7 +337,7 @@ pub struct ServerSla {
 /// That id was also the exact discovery channel a caller needed to walk into the (now also
 /// fixed) unscoped chain-report endpoints.
 ///
-/// Optional filters: `kind` (site|database|volume) and `server_id`.
+/// Optional filters: `kind` (site|database|volume|mail|dns) and `server_id`.
 /// Site backups derive their server via `sites.server_id`; database and volume backups carry
 /// `server_id` directly (nullable - a NULL row predates the fleet backfill and is treated as
 /// local, matching the COALESCE default below; it is visible to every admin the same as any
@@ -333,11 +351,11 @@ pub async fn list_all_backups(
 
     let kind_filter = match params.kind.as_deref() {
         None => None,
-        Some("site") | Some("database") | Some("volume") => params.kind.clone(),
+        Some("site") | Some("database") | Some("volume") | Some("mail") | Some("dns") => params.kind.clone(),
         Some(_) => {
             return Err(err(
                 StatusCode::BAD_REQUEST,
-                "kind must be one of: site, database, volume",
+                "kind must be one of: site, database, volume, mail, dns",
             ));
         }
     };
@@ -362,6 +380,20 @@ pub async fn list_all_backups(
                 vb.filename, vb.size_bytes, vb.created_at, vb.server_id, \
                 vb.encrypted, vb.uploaded, NULL::text \
            FROM volume_backups vb \
+         UNION ALL \
+         SELECT mb.id, 'mail'::text, NULL::uuid, \
+                CASE WHEN mb.kind = 'config' THEN 'Mail config' \
+                     ELSE COALESCE(mb.mailbox, '') || '@' || COALESCE(mb.mail_domain, '') END, \
+                mb.filename, mb.size_bytes, mb.created_at, mb.server_id, \
+                mb.encrypted, mb.uploaded, mb.kind \
+           FROM mail_backups mb \
+         UNION ALL \
+         SELECT dnb.id, 'dns'::text, NULL::uuid, \
+                CASE WHEN dnb.kind = 'snapshot' THEN 'DNS database (' || COALESCE(dnb.backend, '?') || ')' \
+                     ELSE COALESCE(dnb.zone, '') END, \
+                dnb.filename, dnb.size_bytes, dnb.created_at, dnb.server_id, \
+                dnb.encrypted, dnb.uploaded, dnb.kind \
+           FROM dns_backups dnb \
        )";
 
     let list_sql = format!(
@@ -768,6 +800,7 @@ pub async fn create_policy(
     AuthUser(claims): AuthUser,
     Json(req): Json<CreatePolicyRequest>,
 ) -> Result<(StatusCode, Json<BackupPolicy>), ApiError> {
+    mail_dns_access(&claims.role, req.backup_mail, req.backup_dns)?;
     require_admin(&claims.role)?;
     if req.name.is_empty() || req.name.len() > 100 {
         return Err(err(StatusCode::BAD_REQUEST, "Name must be 1-100 characters"));
@@ -786,8 +819,8 @@ pub async fn create_policy(
     let policy: BackupPolicy = sqlx::query_as(
         "INSERT INTO backup_policies (user_id, server_id, name, backup_sites, backup_databases, backup_volumes, \
          schedule, destination_id, retention_count, encrypt, verify_after_backup, enabled, \
-         drill_enabled, drill_schedule, stop_apps) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) \
+         drill_enabled, drill_schedule, stop_apps, backup_mail, backup_dns) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) \
          RETURNING *"
     )
     .bind(claims.sub)
@@ -805,6 +838,8 @@ pub async fn create_policy(
     .bind(req.drill_enabled.unwrap_or(false))
     .bind(&drill_schedule)
     .bind(req.stop_apps.unwrap_or(true))
+    .bind(req.backup_mail.unwrap_or(false))
+    .bind(req.backup_dns.unwrap_or(false))
     .fetch_one(&state.db)
     .await
     .map_err(|e| internal_error("create policy", e))?;
@@ -828,6 +863,7 @@ pub async fn update_policy(
     Path(id): Path<Uuid>,
     Json(req): Json<UpdatePolicyRequest>,
 ) -> Result<Json<BackupPolicy>, ApiError> {
+    mail_dns_access(&claims.role, req.backup_mail, req.backup_dns)?;
     require_admin(&claims.role)?;
     // Verify ownership, and read the three columns the UPDATE assigns
     // unconditionally so an omitted field can keep its current value instead of
@@ -877,6 +913,8 @@ pub async fn update_policy(
          drill_enabled = COALESCE($13, drill_enabled), \
          drill_schedule = COALESCE(NULLIF($14, ''), drill_schedule), \
          stop_apps = COALESCE($15, stop_apps), \
+         backup_mail = COALESCE($16, backup_mail), \
+         backup_dns = COALESCE($17, backup_dns), \
          updated_at = NOW() \
          WHERE id = $1 RETURNING *"
     )
@@ -895,6 +933,8 @@ pub async fn update_policy(
     .bind(req.drill_enabled)
     .bind(req.drill_schedule.as_deref().unwrap_or(""))
     .bind(req.stop_apps)
+    .bind(req.backup_mail)
+    .bind(req.backup_dns)
     .fetch_one(&state.db)
     .await
     .map_err(|e| internal_error("update policy", e))?;
@@ -945,12 +985,15 @@ pub async fn protect_all(
 
     let policy: BackupPolicy = sqlx::query_as(
         "INSERT INTO backup_policies (user_id, name, backup_sites, backup_databases, backup_volumes, \
-         schedule, retention_count, encrypt, verify_after_backup, enabled) \
-         VALUES ($1, $2, TRUE, TRUE, TRUE, '0 2 * * *', 7, FALSE, TRUE, TRUE) \
+         schedule, retention_count, encrypt, verify_after_backup, enabled, backup_mail, backup_dns) \
+         VALUES ($1, $2, TRUE, TRUE, TRUE, '0 2 * * *', 7, FALSE, TRUE, TRUE, $3, $3) \
          RETURNING *"
     )
     .bind(claims.sub)
     .bind(policy_name)
+    // Mail and DNS only for an administrator (always the case behind the gate
+    // above, kept explicit so the preset never widens if that gate moves).
+    .bind(claims.role == "admin")
     .fetch_one(db).await
     .map_err(|e| internal_error("protect all", e))?;
 
@@ -970,6 +1013,8 @@ pub async fn protect_all(
         "backup_sites": true,
         "backup_databases": true,
         "backup_volumes": true,
+        "backup_mail": policy.backup_mail,
+        "backup_dns": policy.backup_dns,
         "retention_count": 7,
         "verify_after_backup": true,
     }))))
@@ -1676,6 +1721,119 @@ pub async fn restore_volume_backup(
     }));
 
     Ok(Json(result))
+}
+
+// ── Mail and DNS backups (lot 3) ─────────────────────────────────────────────
+
+#[derive(serde::Serialize, sqlx::FromRow)]
+pub struct MailBackupRow {
+    pub id: Uuid,
+    pub server_id: Option<Uuid>,
+    /// `mailbox` or `config`.
+    pub kind: String,
+    pub mail_domain: Option<String>,
+    /// The local part of the address (kind mailbox).
+    pub mailbox: Option<String>,
+    /// `mailbox@mail_domain` (kind mailbox), computed.
+    pub email: Option<String>,
+    pub filename: String,
+    pub size_bytes: i64,
+    pub encrypted: bool,
+    pub encryption_key_version: i16,
+    pub policy_id: Option<Uuid>,
+    pub uploaded: bool,
+    pub sha256_hash: Option<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(serde::Serialize, sqlx::FromRow)]
+pub struct DnsBackupRow {
+    pub id: Uuid,
+    pub server_id: Option<Uuid>,
+    /// `zone` or `snapshot`.
+    pub kind: String,
+    pub zone: Option<String>,
+    /// `sqlite` or `pgsql` (kind snapshot).
+    pub backend: Option<String>,
+    pub filename: String,
+    pub size_bytes: i64,
+    pub encrypted: bool,
+    pub encryption_key_version: i16,
+    pub policy_id: Option<Uuid>,
+    pub uploaded: bool,
+    pub sha256_hash: Option<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// GET /api/backup-orchestrator/mail-backups - Mail archives of the servers this
+/// operator runs (this machine, or a server they added), newest first.
+pub async fn list_mail_backups(
+    State(state): State<AppState>,
+    AdminUser(claims): AdminUser,
+    Query(params): Query<PaginationQuery>,
+) -> Result<Json<Vec<MailBackupRow>>, ApiError> {
+    let (limit, offset) = paginate(params.limit, params.offset);
+    let rows: Vec<MailBackupRow> = sqlx::query_as(
+        "SELECT mb.id, mb.server_id, mb.kind, mb.mail_domain, mb.mailbox, \
+                CASE WHEN mb.kind = 'mailbox' THEN mb.mailbox || '@' || mb.mail_domain END AS email, \
+                mb.filename, mb.size_bytes, mb.encrypted, mb.encryption_key_version, mb.policy_id, \
+                mb.uploaded, mb.sha256_hash, mb.created_at \
+           FROM mail_backups mb \
+           JOIN servers sv ON sv.id = mb.server_id AND (sv.is_local OR sv.user_id = $1) \
+          ORDER BY mb.created_at DESC LIMIT $2 OFFSET $3"
+    )
+    .bind(claims.sub).bind(limit).bind(offset)
+    .fetch_all(&state.db).await
+    .map_err(|e| internal_error("list mail backups", e))?;
+    Ok(Json(rows))
+}
+
+/// GET /api/backup-orchestrator/dns-backups - DNS exports and snapshots, scoped
+/// like the mail list.
+pub async fn list_dns_backups(
+    State(state): State<AppState>,
+    AdminUser(claims): AdminUser,
+    Query(params): Query<PaginationQuery>,
+) -> Result<Json<Vec<DnsBackupRow>>, ApiError> {
+    let (limit, offset) = paginate(params.limit, params.offset);
+    let rows: Vec<DnsBackupRow> = sqlx::query_as(
+        "SELECT dnb.id, dnb.server_id, dnb.kind, dnb.zone, dnb.backend, dnb.filename, dnb.size_bytes, \
+                dnb.encrypted, dnb.encryption_key_version, dnb.policy_id, dnb.uploaded, dnb.sha256_hash, dnb.created_at \
+           FROM dns_backups dnb \
+           JOIN servers sv ON sv.id = dnb.server_id AND (sv.is_local OR sv.user_id = $1) \
+          ORDER BY dnb.created_at DESC LIMIT $2 OFFSET $3"
+    )
+    .bind(claims.sub).bind(limit).bind(offset)
+    .fetch_all(&state.db).await
+    .map_err(|e| internal_error("list dns backups", e))?;
+    Ok(Json(rows))
+}
+
+/// GET /api/backup-orchestrator/backup-jobs/{server_id}/{job_id} - State of a
+/// long mail or DNS restore that outlived its request (the route answered 202):
+/// `{status: running|done|failed, result, error}` as the agent reports it.
+/// Only for a server this operator runs.
+pub async fn backup_job_status(
+    State(state): State<AppState>,
+    AdminUser(claims): AdminUser,
+    Path((server_id, job_id)): Path<(Uuid, String)>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    if !crate::services::mail_dns_backup::is_valid_job_id(&job_id) {
+        return Err(err(StatusCode::BAD_REQUEST, "Invalid job id"));
+    }
+    let allowed: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT sv.id FROM servers sv WHERE sv.id = $1 AND (sv.is_local OR sv.user_id = $2)"
+    )
+    .bind(server_id).bind(claims.sub)
+    .fetch_optional(&state.db).await
+    .map_err(|e| internal_error("backup job status", e))?;
+    if allowed.is_none() {
+        return Err(err(StatusCode::NOT_FOUND, "Server not found"));
+    }
+    let agent = crate::helpers::agent_for_site_server(&state, Some(server_id), "backup job").await?;
+    let resp = agent.get(&format!("/backup-jobs/{job_id}")).await
+        .map_err(|e| agent_error("Backup job status", e))?;
+    Ok(Json(resp))
 }
 
 // ── Verification ────────────────────────────────────────────────────────────
@@ -2454,6 +2612,20 @@ pub async fn chain_report_pdf(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mail_and_dns_legs_are_refused_to_a_non_admin_with_a_clear_403() {
+        for role in ["user", "reseller", "client"] {
+            let e = mail_dns_access(role, Some(true), None).unwrap_err();
+            assert_eq!(e.0, StatusCode::FORBIDDEN);
+            assert!(e.1 .0["error"].as_str().unwrap().contains("Mail and DNS backups are reserved to administrators"));
+            assert!(mail_dns_access(role, None, Some(true)).is_err());
+            // Turning them off, or not mentioning them, is not refused here.
+            assert!(mail_dns_access(role, Some(false), Some(false)).is_ok());
+            assert!(mail_dns_access(role, None, None).is_ok());
+        }
+        assert!(mail_dns_access("admin", Some(true), Some(true)).is_ok());
+    }
 
     #[test]
     fn policy_runs_limit_defaults_to_20_and_caps_at_100() {

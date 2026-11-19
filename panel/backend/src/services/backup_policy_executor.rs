@@ -6,6 +6,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::services::agent::{AgentHandle, AgentRegistry};
+use crate::services::mail_dns_backup as mdb;
 use crate::services::notifications;
 
 /// Row from the policy query.
@@ -26,6 +27,10 @@ struct PolicyRow {
     verify_after_backup: bool,
     /// Stop the containers that use an app's data while it is archived.
     stop_apps: bool,
+    /// Every mailbox and the mail config of the policy's server (admin only).
+    backup_mail: bool,
+    /// Every PowerDNS zone and a snapshot of its database (admin only).
+    backup_dns: bool,
     last_run: Option<chrono::DateTime<chrono::Utc>>,
 }
 
@@ -882,6 +887,28 @@ async fn enforce_remote_retention(
             "",
             app_data_prune_conflict(db, server_id, &app_data_family(owner, kind, slug)).await?,
         ),
+        // Mail and DNS: empty `domain` too, and each family has its own guard
+        // (the same mailbox, zone or global prefix written by another server).
+        RetentionTarget::Mailbox { server_id, domain, local } => (
+            mdb::mailbox_prune_spec(domain, local),
+            "",
+            mdb::mailbox_prune_conflict(db, server_id, domain, local).await?,
+        ),
+        RetentionTarget::MailConfig { server_id } => (
+            mdb::mail_config_prune_spec(),
+            "",
+            mdb::mail_config_prune_conflict(db, server_id).await?,
+        ),
+        RetentionTarget::DnsZone { server_id, zone } => (
+            mdb::dns_zone_prune_spec(zone),
+            "",
+            mdb::dns_zone_prune_conflict(db, server_id, zone).await?,
+        ),
+        RetentionTarget::DnsSnapshot { server_id, backend } => (
+            mdb::dns_snapshot_prune_spec(backend),
+            "",
+            mdb::dns_snapshot_prune_conflict(db, server_id, backend).await?,
+        ),
     };
     if let Some(reason) = conflict {
         return Err(reason);
@@ -898,6 +925,466 @@ enum RetentionTarget<'a> {
     Site { domain: &'a str },
     Database { db_name: &'a str, engine: &'a str },
     AppData { server_id: Uuid, owner: &'a str, kind: MountKind, slug: &'a str },
+    Mailbox { server_id: Uuid, domain: &'a str, local: &'a str },
+    MailConfig { server_id: Uuid },
+    DnsZone { server_id: Uuid, zone: &'a str },
+    DnsSnapshot { server_id: Uuid, backend: &'a str },
+}
+
+// ── Mail and DNS legs (lot 3) ───────────────────────────────────────────────
+
+/// The run's counters and error log, lent to the mail and DNS legs.
+struct Tally<'a> {
+    successes: &'a mut i32,
+    failures: &'a mut i32,
+    upload_failures: &'a mut i32,
+    destination_down: &'a mut bool,
+    remote_prune_warned: &'a mut bool,
+    log: &'a mut RunLog,
+}
+
+/// Upload one finished mail or DNS file and enforce remote retention, with the
+/// same breaker and the same rules as the other legs: a failed upload is an
+/// upload failure (the file stays recorded), a retention problem is an error of
+/// the run, not a failed backup. Returns whether the file reached the destination.
+#[allow(clippy::too_many_arguments)]
+async fn ship_file(
+    db: &PgPool,
+    agent: &AgentHandle,
+    policy: &PolicyRow,
+    destination: Option<&ResolvedDestination>,
+    t: &mut Tally<'_>,
+    filepath: &str,
+    subject: &str,
+    retention: RetentionTarget<'_>,
+) -> bool {
+    let Some(dest) = destination else { return false };
+    if *t.destination_down {
+        *t.upload_failures += 1;
+        t.log.push("upload", subject.to_string(), "not uploaded: the destination failed earlier in this run");
+        return false;
+    }
+    match upload_to_destination(agent, dest, filepath, subject).await {
+        Ok(()) => {
+            if let Err(e) = enforce_remote_retention(db, agent, dest, retention, policy.retention_count).await {
+                if !*t.remote_prune_warned {
+                    *t.remote_prune_warned = true;
+                    crate::services::system_log::log_event(
+                        db,
+                        "warning",
+                        "backup_policy_executor",
+                        &format!("Policy '{}': remote retention was not enforced", policy.name),
+                        Some(&clean_message(&e, &[])),
+                    )
+                    .await;
+                }
+                t.log.push("retention", subject.to_string(), e);
+            }
+            true
+        }
+        Err(e) => {
+            *t.upload_failures += 1;
+            *t.destination_down = true;
+            t.log.push("upload", subject.to_string(), e);
+            false
+        }
+    }
+}
+
+/// A component the agent reports as not installed: journaled, neither a
+/// success nor a failure, so a host without mail or DNS does not raise an
+/// incident every night.
+async fn note_skipped(db: &PgPool, policy: &PolicyRow, what: &str, reason: &str) {
+    tracing::info!("Policy '{}': {what} skipped by the agent ({reason})", policy.name);
+    // "not installed" is the expected answer of a host without that service;
+    // any other reason is unusual enough to stand out in the log.
+    let level = if reason == mdb::NOT_INSTALLED { "info" } else { "warning" };
+    crate::services::system_log::log_event(
+        db,
+        level,
+        "backup_policy_executor",
+        &format!("Policy '{}': {what} backup skipped ({reason})", policy.name),
+        None,
+    )
+    .await;
+}
+
+/// The host of the mail leg: the policy's server, else the local one (same
+/// resolution as the volume leg).
+async fn policy_host(agents: &AgentRegistry, policy: &PolicyRow) -> Option<Uuid> {
+    match policy.server_id {
+        Some(sid) => Some(sid),
+        None => agents.local_server_id().await,
+    }
+}
+
+/// Record a mail archive. `Err` when the row could not be written.
+#[allow(clippy::too_many_arguments)]
+async fn insert_mail_row(
+    db: &PgPool,
+    server_id: Uuid,
+    kind: &str,
+    domain: Option<&str>,
+    local: Option<&str>,
+    a: &CreatedArchive,
+    policy: &PolicyRow,
+    destination: Option<&ResolvedDestination>,
+    uploaded: bool,
+) -> Result<(), String> {
+    let previous_hash: Option<String> = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT sha256_hash FROM mail_backups \
+         WHERE server_id = $1 AND kind = $2 AND mail_domain IS NOT DISTINCT FROM $3 AND mailbox IS NOT DISTINCT FROM $4 \
+         ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(server_id).bind(kind).bind(domain).bind(local)
+    .fetch_optional(db).await.unwrap_or(None).flatten();
+    sqlx::query(
+        "INSERT INTO mail_backups (server_id, kind, mail_domain, mailbox, filename, size_bytes, encrypted, \
+         encryption_key_version, policy_id, destination_id, uploaded, sha256_hash, previous_hash, chain_valid) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, TRUE)",
+    )
+    .bind(server_id).bind(kind).bind(domain).bind(local)
+    .bind(&a.filename).bind(a.size_bytes).bind(a.encrypted).bind(CURRENT_BACKUP_KEY_VERSION)
+    .bind(policy.id).bind(destination.map(|d| d.id)).bind(uploaded)
+    .bind(if a.sha256.is_empty() { None } else { Some(&a.sha256) })
+    .bind(previous_hash.as_deref())
+    .execute(db)
+    .await
+    .map(|_| ())
+    .map_err(|e| format!("archive created but could not be recorded: {e}"))
+}
+
+/// Record a DNS export or snapshot.
+#[allow(clippy::too_many_arguments)]
+async fn insert_dns_row(
+    db: &PgPool,
+    server_id: Uuid,
+    kind: &str,
+    zone: Option<&str>,
+    backend: Option<&str>,
+    a: &CreatedArchive,
+    policy: &PolicyRow,
+    destination: Option<&ResolvedDestination>,
+    uploaded: bool,
+) -> Result<(), String> {
+    let previous_hash: Option<String> = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT sha256_hash FROM dns_backups \
+         WHERE server_id = $1 AND kind = $2 AND zone IS NOT DISTINCT FROM $3 AND backend IS NOT DISTINCT FROM $4 \
+         ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(server_id).bind(kind).bind(zone).bind(backend)
+    .fetch_optional(db).await.unwrap_or(None).flatten();
+    sqlx::query(
+        "INSERT INTO dns_backups (server_id, kind, zone, backend, filename, size_bytes, encrypted, \
+         encryption_key_version, policy_id, destination_id, uploaded, sha256_hash, previous_hash, chain_valid) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, TRUE)",
+    )
+    .bind(server_id).bind(kind).bind(zone).bind(backend)
+    .bind(&a.filename).bind(a.size_bytes).bind(a.encrypted).bind(CURRENT_BACKUP_KEY_VERSION)
+    .bind(policy.id).bind(destination.map(|d| d.id)).bind(uploaded)
+    .bind(if a.sha256.is_empty() { None } else { Some(&a.sha256) })
+    .bind(previous_hash.as_deref())
+    .execute(db)
+    .await
+    .map(|_| ())
+    .map_err(|e| format!("file created but could not be recorded: {e}"))
+}
+
+/// How one archive call ended, once the agent's answer has been read.
+enum LegResult {
+    Skipped(String),
+    Created(CreatedArchive, serde_json::Value),
+    Failed(String),
+}
+
+/// Start an archive job and wait for it within the executor's budget.
+async fn archive_job(agent: &AgentHandle, path: &str, body: serde_json::Value) -> Result<mdb::JobOutcome, String> {
+    mdb::start_and_wait(agent, path, body, std::time::Duration::from_secs(mdb::JOB_BUDGET_SECS)).await
+}
+
+fn read_outcome(
+    outcome: Result<mdb::JobOutcome, String>,
+    spec_of: impl FnOnce(&serde_json::Value) -> Result<PruneSpec, String>,
+    must_encrypt: bool,
+) -> LegResult {
+    match outcome {
+        Ok(mdb::JobOutcome::Skipped(r)) => LegResult::Skipped(r),
+        Ok(mdb::JobOutcome::StillRunning(id)) => LegResult::Failed(format!(
+            "still running on the agent after {} s (job {id}); not recorded", mdb::JOB_BUDGET_SECS
+        )),
+        Ok(mdb::JobOutcome::Done(v)) => match spec_of(&v).and_then(|spec| mdb::parse_created(&v, &spec, must_encrypt)) {
+            Ok(a) => LegResult::Created(a, v),
+            Err(e) => LegResult::Failed(e),
+        },
+        Err(e) => LegResult::Failed(e),
+    }
+}
+
+/// Mail: the config (manifest exported from the database, DKIM files) first,
+/// then every mailbox of the policy's server. A "not installed" answer to the
+/// config skips the whole leg once instead of once per mailbox.
+#[allow(clippy::too_many_arguments)]
+async fn mail_leg(
+    db: &PgPool,
+    agents: &AgentRegistry,
+    policy: &PolicyRow,
+    jwt_secret: &str,
+    destination: Option<&ResolvedDestination>,
+    encryption_key: Option<&str>,
+    forced_key: &str,
+    t: &mut Tally<'_>,
+) {
+    let Some(server_id) = policy_host(agents, policy).await else {
+        *t.failures += 1;
+        t.log.push("mail", "mail", "no server on the policy and the local server is not known yet (setup incomplete)");
+        return;
+    };
+    let agent = match agents.for_server(server_id).await {
+        Ok(a) => a,
+        Err(e) => {
+            *t.failures += 1;
+            t.log.push("mail", "mail", format!("server {server_id} is unreachable: {e}"));
+            return;
+        }
+    };
+    let agent = &agent;
+
+    let (domains, accounts, aliases) = match mdb::load_mail_rows(db, server_id).await {
+        Ok(r) => r,
+        Err(e) => {
+            *t.failures += 1;
+            t.log.push("listing", "mail", format!("could not read the mail configuration: {e}"));
+            return;
+        }
+    };
+
+    // 1. Config, always encrypted.
+    match mdb::build_mail_manifest(server_id, &domains, &accounts, &aliases, jwt_secret, chrono::Utc::now()) {
+        Err(e) => {
+            *t.failures += 1;
+            t.log.push("mail", "config", e);
+        }
+        Ok(manifest) => {
+            let body = mdb::mail_config_archive_body(&manifest, forced_key);
+            let outcome = archive_job(agent, "/mail/archive", body).await;
+            match read_outcome(outcome, |_| Ok(mdb::mail_config_prune_spec()), true) {
+                LegResult::Skipped(r) => {
+                    note_skipped(db, policy, "mail", &r).await;
+                    return;
+                }
+                LegResult::Failed(e) => {
+                    tracing::error!("Policy '{}': mail config backup failed: {e}", policy.name);
+                    *t.failures += 1;
+                    t.log.push("mail", "config", e);
+                }
+                LegResult::Created(a, _) => {
+                    let filepath = format!("{}/{}", mdb::MAIL_BACKUP_DIR, a.filename);
+                    let uploaded = ship_file(
+                        db, agent, policy, destination, t, &filepath, "mail config",
+                        RetentionTarget::MailConfig { server_id },
+                    ).await;
+                    match insert_mail_row(db, server_id, "config", None, None, &a, policy, destination, uploaded).await {
+                        Ok(()) => *t.successes += 1,
+                        Err(e) => {
+                            *t.failures += 1;
+                            t.log.push("mail", "config", e);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. One archive per mailbox.
+    for acc in &accounts {
+        let Some((local, domain)) = mdb::split_address(&acc.email) else {
+            *t.failures += 1;
+            t.log.push("mail", acc.email.clone(), "not a local@domain address");
+            continue;
+        };
+        let body = mdb::mailbox_archive_body(domain, local, encryption_key);
+        let outcome = archive_job(agent, "/mail/archive", body).await;
+        let spec = mdb::mailbox_prune_spec(domain, local);
+        match read_outcome(outcome, |_| Ok(spec.clone()), false) {
+            LegResult::Skipped(r) => {
+                note_skipped(db, policy, "mail", &r).await;
+                return;
+            }
+            LegResult::Failed(e) => {
+                tracing::error!("Policy '{}': mailbox backup failed for {}: {e}", policy.name, acc.email);
+                *t.failures += 1;
+                t.log.push("mail", acc.email.clone(), e);
+            }
+            LegResult::Created(a, _) => {
+                // Asked to encrypt and handed back a clear archive: recorded
+                // (it exists, retention must see it), never shipped, a failure.
+                let broken = encryption_key.is_some() && !a.encrypted;
+                let uploaded = if broken {
+                    t.log.push("mail", acc.email.clone(), "the archive was stored unencrypted although the policy encrypts - not uploaded");
+                    false
+                } else {
+                    let filepath = format!("{}/{}", mdb::MAIL_BACKUP_DIR, a.filename);
+                    ship_file(
+                        db, agent, policy, destination, t, &filepath, &acc.email,
+                        RetentionTarget::Mailbox { server_id, domain, local },
+                    ).await
+                };
+                match insert_mail_row(db, server_id, "mailbox", Some(domain), Some(local), &a, policy, destination, uploaded).await {
+                    Ok(()) if broken => *t.failures += 1,
+                    Ok(()) => *t.successes += 1,
+                    Err(e) => {
+                        *t.failures += 1;
+                        t.log.push("mail", acc.email.clone(), e);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// DNS: one export per zone through the PowerDNS API, then a snapshot of the
+/// whole PowerDNS database (always encrypted). The host is the server
+/// PowerDNS was installed on (`settings.pdns_server_id`); an install that
+/// predates that key is taken to be on the local server, which is logged.
+#[allow(clippy::too_many_arguments)]
+async fn dns_leg(
+    db: &PgPool,
+    agents: &AgentRegistry,
+    policy: &PolicyRow,
+    jwt_secret: &str,
+    destination: Option<&ResolvedDestination>,
+    encryption_key: Option<&str>,
+    forced_key: &str,
+    t: &mut Tally<'_>,
+) {
+    let server_id = match mdb::pdns_server_id(db).await {
+        Ok(Some(sid)) => Some(sid),
+        Ok(None) => {
+            tracing::info!("Policy '{}': no pdns_server_id recorded - the DNS backup runs on the local server", policy.name);
+            agents.local_server_id().await
+        }
+        Err(e) => {
+            *t.failures += 1;
+            t.log.push("dns", "dns", e);
+            return;
+        }
+    };
+    let Some(server_id) = server_id else {
+        *t.failures += 1;
+        t.log.push("dns", "dns", "the DNS server is not known yet (setup incomplete)");
+        return;
+    };
+    let agent = match agents.for_server(server_id).await {
+        Ok(a) => a,
+        Err(e) => {
+            *t.failures += 1;
+            t.log.push("dns", "dns", format!("server {server_id} is unreachable: {e}"));
+            return;
+        }
+    };
+    let agent = &agent;
+
+    // 1. Zones, through the API the panel already drives.
+    match mdb::pdns_api_from_settings(db, jwt_secret).await {
+        Err(e) => {
+            *t.failures += 1;
+            t.log.push("listing", "dns zones", e);
+        }
+        Ok(None) => {
+            tracing::info!("Policy '{}': PowerDNS is not configured in the panel - no zone to export", policy.name);
+        }
+        Ok(Some(api)) => {
+            t.log.secrets.push(api.key.clone());
+            match api.list_zones().await {
+                Err(e) => {
+                    *t.failures += 1;
+                    t.log.push("listing", "dns zones", e);
+                }
+                Ok(zones) => {
+                    for zone_fqdn in &zones {
+                        let zone = mdb::zone_label(zone_fqdn);
+                        if !mdb::is_valid_zone(&zone) {
+                            *t.failures += 1;
+                            t.log.push("dns", zone.clone(), "PowerDNS lists a zone whose name cannot be used in a file name");
+                            continue;
+                        }
+                        let content = match api.export_zone(zone_fqdn).await {
+                            Ok(c) => c,
+                            Err(e) => {
+                                *t.failures += 1;
+                                t.log.push("dns", zone.clone(), e);
+                                continue;
+                            }
+                        };
+                        let body = mdb::dns_zone_archive_body(zone_fqdn, &content, encryption_key);
+                        let outcome = archive_job(agent, "/dns/archive", body).await;
+                        let spec = mdb::dns_zone_prune_spec(&zone);
+                        match read_outcome(outcome, |_| Ok(spec.clone()), false) {
+                            LegResult::Skipped(r) => {
+                                note_skipped(db, policy, "DNS", &r).await;
+                                return;
+                            }
+                            LegResult::Failed(e) => {
+                                *t.failures += 1;
+                                t.log.push("dns", zone.clone(), e);
+                            }
+                            LegResult::Created(a, _) => {
+                                let broken = encryption_key.is_some() && !a.encrypted;
+                                let uploaded = if broken {
+                                    t.log.push("dns", zone.clone(), "the export was stored unencrypted although the policy encrypts - not uploaded");
+                                    false
+                                } else {
+                                    let filepath = format!("{}/{}", mdb::DNS_BACKUP_DIR, a.filename);
+                                    ship_file(
+                                        db, agent, policy, destination, t, &filepath, &format!("zone {zone}"),
+                                        RetentionTarget::DnsZone { server_id, zone: &zone },
+                                    ).await
+                                };
+                                match insert_dns_row(db, server_id, "zone", Some(&zone), None, &a, policy, destination, uploaded).await {
+                                    Ok(()) if broken => *t.failures += 1,
+                                    Ok(()) => *t.successes += 1,
+                                    Err(e) => {
+                                        *t.failures += 1;
+                                        t.log.push("dns", zone.clone(), e);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. The whole database: DNSSEC keys and metadata live only there.
+    let outcome = archive_job(agent, "/dns/archive", mdb::dns_snapshot_archive_body(forced_key)).await;
+    match read_outcome(
+        outcome,
+        |v| mdb::parse_snapshot_backend(v).map(mdb::dns_snapshot_prune_spec),
+        true,
+    ) {
+        LegResult::Skipped(r) => note_skipped(db, policy, "DNS", &r).await,
+        LegResult::Failed(e) => {
+            tracing::error!("Policy '{}': DNS snapshot failed: {e}", policy.name);
+            *t.failures += 1;
+            t.log.push("dns", "snapshot", e);
+        }
+        LegResult::Created(a, v) => {
+            let backend = mdb::parse_snapshot_backend(&v).unwrap_or("sqlite");
+            let filepath = format!("{}/{}", mdb::DNS_BACKUP_DIR, a.filename);
+            let uploaded = ship_file(
+                db, agent, policy, destination, t, &filepath, "DNS snapshot",
+                RetentionTarget::DnsSnapshot { server_id, backend },
+            ).await;
+            match insert_dns_row(db, server_id, "snapshot", None, Some(backend), &a, policy, destination, uploaded).await {
+                Ok(()) => *t.successes += 1,
+                Err(e) => {
+                    *t.failures += 1;
+                    t.log.push("dns", "snapshot", e);
+                }
+            }
+        }
+    }
 }
 
 /// Run the backup policy executor loop - checks every 60 seconds for due policies.
@@ -939,7 +1426,8 @@ async fn tick(db: &PgPool, agents: &AgentRegistry, jwt_secret: &str) -> Result<(
     // Fetch all enabled policies
     let policies: Vec<PolicyRow> = sqlx::query_as(
         "SELECT id, user_id, server_id, name, backup_sites, backup_databases, backup_volumes, \
-         schedule, destination_id, retention_count, encrypt, verify_after_backup, stop_apps, last_run \
+         schedule, destination_id, retention_count, encrypt, verify_after_backup, stop_apps, \
+         backup_mail, backup_dns, last_run \
          FROM backup_policies WHERE enabled = TRUE"
     )
     .fetch_all(db).await.map_err(|e| e.to_string())?;
@@ -967,7 +1455,9 @@ async fn tick(db: &PgPool, agents: &AgentRegistry, jwt_secret: &str) -> Result<(
         "SELECT COALESCE(SUM(size_bytes), 0)::bigint FROM ( \
             SELECT size_bytes FROM backups UNION ALL \
             SELECT size_bytes FROM database_backups UNION ALL \
-            SELECT size_bytes FROM volume_backups \
+            SELECT size_bytes FROM volume_backups UNION ALL \
+            SELECT size_bytes FROM mail_backups UNION ALL \
+            SELECT size_bytes FROM dns_backups \
         ) t"
     ).fetch_one(db).await.ok();
     if let Some((bytes,)) = total_storage {
@@ -1411,38 +1901,56 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
         }
     }
 
-    // Backup volumes (Docker app volumes). This is an admin-only capability - the
-    // direct create_volume_backup endpoint is AdminUser, and the enumeration below is
-    // fleet-wide with NO per-user scoping. Policy CRUD is now admin-gated, but guard
-    // the executor too so any legacy non-admin-owned policy cannot drive volume backups.
+    // Backup volumes (Docker app volumes), mail and DNS. These are admin-only
+    // capabilities - the direct create_volume_backup endpoint is AdminUser, the
+    // volume enumeration is fleet-wide with NO per-user scoping, and mail and DNS
+    // are shared by every tenant of their host. Policy CRUD is admin-gated, but
+    // guard the executor too so any legacy non-admin-owned policy cannot drive them.
     //
-    // Only asked when the policy wants volumes. A failed lookup is not "not an
-    // admin": it is an error of its own, and either way the leg is skipped with a
-    // recorded reason instead of a journal-only warning.
-    let owner_is_admin: bool = if policy.backup_volumes {
+    // Only asked when the policy wants one of them. A failed lookup is not "not
+    // an admin": it is an error of its own, and either way the legs are skipped
+    // with a recorded reason instead of a journal-only warning.
+    let admin_legs: Vec<&'static str> = [
+        (policy.backup_volumes, "volumes"),
+        (policy.backup_mail, "mail"),
+        (policy.backup_dns, "dns"),
+    ]
+    .iter()
+    .filter(|(on, _)| *on)
+    .map(|(_, leg)| *leg)
+    .collect();
+    let owner_is_admin: bool = if admin_legs.is_empty() {
+        false
+    } else {
         match sqlx::query_scalar::<_, bool>("SELECT role = 'admin' FROM users WHERE id = $1")
             .bind(policy.user_id)
             .fetch_optional(db)
             .await
         {
-            Ok(Some(is_admin)) => is_admin,
+            Ok(Some(is_admin)) => {
+                if !is_admin {
+                    tracing::warn!("Policy '{}': skipping {} backup - owner is not an admin", policy.name, admin_legs.join(", "));
+                    for leg in &admin_legs {
+                        log.push("owner", *leg, format!("the policy's owner is not an admin - {leg} backup skipped"));
+                    }
+                }
+                is_admin
+            }
             Ok(None) => {
-                log.push("owner", "volumes", "the policy's owner no longer exists - volume backup skipped");
+                for leg in &admin_legs {
+                    log.push("owner", *leg, format!("the policy's owner no longer exists - {leg} backup skipped"));
+                }
                 false
             }
             Err(e) => {
                 tracing::error!("Policy '{}': could not read the owner's role: {e}", policy.name);
-                log.push("owner", "volumes", format!("could not read the owner's role ({e}) - volume backup skipped"));
+                for leg in &admin_legs {
+                    log.push("owner", *leg, format!("could not read the owner's role ({e}) - {leg} backup skipped"));
+                }
                 false
             }
         }
-    } else {
-        false
     };
-    if policy.backup_volumes && !owner_is_admin && !log.errors.iter().any(|e| e.kind == "owner") {
-        tracing::warn!("Policy '{}': skipping volume backup - owner is not an admin", policy.name);
-        log.push("owner", "volumes", "the policy's owner is not an admin - volume backup skipped");
-    }
     if policy.backup_volumes && owner_is_admin { 'vol: {
         // Volumes have no per-row host to read: the subject list comes from asking an
         // agent for its containers, so the POLICY's server decides which agent. When
@@ -1653,6 +2161,28 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
             }
         }
     }}
+
+    // Mail and DNS (lot 3). Config archives and DNS snapshots carry DKIM keys,
+    // password hashes and (pgsql) the database password, so they are ALWAYS
+    // encrypted, with the current key, whatever `policy.encrypt` says.
+    if owner_is_admin && (policy.backup_mail || policy.backup_dns) {
+        let forced_key = derive_backup_encryption_key(jwt_secret);
+        log.secrets.push(forced_key.clone());
+        let mut tally = Tally {
+            successes: &mut successes,
+            failures: &mut failures,
+            upload_failures: &mut upload_failures,
+            destination_down: &mut destination_down,
+            remote_prune_warned: &mut remote_prune_warned,
+            log: &mut log,
+        };
+        if policy.backup_mail {
+            mail_leg(db, agents, policy, jwt_secret, destination.as_ref(), encryption_key.as_deref(), &forced_key, &mut tally).await;
+        }
+        if policy.backup_dns {
+            dns_leg(db, agents, policy, jwt_secret, destination.as_ref(), encryption_key.as_deref(), &forced_key, &mut tally).await;
+        }
+    }
 
     // An upload failure is NOT a backup failure - the file exists locally, and it
     // is counted in `successes` because it was taken. It IS a disaster-recovery
@@ -2313,5 +2843,33 @@ mod tests {
         ] {
             assert!(parse_app_data_create_response(&bad, &v).is_err(), "{bad}");
         }
+    }
+
+    // ── Mail and DNS legs ──
+
+    #[test]
+    fn a_skipped_component_is_neither_a_success_nor_a_failure() {
+        let spec = mdb::mail_config_prune_spec();
+        let skipped = read_outcome(Ok(mdb::JobOutcome::Skipped(mdb::NOT_INSTALLED.into())), |_| Ok(spec.clone()), true);
+        assert!(matches!(skipped, LegResult::Skipped(ref r) if r == "not_installed"));
+        // The legs touch no counter and record no error for a skip, so a run
+        // where mail and DNS were only skipped stays green.
+        assert_eq!(compute_run_status(0, 0, 0, 0), "success");
+        assert_eq!(compute_run_status(2, 0, 0, 0), "success");
+        // A job still running past the budget is a failure, never a success.
+        let late = read_outcome(Ok(mdb::JobOutcome::StillRunning("j1".into())), |_| Ok(spec.clone()), true);
+        assert!(matches!(late, LegResult::Failed(ref e) if e.contains("still running")));
+        // A config archive answered in clear is refused.
+        let clear = serde_json::json!({"filename":"mailcfg-20261119-030000.tar.gz","encrypted":false});
+        assert!(matches!(read_outcome(Ok(mdb::JobOutcome::Done(clear)), |_| Ok(spec.clone()), true), LegResult::Failed(_)));
+        let enc = serde_json::json!({"filename":"mailcfg-20261119-030000.tar.gz.enc","encrypted":true,"size_bytes":7});
+        assert!(matches!(read_outcome(Ok(mdb::JobOutcome::Done(enc)), |_| Ok(spec.clone()), true), LegResult::Created(ref a, _) if a.size_bytes == 7));
+        // A snapshot's spec follows the backend the agent reports.
+        let snap = serde_json::json!({"filename":"dns-snapshot-pgsql-20261119-030000.gz.enc","encrypted":true,"backend":"pgsql"});
+        let r = read_outcome(Ok(mdb::JobOutcome::Done(snap)), |v| mdb::parse_snapshot_backend(v).map(mdb::dns_snapshot_prune_spec), true);
+        assert!(matches!(r, LegResult::Created(..)));
+        let wrong = serde_json::json!({"filename":"dns-snapshot-sqlite-20261119-030000.gz.enc","encrypted":true,"backend":"pgsql"});
+        let r = read_outcome(Ok(mdb::JobOutcome::Done(wrong)), |v| mdb::parse_snapshot_backend(v).map(mdb::dns_snapshot_prune_spec), true);
+        assert!(matches!(r, LegResult::Failed(_)));
     }
 }

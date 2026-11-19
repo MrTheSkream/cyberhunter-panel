@@ -809,6 +809,8 @@ pub async fn export_config(
             "backup_sites": r.get::<bool, _>("backup_sites"),
             "backup_databases": r.get::<bool, _>("backup_databases"),
             "backup_volumes": r.get::<bool, _>("backup_volumes"),
+            "backup_mail": r.get::<bool, _>("backup_mail"),
+            "backup_dns": r.get::<bool, _>("backup_dns"),
             "retention_count": r.get::<i32, _>("retention_count"),
             "encrypt": r.get::<bool, _>("encrypt"),
             "verify_after_backup": r.get::<bool, _>("verify_after_backup"),
@@ -1055,6 +1057,9 @@ pub async fn import_config(
             let backup_sites = p.get("backup_sites").and_then(|v| v.as_bool()).unwrap_or(true);
             let backup_databases = p.get("backup_databases").and_then(|v| v.as_bool()).unwrap_or(true);
             let backup_volumes = p.get("backup_volumes").and_then(|v| v.as_bool()).unwrap_or(false);
+            // Import is AdminUser, so the mail and DNS legs (admin-only) may come along.
+            let backup_mail = p.get("backup_mail").and_then(|v| v.as_bool()).unwrap_or(false);
+            let backup_dns = p.get("backup_dns").and_then(|v| v.as_bool()).unwrap_or(false);
             let retention = p.get("retention_count").and_then(|v| v.as_i64()).unwrap_or(7) as i32;
             let encrypt = p.get("encrypt").and_then(|v| v.as_bool()).unwrap_or(false);
             let verify = p.get("verify_after_backup").and_then(|v| v.as_bool()).unwrap_or(false);
@@ -1074,6 +1079,8 @@ pub async fn import_config(
                 .bind(retention)
                 .bind(encrypt)
                 .bind(verify)
+                .bind(backup_mail)
+                .bind(backup_dns)
                 .execute(&state.db)
                 .await;
                 if result.is_ok() {

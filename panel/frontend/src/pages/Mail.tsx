@@ -83,10 +83,80 @@ interface QueueItem {
   status: string;
 }
 
+/** One file of the agent's own listing (`GET /mail/backups`), shown as
+ *  "Legacy backups". Two shapes: the old `{file, email, size}` and the new
+ *  `{filename, size_bytes, modified}`, which carries no address. */
 interface MailBackup {
   file: string;
-  email: string;
+  email: string | null;
   size: number;
+}
+
+type LegacyMailBackupEntry = {
+  file?: string; email?: string; size?: number;
+  filename?: string; size_bytes?: number; modified?: string;
+};
+
+function normalizeLegacyBackups(data: { backups?: LegacyMailBackupEntry[]; files?: LegacyMailBackupEntry[] }): MailBackup[] {
+  const list = data.files ?? data.backups ?? [];
+  return list
+    .map((e) => ({
+      file: e.file ?? e.filename ?? "",
+      email: e.email ?? null,
+      size: e.size ?? e.size_bytes ?? 0,
+    }))
+    .filter((b) => b.file !== "");
+}
+
+/** A row of `mail_backups`, written by the backup policies. */
+interface PolicyMailBackup {
+  id: string;
+  server_id: string | null;
+  kind: "mailbox" | "config";
+  mail_domain: string | null;
+  mailbox: string | null;
+  email: string | null;
+  filename: string;
+  size_bytes: number;
+  encrypted: boolean;
+  encryption_key_version: number;
+  policy_id: string | null;
+  uploaded: boolean;
+  sha256_hash: string | null;
+  created_at: string;
+}
+
+/** A restore either answers at once, or hands back the agent's job to follow. */
+interface RestoreAnswer {
+  ok?: boolean;
+  status?: string;
+  job_id?: string;
+  server_id?: string;
+  message?: string;
+  messages?: number;
+  account_recreated?: boolean;
+  started?: boolean;
+}
+
+interface BackupJobStatus {
+  status: "running" | "done" | "failed";
+  result: Record<string, unknown> | null;
+  error: string | null;
+}
+
+/** Follow a long restore the backend handed back as a job: every 5 s, for at
+ *  most 30 minutes. Resolves with the job's result, rejects with its error. */
+async function waitForBackupJob(serverId: string, jobId: string): Promise<Record<string, unknown> | null> {
+  const deadline = Date.now() + 30 * 60 * 1000;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 5000));
+    const s = await api.get<BackupJobStatus>(
+      `/backup-orchestrator/backup-jobs/${encodeURIComponent(serverId)}/${encodeURIComponent(jobId)}`,
+    );
+    if (s.status === "done") return s.result;
+    if (s.status === "failed") throw new Error(s.error || "The restore failed on the server");
+  }
+  throw new Error("The restore is still running on the server after 30 minutes. Check the mailbox before trying again.");
 }
 
 interface DnsCheckItem {
@@ -237,6 +307,10 @@ export default function Mail() {
   // Mailbox backups
   const [backups, setBackups] = useState<MailBackup[]>([]);
   const [backingUp, setBackingUp] = useState<string | null>(null);
+  // Policy-driven backups (`mail_backups`), and the per-row "Replace current mail" choice.
+  const [policyBackups, setPolicyBackups] = useState<PolicyMailBackup[]>([]);
+  const [replaceMail, setReplaceMail] = useState<Record<string, boolean>>({});
+  const [restoringId, setRestoringId] = useState<string | null>(null);
 
   // DNS verification
   const [dnsCheck, setDnsCheck] = useState<{ checks: DnsCheckItem[]; all_pass: boolean; prereq?: PrereqResult } | null>(null);
@@ -320,8 +394,30 @@ export default function Mail() {
   };
 
   const loadBackups = async () => {
-    try { const data = await api.get<{ backups: MailBackup[] }>("/mail/backups"); setBackups(data.backups); }
+    try {
+      const data = await api.get<{ backups?: LegacyMailBackupEntry[]; files?: LegacyMailBackupEntry[] }>("/mail/backups");
+      setBackups(normalizeLegacyBackups(data));
+    }
     catch { setBackups([]); }
+    try { setPolicyBackups(await api.get<PolicyMailBackup[]>("/backup-orchestrator/mail-backups?limit=200")); }
+    catch { setPolicyBackups([]); }
+  };
+
+  const restoreMailbox = async (b: PolicyMailBackup, mode: "merge" | "replace") => {
+    setRestoringId(b.id);
+    try {
+      const res = await api.post<RestoreAnswer>(`/mail/backups/${b.id}/restore`, { mode });
+      if (res.job_id && res.server_id && res.status === "running") {
+        setMessage({ text: res.message || `Restoring ${b.email ?? "the mailbox"}, this can take a while`, type: "success" });
+        await waitForBackupJob(res.server_id, res.job_id);
+      }
+      setMessage({
+        text: `Mailbox ${b.email ?? ""} restored (${mode === "replace" ? "replaced" : "merged"})${res.account_recreated ? ", account recreated" : ""}`,
+        type: "success",
+      });
+    } finally {
+      setRestoringId(null);
+    }
   };
 
   // GET /api/mail/domains is the only call on this page that is not AdminUser.
@@ -531,6 +627,16 @@ export default function Mail() {
           await api.post("/mail/webmail/remove", {});
           setWebmail({ installed: false, running: false, port: 0 });
           setMessage({ text: "Roundcube removed", type: "success" });
+          break;
+        }
+        case "restore_mailbox": {
+          const b = policyBackups.find((x) => x.id === (data?.id as string));
+          if (b) await restoreMailbox(b, data?.mode === "replace" ? "replace" : "merge");
+          break;
+        }
+        case "restore_all_mail": {
+          const res = await api.post<RestoreAnswer>(`/mail/backups/${data?.id as string}/restore-all`, {});
+          setMessage({ text: res.message || "Restoring all mail in the background. The result is recorded in the system log.", type: "success" });
           break;
         }
         case "restore_backup": {
@@ -1252,24 +1358,97 @@ export default function Mail() {
                         `backups` is already empty for a non-admin because the
                         fetch is not made, but an emptiness that depends on a
                         request not happening is not a permission check. */}
+                    {/* Mailbox backups taken by the backup policies (`mail_backups`).
+                        Restore is AdminUser in the backend; the mailbox rows are
+                        filtered to the selected domain, the config rows (one per
+                        run, host-wide) sit apart and drive "Restore all mail". */}
+                    {isAdmin && (() => {
+                      const domainName = selectedDomain?.domain;
+                      const boxes = policyBackups.filter((b) => b.kind === "mailbox" && b.mail_domain === domainName);
+                      const configs = policyBackups.filter((b) => b.kind === "config");
+                      if (boxes.length === 0 && configs.length === 0) return null;
+                      const badges = (b: PolicyMailBackup) => (
+                        <>
+                          {b.encrypted && <span className="ml-2 text-[9px] px-1 bg-dark-700 text-accent-400 uppercase tracking-wider rounded" title="Encrypted at rest">Encrypted</span>}
+                          {b.uploaded && <span className="ml-1 text-[9px] px-1 bg-dark-700 text-rust-400 uppercase tracking-wider rounded" title="Copied to the remote destination">Remote</span>}
+                        </>
+                      );
+                      return (
+                        <div className="mt-4 bg-dark-900 border border-dark-500 rounded-lg overflow-hidden">
+                          <div className="px-4 py-2 border-b border-dark-600">
+                            <h4 className="text-xs font-medium text-dark-300 uppercase font-mono tracking-widest">Mailbox backups</h4>
+                          </div>
+                          <div className="divide-y divide-dark-600">
+                            {boxes.map((b) => (
+                              <div key={b.id} className="px-4 py-2 flex items-center justify-between text-xs gap-3">
+                                <div className="min-w-0">
+                                  <span className="text-dark-100 font-mono">{b.email ?? b.filename}</span>
+                                  <span className="text-dark-300 ml-2">{(b.size_bytes / 1024 / 1024).toFixed(1)} MB</span>
+                                  <span className="text-dark-300 ml-2">{new Date(b.created_at).toLocaleString()}</span>
+                                  {badges(b)}
+                                </div>
+                                <div className="flex items-center gap-3 shrink-0">
+                                  <label className="flex items-center gap-1 text-dark-300">
+                                    <input
+                                      type="checkbox"
+                                      checked={!!replaceMail[b.id]}
+                                      onChange={(e) => setReplaceMail({ ...replaceMail, [b.id]: e.target.checked })}
+                                    /> Replace current mail
+                                  </label>
+                                  <button
+                                    disabled={restoringId === b.id}
+                                    onClick={() => setPendingConfirm({
+                                      type: "restore_mailbox",
+                                      label: replaceMail[b.id]
+                                        ? "Replace mode overwrites current mail."
+                                        : "Restore this mailbox? Messages newer than the backup are kept.",
+                                      data: { id: b.id, mode: replaceMail[b.id] ? "replace" : "merge" },
+                                    })}
+                                    className="text-rust-400 hover:text-rust-300 disabled:opacity-50"
+                                  >{restoringId === b.id ? "Restoring..." : "Restore mailbox"}</button>
+                                </div>
+                              </div>
+                            ))}
+                            {configs.map((b) => (
+                              <div key={b.id} className="px-4 py-2 flex items-center justify-between text-xs gap-3">
+                                <div className="min-w-0">
+                                  <span className="text-dark-100 font-mono">Mail config</span>
+                                  <span className="text-dark-300 ml-2">{new Date(b.created_at).toLocaleString()}</span>
+                                  {badges(b)}
+                                </div>
+                                <button
+                                  onClick={() => setPendingConfirm({
+                                    type: "restore_all_mail",
+                                    label: "Restore all mail from this backup? Missing domains, mailboxes and aliases are recreated, then every mailbox is restored. Messages newer than the backup are kept.",
+                                    data: { id: b.id },
+                                  })}
+                                  className="text-rust-400 hover:text-rust-300 shrink-0"
+                                >Restore all mail</button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })()}
+
                     {isAdmin && backups.length > 0 && (
                       <div className="mt-4 bg-dark-900 border border-dark-500 rounded-lg overflow-hidden">
                         <div className="px-4 py-2 border-b border-dark-600">
-                          <h4 className="text-xs font-medium text-dark-300 uppercase font-mono tracking-widest">Mailbox Backups</h4>
+                          <h4 className="text-xs font-medium text-dark-300 uppercase font-mono tracking-widest">Legacy backups</h4>
                         </div>
                         <div className="divide-y divide-dark-600">
                           {backups.map((b) => (
                             <div key={b.file} className="px-4 py-2 flex items-center justify-between text-xs">
                               <div>
-                                <span className="text-dark-100 font-mono">{b.email}</span>
+                                <span className="text-dark-100 font-mono">{b.email ?? b.file}</span>
                                 <span className="text-dark-300 ml-2">{(b.size / 1024 / 1024).toFixed(1)} MB</span>
                               </div>
                               <div className="flex gap-2">
-                                <button onClick={() => setPendingConfirm({
+                                {b.email && <button onClick={() => setPendingConfirm({
                                   type: "restore_backup",
                                   label: `Restore ${b.email} from this backup? Current mail data will be overwritten.`,
                                   data: { email: b.email, file: b.file }
-                                })} className="text-rust-400 hover:text-rust-300">Restore</button>
+                                })} className="text-rust-400 hover:text-rust-300">Restore</button>}
                                 <button onClick={() => setPendingConfirm({
                                   type: "delete_backup",
                                   label: "Delete this backup?",

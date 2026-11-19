@@ -91,13 +91,13 @@ check_count backups 2
 check_count cdn 1
 check_count crons 1
 check_count databases 2
-check_count dns 3
+check_count dns 4
 check_count docker_apps 4
 check_count extensions 3
 check_count git_deploys 2
 check_count iac 1
 check_count logs 1
-check_count mail 7
+check_count mail 9
 check_count oauth 3
 check_count passkeys 6
 check_count reseller_dashboard 2
@@ -123,10 +123,10 @@ for f in $FILES; do
   n=$(code "$ROUTES/$f.rs" | grep -c "audit_log(")
   TOTAL=$((TOTAL + n))
 done
-if [ "$TOTAL" -eq 113 ]; then
-  ok "grand total audit_log() calls across all 32 files is 113 (13 pre-existing + 97 from this session's own extension + 3 from the later SFTP feature's own enable/disable/reset-password credential-lifecycle events)"
+if [ "$TOTAL" -eq 116 ]; then
+  ok "grand total audit_log() calls across all 32 files is 116 (13 pre-existing + 97 from this session's own extension + 3 from the later SFTP feature's own enable/disable/reset-password credential-lifecycle events + 3 from the mail and DNS backup restores)"
 else
-  bad "grand total audit_log() calls: expected 113, found $TOTAL"
+  bad "grand total audit_log() calls: expected 116, found $TOTAL"
 fi
 
 # ── 3. Targeted content checks - the highest-value / trickiest sites ───

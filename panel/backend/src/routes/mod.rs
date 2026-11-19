@@ -1448,6 +1448,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/dns/zones/{id}/analytics", get(dns::dns_analytics))
         .route("/api/dns/zones/{id}/cf/settings", get(dns::cf_zone_settings).put(dns::cf_update_setting))
         .route("/api/dns/zones/{id}/cf/cache/purge", post(dns::cf_purge_cache))
+        .route("/api/dns/backups/{id}/restore", post(dns::restore_dns_backup))
         // WordPress Toolkit
         .route("/api/wordpress/sites", get(wordpress::all_wp_sites))
         .route("/api/wordpress/bulk-update", post(wordpress::bulk_update))
@@ -1652,6 +1653,9 @@ pub fn router() -> Router<AppState> {
         .route("/api/backup-orchestrator/volume-backup", post(backup_orchestrator::create_volume_backup))
         .route("/api/backup-orchestrator/volume-backups", get(backup_orchestrator::list_volume_backups))
         .route("/api/backup-orchestrator/volume-backups/{id}/restore", post(backup_orchestrator::restore_volume_backup))
+        .route("/api/backup-orchestrator/mail-backups", get(backup_orchestrator::list_mail_backups))
+        .route("/api/backup-orchestrator/dns-backups", get(backup_orchestrator::list_dns_backups))
+        .route("/api/backup-orchestrator/backup-jobs/{server_id}/{job_id}", get(backup_orchestrator::backup_job_status))
         .route("/api/backup-orchestrator/verify", post(backup_orchestrator::trigger_verify))
         .route("/api/backup-orchestrator/verifications", get(backup_orchestrator::list_verifications))
         .route("/api/backup-orchestrator/drill", post(backup_orchestrator::trigger_drill))
@@ -1792,6 +1796,8 @@ pub fn router() -> Router<AppState> {
         .route("/api/mail/restore", post(mail::mailbox_restore))
         .route("/api/mail/backups", get(mail::mailbox_backups))
         .route("/api/mail/backups/delete", post(mail::mailbox_backup_delete))
+        .route("/api/mail/backups/{id}/restore", post(mail::restore_mail_backup))
+        .route("/api/mail/backups/{id}/restore-all", post(mail::restore_all_mail))
         // Mail: TLS Enforcement
         .route("/api/mail/tls/status", get(mail::tls_status))
         .route("/api/mail/tls/enforce", post(mail::tls_enforce))
