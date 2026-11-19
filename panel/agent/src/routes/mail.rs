@@ -2720,6 +2720,14 @@ async fn mail_archive(
     }
     let job_id = match plan {
         mail_backup::ArchivePlan::Mailbox { mailbox, key } => {
+            // A mailbox that never received mail has no maildir yet: nothing to
+            // archive, which a nightly policy must not count as a failure.
+            if !mailbox.maildir().exists() {
+                return Ok((
+                    StatusCode::OK,
+                    Json(serde_json::json!({ "skipped": mail_backup::NO_MAILDIR })),
+                ));
+            }
             mail_backup::require_maildir(&mailbox).map_err(backup_err)?;
             crate::services::backup_jobs::spawn("mail-archive", async move {
                 to_value(mail_backup::archive_mailbox(mailbox, key).await?)

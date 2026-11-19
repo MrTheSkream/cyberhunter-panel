@@ -706,6 +706,9 @@ pub async fn mail_installed() -> bool {
     mail_stack_present(is_installed("postfix").await, is_installed("dovecot-imapd").await)
 }
 
+/// `skipped` reason of `/mail/archive` for a mailbox without a maildir yet.
+pub const NO_MAILDIR: &str = "no_maildir";
+
 /// 404 before a job starts when the maildir does not exist (never received
 /// mail, or a wrong address).
 pub fn require_maildir(mailbox: &Mailbox) -> Result<(), VbError> {

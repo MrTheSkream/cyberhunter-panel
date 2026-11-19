@@ -1206,9 +1206,14 @@ async fn mail_leg(
         let outcome = archive_job(agent, "/mail/archive", body).await;
         let spec = mdb::mailbox_prune_spec(domain, local);
         match read_outcome(outcome, |_| Ok(spec.clone()), false) {
-            LegResult::Skipped(r) => {
+            LegResult::Skipped(r) if r == mdb::NOT_INSTALLED => {
                 note_skipped(db, policy, "mail", &r).await;
                 return;
+            }
+            // A mailbox that never received mail has no maildir yet: nothing to
+            // back up, and no reason to stop the other mailboxes.
+            LegResult::Skipped(r) => {
+                tracing::info!("Policy '{}': mailbox {} skipped ({r})", policy.name, acc.email);
             }
             LegResult::Failed(e) => {
                 tracing::error!("Policy '{}': mailbox backup failed for {}: {e}", policy.name, acc.email);
