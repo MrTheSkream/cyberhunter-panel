@@ -189,9 +189,15 @@ Click the delete icon next to any backup in the list.
 
 CyberHunter - Panel runs an automatic daily database backup cron job for the panel's own PostgreSQL database:
 
-- **Schedule**: Daily at 2:00 AM
-- **Retention**: 7 days (older backups are automatically deleted)
-- **Location**: `/var/backups/dockpanel/`
+- **Schedule**: Daily at 3:00 AM server time (crontab line `0 3 * * *`, running
+  `/opt/dockpanel/scripts/db-backup.sh`, installed by `setup.sh`)
+- **Retention**: 7 days (older dumps are deleted, and only after the day's dump
+  has been checked complete)
+- **Location**: `/var/backups/dockpanel/db/` (`dockpanel_<timestamp>.sql.gz`, mode
+  0600). An upgrade with `update.sh` also writes a `pre-upgrade-<timestamp>.sql.gz`
+  there before it changes anything.
+- **Local only**: nothing copies these dumps off the server. Losing the disk loses
+  them too, so copy them elsewhere yourself.
 
 This is separate from site backups, and it covers the panel's own database only - not your
 sites'. A site's database (its MySQL or PostgreSQL container) is not captured by either one, so

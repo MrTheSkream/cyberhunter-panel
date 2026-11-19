@@ -164,9 +164,32 @@ trap cleanup EXIT
 STUBS="$SCRATCH/stubs"
 mkdir -p "$STUBS"
 
+# Three knobs, each for one scenario: nginx running or not, its reload failing,
+# and the agent refusing to start (from the exit trap). Everything else succeeds.
 cat > "$STUBS/systemctl" <<'EOF'
 #!/usr/bin/env bash
 echo "systemctl $*" >> "$STUB_ACTIONS"
+case "$*" in
+    "is-active --quiet nginx") exit "${STUB_NGINX_ACTIVE_RC:-0}" ;;
+    "reload nginx")            exit "${STUB_NGINX_RELOAD_RC:-0}" ;;
+    "start dockpanel-agent")   exit "${STUB_AGENT_START_RC:-0}" ;;
+    "stop dockpanel-api")      exit "${STUB_API_STOP_RC:-0}" ;;
+    "is-active --quiet dockpanel-api") exit "${STUB_API_ACTIVE_RC:-3}" ;;
+esac
+exit 0
+EOF
+
+# Always present, so a box that has a real nginx never has it tested by this
+# suite, and a container without one still reaches the reload branch.
+cat > "$STUBS/nginx" <<'EOF'
+#!/usr/bin/env bash
+echo "nginx $*" >> "$STUB_ACTIONS"
+if [ "${STUB_NGINX_T_RC:-0}" != "0" ]; then
+    echo 'nginx: [emerg] cannot load certificate "/etc/dockpanel/ssl/example.test/fullchain.pem"' >&2
+    echo 'nginx: configuration file /etc/nginx/nginx.conf test failed' >&2
+    exit "$STUB_NGINX_T_RC"
+fi
+echo 'nginx: configuration file /etc/nginx/nginx.conf test is successful' >&2
 exit 0
 EOF
 
@@ -200,7 +223,7 @@ case "$args" in
         exit "${STUB_JOURNAL_RC:-0}" ;;
     *"information_schema.tables"*)
         echo "${STUB_VERIFY_COUNT:-3}"
-        exit 0 ;;
+        exit "${STUB_VERIFY_RC:-0}" ;;
     *psql*)
         # The restore itself: consume the stream it is fed.
         cat > /dev/null
@@ -329,6 +352,10 @@ assert_has "stage is complete"                   '"stage":"complete"'     "$J"
 assert_has "dockpanel-api was started"           'systemctl start dockpanel-api' "$A"
 chk "$([ "$(cat "$BIN_DIR_OUT/dockpanel-api")" = "OLD-API" ] && echo 0 || echo 1)" \
     "the api binary was actually reverted to the snapshot's"
+NGINX_T_AT="$(grep -n -m1 -x 'nginx -t' "$ACTIONS" | cut -d: -f1)"
+RELOAD_AT="$(grep -n -m1 -x 'systemctl reload nginx' "$ACTIONS" | cut -d: -f1)"
+chk "$([ -n "$NGINX_T_AT" ] && [ -n "$RELOAD_AT" ] && [ "$RELOAD_AT" -gt "$NGINX_T_AT" ] && echo 0 || echo 1)" \
+    "nginx is reloaded after the restore, and only after nginx -t"
 
 echo
 echo "S1b · the MCP binary and the frontend go back with the rest"
@@ -376,6 +403,14 @@ chk "$([ "$RC" = "0" ] && echo 0 || echo 1)" "a NON-NUMERIC count does not abort
 J="$(cat "$RES_JSON")"
 assert_has "the unreadable count is reported, not raised" 'could not read a table count' "$J"
 
+# Under pipefail a failing `docker exec` makes the count's assignment fail, and a
+# bare failing assignment is an errexit abort - inside the post-commit window.
+run_restore verify_docker_down yes STUB_VERIFY_RC=1
+chk "$([ "$RC" = "0" ] && echo 0 || echo 1)" "a count query that FAILS does not abort the script either"
+J="$(cat "$RES_JSON")"; A="$(cat "$ACTIONS")"
+assert_has "the failed count is reported, not raised" 'could not read a table count' "$J"
+assert_has "and dockpanel-api WAS started"           'systemctl start dockpanel-api' "$A"
+
 echo
 echo "S4 · THE HAZARD · database reverted, api binary NOT - panel stays down"
 run_restore no_api_in_snapshot no
@@ -421,6 +456,28 @@ assert_has  "dockpanel-api WAS restarted - nothing was lost, so nothing is held"
 assert_lacks "and it is NOT reported as left down" 'LEFT STOPPED'                "$J"
 assert_lacks "and no rollback is journaled: the database never moved" \
             'INSERT INTO activity_logs' "$A"
+
+# An api that will not stop must not have its database dropped under it. A stop
+# that errors on a unit that is NOT running is only noted.
+run_restore api_wont_stop yes STUB_API_STOP_RC=1 STUB_API_ACTIVE_RC=0
+chk "$([ "$RC" != "0" ] && echo 0 || echo 1)" "an api that is still running after stop: exits non-zero"
+J="$(cat "$RES_JSON")"; A="$(cat "$ACTIONS")"
+assert_has   "the detail says so, and that nothing changed" 'could not stop dockpanel-api - nothing changed' "$J"
+assert_lacks "the database was never touched"     '--single-transaction'          "$A"
+assert_has   "and the trap starts the api again"  'systemctl start dockpanel-api' "$A"
+run_restore api_stop_errs_but_down yes STUB_API_STOP_RC=5 STUB_API_ACTIVE_RC=3
+chk "$([ "$RC" = "0" ] && echo 0 || echo 1)" "a stop error on a unit that is not running: the restore goes on"
+assert_has   "and its verdict is ok=true" '"ok":true' "$(cat "$RES_JSON")"
+
+# The same early failure, with the agent refusing to come back from the trap:
+# the api must still be tried, and the verdict must say what is still down.
+run_restore trap_agent_fails yes STUB_PSQL_RC=3 STUB_AGENT_START_RC=1
+chk "$([ "$RC" != "0" ] && echo 0 || echo 1)" "exits non-zero"
+J="$(cat "$RES_JSON")"; A="$(cat "$ACTIONS")"
+assert_has  "dockpanel-api is still started after the agent fails" \
+            'systemctl start dockpanel-api' "$A"
+assert_has  "the verdict keeps the original failure"   'nothing changed'           "$J"
+assert_has  "and says the agent is still down"         'dockpanel-agent could not be restarted' "$J"
 
 echo
 echo "S6b · a manual rollback is journaled as itself, after the database is back"
@@ -505,6 +562,39 @@ chk "$([ "$(stat -c %a "$E/update-token")" = "600" ] && echo 0 || echo 1)" \
     "and its mode 0600"
 chk "$([ "$(cat "$E/update.conf")" = "UPDATE_REPO=new/repo" ] && echo 0 || echo 1)" \
     "update.conf keeps its current content"
+
+echo
+echo "S8 · nginx picks up the restored certificates, and a bad config is not loaded"
+# /etc/dockpanel/ssl holds the site certificates, so nginx is reloaded once it is
+# back - after `nginx -t`, and never as a `fail`: by then the binaries and /etc
+# are the snapshot's, and aborting could only strand the box.
+run_restore nginx_t_fails yes STUB_NGINX_T_RC=1
+chk "$([ "$RC" = "0" ] && echo 0 || echo 1)" "a failing nginx -t still exits 0: the box is restored"
+J="$(cat "$RES_JSON")"; A="$(cat "$ACTIONS")"
+assert_has   "the verdict is ok=false"                 '"ok":false'                 "$J"
+assert_has   "the stage named is nginx"                '"stage":"nginx"'            "$J"
+assert_has   "the detail says nginx -t failed"         'nginx -t failed'            "$J"
+assert_has   "and carries nginx's own reason"          'cannot load certificate'    "$J"
+assert_has   "nginx -t was run"                        'nginx -t'                   "$A"
+assert_lacks "nginx was NOT reloaded on a bad config"  'systemctl reload nginx'     "$A"
+assert_has   "dockpanel-api WAS started"               'systemctl start dockpanel-api' "$A"
+chk "$([ "$(cat "$BIN_DIR_OUT/dockpanel-api")" = "OLD-API" ] && echo 0 || echo 1)" \
+    "the rollback completed"
+
+run_restore nginx_reload_fails yes STUB_NGINX_RELOAD_RC=1
+chk "$([ "$RC" = "0" ] && echo 0 || echo 1)" "a failing reload still exits 0"
+J="$(cat "$RES_JSON")"
+assert_has   "the verdict is ok=false"                 '"ok":false'                 "$J"
+assert_has   "the detail names the reload"             'systemctl reload nginx failed' "$J"
+
+run_restore nginx_inactive yes STUB_NGINX_ACTIVE_RC=3
+chk "$([ "$RC" = "0" ] && echo 0 || echo 1)" "no running nginx: exits 0"
+J="$(cat "$RES_JSON")"; A="$(cat "$ACTIONS")"
+assert_has   "and the verdict stays ok=true"           '"ok":true'                  "$J"
+assert_lacks "nginx -t is not run"                     'nginx -t'                   "$A"
+assert_lacks "nginx is not reloaded"                   'systemctl reload nginx'     "$A"
+assert_has   "the skip is logged"                      'nginx is not installed or not running' \
+             "$(cat "$SCRATCH/nginx_inactive/out.log")"
 
 echo
 echo "══ Part 2 · the update path, by source ══════════════════════════════════"
@@ -784,6 +874,77 @@ if landed_insert "$ORCHESTRATOR" "$CTL" "$PROMOTE_DEFECT" && has_prod "$CTL" -E 
     ok "planting a recorded success at the handoff makes that arm fire"
 else
     bad "planting a recorded success at the handoff makes that arm fire - it did NOT, the arm is blind"
+fi
+
+echo
+echo "§2f · restore-snapshot.sh silences nothing, and tests nginx before reloading it"
+# RAW for the plain form, on purpose: the file is not allowed to spell it even in
+# prose, so a grep that finds it anywhere is a finding. The disguised forms are
+# read as code, since an explanation may have to name them.
+PAT_SILENCED_RAW='[|][|][[:space:]]*true'
+PAT_SILENCED_CODE='[|][|][[:space:]]*(:|echo|true)([[:space:]]|;|[)]|$)|;[[:space:]]*true([[:space:]]|;|$)'
+silenced_count() {   # file  →  raw hits + code hits
+    local raw code
+    raw="$(grep -cE "$PAT_SILENCED_RAW" "$1")"
+    code="$(code_count "$1" -E "$PAT_SILENCED_CODE")"
+    echo $(( ${raw:-0} + ${code:-0} ))
+}
+if [ "$(silenced_count "$RESTORE_SH")" = "0" ]; then
+    ok "restore-snapshot.sh has no silenced command (|| true, || :, || echo, ; true)"
+else
+    bad "restore-snapshot.sh silences a command: $(grep -nE "$PAT_SILENCED_RAW" "$RESTORE_SH" | head -3 | tr '\n' ' ')$(code_lines "$RESTORE_SH" | grep -nE "$PAT_SILENCED_CODE" | head -3 | tr '\n' ' ')"
+fi
+
+# nginx -t must come before the reload, both after /etc is restored, and the
+# stage between them must report rather than raise.
+nginx_order_ok() {   # file  →  0 when the order holds and the stage never fails
+    local f="$1" etc_ln t_ln rl_ln ng_ln st_ln
+    etc_ln="$(code_lineno "$f" -F -e 'stage="etc"')"
+    ng_ln="$(code_lineno "$f" -F -e 'stage="nginx"')"
+    st_ln="$(code_lineno "$f" -F -e 'stage="start-services"')"
+    t_ln="$(code_lineno "$f" -F -e 'nginx -t')"
+    rl_ln="$(code_lineno "$f" -F -e 'systemctl reload nginx')"
+    [ -n "$etc_ln" ] && [ -n "$ng_ln" ] && [ -n "$st_ln" ] && [ -n "$t_ln" ] && [ -n "$rl_ln" ] || return 1
+    [ "$etc_ln" -lt "$ng_ln" ] && [ "$ng_ln" -lt "$t_ln" ] && [ "$t_ln" -lt "$rl_ln" ] && [ "$rl_ln" -lt "$st_ln" ] || return 1
+    # The stage itself: at least one degrade, no fail.
+    code_lines "$f" | sed -n "${ng_ln},${st_ln}p" > "$MUTANTS/nginx-stage.txt"
+    [ "$(grep -cF -e 'degrade "' "$MUTANTS/nginx-stage.txt")" -gt 0 ] || return 1
+    [ "$(grep -cF -e 'fail "' "$MUTANTS/nginx-stage.txt")" -eq 0 ]
+}
+if nginx_order_ok "$RESTORE_SH"; then
+    ok "nginx -t precedes the reload, after /etc, in a stage that degrades and never fails"
+else
+    bad "nginx -t precedes the reload, after /etc, in a stage that degrades and never fails"
+fi
+
+# And both arms fire on the defect they forbid.
+SILENCE_DEFECT='chmod 0700 "$STATE_DIR" 2>/dev/null || true'
+CTL="$(plant_line_after "$RESTORE_SH" '^mkdir -p "[$]STATE_DIR"' "$SILENCE_DEFECT" silence)"
+if landed_insert "$RESTORE_SH" "$CTL" "$SILENCE_DEFECT" && [ "$(silenced_count "$CTL")" -gt 0 ]; then
+    ok "planting a silenced chmod makes the no-silencing arm fire"
+else
+    bad "planting a silenced chmod makes the no-silencing arm fire - it did NOT, the arm is blind"
+fi
+DISGUISE_DEFECT='    SIZE_BYTES="$(stat -c%s "$TARBALL" 2>/dev/null || echo 0)"'
+CTL="$(plant_line_after "$RESTORE_SH" '^mkdir -p "[$]STATE_DIR"' "$DISGUISE_DEFECT" disguise)"
+if landed_insert "$RESTORE_SH" "$CTL" "$DISGUISE_DEFECT" && [ "$(silenced_count "$CTL")" -gt 0 ]; then
+    ok "planting a disguised '|| echo 0' fallback makes it fire too"
+else
+    bad "planting a disguised '|| echo 0' fallback makes it fire too - it did NOT, the arm is blind"
+fi
+RELOAD_DEFECT='systemctl reload nginx'
+CTL="$(plant_line_after "$RESTORE_SH" '^stage="nginx"' "$RELOAD_DEFECT" reloadfirst)"
+if landed_insert "$RESTORE_SH" "$CTL" "$RELOAD_DEFECT" && ! nginx_order_ok "$CTL"; then
+    ok "planting a reload before nginx -t makes the ordering arm fire"
+else
+    bad "planting a reload before nginx -t makes the ordering arm fire - it did NOT, the arm is blind"
+fi
+FAIL_DEFECT='fail "nginx -t failed"'
+CTL="$(plant_line_after "$RESTORE_SH" '^stage="nginx"' "$FAIL_DEFECT" nginxfail)"
+if landed_insert "$RESTORE_SH" "$CTL" "$FAIL_DEFECT" && ! nginx_order_ok "$CTL"; then
+    ok "planting a fail in the nginx stage makes that arm fire"
+else
+    bad "planting a fail in the nginx stage makes that arm fire - it did NOT, the arm is blind"
 fi
 
 echo

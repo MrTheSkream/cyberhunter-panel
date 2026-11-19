@@ -170,7 +170,16 @@ When encryption is enabled, for the database dumps it covers:
   `openssl` derives for encryption itself. A backup encrypted before this
   scheme shipped has no tag and is still decrypted, unauthenticated, for
   backward compatibility.
-- **Key management**: Keys are stored encrypted in the panel database
+- **Key management**: no key is stored anywhere. The passphrase is derived from
+  the panel's `JWT_SECRET` (an HKDF derivation for current backups; backups made
+  before key version 2 used an older derivation from the same secret) every time
+  a dump is encrypted, verified or restored. On a standard install `JWT_SECRET`
+  lives only in `/etc/dockpanel/api.env` (Docker Compose: `PANEL_JWT_SECRET` in
+  `panel/.env`), so **losing that file, or changing `JWT_SECRET`, makes every
+  encrypted backup made until then unreadable**, on this server and at the
+  destination. Keep a copy of it somewhere safe, apart from the backups it
+  unlocks. `SECRETS_ENCRYPTION_KEY` plays no part in this derivation. See
+  [Configuration](../CONFIGURATION.md) for how these keys are handled.
 - Encrypted backups have a `.enc` extension
 - Decryption happens automatically during restore and verification
 
