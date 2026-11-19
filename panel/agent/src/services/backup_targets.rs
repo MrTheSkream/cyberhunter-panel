@@ -654,7 +654,7 @@ mod tests {
                 name: "dockpanel-compose-demo-db".into(),
                 running: true,
                 labels: compose_labels("demo"),
-                mounts: vec![vol("demo_pgdata"), bind(&up), bind(Path::new("/etc/localtime"))],
+                mounts: vec![vol("demo_pgdata"), bind(&up), bind(Path::new("/usr"))],
             },
         ];
         let r = build_targets(containers, &roots);
@@ -675,7 +675,7 @@ mod tests {
         assert_eq!(b.source, up.to_string_lossy());
         assert_eq!(r.excluded.len(), 1);
         assert_eq!(r.excluded[0].container, "dockpanel-compose-demo-db");
-        assert_eq!(r.excluded[0].source, "/etc/localtime");
+        assert_eq!(r.excluded[0].source, "/usr");
         assert_eq!(r.excluded[0].reason, REASON_OUTSIDE);
     }
 
