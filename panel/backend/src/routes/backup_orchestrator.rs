@@ -33,8 +33,41 @@ pub struct BackupPolicy {
     pub last_drill_at: Option<chrono::DateTime<chrono::Utc>>,
     pub last_run: Option<chrono::DateTime<chrono::Utc>>,
     pub last_status: Option<String>,
+    /// Summary of the last run's errors (first error and a count of the rest),
+    /// NULL when the last run recorded none. Written by the policy executor.
+    pub last_error: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// One execution of a policy, from `backup_policy_runs`.
+#[derive(serde::Serialize, sqlx::FromRow)]
+pub struct BackupPolicyRun {
+    pub id: Uuid,
+    pub policy_id: Uuid,
+    pub started_at: chrono::DateTime<chrono::Utc>,
+    pub finished_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// running, success, partial, failed
+    pub status: String,
+    pub successes: i32,
+    pub failures: i32,
+    pub upload_failures: i32,
+    /// `[{kind, subject, message}]`, one entry per problem met by the run.
+    pub errors: serde_json::Value,
+}
+
+#[derive(serde::Deserialize)]
+pub struct PolicyRunsQuery {
+    pub limit: Option<i64>,
+}
+
+/// Default and maximum page size of GET /policies/{id}/runs. The history keeps
+/// 100 runs per policy (`auto_healer`), so the maximum shows all of it.
+const POLICY_RUNS_DEFAULT_LIMIT: i64 = 20;
+const POLICY_RUNS_MAX_LIMIT: i64 = 100;
+
+fn policy_runs_limit(requested: Option<i64>) -> i64 {
+    requested.unwrap_or(POLICY_RUNS_DEFAULT_LIMIT).clamp(1, POLICY_RUNS_MAX_LIMIT)
 }
 
 #[derive(serde::Deserialize)]
@@ -681,6 +714,40 @@ pub async fn list_policies(
     .map_err(|e| internal_error("list policies", e))?;
 
     Ok(Json(policies))
+}
+
+/// GET /api/backup-orchestrator/policies/{id}/runs?limit=N - The policy's most
+/// recent runs, newest first (default 20, at most 100).
+///
+/// Same access rule as reading the policy in `list_policies`: an admin, and
+/// only for a policy they own. Another owner's policy answers 404, not 403, so
+/// its existence is not disclosed.
+pub async fn list_policy_runs(
+    State(state): State<AppState>,
+    AuthUser(claims): AuthUser,
+    Path(id): Path<Uuid>,
+    Query(params): Query<PolicyRunsQuery>,
+) -> Result<Json<Vec<BackupPolicyRun>>, ApiError> {
+    require_admin(&claims.role)?;
+    let owned: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT id FROM backup_policies WHERE id = $1 AND user_id = $2"
+    )
+    .bind(id).bind(claims.sub)
+    .fetch_optional(&state.db).await
+    .map_err(|e| internal_error("list policy runs", e))?;
+    if owned.is_none() {
+        return Err(err(StatusCode::NOT_FOUND, "Policy not found"));
+    }
+
+    let runs: Vec<BackupPolicyRun> = sqlx::query_as(
+        "SELECT id, policy_id, started_at, finished_at, status, successes, failures, upload_failures, errors \
+         FROM backup_policy_runs WHERE policy_id = $1 ORDER BY started_at DESC LIMIT $2"
+    )
+    .bind(id).bind(policy_runs_limit(params.limit))
+    .fetch_all(&state.db).await
+    .map_err(|e| internal_error("list policy runs", e))?;
+
+    Ok(Json(runs))
 }
 
 /// POST /api/backup-orchestrator/policies - Create a policy.
@@ -2173,4 +2240,19 @@ pub async fn chain_report_pdf(
         .map_err(|e| internal_error("chain report: build response", e))?;
 
     Ok(response)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn policy_runs_limit_defaults_to_20_and_caps_at_100() {
+        assert_eq!(policy_runs_limit(None), 20);
+        assert_eq!(policy_runs_limit(Some(5)), 5);
+        assert_eq!(policy_runs_limit(Some(100)), 100);
+        assert_eq!(policy_runs_limit(Some(10_000)), 100);
+        assert_eq!(policy_runs_limit(Some(0)), 1);
+        assert_eq!(policy_runs_limit(Some(-3)), 1);
+    }
 }

@@ -377,36 +377,49 @@ async fn run_scheduled_backup(
             upload_failed = Some(last_err.clone());
             false
         } else {
-            // Prune old remote backups.
+            // Prune old remote backups, S3 and SFTP alike, keyed on this site's
+            // exact file name prefix (`{domain}-`) and suffix (`.tar.gz`), the
+            // same contract the policy executor uses.
             //
-            // The agent answers 200 with an explanatory `message` when it cannot
-            // prune - SFTP has no supported prune path, so it returns pruned:0 and
-            // says so. Discarding the body meant the schedule kept rendering its
-            // retention count as an enforced setting while remote copies accumulated
-            // forever, and the only trace was a warn in a journal that gets vacuumed.
-            let prune_body = serde_json::json!({
-                "destination": dest,
-                "domain": row.domain,
-                "retention": row.retention_count,
-            });
-            match agent.post("/backups/prune", Some(prune_body)).await {
-                Ok(resp) => {
-                    if let Some(msg) = resp.get("message").and_then(|v| v.as_str()) {
-                        // "warning", not "warn" - this file's two other warning writers
-                        // (:201, :248) already spell it the long way, and only that
-                        // spelling is filterable and countable.
-                        crate::services::system_log::log_event(
-                            db,
-                            "warning",
-                            "backup_scheduler",
-                            &format!("Remote retention was not enforced for {}", row.domain),
-                            Some(msg),
-                        ).await;
+            // Discarding the agent's answer used to let the schedule render its
+            // retention count as an enforced setting while remote copies
+            // accumulated forever. The answer must now confirm a `deleted` count;
+            // anything else, a failed call, or a prefix that would also catch
+            // another resource's copies is reported. It does not fail the backup:
+            // the archive was taken and shipped.
+            use crate::services::backup_policy_executor as bpe;
+            let spec = bpe::site_prune_spec(&row.domain);
+            let retention_problem: Option<String> = match bpe::site_prune_conflict(db, &row.domain).await {
+                Err(e) => Some(e),
+                Ok(Some(conflict)) => Some(conflict),
+                Ok(None) => {
+                    let prune_body = bpe::prune_body(&dest, &row.domain, &spec, row.retention_count);
+                    match agent.post_long("/backups/prune", Some(prune_body), bpe::PRUNE_TIMEOUT_SECS).await {
+                        Ok(resp) => match bpe::parse_prune_response(&resp) {
+                            Ok(deleted) => {
+                                if deleted > 0 {
+                                    tracing::info!("Remote retention for {}: {deleted} old copies deleted", row.domain);
+                                }
+                                None
+                            }
+                            Err(e) => Some(e),
+                        },
+                        Err(e) => Some(format!("prune request failed: {e}")),
                     }
                 }
-                Err(e) => {
-                    tracing::warn!("Remote prune failed for {}: {e}", row.domain);
-                }
+            };
+            if let Some(problem) = retention_problem {
+                tracing::warn!("Remote retention was not enforced for {}: {problem}", row.domain);
+                // "warning", not "warn" - this file's two other warning writers
+                // already spell it the long way, and only that spelling is
+                // filterable and countable.
+                crate::services::system_log::log_event(
+                    db,
+                    "warning",
+                    "backup_scheduler",
+                    &format!("Remote retention was not enforced for {}", row.domain),
+                    Some(&bpe::clean_message(&problem, &[])),
+                ).await;
             }
 
             true

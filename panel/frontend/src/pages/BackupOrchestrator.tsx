@@ -1,6 +1,6 @@
 import { useAuth } from "../context/AuthContext";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
-import { useState, useEffect } from "react";
+import { useState, useEffect, Fragment } from "react";
 import { api } from "../api";
 import { formatSize, formatDate, timeAgo } from "../utils/format";
 import { PrereqList, type PrereqResult } from "../components/Prerequisite";
@@ -79,7 +79,35 @@ interface BackupPolicy {
   last_drill_at: string | null;
   last_run: string | null;
   last_status: string | null;
+  last_error: string | null;
   created_at: string;
+}
+
+interface PolicyRunError {
+  kind: string;
+  subject: string;
+  message: string;
+}
+
+interface PolicyRun {
+  id: string;
+  policy_id: string;
+  started_at: string;
+  finished_at: string | null;
+  status: string;
+  successes: number;
+  failures: number;
+  upload_failures: number;
+  errors: PolicyRunError[];
+}
+
+const RUN_HISTORY_LIMIT = 20;
+
+function runStatusClass(status: string): string {
+  if (status === "success") return "text-rust-400";
+  if (status === "running") return "text-dark-200";
+  if (status === "partial") return "text-warn-400";
+  return "text-danger-400";
 }
 
 interface DatabaseBackup {
@@ -1433,6 +1461,29 @@ function PoliciesTab({
   protectAllBusy: boolean;
 }) {
   const editing = editingId !== null;
+  const [historyFor, setHistoryFor] = useState<string | null>(null);
+  const [runs, setRuns] = useState<PolicyRun[]>([]);
+  const [runsLoading, setRunsLoading] = useState(false);
+  const [runsError, setRunsError] = useState("");
+
+  const toggleHistory = async (policyId: string) => {
+    if (historyFor === policyId) {
+      setHistoryFor(null);
+      return;
+    }
+    setHistoryFor(policyId);
+    setRuns([]);
+    setRunsError("");
+    setRunsLoading(true);
+    try {
+      setRuns(await api.get<PolicyRun[]>(`/backup-orchestrator/policies/${policyId}/runs?limit=${RUN_HISTORY_LIMIT}`));
+    } catch (e) {
+      setRunsError(e instanceof Error ? e.message : "Failed to load run history");
+    } finally {
+      setRunsLoading(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex justify-end gap-2">
@@ -1538,9 +1589,9 @@ function PoliciesTab({
               including configuration files and any database credentials in them.
             </p>
           )}
-          {form.destination_id !== "" && destinations.find(d => d.id === form.destination_id)?.dtype === "sftp" && (
+          {form.destination_id !== "" && form.backup_volumes && (
             <p className="text-[11px] text-warn-400 font-mono">
-              Retention is enforced on this server only. The agent cannot prune an SFTP destination, so remote copies accumulate there until you remove them.
+              Remote retention covers site archives and database dumps. Volume archives are not pruned at the destination yet, so their remote copies accumulate there until you remove them.
             </p>
           )}
           {editing && (
@@ -1577,7 +1628,8 @@ function PoliciesTab({
             </thead>
             <tbody className="divide-y divide-dark-600">
               {policies.map(p => (
-                <tr key={p.id} className="hover:bg-dark-700/30 transition-colors">
+                <Fragment key={p.id}>
+                <tr className="hover:bg-dark-700/30 transition-colors">
                   <td className="px-5 py-4 text-sm text-dark-50 font-mono">{p.name}</td>
                   <td className="px-5 py-4 text-sm text-dark-200 font-mono">
                     <div>{p.schedule}</div>
@@ -1605,9 +1657,19 @@ function PoliciesTab({
                         ({p.last_status})
                       </span>
                     )}
+                    {p.last_error && (
+                      <div className="mt-1 text-danger-400 max-w-xs break-words" title={p.last_error}>
+                        {p.last_error.length > 160 ? `${p.last_error.slice(0, 160)}...` : p.last_error}
+                      </div>
+                    )}
                   </td>
                   <td className="px-5 py-4">
                     <div className="flex gap-2">
+                      <button onClick={() => toggleHistory(p.id)}
+                        aria-expanded={historyFor === p.id}
+                        className="px-3 py-1 bg-dark-700 text-dark-50 rounded-md text-xs font-medium font-mono hover:bg-dark-600 transition-colors whitespace-nowrap">
+                        {historyFor === p.id ? "Hide history" : "Run history"}
+                      </button>
                       <button onClick={() => onEdit(p)}
                         className="px-3 py-1 bg-dark-700 text-dark-50 rounded-md text-xs font-medium font-mono hover:bg-dark-600 transition-colors">
                         Edit
@@ -1619,11 +1681,79 @@ function PoliciesTab({
                     </div>
                   </td>
                 </tr>
+                {historyFor === p.id && (
+                  <tr className="bg-dark-900/40">
+                    <td colSpan={7} className="px-5 py-4">
+                      <PolicyRunHistory runs={runs} loading={runsLoading} error={runsError} />
+                    </td>
+                  </tr>
+                )}
+                </Fragment>
               ))}
             </tbody>
           </table>
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Policy Run History ────────────────────────────────────────────────────
+
+function PolicyRunHistory({ runs, loading, error }: { runs: PolicyRun[]; loading: boolean; error: string }) {
+  if (loading) {
+    return <p className="text-xs text-dark-300 font-mono">Loading run history...</p>;
+  }
+  if (error) {
+    return <p className="text-xs text-danger-400 font-mono">{error}</p>;
+  }
+  if (runs.length === 0) {
+    return <p className="text-xs text-dark-300 font-mono">No runs recorded yet</p>;
+  }
+  return (
+    <div className="space-y-2">
+      <p className="text-xs text-dark-300 uppercase font-mono tracking-widest">
+        Last {runs.length} run{runs.length === 1 ? "" : "s"}
+      </p>
+      <table className="w-full">
+        <thead>
+          <tr className="border-b border-dark-600">
+            {["Started", "Status", "Backups", "Failures", "Not uploaded", "Errors"].map(h => (
+              <th key={h} className="text-left text-[10px] font-medium text-dark-200 uppercase font-mono tracking-widest px-3 py-2">{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-dark-700">
+          {runs.map(r => (
+            <tr key={r.id} className="align-top">
+              <td className="px-3 py-2 text-xs text-dark-200 font-mono whitespace-nowrap"
+                title={r.finished_at ? `Finished ${formatDate(r.finished_at)}` : "Not finished"}>
+                {formatDate(r.started_at)}
+              </td>
+              <td className={`px-3 py-2 text-xs font-mono ${runStatusClass(r.status)}`}>{r.status}</td>
+              <td className="px-3 py-2 text-xs text-dark-200 font-mono">{r.successes}</td>
+              <td className="px-3 py-2 text-xs text-dark-200 font-mono">{r.failures}</td>
+              <td className="px-3 py-2 text-xs text-dark-200 font-mono">{r.upload_failures}</td>
+              <td className="px-3 py-2 text-xs font-mono">
+                {r.errors.length === 0 ? (
+                  <span className="text-dark-300">None</span>
+                ) : (
+                  <ul className="space-y-1">
+                    {r.errors.map((e, i) => (
+                      <li key={i} className="break-words">
+                        <span className="text-warn-400">{e.kind}</span>{" "}
+                        <span className="text-dark-50">{e.subject}</span>
+                        <span className="text-dark-300">: </span>
+                        <span className="text-danger-400">{e.message}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
