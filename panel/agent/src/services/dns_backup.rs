@@ -503,40 +503,123 @@ async fn unsandboxed(binary: &str, args: &[&str], what: &str) -> Result<(), VbEr
     Ok(())
 }
 
+/// What installing a sqlite database needs from the host: running a command
+/// outside the sandbox (`/var/lib/powerdns` is read-only inside it) and the
+/// integrity check of the installed file. A seam so every failure path and
+/// its cleanup can be tested.
+trait SqliteInstallHost {
+    async fn run(&mut self, binary: &str, args: &[&str], what: &str) -> Result<(), VbError>;
+    /// Whether `PRAGMA integrity_check` on `db` answers `ok`.
+    async fn integrity_ok(&mut self, db: &str) -> Result<bool, VbError>;
+}
+
+struct LiveHost;
+
+impl SqliteInstallHost for LiveHost {
+    async fn run(&mut self, binary: &str, args: &[&str], what: &str) -> Result<(), VbError> {
+        unsandboxed(binary, args, what).await
+    }
+
+    async fn integrity_ok(&mut self, db: &str) -> Result<bool, VbError> {
+        // immutable=1: PowerDNS is stopped, and a root-owned -wal/-shm created
+        // by this check would keep it from opening its own database.
+        let uri = format!("file:{db}?immutable=1");
+        let check = safe_command_unsandboxed("sqlite3", &[])
+            .arg(&uri)
+            .arg("PRAGMA integrity_check;")
+            .output_with_timeout(SNAPSHOT_TIMEOUT)
+            .await
+            .map_err(VbError::Internal)?;
+        let first = String::from_utf8_lossy(&check.stdout).lines().next().unwrap_or("").trim().to_string();
+        Ok(check.status.success() && first == "ok")
+    }
+}
+
+/// `e`, with what went wrong cleaning up after it added to its message (its
+/// status class kept).
+fn with_cleanup_failure(e: VbError, cleanup: Result<(), VbError>) -> VbError {
+    let Err(c) = cleanup else { return e };
+    tracing::warn!("DNS restore: cleanup after a failure failed: {}", c.message());
+    let msg = format!("{} (and removing the restore leftovers failed: {})", e.message(), c.message());
+    match e {
+        VbError::BadRequest(_) => VbError::BadRequest(msg),
+        VbError::NotFound(_) => VbError::NotFound(msg),
+        VbError::Conflict(_) => VbError::Conflict(msg),
+        VbError::Integrity(_) => VbError::Integrity(msg),
+        VbError::NoSpace(_) => VbError::NoSpace(msg),
+        VbError::Internal(_) => VbError::Internal(msg),
+    }
+}
+
 /// Install the checked copy `raw` as the live sqlite database (PowerDNS is
 /// stopped). The previous database is kept as `{db}.before-restore` and put
-/// back if the new one cannot be installed or does not pass its check.
+/// back if the new one does not pass its check (or cannot be checked).
 async fn install_sqlite(raw: &Path, database: &Path) -> Result<(), VbError> {
+    install_sqlite_on(&mut LiveHost, raw, database, database.exists()).await
+}
+
+/// `install_sqlite` against `host`. A failure leaves no intermediate file
+/// behind: before the new database is moved into place the live one is
+/// untouched, and `{db}.restore-new` plus the fresh `{db}.before-restore` are
+/// removed; after, the previous database is moved back (consuming
+/// `.before-restore`, kept only if that move fails, being then the sole copy).
+async fn install_sqlite_on<H: SqliteInstallHost>(
+    host: &mut H,
+    raw: &Path,
+    database: &Path,
+    had_previous: bool,
+) -> Result<(), VbError> {
     let db = database.to_string_lossy().to_string();
     let staged = format!("{db}.restore-new");
     let before = format!("{db}.before-restore");
     let raw_s = raw.to_string_lossy().to_string();
-    let had_previous = database.exists();
-    if had_previous {
-        unsandboxed("cp", &["-a", "--", &db, &before], "Keeping a copy of the current DNS database").await?;
+
+    if let Err(e) = place_sqlite(host, &raw_s, &db, &staged, &before, had_previous).await {
+        let mut leftovers = vec!["-f", "--", staged.as_str()];
+        if had_previous {
+            leftovers.push(before.as_str());
+        }
+        let cleanup = host.run("rm", &leftovers, "Removing the restore leftovers").await;
+        return Err(with_cleanup_failure(e, cleanup));
     }
-    unsandboxed("install", &["-o", "pdns", "-g", "pdns", "-m", "0640", "--", &raw_s, &staged], "Installing the DNS database")
+
+    let why = match host.integrity_ok(&db).await {
+        Ok(true) => return Ok(()),
+        Ok(false) => "failed its integrity check".to_string(),
+        Err(e) => format!("could not be checked ({})", e.message()),
+    };
+    if !had_previous {
+        return Err(VbError::Integrity(format!(
+            "The installed DNS database {why}; there was no previous database to put back"
+        )));
+    }
+    match host.run("mv", &["-f", "--", &before, &db], "Putting the previous DNS database back").await {
+        Ok(()) => Err(VbError::Integrity(format!("The installed DNS database {why}; the previous one was put back"))),
+        Err(e) => Err(VbError::Internal(format!(
+            "The installed DNS database {why}, and putting the previous one back failed: {}; it is kept as {before}",
+            e.message()
+        ))),
+    }
+}
+
+/// Keep a copy of the live database, stage the new one with PowerDNS's owner
+/// and mode, drop the old WAL, then move the new one into place.
+async fn place_sqlite<H: SqliteInstallHost>(
+    host: &mut H,
+    raw: &str,
+    db: &str,
+    staged: &str,
+    before: &str,
+    had_previous: bool,
+) -> Result<(), VbError> {
+    if had_previous {
+        host.run("cp", &["-a", "--", db, before], "Keeping a copy of the current DNS database").await?;
+    }
+    host.run("install", &["-o", "pdns", "-g", "pdns", "-m", "0640", "--", raw, staged], "Installing the DNS database")
         .await?;
     // A WAL left by the old database would be replayed into the new one.
-    unsandboxed("rm", &["-f", "--", &format!("{db}-wal"), &format!("{db}-shm")], "Removing the old WAL").await?;
-    unsandboxed("mv", &["-f", "--", &staged, &db], "Moving the DNS database into place").await?;
-    // immutable=1: PowerDNS is stopped, and a root-owned -wal/-shm created
-    // by this check would keep it from opening its own database.
-    let uri = format!("file:{db}?immutable=1");
-    let check = safe_command_unsandboxed("sqlite3", &[])
-        .arg(&uri)
-        .arg("PRAGMA integrity_check;")
-        .output_with_timeout(SNAPSHOT_TIMEOUT)
-        .await
-        .map_err(VbError::Internal)?;
-    let first = String::from_utf8_lossy(&check.stdout).lines().next().unwrap_or("").trim().to_string();
-    if !check.status.success() || first != "ok" {
-        if had_previous {
-            unsandboxed("mv", &["-f", "--", &before, &db], "Putting the previous DNS database back").await?;
-        }
-        return Err(VbError::Integrity("The installed DNS database failed its integrity check; the previous one was put back".into()));
-    }
-    Ok(())
+    host.run("rm", &["-f", "--", &format!("{db}-wal"), &format!("{db}-shm")], "Removing the old WAL").await?;
+    host.run("mv", &["-f", "--", staged, db], "Moving the DNS database into place").await
 }
 
 async fn pg_restore(raw: &Path, dbname: &str, user: &str) -> Result<(), VbError> {
@@ -648,6 +731,109 @@ pub fn list_backups(dir: &Path) -> Vec<serde_json::Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Records every command; fails the first one whose `what` contains an
+    /// entry of `fail_on` (each entry once); answers the check with `check`.
+    struct FakeHost {
+        calls: Vec<String>,
+        fail_on: Vec<&'static str>,
+        check: Result<bool, String>,
+    }
+
+    impl FakeHost {
+        fn new(fail_on: &[&'static str], check: Result<bool, String>) -> Self {
+            Self { calls: Vec::new(), fail_on: fail_on.to_vec(), check }
+        }
+    }
+
+    impl SqliteInstallHost for FakeHost {
+        async fn run(&mut self, binary: &str, args: &[&str], what: &str) -> Result<(), VbError> {
+            self.calls.push(format!("{binary} {}", args.join(" ")));
+            if let Some(i) = self.fail_on.iter().position(|f| what.contains(f)) {
+                self.fail_on.remove(i);
+                return Err(VbError::Internal(format!("{what} failed: boom")));
+            }
+            Ok(())
+        }
+        async fn integrity_ok(&mut self, _db: &str) -> Result<bool, VbError> {
+            self.calls.push("check".into());
+            self.check.clone().map_err(VbError::Internal)
+        }
+    }
+
+    const DB: &str = "/var/lib/powerdns/pdns.sqlite3";
+    const STAGED: &str = "/var/lib/powerdns/pdns.sqlite3.restore-new";
+    const BEFORE: &str = "/var/lib/powerdns/pdns.sqlite3.before-restore";
+
+    async fn install(h: &mut FakeHost, had_previous: bool) -> Result<(), VbError> {
+        install_sqlite_on(h, Path::new("/var/backups/dockpanel/dns/raw"), Path::new(DB), had_previous).await
+    }
+
+    #[tokio::test]
+    async fn a_failed_move_leaves_no_staged_database_behind() {
+        let mut h = FakeHost::new(&["Moving the DNS database into place"], Ok(true));
+        let e = install(&mut h, true).await.unwrap_err();
+        assert!(matches!(e, VbError::Internal(ref m) if m.contains("Moving the DNS database into place")), "{e:?}");
+        assert_eq!(h.calls.last().unwrap(), &format!("rm -f -- {STAGED} {BEFORE}"));
+        assert!(!h.calls.contains(&"check".to_string()));
+    }
+
+    #[tokio::test]
+    async fn every_failure_before_the_move_removes_the_leftovers() {
+        for step in ["Keeping a copy", "Installing the DNS database", "Removing the old WAL"] {
+            let mut h = FakeHost::new(&[step], Ok(true));
+            assert!(install(&mut h, true).await.is_err(), "{step}");
+            assert_eq!(h.calls.last().unwrap(), &format!("rm -f -- {STAGED} {BEFORE}"), "{step}");
+        }
+        // Without a previous database, a stale `.before-restore` is not ours.
+        let mut h = FakeHost::new(&["Installing the DNS database"], Ok(true));
+        assert!(install(&mut h, false).await.is_err());
+        assert_eq!(h.calls.last().unwrap(), &format!("rm -f -- {STAGED}"));
+    }
+
+    #[tokio::test]
+    async fn a_failed_cleanup_is_reported_without_hiding_the_cause() {
+        let mut h = FakeHost::new(&["Moving the DNS database", "restore leftovers"], Ok(true));
+        let e = install(&mut h, true).await.unwrap_err();
+        let m = e.message();
+        assert!(matches!(e, VbError::Internal(_)));
+        assert!(m.contains("Moving the DNS database into place") && m.contains("removing the restore leftovers failed"), "{m}");
+    }
+
+    #[tokio::test]
+    async fn a_database_that_fails_or_escapes_its_check_is_rolled_back() {
+        let mut h = FakeHost::new(&[], Ok(false));
+        let e = install(&mut h, true).await.unwrap_err();
+        assert!(matches!(e, VbError::Integrity(ref m) if m.contains("put back")), "{e:?}");
+        assert_eq!(h.calls.last().unwrap(), &format!("mv -f -- {BEFORE} {DB}"));
+
+        let mut h = FakeHost::new(&[], Err("sqlite3 could not run".into()));
+        let e = install(&mut h, true).await.unwrap_err();
+        assert!(e.message().contains("could not be checked"), "{e:?}");
+        assert_eq!(h.calls.last().unwrap(), &format!("mv -f -- {BEFORE} {DB}"));
+
+        let mut h = FakeHost::new(&["Putting the previous DNS database back"], Ok(false));
+        let e = install(&mut h, true).await.unwrap_err();
+        assert!(matches!(e, VbError::Internal(ref m) if m.contains(BEFORE)), "{e:?}");
+
+        let mut h = FakeHost::new(&[], Ok(false));
+        let e = install(&mut h, false).await.unwrap_err();
+        assert!(e.message().contains("no previous database"), "{e:?}");
+        assert_eq!(h.calls.last().unwrap(), "check");
+    }
+
+    #[tokio::test]
+    async fn a_good_database_is_installed_in_order() {
+        let mut h = FakeHost::new(&[], Ok(true));
+        install(&mut h, true).await.unwrap();
+        assert_eq!(h.calls, vec![
+            format!("cp -a -- {DB} {BEFORE}"),
+            format!("install -o pdns -g pdns -m 0640 -- /var/backups/dockpanel/dns/raw {STAGED}"),
+            format!("rm -f -- {DB}-wal {DB}-shm"),
+            format!("mv -f -- {STAGED} {DB}"),
+            "check".to_string(),
+        ]);
+    }
 
     const ST: &str = "20261119-101010";
 
