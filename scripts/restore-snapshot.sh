@@ -41,7 +41,10 @@
 #
 #   Nothing outside the snapshot is touched at all: /etc/nginx, /etc/letsencrypt,
 #   /var/www, docker volumes and site data are NOT rewound. A rollback is "put the
-#   panel back", not "put the machine back".
+#   panel back", not "put the machine back". The one thing it does ask of nginx
+#   is a reload, once /etc/dockpanel is back: the site certificates live there,
+#   and nginx keeps serving the ones it loaded until it reloads. `nginx -t` runs
+#   first; a configuration that fails it is reported (ok=false) and NOT loaded.
 #
 # Env (all set by the caller):
 #   DOCKPANEL_SNAPSHOT_ID        uuid of the snapshot row
@@ -104,8 +107,27 @@ LOG_TAG=dockpanel-restore
 # window as short as the script can make it.
 BINS=(dockpanel-api dockpanel-agent dockpanel dockpanel-mcp)
 
+# Always returns 0: it is called from `degrade` and from the exit trap, where a
+# failing logger must never change what the restore does next. A journal that
+# refuses the line is said so on stderr (the unit's own journal stream) instead
+# of being swallowed. Writes to stdout, so never call it inside `$(...)`
+# without redirecting it.
+log() {
+    echo "[restore] $*"
+    if command -v systemd-cat >/dev/null 2>&1; then
+        if ! echo "[restore] $*" | systemd-cat -t "$LOG_TAG"; then
+            echo "[restore] systemd-cat refused the line above" >&2
+        fi
+    fi
+}
+
 mkdir -p "$STATE_DIR"
-chmod 0700 "$STATE_DIR" 2>/dev/null || true
+# Defence in depth only: the work directory is created 0700 and the verdict and
+# pre-rollback dump are each restricted on their own, so a state directory whose
+# mode cannot be tightened is reported, not fatal.
+if ! chmod 0700 "$STATE_DIR"; then
+    log "could not set mode 0700 on $STATE_DIR - the files in it are still restricted one by one"
+fi
 
 stage="init"
 finished=0
@@ -125,8 +147,9 @@ PRE_DUMP=""
 M_FROM="unknown"
 # Set once this rollback has its entry in the activity log.
 journaled=0
-
-log() { echo "[restore] $*"; command -v systemd-cat >/dev/null 2>&1 && echo "[restore] $*" | systemd-cat -t "$LOG_TAG" || true; }
+# The last verdict written, raw, so the exit trap can append to it.
+result_stage=""
+result_detail=""
 
 # JSON-escape a string for the single "detail" field (quotes, backslashes,
 # control chars). Kept to one line so the result file stays trivially parseable.
@@ -166,10 +189,16 @@ journal_manual_rollback() {
 write_result() {
     local ok="$1" st="$2" detail="$3"
     local tmp="$RESULT.tmp"
+    result_stage="$st"
+    result_detail="$detail"
     printf '{"snapshot_id":"%s","ok":%s,"stage":"%s","detail":"%s","finished_at":"%s"}\n' \
         "$SNAP_ID" "$ok" "$st" "$(json_escape "$detail")" \
         "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$tmp"
-    chmod 0600 "$tmp" 2>/dev/null || true
+    # The verdict holds no secret, and this runs from the exit trap too, where
+    # aborting would lose the verdict itself: reported, never fatal.
+    if ! chmod 0600 "$tmp"; then
+        log "could not set mode 0600 on $tmp"
+    fi
     mv "$tmp" "$RESULT"
 }
 
@@ -231,6 +260,10 @@ hazard_note() {
 # ended up migrated forward from a rollback that had just reported failure.
 on_exit() {
     local code=$?
+    # What the trap itself could not do, appended to the verdict. Every command
+    # in here sits in a condition: errexit is live in a trap, and one bare
+    # failure would skip the restarts below and the verdict with them.
+    local trap_note=""
     # A rollback that stops after the commit has still replaced the database, and
     # with it the journal: the failure gets its entry here. The success path
     # writes its own, while it can still report a failure to do so.
@@ -244,17 +277,37 @@ on_exit() {
             log "NOT starting dockpanel-api: the database was restored but the binaries were not"
             log "starting it would migrate the reverted database forward and undo this rollback"
             log "the pre-rollback database is at ${PRE_DUMP:-$STATE_DIR/pre-rollback-$SNAP_ID.sql.gz}"
-            systemctl start dockpanel-agent 2>/dev/null || true
+            if ! systemctl start dockpanel-agent; then
+                log "dockpanel-agent could not be restarted from the exit trap"
+                trap_note="$trap_note dockpanel-agent could not be restarted and must be started by hand."
+            fi
         else
             log "restarting services from exit trap"
-            systemctl start dockpanel-agent 2>/dev/null || true
-            systemctl start dockpanel-api 2>/dev/null || true
+            if ! systemctl start dockpanel-agent; then
+                log "dockpanel-agent could not be restarted from the exit trap"
+                trap_note="$trap_note dockpanel-agent could not be restarted and must be started by hand."
+            fi
+            # Attempted even when the agent did not come back: the api is what
+            # the operator reaches the box through.
+            if ! systemctl start dockpanel-api; then
+                log "dockpanel-api could not be restarted from the exit trap"
+                trap_note="$trap_note dockpanel-api could not be restarted and must be started by hand."
+            fi
         fi
     fi
-    if [ "$finished" != "1" ]; then
-        write_result false "$stage" "aborted at stage '$stage' with exit code $code$(hazard_note)"
+    # The work directory holds a decompressed copy of the database dump, so a
+    # leftover is worth an operator's attention.
+    if ! rm -rf "$WORK"; then
+        log "could not remove $WORK (it holds a copy of the database dump): remove it by hand"
+        trap_note="$trap_note $WORK could not be removed and holds a copy of the database dump."
     fi
-    rm -rf "$WORK" 2>/dev/null || true
+    if [ "$finished" != "1" ]; then
+        write_result false "$stage" "aborted at stage '$stage' with exit code $code$(hazard_note)${trap_note:+ -$trap_note}"
+    elif [ -n "$trap_note" ]; then
+        # A verdict is already on disk (fail, or the success path): keep its
+        # stage and words, and say what the trap could not do on top of it.
+        write_result false "$result_stage" "$result_detail -$trap_note"
+    fi
 }
 trap on_exit EXIT INT TERM
 
@@ -321,10 +374,18 @@ DUMP_SQL="$WORK/db/dump.sql"
 
 # Read before anything is destroyed: every path from the commit on names this
 # version in the journal.
+#
+# Called inside `$(...)` both before and after the commit, so it never fails and
+# never pipes: an unreadable field comes back empty and the caller's default
+# applies. Its own log line goes to stderr, out of the captured value.
 meta_field() {
+    local out
     [ -f "$WORK/metadata.json" ] || return 0
-    sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" \
-        "$WORK/metadata.json" | head -1
+    if ! out="$(sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" "$WORK/metadata.json")"; then
+        log "could not read '$1' from the snapshot metadata" >&2
+        return 0
+    fi
+    printf '%s\n' "${out%%$'\n'*}"
 }
 M_FROM="$(meta_field from_version)"; [ -n "$M_FROM" ] || M_FROM="unknown"
 
@@ -347,7 +408,11 @@ if [ -f "$DUMP_GZ" ]; then
     if ! tail -20 "$DUMP_SQL" | grep -c 'PostgreSQL database dump complete' >/dev/null; then
         fail "database dump is truncated (completion marker absent) - refusing to apply it"
     fi
-    EXPECT_TABLES="$(grep -c '^CREATE TABLE' "$DUMP_SQL" || true)"
+    # awk rather than `grep -c`: grep exits 1 on a count of zero, so its status
+    # cannot tell "no table" from "could not read the dump". awk exits non-zero
+    # only on a real read error, which is fatal here - nothing is touched yet.
+    EXPECT_TABLES="$(awk '/^CREATE TABLE/ { n++ } END { print n + 0 }' "$DUMP_SQL")" \
+        || fail "could not count the tables in the database dump - nothing changed"
     log "dump verified complete: $EXPECT_TABLES CREATE TABLE statements"
 else
     EXPECT_TABLES=0
@@ -361,8 +426,22 @@ fi
 stage="stop-services"
 log "stopping dockpanel-api and dockpanel-agent"
 services_stopped=1
-systemctl stop dockpanel-api 2>/dev/null || true
-systemctl stop dockpanel-agent 2>/dev/null || true
+# What matters is that the unit is not RUNNING: an api still up while the schema
+# is dropped would write into a database being replaced, and its binary is about
+# to be swapped. So a stop that errors is only fatal if the unit is still
+# active. Before the commit, so `fail` is safe: the trap brings both back.
+stop_service() {
+    local unit="$1"
+    if systemctl stop "$unit"; then
+        return 0
+    fi
+    if systemctl is-active --quiet "$unit"; then
+        fail "could not stop $unit - nothing changed"
+    fi
+    log "systemctl stop $unit reported an error, but $unit is not running - continuing"
+}
+stop_service dockpanel-api
+stop_service dockpanel-agent
 
 # ── 5. Database (the destructive stage; atomic) ──────────────────────────────
 # ON_ERROR_STOP=1 + --single-transaction is the difference between a restore that
@@ -381,8 +460,15 @@ if [ -f "$DUMP_SQL" ]; then
     # `pg_dump | gzip` is gzip's, and gzip exits 0 on a truncated stream.
     stage="pre-rollback-dump"
     PRE_DUMP="$STATE_DIR/pre-rollback-$SNAP_ID.sql.gz"
-    if bash -c "set -o pipefail; docker exec '$PG_CONTAINER' pg_dump -U '$PG_USER' --clean --if-exists '$PG_DB' | gzip > '$PRE_DUMP'"; then
-        chmod 0600 "$PRE_DUMP" 2>/dev/null || true
+    # umask 077 so the dump is never readable by anyone else, not even for the
+    # moment before the chmod below.
+    if bash -c "set -o pipefail; umask 077; docker exec '$PG_CONTAINER' pg_dump -U '$PG_USER' --clean --if-exists '$PG_DB' | gzip > '$PRE_DUMP'"; then
+        # The whole database is in this file. A leftover from an earlier run of
+        # the same snapshot keeps its old mode through the redirection, so the
+        # mode is still set explicitly, and a dump that cannot be restricted
+        # stops the restore: nothing has changed yet.
+        chmod 0600 "$PRE_DUMP" \
+            || fail "could not restrict $PRE_DUMP to mode 0600 - refusing to proceed, nothing changed"
         log "pre-rollback state saved to $PRE_DUMP"
         # These are now the only way back from a rollback, so they are worth
         # keeping - but nothing else in the product ever deletes them (the
@@ -479,9 +565,15 @@ if [ -f "$DUMP_SQL" ]; then
     # reason this query returns junk is that docker or postgres is unreachable
     # for a moment, and `[ x -lt y ]` on junk is itself an errexit abort - inside
     # exactly the window that must not abort.
+    #
+    # The query sits in a condition for the same reason: under pipefail a failing
+    # `docker exec` makes the assignment itself fail, and a bare failing
+    # assignment is an errexit abort. An unanswered query lands in the empty case.
     stage="database-verify"
-    GOT_TABLES="$(docker exec "$PG_CONTAINER" psql -U "$PG_USER" -d "$PG_DB" -tAq \
-        -c "select count(*) from information_schema.tables where table_schema='public' and table_type='BASE TABLE'" 2>/dev/null | tr -d ' \r')"
+    if ! GOT_TABLES="$(docker exec "$PG_CONTAINER" psql -U "$PG_USER" -d "$PG_DB" -tAq \
+        -c "select count(*) from information_schema.tables where table_schema='public' and table_type='BASE TABLE'" | tr -d ' \r')"; then
+        GOT_TABLES=""
+    fi
     case "$GOT_TABLES" in
         ''|*[!0-9]*)
             degrade "post-restore schema check could not read a table count (got '${GOT_TABLES:-none}')" ;;
@@ -519,7 +611,12 @@ if [ -f "$DUMP_SQL" ]; then
     esac
     M_CREATED="$(meta_field created_at)"
     M_OPER="$(meta_field operator)"
-    SIZE_BYTES="$(stat -c%s "$TARBALL" 2>/dev/null || echo 0)"
+    # Inside the post-commit window: an unreadable size is reported and recorded
+    # as 0, never raised.
+    if ! SIZE_BYTES="$(stat -c%s "$TARBALL")"; then
+        SIZE_BYTES=0
+        degrade "the snapshot size could not be read, so it is recorded as 0 bytes"
+    fi
     if [ -n "$M_OPER" ]; then OPER_SQL="'$(sqlq "$M_OPER")'"; else OPER_SQL="NULL"; fi
     if [ -n "$M_CREATED" ]; then CREATED_SQL="'$(sqlq "$M_CREATED")'"; else CREATED_SQL="NOW()"; fi
 
@@ -542,8 +639,8 @@ fi
 
 # ── 6. Binaries ──────────────────────────────────────────────────────────────
 # Services are stopped, so a plain mv is safe and atomic. Each binary keeps a
-# .prerestore copy. No `|| true` anywhere: a restore that cannot restore must say
-# so (lesson #48).
+# .prerestore copy. No failure is silenced anywhere in this file: a restore that
+# cannot restore must say so (lesson #48).
 stage="binaries"
 for bin in "${BINS[@]}"; do
     src="$WORK/binaries/$bin"
@@ -605,19 +702,71 @@ fi
 # Treated as fatal, not best-effort: api.env carries JWT_SECRET and the database
 # password, so a half-applied /etc against a fully-restored database is a broken
 # panel, not a warning.
+#
+# The safety copy is required, not best-effort: it is the only way back to the
+# api.env this overwrites, and the likeliest reason it cannot be made (a full
+# disk) would also break the copy below halfway. Failing here is the existing
+# answer for this stage: the api binary is already the snapshot's, so the trap
+# restarts the panel on the config it has now. A box with no config directory
+# yet has nothing to keep.
 stage="etc"
+etc_restored=0
 if [ -d "$WORK/etc" ]; then
-    cp -a "$ETC_DIR" "$ETC_DIR.prerestore.$SNAP_ID" 2>/dev/null || true
-    # The restore never touches the update token, so the safety copy needs none:
-    # a token cleared later must not survive in it.
-    rm -rf "$ETC_DIR.prerestore.$SNAP_ID/update-token" "$ETC_DIR.prerestore.$SNAP_ID"/.update-token.tmp-* 2>/dev/null || true
+    ETC_SAFETY="$ETC_DIR.prerestore.$SNAP_ID"
+    if [ -d "$ETC_DIR" ]; then
+        # A leftover from an earlier restore of the same snapshot would make
+        # `cp -a` nest the new copy inside it, and the token removal below would
+        # then miss the nested token.
+        rm -rf "$ETC_SAFETY" || fail "could not clear the stale safety copy $ETC_SAFETY - $ETC_DIR left untouched"
+        cp -a "$ETC_DIR" "$ETC_SAFETY" || fail "could not make the safety copy $ETC_SAFETY - $ETC_DIR left untouched"
+        # The restore never touches the update token, so the safety copy needs
+        # none: a token cleared later must not survive in it.
+        if ! rm -rf "$ETC_SAFETY/update-token" "$ETC_SAFETY"/.update-token.tmp-*; then
+            degrade "the update token could not be removed from the safety copy $ETC_SAFETY: delete it by hand"
+        fi
+    else
+        log "$ETC_DIR does not exist yet - no safety copy to make"
+    fi
     cp -a "$WORK/etc/." "$ETC_DIR/" || fail "restoring $ETC_DIR failed"
+    etc_restored=1
     log "restored $ETC_DIR"
+fi
+
+# ── 7b. nginx ────────────────────────────────────────────────────────────────
+# /etc/dockpanel/ssl holds the certificates the site vhosts point at, and the
+# ACME account, so the stage above may just have swapped the files nginx serves.
+# nginx keeps the old ones in memory until it reloads, and a reload with a
+# broken configuration is refused anyway - so the configuration is tested first
+# and only a configuration that passes is loaded.
+#
+# Everything here is after the point of no return (the binaries and /etc are
+# already the snapshot's), so nothing in this stage may `fail`: a problem is a
+# `degrade`, which tells the operator while the box stays consistent. A box
+# without nginx, or with nginx stopped, has nothing to reload.
+stage="nginx"
+if [ "$etc_restored" != "1" ]; then
+    log "the snapshot restored no $ETC_DIR - nginx left alone"
+elif ! systemctl is-active --quiet nginx; then
+    log "nginx is not installed or not running - no reload needed"
+elif ! command -v nginx >/dev/null 2>&1; then
+    degrade "nginx is running but its binary is not on PATH, so its configuration could not be tested and it was not reloaded"
+elif ! nginx_test_out="$(nginx -t 2>&1)"; then
+    # The output names the file and line at fault; it holds no secret.
+    degrade "nginx -t failed after the restore, so nginx was NOT reloaded and still serves its previous certificates: $(printf '%s\n' "$nginx_test_out" | tail -3 | tr '\n' ' ')"
+elif ! systemctl reload nginx; then
+    degrade "nginx -t passed but systemctl reload nginx failed: nginx still serves its previous certificates"
+else
+    log "nginx configuration tested and nginx reloaded"
 fi
 
 # ── 8. Start + prove it came back ────────────────────────────────────────────
 stage="start-services"
-systemctl daemon-reload 2>/dev/null || true
+# Nothing this script restores is a unit file, so a failed daemon-reload changes
+# nothing the start below depends on - but it does mean systemd is unwell, which
+# the operator should hear about.
+if ! systemctl daemon-reload; then
+    degrade "systemctl daemon-reload failed after the restore"
+fi
 systemctl start dockpanel-agent || fail "dockpanel-agent failed to start after restore"
 sleep 1
 
@@ -647,8 +796,9 @@ fi
 stage="health"
 HEALTH=""
 for _ in $(seq 1 30); do
-    # `if` rather than `|| true`: a per-attempt failure is expected while the
-    # panel boots, but it must not be spelled the same way as a swallowed error.
+    # An `if`, not a silenced command: a per-attempt failure is expected while
+    # the panel boots, but it must not be spelled the same way as a swallowed
+    # error.
     if HEALTH="$(curl -fsS -m 3 "$HEALTH_URL" 2>/dev/null)"; then
         [ -n "$HEALTH" ] && break
     fi

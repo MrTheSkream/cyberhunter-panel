@@ -954,36 +954,101 @@ mod tests {
 
     /// A restore that cannot restore has to say so. `|| true` on a restore step
     /// is what let the previous rollback path print success while having changed
-    /// nothing, so the script must not silence any of its own failures.
+    /// nothing, so the script must not silence any of its own failures - not one,
+    /// with no list of tolerated places. A step whose failure is acceptable says
+    /// so in an `if ! ...; then log/degrade ...; fi`.
+    ///
+    /// The plain form is refused anywhere in the file, prose included: a pin that
+    /// a comment can trip is cheaper than one that a comment can hide behind. The
+    /// disguised forms are refused in code.
     #[test]
     fn restore_script_never_swallows_a_restore_failure() {
+        let silenced = |l: &str| {
+            let compact: String = l.split_whitespace().collect::<Vec<_>>().join(" ");
+            compact.contains("|| true")
+                || compact.contains("||true")
+                || compact.contains("|| :")
+                || compact.contains("||:")
+                || compact.contains("|| echo")
+                || compact.contains("; true")
+                || compact.ends_with(";true")
+        };
         for (i, line) in RESTORE_SCRIPT.lines().enumerate() {
-            let l = line.trim_start();
-            if l.starts_with('#') {
+            let compact: String = line.split_whitespace().collect::<Vec<_>>().join(" ");
+            assert!(
+                !compact.contains("|| true") && !compact.contains("||true"),
+                "line {} spells `|| true`, which this file must not contain at all: {line}",
+                i + 1
+            );
+            if line.trim_start().starts_with('#') {
                 continue;
             }
-            if l.contains("|| true") {
-                // Only tolerated where failing is genuinely the safe outcome:
-                // best-effort cleanup and the start-services safety net.
-                let tolerated = l.contains("chmod")
-                    || l.contains("rm -rf")
-                    || l.contains("systemctl start")
-                    || l.contains("systemd-cat")
-                    || l.contains("daemon-reload")
-                    || l.contains("systemctl stop")
-                    // The pre-restore copy of the config directory. Matched on
-                    // `.prerestore.` rather than on a literal path, because the
-                    // path became a variable and this pin then failed on a
-                    // rename that changed nothing about why the line is safe.
-                    || l.contains(".prerestore.")
-                    || l.contains("grep -c");
-                assert!(
-                    tolerated,
-                    "line {} silences a failure in the restore path: {l}",
-                    i + 1
-                );
-            }
+            assert!(
+                !silenced(line),
+                "line {} silences a failure in the restore path: {line}",
+                i + 1
+            );
         }
+        // The predicate itself, so a green run means something.
+        for planted in [
+            "chmod 0700 \"$STATE_DIR\" 2>/dev/null || true",
+            "rm -rf \"$WORK\" ||   :",
+            "SIZE_BYTES=\"$(stat -c%s \"$TARBALL\" 2>/dev/null || echo 0)\"",
+            "systemctl daemon-reload; true",
+        ] {
+            assert!(silenced(planted), "the predicate misses: {planted}");
+        }
+        assert!(!silenced("cp -a \"$WORK/etc/.\" \"$ETC_DIR/\" || fail \"restoring failed\""));
+    }
+
+    /// The restored /etc/dockpanel carries the site certificates, so nginx is
+    /// reloaded after it - but only once `nginx -t` has passed, and a failure
+    /// there is a `degrade`, never a `fail`: by then the binaries and /etc are the
+    /// snapshot's, and aborting could only strand the box between two versions.
+    #[test]
+    fn restore_script_tests_nginx_before_reloading_it_and_never_fails_on_it() {
+        let code: Vec<(usize, &str)> = RESTORE_SCRIPT
+            .lines()
+            .enumerate()
+            .filter(|(_, l)| !l.trim_start().starts_with('#'))
+            .collect();
+        let first = |needle: &str| {
+            code.iter()
+                .find(|(_, l)| l.contains(needle))
+                .map(|(i, _)| *i)
+                .unwrap_or_else(|| panic!("`{needle}` must appear in the script's code"))
+        };
+        let etc = first("stage=\"etc\"");
+        let nginx = first("stage=\"nginx\"");
+        let start = first("stage=\"start-services\"");
+        let test = first("nginx -t");
+        let reload = first("systemctl reload nginx");
+        assert!(etc < nginx, "the nginx stage must follow the /etc/dockpanel restore");
+        assert!(nginx < test && test < reload, "nginx -t must run before the reload");
+        assert!(reload < start, "the reload belongs to the nginx stage");
+
+        let stage: Vec<&str> = code
+            .iter()
+            .filter(|(i, _)| *i >= nginx && *i < start)
+            .map(|(_, l)| *l)
+            .collect();
+        assert!(
+            !stage.iter().any(|l| l.contains("fail \"")),
+            "the nginx stage runs after the point of no return and must never `fail`"
+        );
+        // The test's failure branch is the one that degrades.
+        let test_line = stage
+            .iter()
+            .position(|l| l.contains("nginx -t"))
+            .expect("nginx -t inside the nginx stage");
+        assert!(
+            stage[test_line].contains("if !") || stage[test_line].contains("elif !"),
+            "nginx -t must be a condition, so its failure cannot trip errexit"
+        );
+        assert!(
+            stage.get(test_line + 1..).into_iter().flatten().take(3).any(|l| l.contains("degrade \"")),
+            "a failing nginx -t must be reported as degraded"
+        );
     }
 
     /// Every exit path must leave a verdict behind: the restore restarts the

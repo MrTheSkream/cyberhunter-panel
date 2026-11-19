@@ -67,6 +67,11 @@ Set it once, keep it backed up with your database, and treat losing it the same
 way you would treat losing the database: without it, or without `JWT_SECRET`, the
 encrypted values cannot be recovered.
 
+Encrypted database backups (Backup Orchestrator) are tied to `JWT_SECRET` alone:
+their passphrase is re-derived from it on every encrypt, verify and restore, and
+is stored nowhere. `SECRETS_ENCRYPTION_KEY` does not protect them, and losing or
+rotating `JWT_SECRET` leaves every encrypted backup made before that unreadable.
+
 ### Docker Compose (`.env` file in `panel/`)
 
 | Variable | Description |
@@ -100,6 +105,7 @@ The agent reads its configuration from files, not environment variables:
 | `/etc/dockpanel/ssl/acme-account.json` | Let's Encrypt ACME account credentials |
 | `/var/run/dockpanel/agent.sock` | Agent Unix socket |
 | `/var/backups/dockpanel/` | Site backups (compressed tarballs) |
+| `/var/backups/dockpanel/db/` | Panel database dumps: daily at 3:00 AM (cron `0 3 * * *`), 7-day retention, plus `pre-upgrade-*` dumps from `update.sh`. Local only |
 | `/var/www/acme/` | ACME HTTP-01 challenge webroot |
 | `/var/www/{domain}/` | Site document roots |
 
