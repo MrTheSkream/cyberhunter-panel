@@ -246,3 +246,6 @@ path is outside `/etc/dockpanel` are copied (0600) to `/etc/dockpanel/backup-key
 `index.json` naming their original paths, so the archive carries them. The panel alerts when no
 off-site copy succeeded for 48 hours. Without the panel, `age -d -i recovery-key.txt <archive>`
 decrypts an archive (Ubuntu package `age`).
+
+Restoring a server from these snapshots, on a new machine or from the panel, is described step by
+step in the [Disaster Recovery Guide](disaster-recovery.md).
