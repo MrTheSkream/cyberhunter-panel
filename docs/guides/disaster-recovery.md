@@ -20,15 +20,16 @@ Keep these three things somewhere that does not depend on the server:
 
 - the panel database (accounts, 2FA, sites, databases, destinations, policies, backup history);
 - the PowerDNS database when PowerDNS keeps its zones in the panel's PostgreSQL;
-- `/etc/dockpanel` without the update token: `api.env` (`JWT_SECRET`,
-  `SECRETS_ENCRYPTION_KEY`, the keys every stored credential and every encrypted backup depends
-  on), `agent.token`, the site certificates and the ACME account (`ssl/`), DKIM keys, the mail
-  configuration, deploy keys, and copies of the SFTP keys kept outside `/etc/dockpanel`
-  (`backup-keys/`).
+- `/etc/dockpanel` without the update token: `api.env` (`JWT_SECRET`, and
+  `SECRETS_ENCRYPTION_KEY` if it is set: the keys every stored credential and every encrypted
+  backup depends on), `agent.token`, the site certificates and the ACME account (`ssl/`), the
+  panel's self-signed certificate when it was installed without a domain (`ssl/panel.crt`), DKIM
+  keys, the mail configuration, deploy keys, and copies of the SFTP keys kept outside
+  `/etc/dockpanel` (`backup-keys/`).
 
 It does **not** hold the binaries and the frontend (the new machine runs the same version
-instead), the nginx vhosts (rebuilt from the database), the panel's own certificate
-(`/etc/letsencrypt`, issued again by certbot after the DNS switch), or the data of the sites,
+instead), the nginx vhosts (rebuilt from the database), a panel certificate issued by certbot
+(`/etc/letsencrypt`, issued again after the DNS switch, step 7), or the data of the sites,
 databases, apps and mailboxes (restored from their own backups, step 6).
 
 ## Restore on a new machine
@@ -79,7 +80,7 @@ SFTP:
   "host": "backup.example.com",
   "port": 22,
   "username": "backup",
-  "key_path": "/root/backup-key",
+  "key_path": "/etc/dockpanel/dr-restore-key",
   "remote_path": "/backups",
   "install_id": "0b3f7a52-5f1e-4f53-9a43-7f2b8f0c1d2e"
 }
@@ -89,9 +90,15 @@ SFTP:
 without `cyberhunter-dr/...`: the restore adds it. Leave out `secret_key` (S3) or `password`
 (SFTP) to be asked for it without echo. Secrets are never accepted on the command line.
 
+The destination file and the recovery key are read by the `dockpanel-api dr` command itself
+(run as root), so `/root` is fine for them. The SFTP private key named by `key_path` is not: the
+download goes through the local agent, which runs with `ProtectHome=yes` and cannot see `/root`
+or `/home` (a key there fails with "no such file"). Put it outside them, root only:
+
 ```bash
 sudo install -m 600 /dev/null /root/dr-dest.json      # then edit it
 sudo install -m 600 /dev/null /root/recovery-key.txt  # paste the recovery key into it
+sudo install -m 600 -o root -g root /path/to/backup-key /etc/dockpanel/dr-restore-key   # SFTP with a key only
 ```
 
 ### 3. List the snapshots
@@ -129,7 +136,12 @@ question). Then, through the local agent:
 5. at its first start, the panel rebuilds the nginx configuration of every site from the restored
    database. A site bound to an IP address that does not exist on this machine is moved to the
    primary IP address. SFTP destinations whose key was copied in the snapshot are pointed at the
-   restored copy (`/etc/dockpanel/sftp-keys/`). The report is written to
+   restored copy (`/etc/dockpanel/sftp-keys/`). Then it lists the off-site snapshots at the
+   configured destinations and puts them back on the Disaster recovery card (the restored
+   database was dumped during the run that made the archive, so it knew neither that archive nor
+   the later ones), and records the last run as `restored` ("Panel restored from <archive>")
+   instead of a failed run. It also checks that the panel's self-signed certificate, if there is
+   one, names this machine's primary IP (step 5 below). The report is written to
    `/var/lib/dockpanel/vhost-rebuild.json`.
 
 The command waits for the verdict (`/var/lib/dockpanel/last-restore.json`) and for that report,
@@ -138,7 +150,10 @@ version not installed yet on this machine), `nginx -t` and the reload. It exits 
 are clean. A refused restore changes nothing; `journalctl -u dockpanel-snapshot-restore-<id>`
 shows the details.
 
-Then remove the two secret files: `sudo shred -u /root/recovery-key.txt /root/dr-dest.json`.
+Then remove the secret files: `sudo shred -u /root/recovery-key.txt /root/dr-dest.json`, and
+`/etc/dockpanel/dr-restore-key` if you created it (a key left under `/etc/dockpanel` goes into
+every later off-site snapshot). The restored SFTP destinations use their own copy in
+`/etc/dockpanel/sftp-keys/`.
 
 ### 5. Sign in
 
@@ -148,12 +163,36 @@ shows the last restore and the site rebuild report. Fix any failed site (install
 or Apache, then save it). **Test connection** on each backup destination proves the restored keys
 work.
 
+#### The panel's self-signed certificate
+
+A panel installed without a domain serves a self-signed certificate,
+`/etc/dockpanel/ssl/panel.crt`, made at install time for that machine's addresses. It is in the
+archive, so it comes back naming the old IP address: the browser warning then adds a name
+mismatch. No panel or installer step regenerates it (the installer never overwrites an existing
+one), so the site rebuild report and `dr restore` say when it does not name the primary IP. To
+make a new one for this machine (accept the new fingerprint in your browser afterwards):
+
+```bash
+IP=203.0.113.20   # this machine's primary IP address
+sudo openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj "/CN=$IP" \
+  -addext "subjectAltName=DNS:localhost,IP:127.0.0.1,IP:$IP" \
+  -keyout /etc/dockpanel/ssl/panel.key -out /etc/dockpanel/ssl/panel.crt
+sudo chmod 600 /etc/dockpanel/ssl/panel.key && sudo chmod 644 /etc/dockpanel/ssl/panel.crt
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+A panel with a domain does not use this file: its certificate is issued again in step 7.
+
 ### 6. Restore the data, in this order
 
 1. **Sites and databases**: on the **Disaster recovery** card, **Restore sites and databases from
    remote backups**. For each site and database whose latest backup was sent to a remote
    destination, it downloads that backup, checks its sha256, and restores it (sites first, with
    the databases their archives carry; a database dump older than its site's archive is skipped).
+   An encrypted dump (`.enc`) whose sha256 differs from the recorded one is restored with a
+   warning in its line: older agents recorded the hash of the unencrypted dump, and the
+   integrity check (HMAC) of its decryption refuses a corrupted or modified file. For any other
+   file, a different sha256 fails the item.
    Database containers that do not exist on this machine are recreated first, with the same name,
    engine, port and password. The report lists each item as restored, failed or skipped.
 The next three restore from a file on THIS machine, and the bulk action above does not fetch
@@ -198,8 +237,14 @@ offers on each remote copy:
   stops and restarts, and the card keeps checking until the verdict and the site rebuild report
   are there.
 
+After the restart, the card lists the off-site copies found at the destinations again, and the
+last run reads `restored` with the archive name. The same resynchronisation also runs at the start
+of every off-site snapshot run.
+
 The recovery key goes from the request to the decryption in memory only: it is never written to
-disk, put on a command line or in an environment variable, or logged (only its fingerprint is).
+disk, put on a command line or in an environment variable, or logged. Only its fingerprint is
+logged (`journalctl -u dockpanel-api`, "recovery key fingerprint"), with the archive name and
+the operator.
 
 ## API
 

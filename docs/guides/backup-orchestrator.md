@@ -247,6 +247,13 @@ Store backups off-server. There are exactly two destination types - `s3` and `sf
 
 Add a destination under **Backup Manager** > **Destinations**, then select it on a policy.
 
+> **SFTP with a private key: put the key where the agent can read it.** The agent that uploads, lists and downloads runs with `ProtectHome=yes`, so `/root` and `/home` do not exist for it: a `key_path` such as `/root/.ssh/backup_key` or `/home/me/.ssh/id_ed25519` fails with "no such file" although the file is there. Use a path outside them, readable by root only, for example `/etc/dockpanel/sftp-keys/backup.key`:
+>
+> ```bash
+> sudo install -d -m 700 /etc/dockpanel/sftp-keys
+> sudo install -m 600 -o root -g root ~/.ssh/backup_key /etc/dockpanel/sftp-keys/backup.key
+> ```
+
 A policy with no destination writes its archives to this server's own disk and nowhere else. CyberHunter - Panel says so on the Backup Manager overview rather than leaving you to discover it - see [What CyberHunter - Panel checks for you](prerequisites.md).
 
 > **Retention off-site covers site archives and database dumps, on S3 and SFTP.** After each upload the panel keeps the newest copies at the destination, up to the policy's retention count, and deletes older ones. Only files named exactly `<site or database>-<YYYYMMDD-HHMMSS><extension>` are ever deleted, so other files in the bucket or directory are left alone. Retention is skipped, and reported in the policy's run history, when two resources share a name (the same domain on two servers, or the same database name for two owners). App data archives follow the same rule, per volume or bind mount: only `<app>-<v|b>-<name>-<YYYYMMDD-HHMMSS>.tar.gz` and `.tar.gz.enc` of that exact target are ever deleted, and retention is skipped and reported when the same name is also used by another server or by a site. Mail and DNS files follow it too: per mailbox (`mail-<domain>-<local part>-`), per zone (`dns-zone-<zone>-`), and for `mailcfg-` and `dns-snapshot-<backend>-`; retention is skipped and reported when another server writes the same names (the mail config or DNS snapshot of a second server sent to the same destination, or the same mailbox or zone on two servers).
