@@ -93,7 +93,7 @@ without `cyberhunter-dr/...`: the restore adds it. Leave out `secret_key` (S3) o
 The destination file and the recovery key are read by the `dockpanel-api dr` command itself
 (run as root), so `/root` is fine for them. The SFTP private key named by `key_path` is not: the
 download goes through the local agent, which runs with `ProtectHome=yes` and cannot see `/root`
-or `/home` (a key there fails with "no such file"). Put it outside them, root only:
+or `/home` (ssh reports a key there as not accessible and the download fails). Put it outside them, root only:
 
 ```bash
 sudo install -m 600 /dev/null /root/dr-dest.json      # then edit it
@@ -190,9 +190,10 @@ A panel with a domain does not use this file: its certificate is issued again in
    destination, it downloads that backup, checks its sha256, and restores it (sites first, with
    the databases their archives carry; a database dump older than its site's archive is skipped).
    An encrypted dump (`.enc`) whose sha256 differs from the recorded one is restored with a
-   warning in its line: older agents recorded the hash of the unencrypted dump, and the
-   integrity check (HMAC) of its decryption refuses a corrupted or modified file. For any other
-   file, a different sha256 fails the item.
+   warning in its line: older agents recorded the hash of the unencrypted dump. Its integrity is
+   then checked by the integrity tag (HMAC) of the decryption, which refuses a corrupted or
+   modified file; a dump encrypted before that tag existed has none and is decrypted unverified
+   (the agent logs it). For any other file, a different sha256 fails the item.
    Database containers that do not exist on this machine are recreated first, with the same name,
    engine, port and password. The report lists each item as restored, failed or skipped.
 The next three restore from a file on THIS machine, and the bulk action above does not fetch

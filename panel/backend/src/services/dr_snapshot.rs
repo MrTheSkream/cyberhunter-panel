@@ -1683,12 +1683,21 @@ mod tests {
         let mig = include_str!("../../migrations/20261130000100_dr_settings_restored_status.sql");
         assert!(mig.contains("'restored'") && mig.contains("dr_settings_last_status_check"));
         let src = include_str!("dr_snapshot.rs");
-        assert!(src.contains("SET last_status = 'restored'"));
+        let code = &src[..src.find("#[cfg(test)]").unwrap()];
+        let body = |sig: &str| code.split(sig).nth(1).unwrap().split("
+}
+").next().unwrap().to_string();
+        assert!(body("pub async fn mark_restored(").contains("SET last_status = 'restored'"));
+        assert!(body("pub async fn mark_restored(").contains("AND last_status = 'running'"));
         // The startup sweep and the scheduler both wait for a pending restore.
-        let run = src.split("pub async fn run(").nth(1).unwrap();
-        assert!(run.contains("dr_post_restore::pending()"));
-        let tick = src.split("async fn tick(").nth(1).unwrap();
-        assert!(tick.contains("dr_post_restore::pending()"));
+        let run = body("pub async fn run(");
+        let sweep = run.find("last_status = 'failed'").unwrap();
+        assert!(run[..sweep].contains("dr_post_restore::pending()"));
+        let tick = body("async fn tick(");
+        assert!(tick[..tick.find("RunGuard::acquire()").unwrap()].contains("dr_post_restore::pending()"));
+        // Every run resyncs before it builds.
+        let once = body("pub async fn run_once(");
+        assert!(once.find("dr_resync::resync(").unwrap() < once.find("prepare(db").unwrap());
     }
 
     #[test]

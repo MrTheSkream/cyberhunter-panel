@@ -291,7 +291,20 @@ pub async fn run_if_pending(db: PgPool, agent: AgentClient, local_server_id: Uui
     let agent_unreachable = report.errors.iter().any(|e| e.starts_with(AGENT_UNREACHABLE));
     if !agent_unreachable {
         // After the key paths are re-pointed (rebuild): SFTP lists with them.
-        report.dr_snapshots = Some(resync_after_restore(&db, &AgentHandle::Local(agent), snapshot_id.as_deref()).await);
+        // Bounded: the report (which `dr restore` waits for) and the marker
+        // removal come after it. Every off-site run resyncs again anyway.
+        let handle = AgentHandle::Local(agent);
+        let resync = resync_after_restore(&db, &handle, snapshot_id.as_deref());
+        report.dr_snapshots = Some(match tokio::time::timeout(std::time::Duration::from_secs(RESYNC_TIMEOUT_SECS), resync).await {
+            Ok(r) => r,
+            Err(_) => {
+                let e = format!(
+                    "the destinations did not answer within {RESYNC_TIMEOUT_SECS} s: the off-site copies are resynchronised again at the next off-site run"
+                );
+                tracing::warn!("Off-site restore: {e}");
+                dr_resync::ResyncReport { errors: vec![e], ..Default::default() }
+            }
+        });
     }
     if let Err(e) = write_report(Path::new(REPORT), &report) {
         tracing::error!("Off-site restore: the vhost rebuild report could not be written: {e}");
@@ -314,6 +327,8 @@ pub async fn run_if_pending(db: PgPool, agent: AgentClient, local_server_id: Uui
 }
 
 const AGENT_UNREACHABLE: &str = "the agent did not answer";
+/// How long the post-restore resync may hold the report back.
+const RESYNC_TIMEOUT_SECS: u64 = 180;
 
 /// Put the off-site copies the destinations hold back on the card, and name
 /// the archive this restore came from in the run note.
@@ -760,6 +775,7 @@ mod tests {
         let resync = body.find("resync_after_restore(").expect("the copies are resynchronised");
         assert!(mark < rebuild && rebuild < resync);
         assert!(body[rebuild..resync].contains("if !agent_unreachable"));
+        assert!(body[resync..].contains("tokio::time::timeout("), "the resync cannot hold the report back");
         let rb = src.split("async fn rebuild(").nth(1).unwrap();
         assert!(rb.find("rewrite_key_paths(").unwrap() < rb.find("check_panel_cert(").unwrap());
     }

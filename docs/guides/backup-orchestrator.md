@@ -247,7 +247,7 @@ Store backups off-server. There are exactly two destination types - `s3` and `sf
 
 Add a destination under **Backup Manager** > **Destinations**, then select it on a policy.
 
-> **SFTP with a private key: put the key where the agent can read it.** The agent that uploads, lists and downloads runs with `ProtectHome=yes`, so `/root` and `/home` do not exist for it: a `key_path` such as `/root/.ssh/backup_key` or `/home/me/.ssh/id_ed25519` fails with "no such file" although the file is there. Use a path outside them, readable by root only, for example `/etc/dockpanel/sftp-keys/backup.key`:
+> **SFTP with a private key: put the key where the agent can read it.** The agent that uploads, lists and downloads runs with `ProtectHome=yes`, so `/root` and `/home` do not exist for it: a `key_path` such as `/root/.ssh/backup_key` or `/home/me/.ssh/id_ed25519` cannot be read: ssh reports the identity file as not accessible and the connection fails, although the file is there. Use a path outside them, readable by root only, for example `/etc/dockpanel/sftp-keys/backup.key`:
 >
 > ```bash
 > sudo install -d -m 700 /etc/dockpanel/sftp-keys

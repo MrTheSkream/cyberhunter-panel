@@ -138,9 +138,11 @@ pub fn plain_file_name(name: &str) -> bool {
 /// when a plaintext file differs, and `Ok(Some(warning))` when an ENCRYPTED
 /// dump (`.enc`) differs. Agents before the fix recorded the sha256 of the
 /// plaintext dump for an encrypted one, so on those rows a mismatch says
-/// nothing about the file. Its integrity is then proved by the agent at the
-/// restore itself: `/db-backups/.../restore` checks the HMAC of the whole
+/// nothing about the file. Its integrity is then checked by the agent at the
+/// restore itself: `/db-backups/.../restore` checks the HMAC tag of the whole
 /// `.enc` before decrypting, and refuses a corrupted or tampered file (422).
+/// A legacy `.enc` (encrypted before the tag existed) has no tag: the agent
+/// decrypts it unverified and logs a warning, which the item's warning says.
 pub fn checksum_verdict(filename: &str, recorded: Option<&str>, got: &str) -> Result<Option<String>, String> {
     let Some(want) = recorded.filter(|s| !s.is_empty()) else { return Ok(None) };
     if got.eq_ignore_ascii_case(want) {
@@ -148,7 +150,7 @@ pub fn checksum_verdict(filename: &str, recorded: Option<&str>, got: &str) -> Re
     }
     if filename.ends_with(".enc") {
         return Ok(Some(format!(
-            "the downloaded sha256 {got} differs from the one recorded ({want}); older agents recorded the hash of the              unencrypted dump for an encrypted one, so the file is checked instead by the integrity check (HMAC) of its              decryption at the restore"
+            "the downloaded sha256 {got} differs from the one recorded ({want}); older agents recorded the hash of the              unencrypted dump for an encrypted one, so the file is checked instead by the integrity tag (HMAC) of its              decryption at the restore (a dump encrypted before that tag existed has none: the agent then decrypts it              unverified and logs it)"
         )));
     }
     Err(format!("checksum mismatch: downloaded sha256 {got}, the backup row says {want}"))
