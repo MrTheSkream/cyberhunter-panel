@@ -960,13 +960,31 @@ pub async fn create(
                             if let (Some(url), Some(key_enc)) = (purl, pkey_enc) {
                                 let key = crate::services::secrets_crypto::decrypt_credential_from_env(&key_enc);
                                 let zfqdn = if parent.ends_with('.') { parent.clone() } else { format!("{parent}.") };
-                                let _ = reqwest::Client::new()
-                                    .patch(&format!("{url}/api/v1/servers/localhost/zones/{zfqdn}"))
-                                    .header("X-API-Key", &key)
-                                    .json(&serde_json::json!({"rrsets":[{"name":format!("{dns_domain}."),"type":"A","ttl":300,"changetype":"REPLACE","records":[{"content":server_ip,"disabled":false}]}]}))
-                                    .send().await;
-                                tracing::info!("Auto-DNS (PowerDNS): created A record {dns_domain} → {server_ip}");
-                                emit_step(&dns_logs, site_id, "dns", "Creating DNS record", "done", None);
+                                // Check the URL is PowerDNS, then require its exact
+                                // PATCH answer (204) before reporting the record done.
+                                let client = reqwest::Client::new();
+                                let result: Result<(), crate::services::pdns_api::PdnsApiError> = async {
+                                    crate::services::pdns_api::verify_server(&client, &url, &key).await?;
+                                    let resp = client
+                                        .patch(&format!("{url}/api/v1/servers/localhost/zones/{zfqdn}"))
+                                        .header("X-API-Key", &key)
+                                        .json(&serde_json::json!({"rrsets":[{"name":format!("{dns_domain}."),"type":"A","ttl":300,"changetype":"REPLACE","records":[{"content":server_ip,"disabled":false}]}]}))
+                                        .send().await
+                                        .map_err(|e| crate::services::pdns_api::PdnsApiError::Transport(e.to_string()))?;
+                                    let (status, text) = crate::services::pdns_api::read_response(resp).await;
+                                    crate::services::pdns_api::check_patch(status, &text)
+                                }.await;
+                                match result {
+                                    Ok(()) => {
+                                        tracing::info!("Auto-DNS (PowerDNS): created A record {dns_domain} → {server_ip}");
+                                        emit_step(&dns_logs, site_id, "dns", "Creating DNS record", "done", None);
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!("Auto-DNS (PowerDNS) for {dns_domain} failed: {e}");
+                                        emit_step(&dns_logs, site_id, "dns", "Creating DNS record", "error",
+                                            Some(format!("{e} - create manually")));
+                                    }
+                                }
                             }
                         }
                     }
@@ -2721,12 +2739,22 @@ pub async fn remove(
                     if let (Some(url), Some(key_enc)) = (purl, pkey_enc) {
                         let key = crate::services::secrets_crypto::decrypt_credential_from_env(&key_enc);
                         let zfqdn = if parent.ends_with('.') { parent } else { format!("{parent}.") };
-                        let _ = reqwest::Client::new()
-                            .patch(&format!("{url}/api/v1/servers/localhost/zones/{zfqdn}"))
-                            .header("X-API-Key", &key)
-                            .json(&serde_json::json!({"rrsets":[{"name":format!("{dns_domain}."),"type":"A","ttl":300,"changetype":"DELETE","records":[]}]}))
-                            .send().await;
-                        tracing::info!("Auto-DNS cleanup (PowerDNS): deleted A record {dns_domain}");
+                        let client = reqwest::Client::new();
+                        let result: Result<(), crate::services::pdns_api::PdnsApiError> = async {
+                            crate::services::pdns_api::verify_server(&client, &url, &key).await?;
+                            let resp = client
+                                .patch(&format!("{url}/api/v1/servers/localhost/zones/{zfqdn}"))
+                                .header("X-API-Key", &key)
+                                .json(&serde_json::json!({"rrsets":[{"name":format!("{dns_domain}."),"type":"A","ttl":300,"changetype":"DELETE","records":[]}]}))
+                                .send().await
+                                .map_err(|e| crate::services::pdns_api::PdnsApiError::Transport(e.to_string()))?;
+                            let (status, text) = crate::services::pdns_api::read_response(resp).await;
+                            crate::services::pdns_api::check_patch(status, &text)
+                        }.await;
+                        match result {
+                            Ok(()) => tracing::info!("Auto-DNS cleanup (PowerDNS): deleted A record {dns_domain}"),
+                            Err(e) => tracing::warn!("Auto-DNS cleanup (PowerDNS) for {dns_domain} failed: {e}"),
+                        }
                     }
                 }
             }
@@ -6085,6 +6113,10 @@ where
         let key = crate::services::secrets_crypto::decrypt_credential_from_env(&key_enc);
         let zfqdn = if parent.ends_with('.') { parent.clone() } else { format!("{parent}.") };
         let client = reqwest::Client::new();
+        if let Err(e) = crate::services::pdns_api::verify_server(&client, &url, &key).await {
+            tracing::warn!("DNS swap (PowerDNS) for {domain} skipped: {e}");
+            return 0;
+        }
         let Ok(resp) = client
             .get(format!("{url}/api/v1/servers/localhost/zones/{zfqdn}"))
             .header("X-API-Key", &key)
@@ -6093,7 +6125,8 @@ where
         else {
             return 0;
         };
-        let Ok(zone) = resp.json::<serde_json::Value>().await else { return 0 };
+        let (status, text) = crate::services::pdns_api::read_response(resp).await;
+        let Ok(zone) = crate::services::pdns_api::check_get_zone(status, &text) else { return 0 };
         let name = format!("{domain}.");
         let rrset = zone
             .get("rrsets")
@@ -6126,7 +6159,7 @@ where
                 .json(&serde_json::json!({"rrsets":[{"name": name, "type": rtype, "ttl": ttl, "changetype": "REPLACE", "records": records}]}))
                 .send()
                 .await
-                .map(|r| r.status().is_success())
+                .map(|r| crate::services::pdns_api::check_patch(r.status().as_u16(), "").is_ok())
                 .unwrap_or(false);
             if !ok {
                 changed = 0;

@@ -614,6 +614,175 @@ async fn stage_and_install_pdns_conf(staged: &str, contents: &str) -> Result<(),
     Ok(())
 }
 
+/// First choice for the PowerDNS HTTP API port: what every install used before
+/// the port became dynamic, and what the manual setup guide in Settings shows.
+const PDNS_API_PORT_DEFAULT: u16 = 8081;
+/// Fallback range when [`PDNS_API_PORT_DEFAULT`] is taken. Clear of the panel
+/// (8080, 8443, 8880), Apache (8091, 8092) and the app and database ranges.
+const PDNS_API_PORT_FALLBACK: std::ops::RangeInclusive<u16> = 18081..=18099;
+/// How long the HTTP API may lag behind `systemctl is-active` before the
+/// install is declared failed.
+const PDNS_API_VERIFY_BUDGET: Duration = Duration::from_secs(15);
+
+/// The port the PowerDNS HTTP API should listen on: the default if free, else
+/// the first free port of the fallback range, else `None`.
+fn pick_pdns_api_port(is_free: impl Fn(u16) -> bool) -> Option<u16> {
+    std::iter::once(PDNS_API_PORT_DEFAULT)
+        .chain(PDNS_API_PORT_FALLBACK)
+        .find(|&port| is_free(port))
+}
+
+/// Same probe as `routes/system.rs` and `routes/database.rs`: a port is free
+/// when the agent can bind it on loopback right now.
+fn loopback_port_is_free(port: u16) -> bool {
+    std::net::TcpListener::bind(("127.0.0.1", port)).is_ok()
+}
+
+/// Where PowerDNS keeps its zones.
+enum PdnsStorage<'a> {
+    Sqlite,
+    /// The panel's PostgreSQL container, with the panel's own credential.
+    Pgsql { password: &'a str },
+}
+
+/// The generated `/etc/powerdns/pdns.conf` (before the optional
+/// `local-address=` pin). `api_port` is the single source of the API port.
+fn build_pdns_conf(storage: &PdnsStorage<'_>, api_key: &str, api_port: u16) -> String {
+    let (title, backend) = match storage {
+        PdnsStorage::Sqlite => (
+            "# CyberHunter - Panel PowerDNS configuration (SQLite backend)",
+            "launch=gsqlite3\n\
+             gsqlite3-database=/var/lib/powerdns/pdns.sqlite3\n"
+                .to_string(),
+        ),
+        PdnsStorage::Pgsql { password } => (
+            "# CyberHunter - Panel PowerDNS configuration",
+            format!(
+                "launch=gpgsql\n\
+                 gpgsql-host=127.0.0.1\n\
+                 gpgsql-port=5450\n\
+                 gpgsql-dbname=pdns\n\
+                 gpgsql-user=dockpanel\n\
+                 gpgsql-password={password}\n"
+            ),
+        ),
+    };
+    format!(r#"{title}
+{backend}
+# HTTP API
+api=yes
+api-key={api_key}
+webserver=yes
+webserver-address=127.0.0.1
+webserver-port={api_port}
+webserver-allow-from=127.0.0.1
+
+# SOA defaults
+default-soa-content=ns1.@ hostmaster.@ 0 10800 3600 604800 3600
+"#)
+}
+
+/// Process names in one `ss -p` line: `users:(("pdns_server",pid=1,fd=5),...)`.
+fn ss_process_names(line: &str) -> Vec<&str> {
+    let Some(users) = line.split("users:(").nth(1) else {
+        return Vec::new();
+    };
+    users
+        .split("(\"")
+        .skip(1)
+        .filter_map(|rest| rest.split('"').next())
+        .collect()
+}
+
+/// Whether `ss -tlnpH sport = :<port>` shows that port held by PowerDNS and by
+/// nothing else. A listener without process information (no permission) or
+/// owned by any other process (docker-proxy, nginx...) means the API key must
+/// not be sent there.
+fn ss_shows_pdns(output: &str) -> bool {
+    let mut lines = output.lines().filter(|l| !l.trim().is_empty()).peekable();
+    if lines.peek().is_none() {
+        return false;
+    }
+    lines.all(|line| {
+        let names = ss_process_names(line);
+        !names.is_empty() && names.iter().all(|n| n.contains("pdns"))
+    })
+}
+
+/// Whether a `GET /api/v1/servers/localhost` body describes an authoritative
+/// PowerDNS server (`{"type":"Server","daemon_type":"authoritative",...}`).
+fn is_pdns_server_detail(json: &serde_json::Value) -> bool {
+    json.get("daemon_type").and_then(|v| v.as_str()) == Some("authoritative")
+}
+
+/// Wait until the PowerDNS HTTP API on `127.0.0.1:<port>` is provably pdns's.
+///
+/// Each round first checks with `ss` that the listening socket belongs to
+/// `pdns_server`; only then is the key sent, to `servers/localhost`, whose
+/// answer must be a 200 describing an authoritative server. Returns the last
+/// reason on timeout. Neither the key nor the response body is ever echoed.
+async fn verify_pdns_api(port: u16, api_key: &str) -> Result<(), String> {
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(3))
+        .build()
+        .map_err(|e| format!("could not build the HTTP client: {e}"))?;
+    let url = format!("http://127.0.0.1:{port}/api/v1/servers/localhost");
+    let sport = format!(":{port}");
+    let deadline = tokio::time::Instant::now() + PDNS_API_VERIFY_BUDGET;
+    let mut reason;
+
+    loop {
+        let listeners = tokio::time::timeout(
+            Duration::from_secs(5),
+            safe_command("ss").args(["-tlnpH", "sport", "=", &sport]).output(),
+        ).await
+            .ok()
+            .and_then(|r| r.ok())
+            .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+            .unwrap_or_default();
+
+        if !ss_shows_pdns(&listeners) {
+            reason = if listeners.trim().is_empty() {
+                "nothing is listening on the port".to_string()
+            } else {
+                let owners: Vec<&str> = listeners.lines().flat_map(ss_process_names).collect();
+                if owners.is_empty() {
+                    "the port is held by a process that is not pdns_server".to_string()
+                } else {
+                    format!("the port is held by another process ({})", owners.join(", "))
+                }
+            };
+        } else {
+            match client.get(&url).header("X-API-Key", api_key).send().await {
+                Err(e) => reason = format!("request failed: {}", e.without_url()),
+                Ok(resp) if resp.status() != reqwest::StatusCode::OK => {
+                    reason = format!("the API answered HTTP {}", resp.status().as_u16());
+                }
+                Ok(resp) => match resp.bytes().await {
+                    Err(e) => reason = format!("reading the answer failed: {}", e.without_url()),
+                    Ok(body) => {
+                        let is_pdns = body.len() <= 64 * 1024
+                            && serde_json::from_slice::<serde_json::Value>(&body)
+                                .map(|v| is_pdns_server_detail(&v))
+                                .unwrap_or(false);
+                        if is_pdns {
+                            return Ok(());
+                        }
+                        reason = "the answer does not describe an authoritative PowerDNS server".to_string();
+                    }
+                },
+            }
+        }
+
+        if tokio::time::Instant::now() >= deadline {
+            return Err(reason);
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+}
+
 async fn install_powerdns(body: axum::body::Bytes) -> Result<Json<serde_json::Value>, ApiErr> {
     use crate::services::pkg;
 
@@ -732,23 +901,9 @@ async fn install_powerdns(body: axum::body::Bytes) -> Result<Json<serde_json::Va
         }
     }
 
-    // 4. Build the backend-specific config
-    let mut pdns_conf = if use_sqlite {
-        format!(r#"# CyberHunter - Panel PowerDNS configuration (SQLite backend)
-launch=gsqlite3
-gsqlite3-database=/var/lib/powerdns/pdns.sqlite3
-
-# HTTP API
-api=yes
-api-key={api_key}
-webserver=yes
-webserver-address=127.0.0.1
-webserver-port=8081
-webserver-allow-from=127.0.0.1
-
-# SOA defaults
-default-soa-content=ns1.@ hostmaster.@ 0 10800 3600 604800 3600
-"#)
+    // 4. Resolve the backend-specific storage settings
+    let pdns_db_password = if use_sqlite {
+        None
     } else {
         // Use the same DB password as the panel's postgres connection (never
         // hardcode). The agent unit carries no EnvironmentFile - it is started
@@ -758,34 +913,45 @@ default-soa-content=ns1.@ hostmaster.@ 0 10800 3600 604800 3600
         // matches no role, so pdns failed authentication on every start and the
         // pgsql backend could not have worked on any install. Read the real
         // credential from the API's env file instead.
-        let pdns_db_password = panel_db_password().await.ok_or_else(|| err(
+        Some(panel_db_password().await.ok_or_else(|| err(
             StatusCode::INTERNAL_SERVER_ERROR,
             "Could not read the panel database password from /etc/dockpanel/api.env - \
              install PowerDNS with the SQLite backend instead, or repair DATABASE_URL",
-        ))?;
-
-        format!(r#"# CyberHunter - Panel PowerDNS configuration
-launch=gpgsql
-gpgsql-host=127.0.0.1
-gpgsql-port=5450
-gpgsql-dbname=pdns
-gpgsql-user=dockpanel
-gpgsql-password={pdns_db_password}
-
-# HTTP API
-api=yes
-api-key={api_key}
-webserver=yes
-webserver-address=127.0.0.1
-webserver-port=8081
-webserver-allow-from=127.0.0.1
-
-# SOA defaults
-default-soa-content=ns1.@ hostmaster.@ 0 10800 3600 604800 3600
-"#)
+        ))?)
     };
 
-    // 5. Pin the listening addresses when something already owns port 53
+    // 5. Choose the HTTP API port. pdns is stopped first: on a reinstall it may
+    //    hold its own previous port, which must not read as "taken". It is
+    //    restarted below in any case. 8081 stays the first choice (existing
+    //    installs, the manual guide in Settings); when another service holds it
+    //    (typically a Docker app publishing 127.0.0.1:8081) the first free port
+    //    of the fallback range is used. One variable feeds both the config and
+    //    the returned api_url, so they can never disagree.
+    let _ = tokio::time::timeout(
+        Duration::from_secs(60),
+        safe_command("systemctl").args(["stop", "pdns"]).output(),
+    ).await;
+    let Some(api_port) = pick_pdns_api_port(loopback_port_is_free) else {
+        // Nothing was written: give back the pdns that was running before.
+        let _ = tokio::time::timeout(
+            Duration::from_secs(60),
+            safe_command("systemctl").args(["start", "pdns"]).output(),
+        ).await;
+        return Err(err(StatusCode::INTERNAL_SERVER_ERROR, &format!(
+            "No free port for the PowerDNS HTTP API on 127.0.0.1: {PDNS_API_PORT_DEFAULT} and \
+             {}-{} are all in use. Free one of them and install again.",
+            PDNS_API_PORT_FALLBACK.start(), PDNS_API_PORT_FALLBACK.end()
+        )));
+    };
+    tracing::info!("PowerDNS HTTP API will listen on 127.0.0.1:{api_port}");
+
+    let storage = match pdns_db_password.as_deref() {
+        None => PdnsStorage::Sqlite,
+        Some(password) => PdnsStorage::Pgsql { password },
+    };
+    let mut pdns_conf = build_pdns_conf(&storage, &api_key, api_port);
+
+    // 5b. Pin the listening addresses when something already owns port 53
     if let Some(addrs) = pdns_local_addresses().await {
         tracing::info!("Port 53 already in use - binding PowerDNS to {addrs}");
         pdns_conf.push_str(&format!(
@@ -795,8 +961,16 @@ default-soa-content=ns1.@ hostmaster.@ 0 10800 3600 604800 3600
         ));
     }
 
-    // 6. Write PowerDNS config
-    write_pdns_conf(&pdns_conf).await?;
+    // 6. Write PowerDNS config (the step-5 stop left pdns down; step 7 restarts it).
+    //    On a failed write the old config is still in place: give back the pdns
+    //    that was running before rather than leaving DNS down.
+    if let Err(e) = write_pdns_conf(&pdns_conf).await {
+        let _ = tokio::time::timeout(
+            Duration::from_secs(60),
+            safe_command("systemctl").args(["start", "pdns"]).output(),
+        ).await;
+        return Err(e);
+    }
 
     // 7. Enable and start. `enable` stays best-effort, but a pdns that never
     //    comes up must not be reported as a successful install - that silence
@@ -812,12 +986,24 @@ default-soa-content=ns1.@ hostmaster.@ 0 10800 3600 604800 3600
         )));
     }
 
-    tracing::info!("PowerDNS installed with API key (backend={backend_name})");
+    // 8. `active` only proves the DNS side is up: pdns stays active when its
+    //    web server cannot bind. Prove the port is pdns's own before the key
+    //    is sent there, then that the API answers as PowerDNS. The panel
+    //    records the URL and key only on Ok, so a failure here stores nothing.
+    if let Err(reason) = verify_pdns_api(api_port, &api_key).await {
+        let detail = pdns_failure_detail().await;
+        tracing::warn!("PowerDNS HTTP API check failed on 127.0.0.1:{api_port}: {reason}");
+        return Err(err(StatusCode::INTERNAL_SERVER_ERROR, &format!(
+            "PowerDNS started but its HTTP API is not reachable on 127.0.0.1:{api_port}: {reason} ({detail})"
+        )));
+    }
+
+    tracing::info!("PowerDNS installed with API key (backend={backend_name}, api port {api_port})");
 
     Ok(Json(serde_json::json!({
         "ok": true,
         "message": format!("PowerDNS installed and configured ({backend_name} backend)"),
-        "api_url": "http://127.0.0.1:8081",
+        "api_url": format!("http://127.0.0.1:{api_port}"),
         "api_key": api_key,
         "backend": backend_name,
     })))
@@ -1790,4 +1976,107 @@ async fn detect_available_php() -> Option<String> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn port_default_when_free() {
+        assert_eq!(pick_pdns_api_port(|_| true), Some(8081));
+    }
+
+    #[test]
+    fn port_falls_back_when_default_taken() {
+        assert_eq!(pick_pdns_api_port(|p| p != 8081), Some(18081));
+    }
+
+    #[test]
+    fn port_skips_taken_fallbacks() {
+        assert_eq!(pick_pdns_api_port(|p| p != 8081 && p != 18081), Some(18082));
+    }
+
+    #[test]
+    fn port_none_when_all_taken() {
+        assert_eq!(pick_pdns_api_port(|_| false), None);
+    }
+
+    #[test]
+    fn port_never_outside_the_documented_set() {
+        // A probe that only accepts ports outside the set must find nothing.
+        assert_eq!(pick_pdns_api_port(|p| p == 8080 || p == 8091 || p == 18100), None);
+    }
+
+    #[test]
+    fn ss_pdns_listener_is_pdns() {
+        let out = "LISTEN 0      128        127.0.0.1:18081      0.0.0.0:*    users:((\"pdns_server\",pid=4242,fd=7))\n";
+        assert!(ss_shows_pdns(out));
+    }
+
+    #[test]
+    fn ss_docker_proxy_is_not_pdns() {
+        let out = "LISTEN 0      4096       127.0.0.1:8081       0.0.0.0:*    users:((\"docker-proxy\",pid=999,fd=4))\n";
+        assert!(!ss_shows_pdns(out));
+    }
+
+    #[test]
+    fn ss_empty_is_not_pdns() {
+        assert!(!ss_shows_pdns(""));
+        assert!(!ss_shows_pdns("\n  \n"));
+    }
+
+    #[test]
+    fn ss_line_without_process_is_not_pdns() {
+        let out = "LISTEN 0      128        127.0.0.1:8081       0.0.0.0:*\n";
+        assert!(!ss_shows_pdns(out));
+    }
+
+    #[test]
+    fn ss_pdns_sharing_the_port_with_another_process_is_not_pdns() {
+        let out = "LISTEN 0 128 127.0.0.1:8081 0.0.0.0:* users:((\"pdns_server\",pid=1,fd=7))\n\
+                   LISTEN 0 4096 0.0.0.0:8081 0.0.0.0:* users:((\"docker-proxy\",pid=2,fd=4))\n";
+        assert!(!ss_shows_pdns(out));
+        let mixed = "LISTEN 0 128 127.0.0.1:8081 0.0.0.0:* users:((\"pdns_server\",pid=1,fd=7),(\"nginx\",pid=3,fd=6))\n";
+        assert!(!ss_shows_pdns(mixed));
+    }
+
+    #[test]
+    fn server_detail_from_pdns() {
+        let v = serde_json::json!({
+            "type": "Server", "id": "localhost", "daemon_type": "authoritative",
+            "version": "4.8.3", "url": "/api/v1/servers/localhost",
+        });
+        assert!(is_pdns_server_detail(&v));
+    }
+
+    #[test]
+    fn server_detail_from_another_server() {
+        let v = serde_json::json!({ "status": "ok", "daemon_type": "recursor" });
+        assert!(!is_pdns_server_detail(&v));
+        let html_ok = serde_json::json!("<html>ok</html>");
+        assert!(!is_pdns_server_detail(&html_ok));
+    }
+
+    #[test]
+    fn server_detail_empty_object() {
+        assert!(!is_pdns_server_detail(&serde_json::json!({})));
+    }
+
+    #[test]
+    fn conf_carries_the_chosen_port_for_both_backends() {
+        for storage in [PdnsStorage::Sqlite, PdnsStorage::Pgsql { password: "pw" }] {
+            let conf = build_pdns_conf(&storage, "k", 18082);
+            assert!(conf.contains("\nwebserver-port=18082\n"), "{conf}");
+            assert!(!conf.contains("8081"), "{conf}");
+            assert!(conf.contains("\nwebserver-address=127.0.0.1\n"));
+            assert!(conf.contains("\napi-key=k\n"));
+        }
+        let sqlite = build_pdns_conf(&PdnsStorage::Sqlite, "k", 8081);
+        assert!(sqlite.contains("\nlaunch=gsqlite3\n"));
+        assert!(sqlite.contains("\nwebserver-port=8081\n"));
+        let pgsql = build_pdns_conf(&PdnsStorage::Pgsql { password: "pw" }, "k", 8081);
+        assert!(pgsql.contains("\nlaunch=gpgsql\n"));
+        assert!(pgsql.contains("\ngpgsql-password=pw\n"));
+    }
 }

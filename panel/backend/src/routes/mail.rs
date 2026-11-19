@@ -1826,22 +1826,26 @@ async fn auto_create_mail_dns(
             })
             .collect();
 
-        let result = client
-            .patch(&format!("{url}/api/v1/servers/localhost/zones/{zone_fqdn}"))
-            .header("X-API-Key", &key)
-            .json(&serde_json::json!({ "rrsets": rrsets }))
-            .send()
-            .await;
+        // Check the URL is PowerDNS, then require its exact PATCH answer
+        // (204): another service on the port must not pass for success.
+        let result: Result<(), crate::services::pdns_api::PdnsApiError> = async {
+            crate::services::pdns_api::verify_server(&client, &url, &key).await?;
+            let resp = client
+                .patch(&format!("{url}/api/v1/servers/localhost/zones/{zone_fqdn}"))
+                .header("X-API-Key", &key)
+                .json(&serde_json::json!({ "rrsets": rrsets }))
+                .send()
+                .await
+                .map_err(|e| crate::services::pdns_api::PdnsApiError::Transport(e.to_string()))?;
+            let (status, text) = crate::services::pdns_api::read_response(resp).await;
+            crate::services::pdns_api::check_patch(status, &text)
+        }.await;
 
         match result {
-            Ok(resp) if resp.status().is_success() => {
+            Ok(()) => {
                 tracing::info!("Auto-DNS (mail/PowerDNS): created all records for {domain}");
             }
-            Ok(resp) => {
-                let text = resp.text().await.unwrap_or_default();
-                return Err(format!("PowerDNS error: {text}"));
-            }
-            Err(e) => return Err(format!("PowerDNS API error: {e}")),
+            Err(e) => return Err(e.to_string()),
         }
 
         // ── Auto-SSL for PowerDNS ────────────────────────────────────────
@@ -1942,14 +1946,24 @@ async fn auto_delete_mail_dns(
                 ]
             });
 
-            let _ = reqwest::Client::new()
-                .patch(&format!("{url}/api/v1/servers/localhost/zones/{zone_fqdn}"))
-                .header("X-API-Key", &key)
-                .json(&rrsets)
-                .send()
-                .await;
+            let client = reqwest::Client::new();
+            let result: Result<(), crate::services::pdns_api::PdnsApiError> = async {
+                crate::services::pdns_api::verify_server(&client, &url, &key).await?;
+                let resp = client
+                    .patch(&format!("{url}/api/v1/servers/localhost/zones/{zone_fqdn}"))
+                    .header("X-API-Key", &key)
+                    .json(&rrsets)
+                    .send()
+                    .await
+                    .map_err(|e| crate::services::pdns_api::PdnsApiError::Transport(e.to_string()))?;
+                let (status, text) = crate::services::pdns_api::read_response(resp).await;
+                crate::services::pdns_api::check_patch(status, &text)
+            }.await;
 
-            tracing::info!("Auto-DNS cleanup (mail/PowerDNS): deleted all records for {domain}");
+            match result {
+                Ok(()) => tracing::info!("Auto-DNS cleanup (mail/PowerDNS): deleted all records for {domain}"),
+                Err(e) => return Err(e.to_string()),
+            }
         }
     }
 

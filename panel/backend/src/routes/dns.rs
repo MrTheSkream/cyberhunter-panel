@@ -9,6 +9,7 @@ use uuid::Uuid;
 use crate::auth::{AdminUser, AuthUser};
 use crate::error::{ApiError, err, internal_error, require_admin, upstream_error};
 use crate::services::activity;
+use crate::services::pdns_api::{self, PdnsApiError};
 use crate::AppState;
 
 const CF_API: &str = "https://api.cloudflare.com/client/v4";
@@ -137,6 +138,54 @@ fn pdns_client(api_key: &str) -> Result<(reqwest::Client, reqwest::header::Heade
         reqwest::header::HeaderValue::from_static("application/json"),
     );
     Ok((client, headers))
+}
+
+/// Settings + client, then check the URL really is PowerDNS
+/// ([`pdns_api::verify_server`], cached 60 s) before the first call.
+async fn pdns_connect(
+    state: &AppState,
+) -> Result<(String, reqwest::Client, reqwest::header::HeaderMap), ApiError> {
+    let (pdns_url, pdns_key) = pdns_settings(state).await?;
+    let (client, headers) = pdns_client(&pdns_key)?;
+    pdns_api::verify_server(&client, &pdns_url, &pdns_key)
+        .await
+        .map_err(|e| pdns_error(e, StatusCode::BAD_GATEWAY, "PowerDNS request failed"))?;
+    Ok((pdns_url, client, headers))
+}
+
+/// Map a [`PdnsApiError`] to the route's answer. Something other than
+/// PowerDNS answering is always a 502 with the operator message; a real
+/// PowerDNS refusal keeps each handler's previous status and message.
+fn pdns_error(e: PdnsApiError, rejected_status: StatusCode, rejected_msg: &str) -> ApiError {
+    match e {
+        PdnsApiError::NotPowerDns => {
+            tracing::warn!("PowerDNS API URL answered, but not as PowerDNS");
+            err(StatusCode::BAD_GATEWAY, pdns_api::NOT_POWERDNS_MSG)
+        }
+        PdnsApiError::Transport(msg) => upstream_error("PowerDNS API", msg),
+        PdnsApiError::Rejected { status, body } => {
+            tracing::warn!("PowerDNS error ({status}): {body}");
+            err(rejected_status, rejected_msg)
+        }
+    }
+}
+
+/// Zone read before a PATCH. A real PowerDNS error leaves the merge base
+/// empty, as before; an answer that is not PowerDNS's is refused.
+async fn pdns_zone_or_empty(resp: reqwest::Response) -> Result<serde_json::Value, ApiError> {
+    let (status, body_text) = pdns_api::read_response(resp).await;
+    match pdns_api::check_get_zone(status, &body_text) {
+        Ok(zone) => Ok(zone),
+        Err(PdnsApiError::Rejected { .. }) => Ok(serde_json::Value::Null),
+        Err(e) => Err(pdns_error(e, StatusCode::BAD_GATEWAY, "PowerDNS request failed")),
+    }
+}
+
+/// PATCH of rrsets: exactly 204. A real refusal stays a 422 as before.
+async fn pdns_patch_result(resp: reqwest::Response) -> Result<(), ApiError> {
+    let (status, body_text) = pdns_api::read_response(resp).await;
+    pdns_api::check_patch(status, &body_text)
+        .map_err(|e| pdns_error(e, StatusCode::UNPROCESSABLE_ENTITY, "PowerDNS rejected the record"))
 }
 
 /// Ensure domain ends with a dot (FQDN) for PowerDNS.
@@ -352,8 +401,9 @@ pub async fn create_zone(
             }))))
         }
         "powerdns" => {
-            let (pdns_url, pdns_key) = pdns_settings(&state).await?;
-            let (client, headers) = pdns_client(&pdns_key)?;
+            // Checked before the INSERT below: a URL that does not answer as
+            // PowerDNS must not leave a phantom `dns_zones` row.
+            let (pdns_url, client, headers) = pdns_connect(&state).await?;
             let zone_fqdn = fqdn(domain);
 
             // Create zone in PowerDNS
@@ -366,20 +416,30 @@ pub async fn create_zone(
 
             let resp = client
                 .post(&format!("{pdns_url}/api/v1/servers/localhost/zones"))
-                .headers(headers)
+                .headers(headers.clone())
                 .json(&pdns_body)
                 .send()
                 .await
                 .map_err(|e| upstream_error("PowerDNS API", e))?;
 
-            let status = resp.status();
-            if !status.is_success() {
-                let body_text = resp.text().await.unwrap_or_default();
-                // 409 = zone already exists in PowerDNS, we can still track it
-                if status.as_u16() != 409 {
-                    tracing::warn!("PowerDNS error (create zone): {body_text}");
-                    return Err(err(StatusCode::BAD_GATEWAY, "PowerDNS request failed"));
-                }
+            // 201 with our zone's name = created; 409 = zone already exists in
+            // PowerDNS, we can still track it. Any other "success" is refused.
+            let (status, body_text) = pdns_api::read_response(resp).await;
+            let created = pdns_api::check_create_zone(status, &body_text, &zone_fqdn)
+                .map_err(|e| pdns_error(e, StatusCode::BAD_GATEWAY, "PowerDNS request failed"))?;
+
+            // A 409 carries no zone to check, so read the zone back: an impostor
+            // answering 409 must not get a `dns_zones` row either.
+            if created == pdns_api::ZoneCreated::AlreadyExists {
+                let resp = client
+                    .get(&format!("{pdns_url}/api/v1/servers/localhost/zones/{zone_fqdn}"))
+                    .headers(headers)
+                    .send()
+                    .await
+                    .map_err(|e| upstream_error("PowerDNS API", e))?;
+                let (status, body_text) = pdns_api::read_response(resp).await;
+                pdns_api::check_get_zone(status, &body_text)
+                    .map_err(|e| pdns_error(e, StatusCode::BAD_GATEWAY, "PowerDNS request failed"))?;
             }
 
             let zone: DnsZone = sqlx::query_as(
@@ -428,8 +488,7 @@ pub async fn delete_zone(
     // only drop our tracking row once the zone is actually gone, so a transient PowerDNS
     // error can't orphan an authoritative zone (panel says deleted, server still answers).
     if zone.provider == "powerdns" {
-        let (pdns_url, pdns_key) = pdns_settings(&state).await?;
-        let (client, headers) = pdns_client(&pdns_key)?;
+        let (pdns_url, client, headers) = pdns_connect(&state).await?;
         let zone_fqdn = fqdn(&zone.domain);
         let resp = client
             .delete(&format!("{pdns_url}/api/v1/servers/localhost/zones/{zone_fqdn}"))
@@ -437,13 +496,12 @@ pub async fn delete_zone(
             .send()
             .await
             .map_err(|e| upstream_error("PowerDNS delete zone", e))?;
-        let st = resp.status();
-        // 2xx = deleted; 404 = already absent - both are acceptable end states.
-        if !st.is_success() && st.as_u16() != 404 {
-            let body_text = resp.text().await.unwrap_or_default();
-            tracing::warn!("PowerDNS delete-zone error ({}): {body_text}", zone.domain);
-            return Err(err(StatusCode::BAD_GATEWAY, "PowerDNS request failed; zone not deleted"));
-        }
+        // 204 = deleted; 404 = already absent - both are acceptable end states.
+        let (st, body_text) = pdns_api::read_response(resp).await;
+        pdns_api::check_delete_zone(st, &body_text).map_err(|e| {
+            tracing::warn!("PowerDNS delete-zone refused ({})", zone.domain);
+            pdns_error(e, StatusCode::BAD_GATEWAY, "PowerDNS request failed; zone not deleted")
+        })?;
     }
 
     sqlx::query("DELETE FROM dns_zones WHERE id = $1")
@@ -498,8 +556,7 @@ pub async fn list_records(
             })))
         }
         "powerdns" => {
-            let (pdns_url, pdns_key) = pdns_settings(&state).await?;
-            let (client, headers) = pdns_client(&pdns_key)?;
+            let (pdns_url, client, headers) = pdns_connect(&state).await?;
             let zone_fqdn = fqdn(&zone.domain);
 
             let resp = client
@@ -509,16 +566,9 @@ pub async fn list_records(
                 .await
                 .map_err(|e| upstream_error("PowerDNS API", e))?;
 
-            if !resp.status().is_success() {
-                let body = resp.text().await.unwrap_or_default();
-                tracing::warn!("PowerDNS error (list records): {body}");
-                return Err(err(StatusCode::BAD_GATEWAY, "PowerDNS request failed"));
-            }
-
-            let pdns_resp: serde_json::Value = resp
-                .json()
-                .await
-                .map_err(|e| upstream_error("PowerDNS response", e))?;
+            let (status, body_text) = pdns_api::read_response(resp).await;
+            let pdns_resp = pdns_api::check_get_zone(status, &body_text)
+                .map_err(|e| pdns_error(e, StatusCode::BAD_GATEWAY, "PowerDNS request failed"))?;
 
             let rrsets = pdns_resp.get("rrsets").and_then(|v| v.as_array()).cloned().unwrap_or_default();
             let records = pdns_flatten_records(&rrsets);
@@ -593,8 +643,7 @@ pub async fn create_record(
             Ok((StatusCode::CREATED, Json(cf_resp.get("result").cloned().unwrap_or_default())))
         }
         "powerdns" => {
-            let (pdns_url, pdns_key) = pdns_settings(&state).await?;
-            let (client, headers) = pdns_client(&pdns_key)?;
+            let (pdns_url, client, headers) = pdns_connect(&state).await?;
             let zone_fqdn = fqdn(&zone.domain);
             let ttl = body.ttl.unwrap_or(3600);
 
@@ -625,18 +674,16 @@ pub async fn create_record(
                 .map_err(|e| upstream_error("PowerDNS API", e))?;
 
             let mut existing_records: Vec<serde_json::Value> = Vec::new();
-            if get_resp.status().is_success() {
-                let zone_data: serde_json::Value = get_resp.json().await.unwrap_or_default();
-                if let Some(rrsets) = zone_data.get("rrsets").and_then(|v| v.as_array()) {
-                    for rrset in rrsets {
-                        let rr_name = rrset.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                        let rr_type = rrset.get("type").and_then(|v| v.as_str()).unwrap_or("");
-                        if rr_name == rec_name && rr_type == body.rtype {
-                            if let Some(recs) = rrset.get("records").and_then(|v| v.as_array()) {
-                                existing_records = recs.clone();
-                            }
-                            break;
+            let zone_data = pdns_zone_or_empty(get_resp).await?;
+            if let Some(rrsets) = zone_data.get("rrsets").and_then(|v| v.as_array()) {
+                for rrset in rrsets {
+                    let rr_name = rrset.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                    let rr_type = rrset.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                    if rr_name == rec_name && rr_type == body.rtype {
+                        if let Some(recs) = rrset.get("records").and_then(|v| v.as_array()) {
+                            existing_records = recs.clone();
                         }
+                        break;
                     }
                 }
             }
@@ -665,11 +712,7 @@ pub async fn create_record(
                 .await
                 .map_err(|e| upstream_error("PowerDNS API", e))?;
 
-            if !resp.status().is_success() {
-                let body_text = resp.text().await.unwrap_or_default();
-                tracing::warn!("PowerDNS record error: {body_text}");
-                return Err(err(StatusCode::UNPROCESSABLE_ENTITY, "PowerDNS rejected the record"));
-            }
+            pdns_patch_result(resp).await?;
 
             activity::log_activity(
                 &state.db, claims.sub, &claims.email, "dns.record.create",
@@ -758,8 +801,7 @@ pub async fn update_record(
             Ok(Json(cf_resp.get("result").cloned().unwrap_or_default()))
         }
         "powerdns" => {
-            let (pdns_url, pdns_key) = pdns_settings(&state).await?;
-            let (client, headers) = pdns_client(&pdns_key)?;
+            let (pdns_url, client, headers) = pdns_connect(&state).await?;
             let zone_fqdn = fqdn(&zone.domain);
 
             // Parse the old record from the ID
@@ -791,7 +833,7 @@ pub async fn update_record(
                 .await
                 .map_err(|e| upstream_error("PowerDNS API", e))?;
 
-            let zone_data: serde_json::Value = get_resp.json().await.unwrap_or_default();
+            let zone_data = pdns_zone_or_empty(get_resp).await?;
             let rrsets = zone_data.get("rrsets").and_then(|v| v.as_array()).cloned().unwrap_or_default();
 
             let mut patch_rrsets: Vec<serde_json::Value> = Vec::new();
@@ -895,11 +937,7 @@ pub async fn update_record(
                 .await
                 .map_err(|e| upstream_error("PowerDNS API", e))?;
 
-            if !resp.status().is_success() {
-                let body_text = resp.text().await.unwrap_or_default();
-                tracing::warn!("PowerDNS record error: {body_text}");
-                return Err(err(StatusCode::UNPROCESSABLE_ENTITY, "PowerDNS rejected the record"));
-            }
+            pdns_patch_result(resp).await?;
 
             activity::log_activity(
                 &state.db, claims.sub, &claims.email, "dns.record.update",
@@ -976,8 +1014,7 @@ pub async fn delete_record(
             Ok(Json(serde_json::json!({ "ok": true })))
         }
         "powerdns" => {
-            let (pdns_url, pdns_key) = pdns_settings(&state).await?;
-            let (client, headers) = pdns_client(&pdns_key)?;
+            let (pdns_url, client, headers) = pdns_connect(&state).await?;
             let zone_fqdn = fqdn(&zone.domain);
 
             let (rec_name, rec_type, rec_content) = pdns_parse_record_id(&record_id)?;
@@ -990,7 +1027,7 @@ pub async fn delete_record(
                 .await
                 .map_err(|e| upstream_error("PowerDNS API", e))?;
 
-            let zone_data: serde_json::Value = get_resp.json().await.unwrap_or_default();
+            let zone_data = pdns_zone_or_empty(get_resp).await?;
             let rrsets = zone_data.get("rrsets").and_then(|v| v.as_array()).cloned().unwrap_or_default();
 
             let mut remaining: Vec<serde_json::Value> = Vec::new();
@@ -1031,11 +1068,7 @@ pub async fn delete_record(
                 .await
                 .map_err(|e| upstream_error("PowerDNS API", e))?;
 
-            if !resp.status().is_success() {
-                let body_text = resp.text().await.unwrap_or_default();
-                tracing::warn!("PowerDNS record error: {body_text}");
-                return Err(err(StatusCode::UNPROCESSABLE_ENTITY, "PowerDNS rejected the record"));
-            }
+            pdns_patch_result(resp).await?;
 
             activity::log_activity(
                 &state.db, claims.sub, &claims.email, "dns.record.delete",

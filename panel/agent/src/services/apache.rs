@@ -19,8 +19,9 @@ use crate::safe_cmd::{safe_command, safe_command_unsandboxed};
 use std::time::Duration;
 
 /// The only address Apache ever listens on. 8080, 8443 and 8880 belong to the
-/// panel and Traefik, and 8081 to PowerDNS's HTTP API (`install_powerdns`
-/// writes `webserver-port=8081`). The configure step still checks that
+/// panel and Traefik. PowerDNS's HTTP API prefers 8081 but `install_powerdns`
+/// falls back to 18081-18099 when 8081 is taken, so neither is guaranteed to
+/// be pdns's; 8091 sits outside both. The configure step still checks that
 /// nothing else holds this port and refuses with a clear message.
 pub const LISTEN_ADDR: &str = "127.0.0.1:8091";
 /// The port half of [`LISTEN_ADDR`], for the "is it free" probe.
