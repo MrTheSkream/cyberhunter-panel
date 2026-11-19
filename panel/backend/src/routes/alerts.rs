@@ -360,9 +360,12 @@ pub async fn update_rules(
 /// This does NOT widen for `claims.role == "admin"`, unlike the read routes
 /// s432 fixed - and that's not an inconsistency, it's a different axis
 /// entirely: a single resource resolved by a caller-supplied ID (this route,
-/// `auth::ServerScope`, `metrics.rs::server_metrics`, `servers.rs`'s own
-/// single-server writes) never widens for anyone, admin included - an
-/// account only acts on what it's the registered owner of. What widens is a
+/// `metrics.rs::server_metrics`, `servers.rs`'s own single-server writes)
+/// never widens for anyone, admin included - an
+/// account only acts on what it's the registered owner of. (`auth::ServerScope`
+/// used to be listed here and no longer is: it now admits an administrator to
+/// the local row, as the roles guide promises - see
+/// `auth::SERVER_SCOPE_PREDICATE`.) What widens is a
 /// FLEET-WIDE AGGREGATE with no mandatory per-resource ID (`dashboard.rs`'s
 /// `fleet_overview`/`metrics_history`/`gpu_metrics_history`/`timeline`,
 /// `drift.rs`) - there an admin legitimately needs the whole install's data

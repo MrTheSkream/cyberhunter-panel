@@ -392,6 +392,29 @@ impl FromRequestParts<AppState> for ResellerUser {
 /// ```
 pub struct ServerScope(pub Uuid, pub AgentHandle);
 
+/// Who may target a server through `X-Server-Id`. Binds `$1` = server id, `$2` =
+/// the caller's own id.
+///
+/// Two ways to satisfy it: own the row, or be an administrator and the row is
+/// this box (`is_local`). That is the reach `docs/guides/roles-and-ownership.md`
+/// gives an administrator - the machine they operate plus any server they
+/// registered themselves (the owner arm) - and nothing more: a remote server
+/// another administrator added stays theirs alone.
+///
+/// Until v3.0.0-rc.4 this was the owner arm alone. The local row belongs to the
+/// FIRST administrator, while `GET /api/servers` lists it to every administrator
+/// and the frontend sends its id as `X-Server-Id`, so a second administrator was
+/// answered "Server not found or access denied" on every page.
+///
+/// ⚠ The admin arm reads `users.role` from the DATABASE, not `claims.role`, for
+/// the reason given on `helpers::SITE_CALLER_PREDICATE`: a token keeps asserting
+/// the role it was minted with, so a demoted account would keep this reach until
+/// it expired. An impersonation token's `sub` is the impersonated account, so it
+/// gets that account's reach, not the administrator's.
+pub const SERVER_SCOPE_PREDICATE: &str = "SELECT sv.id FROM servers sv WHERE sv.id = $1 \
+    AND (sv.user_id = $2 OR (sv.is_local AND EXISTS (\
+    SELECT 1 FROM users u WHERE u.id = $2 AND u.role = 'admin')))";
+
 impl FromRequestParts<AppState> for ServerScope {
     type Rejection = ApiError;
 
@@ -438,14 +461,13 @@ impl FromRequestParts<AppState> for ServerScope {
 
         match server_id {
             Some(sid) => {
-                // Verify server belongs to the authenticated user
+                // Verify the caller owns the server, or administers this box
+                // (see SERVER_SCOPE_PREDICATE).
                 let uid = user_id.ok_or_else(|| {
                     session_invalid("Authentication required when X-Server-Id is provided")
                 })?;
 
-                let owns: Option<(Uuid,)> = sqlx::query_as(
-                    "SELECT id FROM servers WHERE id = $1 AND user_id = $2",
-                )
+                let owns: Option<(Uuid,)> = sqlx::query_as(SERVER_SCOPE_PREDICATE)
                 .bind(sid)
                 .bind(uid)
                 .fetch_optional(&state.db)
@@ -548,6 +570,35 @@ pub fn agent_rate_limit(state: &AppState, server_id: Uuid) -> Result<(), ApiErro
         return Err(err(StatusCode::TOO_MANY_REQUESTS, "Rate limit exceeded"));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod server_scope_predicate_tests {
+    use super::SERVER_SCOPE_PREDICATE as P;
+
+    fn flat() -> String {
+        P.split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+
+    /// The owner arm stays: a non-admin keeps exactly the rule it had.
+    #[test]
+    fn the_owner_arm_is_kept() {
+        assert!(flat().contains("sv.id = $1 AND (sv.user_id = $2 OR"));
+    }
+
+    /// The admin arm reaches the local row only, never a remote server another
+    /// administrator registered.
+    #[test]
+    fn the_admin_arm_is_bounded_to_the_local_row() {
+        assert!(flat().contains("(sv.is_local AND EXISTS ("));
+        assert!(!flat().contains("OR sv.is_local OR"), "is_local must not stand alone");
+    }
+
+    /// The role comes from the database row of `$2`, not from the token.
+    #[test]
+    fn the_admin_arm_reads_the_role_from_the_database() {
+        assert!(flat().contains("FROM users u WHERE u.id = $2 AND u.role = 'admin'"));
+    }
 }
 
 #[cfg(test)]
