@@ -4,6 +4,7 @@ import { api, ApiError } from "../api";
 import { formatDate } from "../utils/format";
 import ConfirmDialog from "../components/ConfirmDialog";
 import UpdateSourceCard from "../components/UpdateSourceCard";
+import DisasterRecoveryCard from "../components/DisasterRecoveryCard";
 
 interface TelemetryEvent {
   id: string;
@@ -1342,6 +1343,11 @@ export default function Telemetry() {
             <div className="text-xs text-dark-400 mt-3">
               Retained 7 days (min 3 always kept). Stored under /var/backups/dockpanel/snapshots/.
             </div>
+          </div>
+
+          {/* Disaster recovery: off-site encrypted panel snapshots */}
+          <div id="disaster-recovery" className="scroll-mt-20">
+            <DisasterRecoveryCard />
           </div>
 
           {/* Fleet rolling update */}

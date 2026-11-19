@@ -2298,7 +2298,7 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
 }
 
 /// Simple cron matcher (5 fields: minute hour day month weekday).
-fn cron_matches_now(schedule: &str, now: &chrono::DateTime<chrono::Utc>) -> bool {
+pub(crate) fn cron_matches_now(schedule: &str, now: &chrono::DateTime<chrono::Utc>) -> bool {
     let fields: Vec<&str> = schedule.split_whitespace().collect();
     if fields.len() != 5 {
         return false;

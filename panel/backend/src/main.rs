@@ -515,6 +515,11 @@ async fn main() {
     let (s_db, s_agents) = (state.db.clone(), state.agents.clone());
     spawn_supervised("telemetry_collector", &shutdown_tx, move |rx| services::telemetry_collector::run(s_db.clone(), s_agents.clone(), rx));
 
+    // Off-site disaster recovery snapshots of THIS panel (lot 2): local by intent,
+    // the snapshot is of the panel host and the upload goes through its agent.
+    let (s_db, s_agents) = (state.db.clone(), state.agents.clone());
+    spawn_supervised("dr_snapshot", &shutdown_tx, move |rx| services::dr_snapshot::run(s_db.clone(), s_agents.clone(), rx));
+
     // Periodic cleanup of token blacklist and rate limiters (every 15 minutes)
     let cleanup_blacklist = state.token_blacklist.clone();
     let cleanup_bl_db = state.db.clone();

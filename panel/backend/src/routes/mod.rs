@@ -30,6 +30,7 @@ pub mod monitors;
 pub mod notifications;
 pub mod on_call;
 pub mod escalation_policies;
+pub mod dr;
 pub mod drift;
 pub mod security;
 pub mod security_scans;
@@ -1624,6 +1625,11 @@ pub fn router() -> Router<AppState> {
         .route("/api/update/channel", get(update::get_channel).put(update::put_channel))
         .route("/api/snapshots", get(update::list_snapshots_route).post(update::create_snapshot_route))
         .route("/api/snapshots/{id}", delete(update::delete_snapshot_route))
+        // Lot 2: off-site disaster recovery snapshots (admin only)
+        .route("/api/dr", get(dr::get_status))
+        .route("/api/dr/settings", put(dr::put_settings))
+        .route("/api/dr/recipient", post(dr::enroll_recipient))
+        .route("/api/dr/run", post(dr::run_now))
         .route("/api/update/fleet", get(update::list_fleet_runs).post(update::apply_fleet))
         .route("/api/update/fleet/{id}", get(update::get_fleet_run))
         // Phase 4 W5: fleet configuration-drift report (read-only)

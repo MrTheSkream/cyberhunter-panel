@@ -56,5 +56,9 @@ url = "2"
 serde_yaml_ng = "0.10"
 hkdf = "0.12"
 zeroize = { version = "1", features = ["derive"] }
+# Lot 2: off-site disaster recovery archives, encrypted in flux to an X25519
+# recipient (the operator's recovery key). Exact version: the API moved between
+# 0.10, 0.11 and 0.12. No feature: no plugin, no ssh, no async.
+age = { version = "=0.11.5", default-features = false }
 # Phase 4 W2: render runbook markdown into HTML for email payloads.
 pulldown-cmark = { version = "0.10", default-features = false, features = ["html"] }

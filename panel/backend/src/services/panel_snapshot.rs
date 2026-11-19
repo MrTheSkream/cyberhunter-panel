@@ -37,6 +37,10 @@ const MIN_FREE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 /// just noticed" scenarios.
 pub const RETENTION_MIN: i64 = 3;
 pub const RETENTION_DAYS: i64 = 7;
+/// `trigger` of the snapshots the off-site run takes every day. They are
+/// retained on their own (the newest `RETENTION_MIN` only), so a daily
+/// schedule never pushes a pre-update or manual snapshot out of the floor.
+pub const SCHEDULED_TRIGGER: &str = "scheduled";
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)] // Fleet variant reserved for future per-server fleet snapshot tagging
@@ -44,12 +48,15 @@ pub enum SnapshotTrigger {
     Manual,
     PreUpdate { target_version: String },
     Fleet { server_id: Uuid },
+    /// Taken by the off-site disaster recovery run (`services::dr_snapshot`).
+    Scheduled,
 }
 
 impl SnapshotTrigger {
     pub fn as_str(&self) -> String {
         match self {
             SnapshotTrigger::Manual => "manual".to_string(),
+            SnapshotTrigger::Scheduled => SCHEDULED_TRIGGER.to_string(),
             SnapshotTrigger::PreUpdate { target_version } => {
                 format!("pre-update:{target_version}")
             }
@@ -302,6 +309,28 @@ async fn build_snapshot_inner(
         });
     }
 
+    // The PowerDNS zones, when PowerDNS keeps them in the panel's PostgreSQL
+    // (gpgsql): a separate database the dump above does not cover. Same guards
+    // as the main dump. A pdns.conf naming a database that does not exist is
+    // logged and recorded in metadata.json, not fatal: the zones are then not in
+    // this snapshot, and the operator is told so instead of an update refused.
+    let mut pdns_database: Option<String> = None;
+    if let Some(dbname) = read_pdns_conf().as_deref().and_then(pdns_pgsql_dbname) {
+        let exists = Command::new("docker")
+            .args(["exec", "dockpanel-postgres", "psql", "-U", "dockpanel", "-d", "dockpanel", "-tAc"])
+            .arg(format!("SELECT 1 FROM pg_database WHERE datname = '{dbname}'"))
+            .output()
+            .await?;
+        if String::from_utf8_lossy(&exists.stdout).trim() == "1" {
+            dump_database(&dbname, &staging_dir.join("db").join("pdns.sql.gz")).await?;
+            pdns_database = Some(dbname);
+        } else {
+            tracing::warn!(
+                "snapshot: pdns.conf uses the gpgsql database '{dbname}', which does not exist in the panel's PostgreSQL - DNS zones not included"
+            );
+        }
+    }
+
     // Copy /etc/dockpanel into staging. The tree is small (api.env, ssl/,
     // a handful of small text files) - recursive cp via tar piped is
     // simplest and preserves permissions cleanly.
@@ -330,6 +359,8 @@ async fn build_snapshot_inner(
         "created_at": Utc::now().to_rfc3339(),
         "trigger": trigger.as_str(),
         "operator": operator,
+        // `db/pdns.sql.gz` holds this database when set (gpgsql PowerDNS).
+        "pdns_database": pdns_database,
     });
     tokio::fs::write(
         staging_dir.join("metadata.json"),
@@ -551,28 +582,28 @@ pub async fn retention_sweep(pool: &PgPool) -> Result<u32, SnapshotError> {
     .await?;
 
     let mut removed = 0u32;
-    let cutoff = Utc::now() - chrono::Duration::days(RETENTION_DAYS);
+    let summary: Vec<(Uuid, chrono::DateTime<Utc>, String)> =
+        rows.iter().map(|s| (s.id, s.created_at, s.trigger.clone())).collect();
+    let victims = retention_victims(&summary, Utc::now());
 
-    for snap in rows.iter().skip(RETENTION_MIN as usize) {
-        if snap.created_at < cutoff {
-            // file-first; if file delete fails, leave the row for retry.
-            if let Err(e) = tokio::fs::remove_file(&snap.file_path).await {
-                if e.kind() != std::io::ErrorKind::NotFound {
-                    tracing::warn!(
-                        "retention sweep: failed to delete {}: {e} - keeping row",
-                        &snap.file_path
-                    );
-                    continue;
-                }
+    for snap in rows.iter().filter(|s| victims.contains(&s.id)) {
+        // file-first; if file delete fails, leave the row for retry.
+        if let Err(e) = tokio::fs::remove_file(&snap.file_path).await {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                tracing::warn!(
+                    "retention sweep: failed to delete {}: {e} - keeping row",
+                    &snap.file_path
+                );
+                continue;
             }
-            if sqlx::query("DELETE FROM panel_snapshots WHERE id = $1")
-                .bind(snap.id)
-                .execute(pool)
-                .await
-                .is_ok()
-            {
-                removed += 1;
-            }
+        }
+        if sqlx::query("DELETE FROM panel_snapshots WHERE id = $1")
+            .bind(snap.id)
+            .execute(pool)
+            .await
+            .is_ok()
+        {
+            removed += 1;
         }
     }
 
@@ -580,6 +611,114 @@ pub async fn retention_sweep(pool: &PgPool) -> Result<u32, SnapshotError> {
         tracing::info!("Snapshot retention sweep removed {removed} aged snapshot(s)");
     }
     Ok(removed)
+}
+
+/// Which snapshots the sweep removes, from `(id, created_at, trigger)` rows.
+///
+/// Two independent groups: the `scheduled` ones (off-site run, one a day) keep
+/// only their newest `RETENTION_MIN`, whatever their age - the off-site copy is
+/// the long-term one; every other snapshot keeps the original rule (newest
+/// `RETENTION_MIN` always, the rest until `RETENTION_DAYS`). Without the split
+/// a daily schedule would fill the floor and age out the last pre-update
+/// snapshot after a week.
+pub fn retention_victims(rows: &[(Uuid, chrono::DateTime<Utc>, String)], now: chrono::DateTime<Utc>) -> Vec<Uuid> {
+    let cutoff = now - chrono::Duration::days(RETENTION_DAYS);
+    let mut sorted: Vec<&(Uuid, chrono::DateTime<Utc>, String)> = rows.iter().collect();
+    sorted.sort_by(|a, b| b.1.cmp(&a.1));
+    let (scheduled, others): (Vec<_>, Vec<_>) = sorted.into_iter().partition(|r| r.2 == SCHEDULED_TRIGGER);
+    let mut out: Vec<Uuid> = scheduled.iter().skip(RETENTION_MIN as usize).map(|r| r.0).collect();
+    out.extend(others.iter().skip(RETENTION_MIN as usize).filter(|r| r.1 < cutoff).map(|r| r.0));
+    out
+}
+
+/// The PowerDNS database to dump with the panel's, when PowerDNS runs on the
+/// gpgsql backend IN the panel's PostgreSQL (what the installer sets up:
+/// 127.0.0.1:5450, database `pdns`). Read from the text of pdns.conf and its
+/// include-dir files; only `launch`, `gpgsql-host`, `gpgsql-port` and
+/// `gpgsql-dbname` are looked at (never the password line, never logged).
+/// `None` for sqlite, absent, or anything else.
+pub fn pdns_pgsql_dbname(conf: &str) -> Option<String> {
+    let (mut launch, mut host, mut port, mut dbname) = (Vec::<String>::new(), None, None, None);
+    for line in conf.lines() {
+        let line = line.trim();
+        if line.starts_with('#') {
+            continue;
+        }
+        let Some((k, v)) = line.split_once('=') else { continue };
+        let v = v.trim().to_string();
+        let modules = |v: &str| -> Vec<String> {
+            v.split(',').map(|m| m.trim().split(':').next().unwrap_or("").to_string()).filter(|m| !m.is_empty()).collect()
+        };
+        match k.trim() {
+            "launch" => launch = modules(&v),
+            "launch+" => launch.extend(modules(&v)),
+            "gpgsql-host" => host = Some(v),
+            "gpgsql-port" => port = Some(v),
+            "gpgsql-dbname" => dbname = Some(v),
+            _ => {}
+        }
+    }
+    if !launch.iter().any(|m| m == "gpgsql") {
+        return None;
+    }
+    let local = matches!(host.as_deref(), Some("127.0.0.1" | "localhost" | "::1"));
+    if !local || port.as_deref() != Some("5450") {
+        return None;
+    }
+    let db = dbname.unwrap_or_else(|| "pdns".into());
+    let ident = !db.is_empty() && db.len() <= 63 && db.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+    (ident && db != "dockpanel").then_some(db)
+}
+
+fn read_pdns_conf() -> Option<String> {
+    let main = std::fs::read_to_string("/etc/powerdns/pdns.conf").ok()?;
+    let mut text = main.clone();
+    if let Some(dir) = main.lines().filter_map(|l| l.trim().strip_prefix("include-dir=")).last() {
+        if let Ok(rd) = std::fs::read_dir(dir.trim()) {
+            let mut files: Vec<PathBuf> =
+                rd.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "conf")).collect();
+            files.sort();
+            for f in files {
+                if let Ok(t) = std::fs::read_to_string(&f) {
+                    text.push('\n');
+                    text.push_str(&t);
+                }
+            }
+        }
+    }
+    Some(text)
+}
+
+/// Dump one database of the panel's PostgreSQL to `out` (gzip), with the same
+/// guards as the main dump: `pipefail` and the completion marker.
+async fn dump_database(dbname: &str, out: &Path) -> Result<(), SnapshotError> {
+    let status = Command::new("bash")
+        .arg("-c")
+        .arg(format!(
+            "set -o pipefail; docker exec dockpanel-postgres pg_dump -U dockpanel --clean --if-exists {} | gzip > {}",
+            shell_escape(dbname),
+            shell_escape(&out.to_string_lossy())
+        ))
+        .status()
+        .await?;
+    if !status.success() {
+        return Err(SnapshotError::Subprocess {
+            cmd: format!("pg_dump {dbname}"),
+            stderr: format!("exit status {status}"),
+        });
+    }
+    let tail = Command::new("bash")
+        .arg("-c")
+        .arg(format!("gunzip -c {} | tail -20", shell_escape(&out.to_string_lossy())))
+        .output()
+        .await?;
+    if !String::from_utf8_lossy(&tail.stdout).contains("PostgreSQL database dump complete") {
+        return Err(SnapshotError::Subprocess {
+            cmd: format!("pg_dump {dbname}"),
+            stderr: "database dump is incomplete (completion marker absent)".into(),
+        });
+    }
+    Ok(())
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────
@@ -745,6 +884,59 @@ mod tests {
             SnapshotTrigger::Fleet { server_id: id }.as_str(),
             format!("fleet:{id}")
         );
+    }
+
+    #[test]
+    fn the_off_site_run_tags_its_snapshots_scheduled() {
+        assert_eq!(SnapshotTrigger::Scheduled.as_str(), "scheduled");
+        assert_eq!(SCHEDULED_TRIGGER, "scheduled");
+    }
+
+    #[test]
+    fn scheduled_snapshots_are_retained_apart_from_the_others() {
+        let now = Utc::now();
+        let day = |n: i64| now - chrono::Duration::days(n);
+        let ids: Vec<Uuid> = (0..8).map(|_| Uuid::new_v4()).collect();
+        let rows = vec![
+            (ids[0], day(0), "scheduled".to_string()),
+            (ids[1], day(1), "scheduled".to_string()),
+            (ids[2], day(2), "scheduled".to_string()),
+            (ids[3], day(3), "scheduled".to_string()),
+            // The last pre-update snapshot, a month old: kept, it is in the
+            // floor of its own group.
+            (ids[4], day(30), "pre-update:v3.0.1".to_string()),
+            (ids[5], day(40), "manual".to_string()),
+            (ids[6], day(50), "manual".to_string()),
+            (ids[7], day(60), "manual".to_string()),
+        ];
+        let mut v = retention_victims(&rows, now);
+        v.sort();
+        let mut expected = vec![ids[3], ids[7]];
+        expected.sort();
+        assert_eq!(v, expected);
+        // Recent non-scheduled snapshots beyond the floor stay until 7 days.
+        let recent = vec![
+            (ids[0], day(1), "manual".to_string()),
+            (ids[1], day(2), "manual".to_string()),
+            (ids[2], day(3), "manual".to_string()),
+            (ids[3], day(4), "manual".to_string()),
+        ];
+        assert!(retention_victims(&recent, now).is_empty());
+    }
+
+    #[test]
+    fn the_pdns_database_is_dumped_only_for_a_local_gpgsql_backend() {
+        let installer = "launch=gpgsql\ngpgsql-host=127.0.0.1\ngpgsql-port=5450\ngpgsql-dbname=pdns\ngpgsql-user=dockpanel\ngpgsql-password=s3cr$t\n";
+        assert_eq!(pdns_pgsql_dbname(installer).as_deref(), Some("pdns"));
+        assert_eq!(pdns_pgsql_dbname("launch=gpgsql:main\ngpgsql-host=localhost\ngpgsql-port=5450\n").as_deref(), Some("pdns"));
+        assert_eq!(pdns_pgsql_dbname("launch=gsqlite3\ngsqlite3-database=/var/lib/powerdns/pdns.sqlite3\n"), None);
+        assert_eq!(pdns_pgsql_dbname("# launch=gpgsql\nlaunch=gsqlite3\n"), None);
+        assert_eq!(pdns_pgsql_dbname("launch=gpgsql\ngpgsql-host=db.example.com\ngpgsql-port=5450\n"), None);
+        assert_eq!(pdns_pgsql_dbname("launch=gpgsql\ngpgsql-host=127.0.0.1\ngpgsql-port=5432\n"), None);
+        // Never an identifier that could escape the shell or the SQL literal.
+        assert_eq!(pdns_pgsql_dbname("launch=gpgsql\ngpgsql-host=127.0.0.1\ngpgsql-port=5450\ngpgsql-dbname=pdns';drop\n"), None);
+        assert_eq!(pdns_pgsql_dbname("launch=gpgsql\ngpgsql-host=127.0.0.1\ngpgsql-port=5450\ngpgsql-dbname=dockpanel\n"), None);
+        assert_eq!(pdns_pgsql_dbname(""), None);
     }
 
     #[test]

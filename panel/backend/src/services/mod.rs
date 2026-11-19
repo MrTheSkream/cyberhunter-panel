@@ -14,6 +14,7 @@ pub mod deploy_incidents;
 pub mod deploy_scheduler;
 pub mod domain_claim;
 pub mod drift;
+pub mod dr_snapshot;
 pub mod drill_scheduler;
 pub mod traffic_accounting_scheduler;
 pub mod email;

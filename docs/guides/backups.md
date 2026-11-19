@@ -216,3 +216,33 @@ docker exec CONTAINER_NAME mysqldump -u root -pPASSWORD DBNAME > /tmp/db-backup.
 ```
 
 Replace `CONTAINER_NAME`, `USERNAME`, `PASSWORD`, and `DBNAME` with your actual values. Find these in the panel under Databases.
+
+## Off-site panel snapshots (disaster recovery)
+
+The local dumps above stay on the server. To keep a copy of the panel itself off site, use the
+**Disaster recovery** card (Telemetry, Updates tab, under Snapshots; also linked from the Backup
+Orchestrator). Administrators only.
+
+1. **Set up recovery key**. The panel generates an age X25519 key pair, keeps only the public key
+   and its fingerprint, and shows the private key once (download or copy it, then tick
+   *I have stored the recovery key*). It is never written on the server and cannot be shown again.
+   Losing it makes the off-site archives unreadable. **Rotate recovery key** issues a new one; the
+   older remote snapshots still need the previous key.
+2. Choose one or more **Destinations** (S3 or SFTP, from the Backup Orchestrator), the
+   **Schedule** (cron, UTC, default `30 3 * * *`) and **Keep remote copies** (default 14), then
+   turn on **Off-site panel snapshots**. **Run off-site snapshot now** runs one immediately.
+
+Each run takes a panel snapshot (database dump, plus the PowerDNS database when PowerDNS uses the
+panel's PostgreSQL, plus `/etc/dockpanel` without the update token), drops the binaries and the
+frontend (a restore reinstalls the same version), encrypts it in flux with age and uploads two
+files to `<destination base>/cyberhunter-dr/<install_id>/`:
+
+- `cyberhunter-dr-<install_id>-<YYYYMMDD-HHMMSS>.tar.gz.age`, the encrypted archive;
+- `cyberhunter-dr-<install_id>-<YYYYMMDD-HHMMSS>.manifest.json`, a plaintext manifest (version,
+  architecture, date, size, sha256 of the archive, key fingerprint; no secret).
+
+`<install_id>` is the id of the panel's own server entry, stable across restores. SFTP keys whose
+path is outside `/etc/dockpanel` are copied (0600) to `/etc/dockpanel/backup-keys/` first, with an
+`index.json` naming their original paths, so the archive carries them. The panel alerts when no
+off-site copy succeeded for 48 hours. Without the panel, `age -d -i recovery-key.txt <archive>`
+decrypts an archive (Ubuntu package `age`).

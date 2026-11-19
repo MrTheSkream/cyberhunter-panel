@@ -1,5 +1,5 @@
 import { useAuth } from "../context/AuthContext";
-import { Navigate, useLocation, useNavigate } from "react-router-dom";
+import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
 import { useState, useEffect, Fragment } from "react";
 import { api } from "../api";
 import { formatSize, formatDate, timeAgo } from "../utils/format";
@@ -738,6 +738,10 @@ export default function BackupOrchestrator() {
         <div>
           <h1 className="text-sm font-medium text-dark-300 uppercase font-mono tracking-widest">Backup Orchestrator</h1>
           <p className="text-sm text-dark-200 mt-1 font-mono">Database, volume & site backups with verification</p>
+          <Link to="/telemetry?tab=updates#disaster-recovery"
+            className="inline-block text-xs text-dark-400 hover:text-rust-400 mt-1 transition-colors">
+            Off-site panel snapshots (disaster recovery)
+          </Link>
         </div>
       </div>
 
