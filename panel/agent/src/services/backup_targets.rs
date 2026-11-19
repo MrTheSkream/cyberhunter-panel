@@ -335,8 +335,9 @@ pub fn build_targets(mut containers: Vec<ContainerInfo>, roots: &[PathBuf]) -> T
                 .source
                 .clone()
                 .filter(|s| !s.is_empty())
-                .or_else(|| m.name.clone())
-                .unwrap_or_default();
+                .or_else(|| m.name.clone().filter(|n| !n.is_empty()))
+                // A tmpfs has neither a source nor a name.
+                .unwrap_or_else(|| format!("({} mount)", m.typ));
             let class = classify_mount(m, roots);
             let (kind, key, volume_name, source_path, source, slug) = match class {
                 MountClass::Excluded(reason) => {
@@ -905,5 +906,17 @@ mod tests {
         // A bind path is not a volume name and vice versa.
         assert!(find_target(&r, TargetKind::Bind, None, Some("/etc")).is_none());
         assert!(find_target(&r, TargetKind::Volume, None, Some(&up.to_string_lossy())).is_none());
+    }
+
+    #[test]
+    fn an_excluded_tmpfs_shows_a_label_not_an_empty_source() {
+        let tpl = labels(&[("dockpanel.managed", "true"), ("dockpanel.app.template", "redis")]);
+        let tmpfs = RawMount { typ: "tmpfs".into(), name: None, source: Some(String::new()) };
+        let r = build_targets(
+            vec![ContainerInfo { id: "1".into(), name: "x".into(), running: true, labels: tpl, mounts: vec![tmpfs] }],
+            &[],
+        );
+        assert_eq!(r.excluded.len(), 1);
+        assert_eq!(r.excluded[0].source, "(tmpfs mount)");
     }
 }

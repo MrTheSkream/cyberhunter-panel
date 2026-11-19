@@ -2,7 +2,7 @@
 
 <p align="center">
   <strong>A free, self-hosted server management panel, written in Rust.</strong><br>
-  Panel services run on <strong>~49MB of RAM</strong>. 840 HTTP routes. 147 app templates. 4738 regression assertions. ~57MB binaries. Zero subscriptions.
+  Panel services run on <strong>~49MB of RAM</strong>. 840 HTTP routes. 147 app templates. 4739 regression assertions. ~57MB binaries. Zero subscriptions.
 </p>
 
 <p align="center">
