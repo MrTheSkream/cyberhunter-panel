@@ -318,7 +318,7 @@ async fn rebuild(db: &PgPool, agent: &AgentHandle, local_server_id: Uuid, snapsh
         .unwrap_or_default();
 
     let sites: Vec<Site> = match sqlx::query_as::<_, Site>(
-        "SELECT * FROM sites WHERE server_id = $1 OR server_id IS NULL ORDER BY domain",
+        "SELECT * FROM sites WHERE server_id = $1 ORDER BY domain",
     )
     .bind(local_server_id)
     .fetch_all(db)

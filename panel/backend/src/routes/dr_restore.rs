@@ -3,7 +3,7 @@
 //! Every route is admin-only.
 //!
 //! - `GET  /api/dr/remote-snapshots/{id}/download`  the `.tar.gz.age` as it is, streamed
-//! - `POST /api/dr/remote-snapshots/{id}/restore`   `{identity}` -> 202 `{started, snapshot_id, archive}`
+//! - `POST /api/dr/remote-snapshots/{id}/restore`   `{identity}` -> 202 `{started, archive, install_id}`
 //! - `GET  /api/dr/restore`                          progress, last verdict, vhost rebuild, rehydration
 //! - `POST /api/dr/rehydrate`                        -> 202 `{started}`: sites and databases from remote backups
 //!
@@ -248,10 +248,10 @@ pub async fn restore_remote(
             }
         }
     });
-    let snapshot_id = rs::parse_archive_name(&copy.filename).map(|(id, _)| id.to_string());
+    let install_id = rs::parse_archive_name(&copy.filename).map(|(id, _)| id.to_string());
     Ok((
         StatusCode::ACCEPTED,
-        Json(serde_json::json!({ "started": true, "archive": copy.filename, "snapshot_id": snapshot_id })),
+        Json(serde_json::json!({ "started": true, "archive": copy.filename, "install_id": install_id })),
     ))
 }
 

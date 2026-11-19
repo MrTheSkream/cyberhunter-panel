@@ -38,8 +38,11 @@ version** as the snapshot. A different IP address is expected.
 
 ### 1. Install the same version
 
-Read the version in the manifest (`from_version`) or, once the destination file below exists, in
-the output of `dr list`. Then install exactly that release:
+The version is `from_version` in the plaintext manifest next to each archive
+(`cyberhunter-dr-<install id>-<stamp>.manifest.json`, readable with the provider's own tool), and
+in the version column of the remote copies on the Disaster recovery card. If you install another
+version first, `dr list` (step 3) still tells you which version each archive needs. Then install
+exactly that release:
 
 ```bash
 TAG=v<from_version>          # for example v2.47.3
@@ -153,13 +156,22 @@ work.
    the databases their archives carry; a database dump older than its site's archive is skipped).
    Database containers that do not exist on this machine are recreated first, with the same name,
    engine, port and password. The report lists each item as restored, failed or skipped.
-2. **App data** (Docker volumes and bind mounts, Backup Orchestrator): redeploy each app, then
-   restore its volume backups from the Backup Orchestrator.
-3. **Mail**: on the Mail page, **Mail backups**, **Restore all mail** on the latest configuration
-   backup (domains, mailboxes, configuration, then every mailbox).
+The next three restore from a file on THIS machine, and the bulk action above does not fetch
+their archives. Copy each archive from the destination first, with the provider's own tool
+(`aws s3 cp`, `rclone`, `sftp get`; the file names are those listed in the panel):
+
+2. **App data** (Docker volumes and bind mounts): redeploy each app, put its archive in
+   `/var/backups/dockpanel/volumes/<container name>/` (mode 0600, owner root), then restore it from
+   the Backup Orchestrator.
+3. **Mail**: put the configuration and mailbox archives in
+   `/var/backups/dockpanel/restore-inbox/` (mode 0600), then on the Mail page, **Mail backups**,
+   **Restore all mail** on the latest configuration backup (domains, mailboxes, configuration,
+   then every mailbox).
 4. **DNS**: the PowerDNS database came back with the snapshot when PowerDNS used the panel's
-   PostgreSQL. Otherwise, or for a newer state, restore from the DNS page, **DNS backups**. Then
-   update the records that name the old IP address (the panel's A record, the sites, MX and SPF).
+   PostgreSQL. Otherwise, or for a newer state, put the DNS archive in
+   `/var/backups/dockpanel/restore-inbox/` and restore it from the DNS page, **DNS backups**.
+   Then update the records that name the old IP address (the panel's A record, the sites, MX and
+   SPF).
 
 ### 7. Switch the DNS, then the panel certificate
 

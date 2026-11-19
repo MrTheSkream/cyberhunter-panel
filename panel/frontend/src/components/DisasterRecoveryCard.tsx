@@ -162,8 +162,8 @@ interface DrRestoreStatus {
 
 interface DrRestoreStarted {
   started: boolean;
-  snapshot_id: string;
   archive: string;
+  install_id: string | null;
 }
 
 /** A remote restore being followed. `baseline` is the last_restore.finished_at

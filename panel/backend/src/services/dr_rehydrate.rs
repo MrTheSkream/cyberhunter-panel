@@ -201,7 +201,7 @@ pub async fn run(db: PgPool, handle: AgentHandle, local_server_id: Uuid, jwt_sec
         "SELECT DISTINCT ON (b.site_id) b.site_id, s.domain, b.filename, b.uploaded, b.destination_id, \
                 d.name AS destination_name, b.created_at, b.databases_included, b.sha256_hash \
          FROM backups b JOIN sites s ON s.id = b.site_id LEFT JOIN backup_destinations d ON d.id = b.destination_id \
-         WHERE s.server_id = $1 OR s.server_id IS NULL \
+         WHERE s.server_id = $1 \
          ORDER BY b.site_id, b.created_at DESC",
     )
     .bind(local_server_id)
@@ -251,7 +251,7 @@ pub async fn run(db: PgPool, handle: AgentHandle, local_server_id: Uuid, jwt_sec
                 d.name AS destination_name, b.created_at, b.db_type, b.encrypted, b.encryption_key_version, b.sha256_hash \
          FROM database_backups b JOIN databases dd ON dd.id = b.database_id \
          LEFT JOIN backup_destinations d ON d.id = b.destination_id \
-         WHERE b.server_id = $1 OR b.server_id IS NULL \
+         WHERE b.server_id = $1 \
          ORDER BY b.database_id, b.created_at DESC",
     )
     .bind(local_server_id)
@@ -450,8 +450,10 @@ async fn recreate_missing_containers(
 ) -> Vec<String> {
     let defs: Vec<DbDef> = match sqlx::query_as(
         "SELECT d.name, d.engine, d.db_password_enc, d.port, d.stack_id, d.kind FROM databases d \
-         LEFT JOIN sites s ON s.id = d.site_id \
-         WHERE d.kind = 'container' AND (s.id IS NULL OR s.server_id = $1 OR s.server_id IS NULL) ORDER BY d.name",
+         LEFT JOIN sites s ON s.id = d.site_id LEFT JOIN docker_stacks st ON st.id = d.stack_id \
+         WHERE d.kind = 'container' \
+           AND ((s.id IS NOT NULL AND s.server_id = $1) OR (s.id IS NULL AND st.server_id = $1)) \
+         ORDER BY d.name",
     )
     .bind(local_server_id)
     .fetch_all(db)
