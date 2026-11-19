@@ -196,6 +196,8 @@ case "$args" in
         exit 0 ;;
     *"INSERT INTO panel_snapshots"*)
         exit "${STUB_RECORD_RC:-0}" ;;
+    *"INSERT INTO activity_logs"*)
+        exit "${STUB_JOURNAL_RC:-0}" ;;
     *"information_schema.tables"*)
         echo "${STUB_VERIFY_COUNT:-3}"
         exit 0 ;;
@@ -417,6 +419,58 @@ assert_has  "the detail says nothing changed"   'nothing changed'               
 assert_has  "dockpanel-api WAS restarted - nothing was lost, so nothing is held" \
             'systemctl start dockpanel-api' "$A"
 assert_lacks "and it is NOT reported as left down" 'LEFT STOPPED'                "$J"
+assert_lacks "and no rollback is journaled: the database never moved" \
+            'INSERT INTO activity_logs' "$A"
+
+echo
+echo "S6b · a manual rollback is journaled as itself, after the database is back"
+# The database restore erases every earlier entry, so only a row written after
+# the commit can survive it, and only this script is still running by then: the
+# api that boots next is the SNAPSHOT's binary, which may predate this code.
+run_restore journal yes \
+    DOCKPANEL_ROLLBACK_OPERATOR="o'brien@example.test" \
+    DOCKPANEL_ROLLBACK_FROM_VERSION=2.48.0
+chk "$([ "$RC" = "0" ] && echo 0 || echo 1)" "exits 0"
+J="$(cat "$RES_JSON")"; A="$(cat "$ACTIONS")"
+assert_has  "the verdict stays ok=true"          '"ok":true'                     "$J"
+assert_has  "it has an action of its own"        "'update.manual_rollback'"      "$A"
+assert_has  "it names the snapshot"              '"snapshot_id":"0000-journal"'  "$A"
+assert_has  "it names the version left"          '"from_version":"2.48.0"'       "$A"
+assert_has  "it names the version restored"      '"to_version":"2.47.3"'         "$A"
+assert_has  "it names the operator, SQL-quoted"  "o''brien@example.test"         "$A"
+assert_has  "it says the rollback completed"     '"outcome":"completed"'         "$A"
+assert_lacks "it does not borrow the update's motive" 'post-deploy health checks' "$A"
+RESTORE_AT="$(grep -n -m1 -- '--single-transaction' "$ACTIONS" | cut -d: -f1)"
+JOURNAL_AT="$(grep -n -m1 'INSERT INTO activity_logs' "$ACTIONS" | cut -d: -f1)"
+chk "$([ -n "$RESTORE_AT" ] && [ -n "$JOURNAL_AT" ] && [ "$JOURNAL_AT" -gt "$RESTORE_AT" ] && echo 0 || echo 1)" \
+    "the entry is written AFTER the database restore"
+assert_has  "the snapshot row is closed, so the next boot does not report an update rollback" \
+            "'2.47.3', '2.47.3'" "$A"
+
+run_restore journal_anon yes
+J="$(cat "$RES_JSON")"; A="$(cat "$ACTIONS")"
+assert_has  "an unknown operator is said to be unknown" '"operator":"unknown"'   "$A"
+assert_has  "and an unknown version too"                '"from_version":"unknown"' "$A"
+
+echo
+echo "S6c · a journal that cannot be written is reported, and undoes nothing"
+run_restore journal_fails yes STUB_JOURNAL_RC=1
+chk "$([ "$RC" = "0" ] && echo 0 || echo 1)" "exits 0: the box is restored"
+J="$(cat "$RES_JSON")"; A="$(cat "$ACTIONS")"
+assert_has  "the verdict is ok=false"            '"ok":false'                    "$J"
+assert_has  "the detail names the journal"       'journal'                       "$J"
+assert_has  "dockpanel-api WAS started"          'systemctl start dockpanel-api' "$A"
+chk "$([ "$(cat "$BIN_DIR_OUT/dockpanel-api")" = "OLD-API" ] && echo 0 || echo 1)" \
+    "the binaries are still the snapshot's"
+
+echo
+echo "S6d · a rollback that fails after the commit is journaled as failed"
+BIN_DIR_OVERRIDE="$SCRATCH/journal_partial/nonexistent-bin-dir" \
+    run_restore journal_partial yes DOCKPANEL_ROLLBACK_FROM_VERSION=2.48.0
+chk "$([ "$RC" != "0" ] && echo 0 || echo 1)" "exits non-zero"
+A="$(cat "$ACTIONS")"
+assert_has  "the entry exists"                   "'update.manual_rollback'"      "$A"
+assert_has  "and it does not claim success"      '"outcome":"failed at stage binaries"' "$A"
 
 echo
 echo "S7 · a restore leaves the CURRENT update source alone (token + update.conf)"

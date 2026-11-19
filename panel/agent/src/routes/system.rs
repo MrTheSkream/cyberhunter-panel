@@ -335,6 +335,37 @@ async fn port_check(
     Ok(Json(serde_json::json!({ "port": port, "free": free })))
 }
 
+/// Whether something accepts a TCP connection on `127.0.0.1:<port>` within `budget`.
+async fn loopback_accepts(port: u16, budget: std::time::Duration) -> bool {
+    matches!(
+        tokio::time::timeout(budget, tokio::net::TcpStream::connect(("127.0.0.1", port))).await,
+        Ok(Ok(_))
+    )
+}
+
+/// GET /system/upstream-probe?port=8080 - Is the app behind a reverse proxy answering?
+///
+/// Connects where nginx connects, so the answer does not depend on the site's
+/// public DNS. `/system/port-check` cannot stand in for this: a successful bind
+/// says the port is free, and a failed one says nothing about an app that hangs.
+async fn upstream_probe(
+    axum::extract::Query(q): axum::extract::Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, Json<serde_json::Value>)> {
+    let port: u16 = q
+        .get("port")
+        .and_then(|p| p.parse().ok())
+        .filter(|p| *p > 0)
+        .ok_or_else(|| {
+            (
+                axum::http::StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "port must be 1-65535"})),
+            )
+        })?;
+
+    let reachable = loopback_accepts(port, std::time::Duration::from_secs(2)).await;
+    Ok(Json(serde_json::json!({ "port": port, "reachable": reachable })))
+}
+
 /// TCP ports in LISTEN state in the text of `/proc/net/tcp` or `/proc/net/tcp6`.
 fn listening_ports(proc_net_tcp: &str) -> Vec<u16> {
     proc_net_tcp
@@ -417,6 +448,7 @@ pub fn router() -> Router<AppState> {
         .route("/system/network", get(network))
         .route("/system/disk-io", get(disk_io))
         .route("/system/port-check", get(port_check))
+        .route("/system/upstream-probe", get(upstream_probe))
         .route("/system/ports-in-use", get(ports_in_use))
         .route("/system/cleanup", axum::routing::post(disk_cleanup))
         .route("/system/hostname", axum::routing::post(change_hostname))
@@ -424,7 +456,25 @@ pub fn router() -> Router<AppState> {
 
 #[cfg(test)]
 mod ports_tests {
-    use super::listening_ports;
+    use super::{listening_ports, loopback_accepts};
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn a_listening_port_accepts() {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        assert!(loopback_accepts(port, Duration::from_secs(2)).await);
+    }
+
+    #[tokio::test]
+    async fn a_port_nothing_listens_on_does_not_accept() {
+        // Bound but never listening: the port is refused, and it stays reserved
+        // here, so a test running in parallel cannot be handed it meanwhile.
+        let socket = tokio::net::TcpSocket::new_v4().unwrap();
+        socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let port = socket.local_addr().unwrap().port();
+        assert!(!loopback_accepts(port, Duration::from_secs(2)).await);
+    }
 
     #[test]
     fn only_listening_sockets_count() {

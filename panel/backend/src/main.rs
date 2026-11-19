@@ -99,6 +99,25 @@ fn emit_guidance(root: &str) -> std::io::Result<()> {
     Ok(())
 }
 
+/// What `--version` or `--help` print, when one of them was asked for.
+fn informational_answer(args: &[String]) -> Option<String> {
+    let flag = args.get(1)?;
+    match flag.as_str() {
+        "--version" | "-V" => Some(format!("dockpanel-api {}", env!("CARGO_PKG_VERSION"))),
+        "--help" | "-h" => Some(format!(
+            "dockpanel-api {}\n\n\
+             Usage: dockpanel-api [OPTION]\n\n\
+             Without an option, starts the API server (JWT_SECRET and DATABASE_URL are required).\n\n\
+             Options:\n  \
+             -h, --help               Print this help and exit\n  \
+             -V, --version            Print the version and exit\n      \
+             --emit-guidance <DIR>    Write the generated guidance files under <DIR> and exit",
+            env!("CARGO_PKG_VERSION")
+        )),
+        _ => None,
+    }
+}
+
 #[tokio::main]
 async fn main() {
     // Documentation generation runs before anything else is set up: it needs no
@@ -111,6 +130,13 @@ async fn main() {
             eprintln!("failed to emit guidance docs: {e}");
             std::process::exit(1);
         }
+        return;
+    }
+
+    // Same reasoning: these two only describe the binary, and `Config::from_env`
+    // below panics without a `JWT_SECRET`.
+    if let Some(answer) = informational_answer(&args) {
+        println!("{answer}");
         return;
     }
 

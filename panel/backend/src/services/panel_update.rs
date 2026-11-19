@@ -870,6 +870,7 @@ pub async fn rollback_to_snapshot(
     handle: UpdateStateHandle,
     pool: PgPool,
     snapshot_id: Uuid,
+    operator: Option<String>,
 ) -> Result<(), OrchestratorError> {
     // Concurrent-apply guard (v2.216.0 audit): rollback used to carry NO check
     // against an update already in flight, so `/api/update/rollback` could race
@@ -892,7 +893,7 @@ pub async fn rollback_to_snapshot(
     // Everything cheap is validated synchronously so the operator gets a real
     // 4xx now rather than a 202 and a result file to go hunting for. The row,
     // the file on disk and its sha256 are all checked inside spawn_restore.
-    let result = panel_snapshot::spawn_restore(&pool, snapshot_id).await;
+    let result = panel_snapshot::spawn_restore(&pool, snapshot_id, operator.as_deref()).await;
     if result.is_err() {
         // Validation failed before any file operation started (NotFound/FileMissing/
         // hash mismatch) - release the reservation. A restore that got past

@@ -476,7 +476,9 @@ pub async fn rollback(
         .fetch_optional(&state.db)
         .await
         .map_err(|e| internal_error("rollback", e))?;
-    panel_update::rollback_to_snapshot(state.panel_update_state.clone(), state.db.clone(), body.snapshot_id)
+    // The administrator really at the keyboard, also behind a "login as user".
+    let operator = claims.imp_email.clone().unwrap_or_else(|| claims.email.clone());
+    panel_update::rollback_to_snapshot(state.panel_update_state.clone(), state.db.clone(), body.snapshot_id, Some(operator))
         .await
         .map_err(|e| match e {
             panel_update::OrchestratorError::Snapshot(

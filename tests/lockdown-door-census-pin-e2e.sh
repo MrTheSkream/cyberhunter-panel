@@ -251,7 +251,7 @@ while read -r entry; do
   [ -n "$entry" ] || continue
   f=${entry%%:*}; fn=${entry##*:}
   B=$(fnbody "$(subj "$f")" "$fn")
-  if grep -qE 'site_rate_limit\(&state\.db\)' <<< "$B"; then
+  if grep -qE 'site_rate_limit\(&state\.db, &claims\.role\)' <<< "$B"; then
     CEIL=$((CEIL+1))
   elif [ "$(basename $f)" = "migration.rs" ]; then
     if grep -qE 'ceiling|per-hour' <<< "$(sed -n '/pub async fn import(/,/^}/p' "$f")"; then

@@ -122,7 +122,7 @@ pub async fn create(
         return Err(err(StatusCode::SERVICE_UNAVAILABLE, "System is in lockdown mode"));
     }
     {
-        let max_sites: i64 = crate::routes::sites::site_rate_limit(&state.db).await;
+        let max_sites: i64 = crate::routes::sites::site_rate_limit(&state.db, &claims.role).await;
         let recent: (i64,) = sqlx::query_as(
             "SELECT COUNT(*) FROM sites WHERE user_id = $1 AND created_at > NOW() - INTERVAL '1 hour'",
         )

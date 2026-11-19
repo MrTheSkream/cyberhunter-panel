@@ -39,13 +39,94 @@ use crate::services::domain_claim;
 /// this file, which is precisely why the third one - in another module, and
 /// therefore unable to call this even had its author looked - was written with a
 /// ceiling of its own: none.
-pub(crate) async fn site_rate_limit(pool: &sqlx::PgPool) -> i64 {
-    match crate::services::security_hardening::get_setting_i64(pool, "security_site_rate_limit", 3)
-        .await
-    {
-        n if n <= 0 => i64::MAX,
-        n => n,
+///
+/// `role` is the session's: an impersonation session carries the impersonated
+/// user's, so an administrator acting as a tenant is held to the tenant's ceiling.
+pub(crate) async fn site_rate_limit(pool: &sqlx::PgPool, role: &str) -> i64 {
+    let configured =
+        crate::services::security_hardening::get_setting_i64(pool, "security_site_rate_limit", 3)
+            .await;
+    site_rate_ceiling(role, configured)
+}
+
+/// An administrator deploying a fleet of apps is not who this ceiling is for.
+fn site_rate_ceiling(role: &str, configured: i64) -> i64 {
+    if role == "admin" || configured <= 0 {
+        i64::MAX
+    } else {
+        configured
     }
+}
+
+/// What the server hosting a site reports about the app behind its reverse proxy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UpstreamState {
+    Up,
+    Down,
+    Unknown,
+}
+
+/// The local port nginx forwards this site to, for the runtimes that have one.
+fn upstream_port(runtime: &str, proxy_port: Option<i32>) -> Option<i32> {
+    proxy_port.filter(|_| matches!(runtime, "proxy" | "node" | "python"))
+}
+
+fn upstream_state_from_agent(answer: Option<&serde_json::Value>) -> UpstreamState {
+    match answer.and_then(|v| v.get("reachable")).and_then(|v| v.as_bool()) {
+        Some(true) => UpstreamState::Up,
+        Some(false) => UpstreamState::Down,
+        None => UpstreamState::Unknown,
+    }
+}
+
+/// Ask the agent of the server hosting the site, since `127.0.0.1` means that
+/// machine. An agent that is unreachable, or too old to know the probe, leaves
+/// the state unknown: that says nothing about the app.
+async fn probe_upstream(
+    state: &AppState,
+    server_id: Option<Uuid>,
+    domain: &str,
+    port: i32,
+) -> UpstreamState {
+    let Ok(agent) = crate::helpers::agent_for_site_server(state, server_id, domain).await else {
+        return UpstreamState::Unknown;
+    };
+    let path = format!("/system/upstream-probe?port={port}");
+    let answer = tokio::time::timeout(std::time::Duration::from_secs(5), agent.get(&path)).await;
+    match answer {
+        Ok(Ok(v)) => upstream_state_from_agent(Some(&v)),
+        _ => upstream_state_from_agent(None),
+    }
+}
+
+/// `public_status` is the answer to the request sent to the public domain, `None`
+/// when none came back. With a running app that only means the domain does not
+/// resolve from here yet, which is not a fault of the site.
+fn site_is_healthy(upstream: Option<UpstreamState>, public_status: Option<u16>) -> bool {
+    match (upstream, public_status) {
+        (Some(UpstreamState::Down), _) => false,
+        (Some(UpstreamState::Up), None) => true,
+        (_, Some(status)) => status < 500,
+        (_, None) => false,
+    }
+}
+
+/// A site whose app is stopped serves only 502s, whatever its certificate and
+/// backups look like, so the score cannot stay out of the red band.
+fn score_with_upstream(score: i32, upstream: Option<UpstreamState>) -> i32 {
+    match upstream {
+        Some(UpstreamState::Down) => (score - 40).min(40),
+        _ => score,
+    }
+}
+
+fn upstream_report(port: i32, state: UpstreamState) -> serde_json::Value {
+    let (name, message) = match state {
+        UpstreamState::Up => ("up", format!("The app is accepting connections on 127.0.0.1:{port}")),
+        UpstreamState::Down => ("down", format!("Nothing is accepting connections on 127.0.0.1:{port}")),
+        UpstreamState::Unknown => ("unknown", "The server could not be asked about the app".to_string()),
+    };
+    serde_json::json!({ "port": port, "state": name, "message": message })
 }
 
 /// Atomically reserve one site slot against the site owner's reseller quota. The
@@ -356,7 +437,7 @@ pub async fn create(
     // read as false and the limit became 999 - the seed disabled the very
     // feature it configures, on every install that ran the migration. 0 = off.
     {
-        let max_sites: i64 = site_rate_limit(&state.db).await;
+        let max_sites: i64 = site_rate_limit(&state.db, &claims.role).await;
         let recent: (i64,) = sqlx::query_as(
             "SELECT COUNT(*) FROM sites WHERE user_id = $1 AND created_at > NOW() - INTERVAL '1 hour'"
         )
@@ -3070,14 +3151,23 @@ pub async fn health_check(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let domain = site_domain(&state, id, &claims).await?;
 
-    // Check if site has SSL
-    let ssl: Option<(bool,)> = sqlx::query_as("SELECT ssl_enabled FROM sites WHERE id = $1")
-        .bind(id)
-        .fetch_optional(&state.db)
-        .await
-        .ok()
-        .flatten();
-    let ssl_enabled = ssl.map(|(s,)| s).unwrap_or(false);
+    // Check if site has SSL, and what it proxies to
+    let row: Option<(bool, String, Option<i32>, Option<Uuid>)> =
+        sqlx::query_as("SELECT ssl_enabled, runtime, proxy_port, server_id FROM sites WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten();
+    let (ssl_enabled, runtime, proxy_port, server_id) =
+        row.unwrap_or((false, String::new(), None, None));
+
+    let port = upstream_port(&runtime, proxy_port);
+    let upstream = match port {
+        Some(p) => Some(probe_upstream(&state, server_id, &domain, p).await),
+        None => None,
+    };
+    let upstream_json = port.zip(upstream).map(|(p, s)| upstream_report(p, s));
 
     let url = if ssl_enabled {
         format!("https://{domain}")
@@ -3098,20 +3188,22 @@ pub async fn health_check(
             let elapsed = start.elapsed().as_millis() as u32;
             let status = resp.status().as_u16();
             Ok(Json(serde_json::json!({
-                "healthy": status < 500,
+                "healthy": site_is_healthy(upstream, Some(status)),
                 "status": status,
                 "response_time_ms": elapsed,
                 "url": url,
+                "upstream": upstream_json,
             })))
         }
         Err(e) => {
             let elapsed = start.elapsed().as_millis() as u32;
             Ok(Json(serde_json::json!({
-                "healthy": false,
+                "healthy": site_is_healthy(upstream, None),
                 "status": 0,
                 "response_time_ms": elapsed,
                 "error": format!("{e}"),
                 "url": url,
+                "upstream": upstream_json,
             })))
         }
     }
@@ -3130,12 +3222,20 @@ pub async fn health_summary(
     let db = &state.db;
 
     // Verify ownership
-    let site: Option<(String, bool, Option<chrono::DateTime<chrono::Utc>>)> = sqlx::query_as(
-        &format!("SELECT s.domain, s.ssl_enabled, s.ssl_expiry FROM sites s WHERE {}", crate::helpers::SITE_CALLER_PREDICATE)
+    #[allow(clippy::type_complexity)]
+    let site: Option<(String, bool, Option<chrono::DateTime<chrono::Utc>>, String, Option<i32>, Option<Uuid>)> = sqlx::query_as(
+        &format!("SELECT s.domain, s.ssl_enabled, s.ssl_expiry, s.runtime, s.proxy_port, s.server_id FROM sites s WHERE {}", crate::helpers::SITE_CALLER_PREDICATE)
     ).bind(id).bind(claims.sub).fetch_optional(db).await
         .map_err(|e| internal_error("health summary", e))?;
 
-    let (domain, ssl_enabled, ssl_expiry) = site.ok_or_else(|| err(StatusCode::NOT_FOUND, "Site not found"))?;
+    let (domain, ssl_enabled, ssl_expiry, runtime, proxy_port, server_id) = site.ok_or_else(|| err(StatusCode::NOT_FOUND, "Site not found"))?;
+
+    // The app behind the reverse proxy, asked directly: no monitor is needed for this
+    let port = upstream_port(&runtime, proxy_port);
+    let upstream = match port {
+        Some(p) => Some(probe_upstream(&state, server_id, &domain, p).await),
+        None => None,
+    };
 
     let now = chrono::Utc::now();
 
@@ -3204,7 +3304,7 @@ pub async fn health_summary(
         score -= 5;
     }
 
-    score = score.max(0);
+    score = score_with_upstream(score, upstream).max(0);
 
     Ok(Json(serde_json::json!({
         "domain": domain,
@@ -3221,6 +3321,7 @@ pub async fn health_summary(
             "response_time_ms": response_time,
             "monitor_enabled": monitor_enabled,
         },
+        "upstream": port.zip(upstream).map(|(p, s)| upstream_report(p, s)),
         "score": score,
     })))
 }
@@ -3282,7 +3383,7 @@ pub async fn clone_site(
         return Err(err(StatusCode::SERVICE_UNAVAILABLE, "System is in lockdown mode"));
     }
     {
-        let max_sites: i64 = site_rate_limit(&state.db).await;
+        let max_sites: i64 = site_rate_limit(&state.db, &claims.role).await;
         let recent: (i64,) = sqlx::query_as(
             "SELECT COUNT(*) FROM sites WHERE user_id = $1 AND created_at > NOW() - INTERVAL '1 hour'",
         )
@@ -6254,6 +6355,93 @@ pub async fn set_proxy_options(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_admin_is_not_held_to_the_site_creation_ceiling() {
+        assert_eq!(site_rate_ceiling("admin", 3), i64::MAX);
+    }
+
+    #[test]
+    fn every_other_role_keeps_the_configured_ceiling() {
+        // An impersonation session carries the impersonated user's role, so it
+        // lands here whoever is really behind it.
+        for role in ["user", "reseller", "client", "developer", "viewer"] {
+            assert_eq!(site_rate_ceiling(role, 3), 3, "{role}");
+            assert_eq!(site_rate_ceiling(role, 0), i64::MAX, "0 still means no limit for {role}");
+            assert_eq!(site_rate_ceiling(role, -1), i64::MAX, "{role}");
+        }
+    }
+
+    #[test]
+    fn only_sites_nginx_proxies_to_a_port_have_an_upstream() {
+        for runtime in ["proxy", "node", "python"] {
+            assert_eq!(upstream_port(runtime, Some(3000)), Some(3000), "{runtime}");
+            assert_eq!(upstream_port(runtime, None), None, "{runtime}");
+        }
+        for runtime in ["static", "php"] {
+            assert_eq!(upstream_port(runtime, Some(3000)), None, "{runtime}");
+        }
+    }
+
+    #[test]
+    fn the_agents_answer_decides_the_upstream_state() {
+        let up = serde_json::json!({ "port": 3000, "reachable": true });
+        let down = serde_json::json!({ "port": 3000, "reachable": false });
+        assert_eq!(upstream_state_from_agent(Some(&up)), UpstreamState::Up);
+        assert_eq!(upstream_state_from_agent(Some(&down)), UpstreamState::Down);
+        // An agent that cannot be asked says nothing about the app.
+        assert_eq!(upstream_state_from_agent(None), UpstreamState::Unknown);
+        assert_eq!(
+            upstream_state_from_agent(Some(&serde_json::json!({}))),
+            UpstreamState::Unknown
+        );
+    }
+
+    #[test]
+    fn a_stopped_app_is_unhealthy_whatever_the_public_side_answers() {
+        for public in [None, Some(200), Some(502)] {
+            assert!(!site_is_healthy(Some(UpstreamState::Down), public), "{public:?}");
+        }
+    }
+
+    #[test]
+    fn an_unresolved_domain_does_not_condemn_a_running_app() {
+        assert!(site_is_healthy(Some(UpstreamState::Up), None));
+        assert!(site_is_healthy(Some(UpstreamState::Up), Some(200)));
+        assert!(!site_is_healthy(Some(UpstreamState::Up), Some(502)));
+    }
+
+    #[test]
+    fn without_an_upstream_verdict_the_public_check_decides_as_before() {
+        for upstream in [None, Some(UpstreamState::Unknown)] {
+            assert!(site_is_healthy(upstream, Some(200)));
+            assert!(site_is_healthy(upstream, Some(404)));
+            assert!(!site_is_healthy(upstream, Some(500)));
+            assert!(!site_is_healthy(upstream, None));
+        }
+    }
+
+    #[test]
+    fn a_stopped_app_lands_the_score_in_the_red_band() {
+        assert_eq!(score_with_upstream(65, Some(UpstreamState::Down)), 25);
+        assert!(score_with_upstream(100, Some(UpstreamState::Down)) < 50);
+    }
+
+    #[test]
+    fn only_a_stopped_app_moves_the_score() {
+        for upstream in [None, Some(UpstreamState::Up), Some(UpstreamState::Unknown)] {
+            assert_eq!(score_with_upstream(65, upstream), 65);
+        }
+    }
+
+    #[test]
+    fn the_upstream_report_states_what_was_probed() {
+        let report = upstream_report(3000, UpstreamState::Down);
+        assert_eq!(report["port"], 3000);
+        assert_eq!(report["state"], "down");
+        assert_eq!(upstream_report(3000, UpstreamState::Up)["state"], "up");
+        assert_eq!(upstream_report(3000, UpstreamState::Unknown)["state"], "unknown");
+    }
 
     #[test]
     fn automatic_ports_skip_what_the_host_holds() {

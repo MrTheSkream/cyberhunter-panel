@@ -48,6 +48,9 @@
 #   DOCKPANEL_SNAPSHOT_TARBALL   absolute path to the .tar.gz
 #   DOCKPANEL_SNAPSHOT_SHA256    expected sha256 of that tarball
 # Optional overrides: DOCKPANEL_PG_CONTAINER / _PG_USER / _PG_DB
+# Optional provenance, for the activity log entry of this rollback:
+#   DOCKPANEL_ROLLBACK_OPERATOR      who asked for it
+#   DOCKPANEL_ROLLBACK_FROM_VERSION  the version running when they did
 #
 # Result is always written to /var/lib/dockpanel/last-restore.json.
 #
@@ -77,6 +80,8 @@ PG_CONTAINER="${DOCKPANEL_PG_CONTAINER:-dockpanel-postgres}"
 # (panel_snapshot.rs build_snapshot_inner) - restore must be symmetric with dump.
 PG_USER="${DOCKPANEL_PG_USER:-dockpanel}"
 PG_DB="${DOCKPANEL_PG_DB:-dockpanel}"
+ROLLBACK_OPERATOR="${DOCKPANEL_ROLLBACK_OPERATOR:-}"
+ROLLBACK_FROM="${DOCKPANEL_ROLLBACK_FROM_VERSION:-}"
 
 # Locations. Overridable ONLY so this script can be driven end to end by
 # tests/update-rollback-pin-e2e.sh against a scratch tree: the guard below
@@ -116,6 +121,10 @@ degraded=""
 degraded_stage=""
 # Where the pre-restore database was captured; the way back from a rollback.
 PRE_DUMP=""
+# The version the snapshot puts back, read from its metadata once extracted.
+M_FROM="unknown"
+# Set once this rollback has its entry in the activity log.
+journaled=0
 
 log() { echo "[restore] $*"; command -v systemd-cat >/dev/null 2>&1 && echo "[restore] $*" | systemd-cat -t "$LOG_TAG" || true; }
 
@@ -124,6 +133,34 @@ log() { echo "[restore] $*"; command -v systemd-cat >/dev/null 2>&1 && echo "[re
 json_escape() {
     printf '%s' "$1" | tr -d '\000-\010\013\014\016-\037' \
         | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | tr '\n' ' '
+}
+
+# Quote a string for a single-quoted SQL literal.
+sqlq() { printf "%s" "$1" | sed "s/'/''/g"; }
+
+# The activity log entry of this rollback.
+#
+# Written HERE, by the restore, because nothing else can: the database restore
+# erases every entry made before it, and the api that boots afterwards is the
+# snapshot's own binary, which may predate this code. Base columns only, since
+# the schema is now the snapshot's. `user_id` stays NULL: the operator's account
+# may not exist in the restored database, and the email names them either way.
+#
+# Returns non-zero when the entry could not be written; the caller decides what
+# that means, because no failure here may abort a restore that has committed.
+journal_manual_rollback() {
+    local outcome="$1"
+    local from="${ROLLBACK_FROM:-unknown}" who="${ROLLBACK_OPERATOR:-unknown}"
+    local reason="manual rollback to snapshot $SNAP_ID, from version $from to version $M_FROM, requested by $who"
+    local details
+    details="$(printf '{"snapshot_id":"%s","from_version":"%s","to_version":"%s","operator":"%s","outcome":"%s","reason":"%s"}' \
+        "$(json_escape "$SNAP_ID")" "$(json_escape "$from")" "$(json_escape "$M_FROM")" \
+        "$(json_escape "$who")" "$(json_escape "$outcome")" "$(json_escape "$reason")")"
+    journaled=1
+    docker exec "$PG_CONTAINER" psql -U "$PG_USER" -d "$PG_DB" -tAq -v ON_ERROR_STOP=1 -c \
+"INSERT INTO activity_logs (user_email, action, target_type, target_name, details)
+ VALUES ('$(sqlq "${ROLLBACK_OPERATOR:-system}")', 'update.manual_rollback', 'panel_update', '$(sqlq "$SNAP_ID")', '$(sqlq "$details")')" \
+        </dev/null >/dev/null 2>&1
 }
 
 write_result() {
@@ -194,6 +231,14 @@ hazard_note() {
 # ended up migrated forward from a rollback that had just reported failure.
 on_exit() {
     local code=$?
+    # A rollback that stops after the commit has still replaced the database, and
+    # with it the journal: the failure gets its entry here. The success path
+    # writes its own, while it can still report a failure to do so.
+    if [ "$db_committed" = "1" ] && [ "$journaled" != "1" ]; then
+        if ! journal_manual_rollback "failed at stage $stage"; then
+            log "the rollback could not be recorded in the activity log"
+        fi
+    fi
     if [ "$services_stopped" = "1" ]; then
         if rollback_would_be_undone; then
             log "NOT starting dockpanel-api: the database was restored but the binaries were not"
@@ -232,6 +277,8 @@ if [ -z "${DOCKPANEL_RESTORE_DETACHED:-}" ] && command -v systemd-run >/dev/null
             --setenv=DOCKPANEL_BIN_DIR="$BIN_DIR" \
             --setenv=DOCKPANEL_ETC_DIR="$ETC_DIR" \
             --setenv=DOCKPANEL_HEALTH_URL="$HEALTH_URL" \
+            --setenv=DOCKPANEL_ROLLBACK_OPERATOR="$ROLLBACK_OPERATOR" \
+            --setenv=DOCKPANEL_ROLLBACK_FROM_VERSION="$ROLLBACK_FROM" \
             bash "$0"
     fi
 fi
@@ -271,6 +318,15 @@ rm -rf "$WORK/etc/update-token" "$WORK/etc/update.conf" \
 
 DUMP_GZ="$WORK/db/dump.sql.gz"
 DUMP_SQL="$WORK/db/dump.sql"
+
+# Read before anything is destroyed: every path from the commit on names this
+# version in the journal.
+meta_field() {
+    [ -f "$WORK/metadata.json" ] || return 0
+    sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" \
+        "$WORK/metadata.json" | head -1
+}
+M_FROM="$(meta_field from_version)"; [ -n "$M_FROM" ] || M_FROM="unknown"
 
 # ── 3. Prove the dump is complete BEFORE destroying anything ─────────────────
 # Decompressing to a file first also removes the pipe that made truncation
@@ -448,14 +504,19 @@ if [ -f "$DUMP_SQL" ]; then
     # (rolled_back_at came back empty and the row was gone). So the row is
     # re-established here, from the tarball we can see and the metadata inside
     # it, and marked as rolled back.
+    #
+    # A pre-update row is also closed here, on the version it was taken from. Left
+    # open, the next boot takes it for an update that has just failed and journals
+    # `update.rolled_back` with the motive of the last update, which is how a
+    # manual rollback came to be logged as "passed the post-deploy health checks".
+    # Closing it here is what also reaches an older api booted from the snapshot.
+    # Manual snapshots never carry a `to_version`.
     stage="record-rollback"
-    sqlq() { printf "%s" "$1" | sed "s/'/''/g"; }
-    meta_field() {
-        sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" \
-            "$WORK/metadata.json" 2>/dev/null | head -1
-    }
-    M_FROM="$(meta_field from_version)"; [ -n "$M_FROM" ] || M_FROM="unknown"
     M_TRIG="$(meta_field trigger)";      [ -n "$M_TRIG" ] || M_TRIG="manual"
+    case "$M_TRIG" in
+        pre-update:*) TO_SQL="'$(sqlq "$M_FROM")'" ;;
+        *)            TO_SQL="NULL" ;;
+    esac
     M_CREATED="$(meta_field created_at)"
     M_OPER="$(meta_field operator)"
     SIZE_BYTES="$(stat -c%s "$TARBALL" 2>/dev/null || echo 0)"
@@ -470,9 +531,9 @@ if [ -f "$DUMP_SQL" ]; then
     # row costs a listing entry and a `rolled_back_at` stamp; aborting used to
     # cost the rollback itself.
     if docker exec "$PG_CONTAINER" psql -U "$PG_USER" -d "$PG_DB" -tAq -v ON_ERROR_STOP=1 -c \
-"INSERT INTO panel_snapshots (id, file_path, from_version, trigger, operator, size_bytes, sha256, created_at, rolled_back_at)
- VALUES ('$SNAP_ID', '$(sqlq "$TARBALL")', '$(sqlq "$M_FROM")', '$(sqlq "$M_TRIG")', $OPER_SQL, $SIZE_BYTES, '$(sqlq "$EXPECT_SHA")', $CREATED_SQL, NOW())
- ON CONFLICT (id) DO UPDATE SET rolled_back_at = NOW()" >/dev/null 2>&1; then
+"INSERT INTO panel_snapshots (id, file_path, from_version, to_version, trigger, operator, size_bytes, sha256, created_at, rolled_back_at)
+ VALUES ('$SNAP_ID', '$(sqlq "$TARBALL")', '$(sqlq "$M_FROM")', $TO_SQL, '$(sqlq "$M_TRIG")', $OPER_SQL, $SIZE_BYTES, '$(sqlq "$EXPECT_SHA")', $CREATED_SQL, NOW())
+ ON CONFLICT (id) DO UPDATE SET rolled_back_at = NOW(), to_version = COALESCE(panel_snapshots.to_version, EXCLUDED.to_version)" >/dev/null 2>&1; then
         log "recorded rollback against snapshot $SNAP_ID"
     else
         degrade "restore applied but the rollback could not be recorded in panel_snapshots (the snapshot will not be listed as rolled back)"
@@ -594,6 +655,16 @@ for _ in $(seq 1 30); do
     sleep 2
 done
 [ -n "$HEALTH" ] || fail "panel did not answer /api/health within 60s after restore"
+
+stage="journal"
+if [ -n "$degraded" ]; then
+    journal_outcome="completed with warnings: $degraded"
+else
+    journal_outcome="completed"
+fi
+if ! journal_manual_rollback "$journal_outcome"; then
+    degrade "the rollback could not be recorded in the activity log (journal entry missing)"
+fi
 
 # A degraded restore still RESTORED - the binaries, /etc and the database are all
 # back on the snapshot and the panel answered. What did not pass is a check or

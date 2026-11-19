@@ -404,7 +404,11 @@ const RESTORE_SCRIPT_PATH: &str = "/var/lib/dockpanel/restore-snapshot.sh";
 /// mid-restore, which broke the `gunzip | psql` pipe; psql read that as a clean
 /// end of input and exited 0, and the code recorded success while the database
 /// had been reduced to 1 of its 92 tables. See `scripts/restore-snapshot.sh`.
-pub async fn spawn_restore(pool: &PgPool, snapshot_id: Uuid) -> Result<(), SnapshotError> {
+pub async fn spawn_restore(
+    pool: &PgPool,
+    snapshot_id: Uuid,
+    operator: Option<&str>,
+) -> Result<(), SnapshotError> {
     let row: Option<PanelSnapshot> =
         sqlx::query_as("SELECT * FROM panel_snapshots WHERE id = $1")
             .bind(snapshot_id)
@@ -460,9 +464,9 @@ pub async fn spawn_restore(pool: &PgPool, snapshot_id: Uuid) -> Result<(), Snaps
                 file_path.to_string_lossy()
             ),
             &format!("--setenv=DOCKPANEL_SNAPSHOT_SHA256={}", snapshot.sha256),
-            "bash",
-            RESTORE_SCRIPT_PATH,
         ])
+        .args(rollback_provenance_env(operator))
+        .args(["bash", RESTORE_SCRIPT_PATH])
         .status()
         .await?;
 
@@ -480,6 +484,22 @@ pub async fn spawn_restore(pool: &PgPool, snapshot_id: Uuid) -> Result<(), Snaps
          dockpanel-snapshot-restore-{snapshot_id}; this process will be stopped by it"
     );
     Ok(())
+}
+
+/// Who asked for this rollback and which version was running, as `systemd-run`
+/// arguments for the restore unit.
+///
+/// The restore journals the rollback itself, once the database is back, and this
+/// process is gone by then. An unknown operator is left unset.
+fn rollback_provenance_env(operator: Option<&str>) -> Vec<String> {
+    let mut env = vec![format!(
+        "--setenv=DOCKPANEL_ROLLBACK_FROM_VERSION={}",
+        env!("CARGO_PKG_VERSION")
+    )];
+    if let Some(operator) = operator {
+        env.push(format!("--setenv=DOCKPANEL_ROLLBACK_OPERATOR={operator}"));
+    }
+    env
 }
 
 /// The verdict written by the last detached restore, if any.
@@ -1061,6 +1081,34 @@ mod tests {
             verify < stop,
             "the dump must be proven complete before the panel is taken down"
         );
+    }
+
+    /// The restore journals the rollback itself, after the database is back, and
+    /// it can only name what the api hands it before stopping.
+    #[test]
+    fn the_restore_unit_is_told_who_rolled_back_and_from_which_version() {
+        let env = rollback_provenance_env(Some("admin@example.test"));
+        assert!(env.contains(&"--setenv=DOCKPANEL_ROLLBACK_OPERATOR=admin@example.test".to_string()));
+        assert!(env.contains(&format!(
+            "--setenv=DOCKPANEL_ROLLBACK_FROM_VERSION={}",
+            env!("CARGO_PKG_VERSION")
+        )));
+        assert!(
+            !rollback_provenance_env(None).iter().any(|a| a.contains("ROLLBACK_OPERATOR")),
+            "an unknown operator is left unset, not invented"
+        );
+    }
+
+    /// The script re-executes itself under systemd-run when started by hand from
+    /// the panel's cgroup: the provenance has to survive that hop too.
+    #[test]
+    fn the_restore_forwards_the_rollback_provenance_when_it_re_executes() {
+        for var in ["DOCKPANEL_ROLLBACK_OPERATOR", "DOCKPANEL_ROLLBACK_FROM_VERSION"] {
+            assert!(
+                RESTORE_SCRIPT.contains(&format!("--setenv={var}=")),
+                "{var} is lost on the re-exec"
+            );
+        }
     }
 
     #[tokio::test]
