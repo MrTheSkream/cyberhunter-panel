@@ -1,10 +1,13 @@
-//! `/api/vulnerabilities/*` (CVE scanner, batch 1: read API and on-demand scan).
+//! `/api/vulnerabilities/*` (CVE scanner: read API, on-demand scan, and since
+//! batch 2 exceptions, grouping by CVE and the alert threshold setting).
 //!
 //! Access: an administrator sees every target; any other role sees only the
 //! `site` targets of sites it owns (`sites.user_id`). Every query that returns
-//! targets or findings goes through [`VISIBLE_TARGET`]. Settings are admin only.
+//! targets or findings goes through [`VISIBLE_TARGET`]. Settings and
+//! exceptions are admin only.
 //!
-//! Contract: conception/13-scanner-cve-lot1-contrat.md.
+//! Contracts: conception/13-scanner-cve-lot1-contrat.md and
+//! conception/13-scanner-cve-lots2-5-contrat.md ("Lot 2").
 
 use std::cmp::Ordering;
 
@@ -22,26 +25,30 @@ use crate::AppState;
 use crate::auth::{AuthUser, Claims};
 use crate::error::{ApiError, err, internal_error, paginate, require_admin};
 use crate::services::security_hardening::{get_setting_bool, get_setting_i64};
-use crate::services::vuln_sweeper;
+use crate::services::vuln_sweeper::{self, ACTIVE_EXCEPTION, AlertMin};
 
 /// Visibility of a target `t`. `$1` = the caller is an administrator, `$2` = the caller's id.
 pub const VISIBLE_TARGET: &str = "($1::bool OR (t.kind = 'site' AND EXISTS (\
     SELECT 1 FROM sites s WHERE s.id = t.site_id AND s.user_id = $2)))";
 
 const SEVERITIES: &[&str] = &["critical", "high", "medium", "low", "unknown"];
-const KINDS: &[&str] = &["site", "image", "system", "wordpress"];
+const KINDS: &[&str] = &["site", "image", "system"];
 
 /// SQL twin of [`rank_cmp`]: KEV first, then risk, then severity, then newest.
 const ORDER_SQL: &str = "f.kev DESC, f.risk DESC NULLS LAST, \
     CASE f.severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END, \
     f.first_seen DESC, f.id";
 
+/// A finding with its target and its active exception (`acc_*`, NULL when none).
 const FINDING_SELECT: &str = "SELECT f.id, f.target_id, f.vuln_id, f.aliases, f.package, f.version, f.pkg_type, \
     f.location, f.severity, f.cvss, f.kev, f.kev_ransomware, f.epss, f.epss_percentile, f.risk, f.fix_state, \
     f.fixed_version, f.title, f.url, f.first_seen, f.last_seen, f.resolved_at, \
     t.kind AS t_kind, t.ref AS t_ref, t.server_id AS t_server_id, sv.name AS t_server_name, \
-    t.site_id AS t_site_id, t.app_name AS t_app_name, t.git_deploy_id AS t_git_deploy_id, t.exposed AS t_exposed \
-    FROM vuln_findings f JOIN vuln_targets t ON t.id = f.target_id JOIN servers sv ON sv.id = t.server_id";
+    t.site_id AS t_site_id, t.app_name AS t_app_name, t.git_deploy_id AS t_git_deploy_id, t.exposed AS t_exposed, \
+    ex.reason AS acc_reason, ex.expires_at AS acc_expires_at, ux.email AS acc_email \
+    FROM vuln_findings f JOIN vuln_targets t ON t.id = f.target_id JOIN servers sv ON sv.id = t.server_id \
+    LEFT JOIN vuln_exceptions ex ON ex.target_id = f.target_id AND ex.vuln_id = f.vuln_id AND ex.expires_at > now() \
+    LEFT JOIN users ux ON ux.id = ex.created_by";
 
 /// List filters, `$3..=$9`, after the visibility predicate's `$1`/`$2`.
 const LIST_FILTERS: &str = "($3::text IS NULL OR f.severity = $3) \
@@ -51,6 +58,31 @@ const LIST_FILTERS: &str = "($3::text IS NULL OR f.severity = $3) \
     AND ($7::uuid IS NULL OR t.id = $7) \
     AND ($8::bool IS NULL OR (f.fix_state = 'fixed') = $8) \
     AND ($9::bool OR f.resolved_at IS NULL)";
+
+/// `group_by=vuln`: the members of the groups on the page, `$11`/`$12` = parallel
+/// arrays of `(target_id, vuln_id)`.
+const GROUP_PACKAGES_SQL: &str = "SELECT f.target_id, f.vuln_id, f.package, f.version, f.fixed_version, f.location \
+    FROM vuln_findings f JOIN vuln_targets t ON t.id = f.target_id WHERE ";
+
+/// Exception upsert from a finding: keyed on the finding's `(target_id, vuln_id)`.
+const ACCEPT_SQL: &str = "INSERT INTO vuln_exceptions (target_id, vuln_id, reason, expires_at, created_by) \
+    SELECT f.target_id, f.vuln_id, $2, $3, $4 FROM vuln_findings f WHERE f.id = $1 \
+    ON CONFLICT (target_id, vuln_id) DO UPDATE SET reason = EXCLUDED.reason, expires_at = EXCLUDED.expires_at, \
+    created_by = EXCLUDED.created_by, created_at = now() \
+    RETURNING id, target_id, vuln_id, reason, expires_at, created_by, created_at";
+
+/// An accepted CVE is announced again when its exception ends.
+const ACCEPT_RENOTIFY_SQL: &str =
+    "UPDATE vuln_findings SET notified = FALSE WHERE target_id = $1 AND vuln_id = $2 AND resolved_at IS NULL";
+
+const FINDING_KEY_SQL: &str = "SELECT target_id, vuln_id FROM vuln_findings WHERE id = $1";
+
+const DELETE_EXCEPTION_SQL: &str = "DELETE FROM vuln_exceptions WHERE target_id = $1 AND vuln_id = $2";
+
+/// An exception lasts at most this long.
+pub const EXCEPTION_MAX_DAYS: i64 = 90;
+const EXCEPTION_REASON_MAX: usize = 500;
+const GROUP_BY: &[&str] = &["vuln"];
 
 const TARGET_SELECT: &str = "SELECT t.id, t.kind, t.ref, t.server_id, sv.name AS server_name, t.site_id, \
     t.app_name, t.git_deploy_id, t.exposed, t.fingerprint, t.sbom_at, t.matched_at, t.needs_inventory, t.last_error \
@@ -65,6 +97,8 @@ const SUMMARY_TOTALS_SQL: &str = "SELECT \
     COUNT(*) FILTER (WHERE f.fix_state = 'fixed') \
     FROM vuln_findings f JOIN vuln_targets t ON t.id = f.target_id WHERE f.resolved_at IS NULL AND ";
 
+/// Ends inside the LEFT JOIN's `ON`: the accepted-CVE exclusion goes there, so
+/// a target whose CVEs are all accepted still shows up, with zero counts.
 const SUMMARY_TARGETS_SQL: &str = "SELECT t.id, t.kind, t.ref, t.server_id, t.site_id, t.app_name, t.git_deploy_id, \
     t.sbom_at, t.matched_at, t.last_error, \
     COUNT(f.id) FILTER (WHERE f.kev) AS kev, \
@@ -72,7 +106,7 @@ const SUMMARY_TARGETS_SQL: &str = "SELECT t.id, t.kind, t.ref, t.server_id, t.si
     COUNT(f.id) FILTER (WHERE f.severity = 'high') AS high, \
     COUNT(f.id) FILTER (WHERE f.severity = 'medium') AS medium, \
     COUNT(f.id) FILTER (WHERE f.severity = 'low') AS low \
-    FROM vuln_targets t LEFT JOIN vuln_findings f ON f.target_id = t.id AND f.resolved_at IS NULL WHERE ";
+    FROM vuln_targets t LEFT JOIN vuln_findings f ON f.target_id = t.id AND f.resolved_at IS NULL ";
 
 const SUMMARY_SERVERS_SQL: &str = "SELECT st.server_id, st.db_built, st.last_match_at, st.last_error \
     FROM vuln_server_state st WHERE $1::bool OR st.server_id IN (SELECT t.server_id FROM vuln_targets t WHERE ";
@@ -111,11 +145,29 @@ pub struct FindingRow {
     pub t_app_name: Option<String>,
     pub t_git_deploy_id: Option<Uuid>,
     pub t_exposed: Option<bool>,
+    pub acc_reason: Option<String>,
+    pub acc_expires_at: Option<DateTime<Utc>>,
+    pub acc_email: Option<String>,
 }
 
 impl FindingRow {
-    fn to_json(&self) -> Value {
+    /// `accepted` when an active exception covers the CVE. Who accepted it is
+    /// shown to administrators only: a site owner does not get an
+    /// administrator's e-mail address.
+    fn accepted_json(&self, admin: bool) -> Value {
+        match (&self.acc_reason, self.acc_expires_at) {
+            (Some(reason), Some(expires_at)) => json!({
+                "reason": reason,
+                "expires_at": expires_at,
+                "created_by_email": if admin { self.acc_email.clone() } else { None },
+            }),
+            _ => Value::Null,
+        }
+    }
+
+    fn to_json(&self, admin: bool) -> Value {
         json!({
+            "accepted": self.accepted_json(admin),
             "id": self.id,
             "target_id": self.target_id,
             "vuln_id": self.vuln_id,
@@ -254,6 +306,8 @@ pub struct ListQuery {
     pub target_id: Option<String>,
     pub fixable: Option<String>,
     pub include_resolved: Option<String>,
+    pub include_accepted: Option<String>,
+    pub group_by: Option<String>,
     pub limit: Option<String>,
     pub offset: Option<String>,
 }
@@ -267,6 +321,10 @@ pub struct Filters {
     pub target_id: Option<Uuid>,
     pub fixable: Option<bool>,
     pub include_resolved: bool,
+    /// Accepted CVEs (active exception) are left out unless this is set.
+    pub include_accepted: bool,
+    /// `group_by=vuln`: one row per `(target_id, vuln_id)`.
+    pub group_by_vuln: bool,
     pub limit: i64,
     pub offset: i64,
 }
@@ -321,6 +379,8 @@ pub fn parse_filters(q: &ListQuery) -> Result<Filters, ApiError> {
         target_id: uuid_param("target_id", &q.target_id)?,
         fixable: bool_param("fixable", &q.fixable)?,
         include_resolved: bool_param("include_resolved", &q.include_resolved)?.unwrap_or(false),
+        include_accepted: bool_param("include_accepted", &q.include_accepted)?.unwrap_or(false),
+        group_by_vuln: listed("group_by", &q.group_by, GROUP_BY)?.is_some(),
         limit,
         offset,
     })
@@ -351,62 +411,149 @@ pub async fn list(
     Query(q): Query<ListQuery>,
 ) -> Result<Json<Value>, ApiError> {
     let f = parse_filters(&q)?;
-    let rows: Vec<FindingRow> = sqlx::query_as(&format!(
-        "{FINDING_SELECT} WHERE {VISIBLE_TARGET} AND {LIST_FILTERS} ORDER BY {ORDER_SQL} LIMIT $10 OFFSET $11"
-    ))
-    .bind(is_admin(&claims))
-    .bind(claims.sub)
-    .bind(&f.severity)
-    .bind(f.kev)
-    .bind(&f.kind)
-    .bind(f.server_id)
-    .bind(f.target_id)
-    .bind(f.fixable)
-    .bind(f.include_resolved)
+    let admin = is_admin(&claims);
+    // `$1..=$10`, shared by every query below: visibility, filters, accepted.
+    macro_rules! bind_filters {
+        ($q:expr) => {
+            $q.bind(admin)
+                .bind(claims.sub)
+                .bind(&f.severity)
+                .bind(f.kev)
+                .bind(&f.kind)
+                .bind(f.server_id)
+                .bind(f.target_id)
+                .bind(f.fixable)
+                .bind(f.include_resolved)
+                .bind(f.include_accepted)
+        };
+    }
+
+    if !f.group_by_vuln {
+        let rows: Vec<FindingRow> = bind_filters!(sqlx::query_as(&format!(
+            "{FINDING_SELECT} WHERE {VISIBLE_TARGET} AND {LIST_FILTERS} AND ($10::bool OR NOT {ACTIVE_EXCEPTION}) \
+             ORDER BY {ORDER_SQL} LIMIT $11 OFFSET $12"
+        )))
+        .bind(f.limit)
+        .bind(f.offset)
+        .fetch_all(&state.db)
+        .await
+        .map_err(|e| internal_error("list vulnerabilities", e))?;
+        let (total,): (i64,) = bind_filters!(sqlx::query_as(&format!(
+            "SELECT COUNT(*) FROM vuln_findings f JOIN vuln_targets t ON t.id = f.target_id \
+             WHERE {VISIBLE_TARGET} AND {LIST_FILTERS} AND ($10::bool OR NOT {ACTIVE_EXCEPTION})"
+        )))
+        .fetch_one(&state.db)
+        .await
+        .map_err(|e| internal_error("count vulnerabilities", e))?;
+        return Ok(Json(json!({
+            "items": rows.iter().map(|r| r.to_json(admin)).collect::<Vec<_>>(),
+            "total": total,
+        })));
+    }
+
+    // group_by=vuln: the highest-ranked finding of each (target, CVE) stands
+    // for the group, ranked and paginated like the plain list.
+    let reps: Vec<FindingRow> = bind_filters!(sqlx::query_as(&format!(
+        "SELECT f.* FROM (SELECT f.*, row_number() OVER (PARTITION BY f.target_id, f.vuln_id ORDER BY {ORDER_SQL}) \
+         AS group_rank FROM ({FINDING_SELECT} WHERE {VISIBLE_TARGET} AND {LIST_FILTERS} \
+         AND ($10::bool OR NOT {ACTIVE_EXCEPTION})) f) f WHERE f.group_rank = 1 \
+         ORDER BY {ORDER_SQL} LIMIT $11 OFFSET $12"
+    )))
     .bind(f.limit)
     .bind(f.offset)
     .fetch_all(&state.db)
     .await
-    .map_err(|e| internal_error("list vulnerabilities", e))?;
-    let (total,): (i64,) = sqlx::query_as(&format!(
-        "SELECT COUNT(*) FROM vuln_findings f JOIN vuln_targets t ON t.id = f.target_id \
-         WHERE {VISIBLE_TARGET} AND {LIST_FILTERS}"
-    ))
-    .bind(is_admin(&claims))
-    .bind(claims.sub)
-    .bind(&f.severity)
-    .bind(f.kev)
-    .bind(&f.kind)
-    .bind(f.server_id)
-    .bind(f.target_id)
-    .bind(f.fixable)
-    .bind(f.include_resolved)
+    .map_err(|e| internal_error("list grouped vulnerabilities", e))?;
+    let (total,): (i64,) = bind_filters!(sqlx::query_as(&format!(
+        "SELECT COUNT(*) FROM (SELECT DISTINCT f.target_id, f.vuln_id FROM vuln_findings f \
+         JOIN vuln_targets t ON t.id = f.target_id \
+         WHERE {VISIBLE_TARGET} AND {LIST_FILTERS} AND ($10::bool OR NOT {ACTIVE_EXCEPTION})) g"
+    )))
     .fetch_one(&state.db)
     .await
-    .map_err(|e| internal_error("count vulnerabilities", e))?;
+    .map_err(|e| internal_error("count grouped vulnerabilities", e))?;
+    let target_ids: Vec<Uuid> = reps.iter().map(|r| r.target_id).collect();
+    let vuln_ids: Vec<String> = reps.iter().map(|r| r.vuln_id.clone()).collect();
+    let members: Vec<PackageRow> = if reps.is_empty() {
+        Vec::new()
+    } else {
+        bind_filters!(sqlx::query_as(&format!(
+            "{GROUP_PACKAGES_SQL}{VISIBLE_TARGET} AND {LIST_FILTERS} AND ($10::bool OR NOT {ACTIVE_EXCEPTION}) \
+             AND (f.target_id, f.vuln_id) IN (SELECT * FROM unnest($11::uuid[], $12::text[])) \
+             ORDER BY f.package, f.version"
+        )))
+        .bind(&target_ids)
+        .bind(&vuln_ids)
+        .fetch_all(&state.db)
+        .await
+        .map_err(|e| internal_error("grouped vulnerability packages", e))?
+    };
     Ok(Json(json!({
-        "items": rows.iter().map(FindingRow::to_json).collect::<Vec<_>>(),
+        "items": group_items(&reps, &members, admin),
         "total": total,
     })))
 }
 
+/// One component of a `group_by=vuln` row.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct PackageRow {
+    pub target_id: Uuid,
+    pub vuln_id: String,
+    pub package: String,
+    pub version: String,
+    pub fixed_version: Option<String>,
+    pub location: Option<String>,
+}
+
+/// The grouped items: each representative's JSON plus the `packages` of its
+/// `(target_id, vuln_id)`, in the representatives' order.
+pub fn group_items(reps: &[FindingRow], members: &[PackageRow], admin: bool) -> Vec<Value> {
+    reps.iter()
+        .map(|r| {
+            let packages: Vec<Value> = members
+                .iter()
+                .filter(|m| m.target_id == r.target_id && m.vuln_id == r.vuln_id)
+                .map(|m| {
+                    json!({
+                        "package": m.package, "version": m.version,
+                        "fixed_version": m.fixed_version, "location": m.location,
+                    })
+                })
+                .collect();
+            let mut item = r.to_json(admin);
+            item["packages"] = Value::Array(packages);
+            item
+        })
+        .collect()
+}
+
 /// GET /api/vulnerabilities/summary
-pub async fn summary(State(state): State<AppState>, AuthUser(claims): AuthUser) -> Result<Json<Value>, ApiError> {
+pub async fn summary(
+    State(state): State<AppState>,
+    AuthUser(claims): AuthUser,
+    Query(q): Query<SummaryQuery>,
+) -> Result<Json<Value>, ApiError> {
     let admin = is_admin(&claims);
-    let (kev, critical, high, medium, low, fixable): (i64, i64, i64, i64, i64, i64) =
-        sqlx::query_as(&format!("{SUMMARY_TOTALS_SQL}{VISIBLE_TARGET}"))
-            .bind(admin)
-            .bind(claims.sub)
-            .fetch_one(&state.db)
-            .await
-            .map_err(|e| internal_error("vulnerability totals", e))?;
-    let targets: Vec<SummaryTargetRow> =
-        sqlx::query_as(&format!("{SUMMARY_TARGETS_SQL}{VISIBLE_TARGET} GROUP BY t.id ORDER BY t.kind, t.ref"))
-            .bind(admin)
-            .bind(claims.sub)
-            .fetch_all(&state.db)
-            .await
-            .map_err(|e| internal_error("vulnerability targets", e))?;
+    let include_accepted = bool_param("include_accepted", &q.include_accepted)?.unwrap_or(false);
+    let (kev, critical, high, medium, low, fixable): (i64, i64, i64, i64, i64, i64) = sqlx::query_as(&format!(
+        "{SUMMARY_TOTALS_SQL}{VISIBLE_TARGET} AND ($3::bool OR NOT {ACTIVE_EXCEPTION})"
+    ))
+    .bind(admin)
+    .bind(claims.sub)
+    .bind(include_accepted)
+    .fetch_one(&state.db)
+    .await
+    .map_err(|e| internal_error("vulnerability totals", e))?;
+    let targets: Vec<SummaryTargetRow> = sqlx::query_as(&format!(
+        "{SUMMARY_TARGETS_SQL}AND ($3::bool OR NOT {ACTIVE_EXCEPTION}) \
+         WHERE {VISIBLE_TARGET} GROUP BY t.id ORDER BY t.kind, t.ref"
+    ))
+    .bind(admin)
+    .bind(claims.sub)
+    .bind(include_accepted)
+    .fetch_all(&state.db)
+    .await
+    .map_err(|e| internal_error("vulnerability targets", e))?;
     let servers: Vec<(Uuid, Option<DateTime<Utc>>, Option<DateTime<Utc>>, Option<String>)> =
         sqlx::query_as(&format!("{SUMMARY_SERVERS_SQL}{VISIBLE_TARGET}) ORDER BY st.server_id"))
             .bind(admin)
@@ -431,6 +578,11 @@ pub async fn summary(State(state): State<AppState>, AuthUser(claims): AuthUser) 
 }
 
 #[derive(Debug, Default, Deserialize)]
+pub struct SummaryQuery {
+    pub include_accepted: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
 pub struct TargetQuery {
     pub include_resolved: Option<String>,
 }
@@ -452,9 +604,10 @@ pub async fn target_detail(
             .await
             .map_err(|e| internal_error("vulnerability target findings", e))?;
     sort_findings(&mut findings);
+    let admin = is_admin(&claims);
     Ok(Json(json!({
         "target": target.to_json(),
-        "findings": findings.iter().map(FindingRow::to_json).collect::<Vec<_>>(),
+        "findings": findings.iter().map(|r| r.to_json(admin)).collect::<Vec<_>>(),
     })))
 }
 
@@ -490,13 +643,16 @@ pub async fn get_settings(State(state): State<AppState>, AuthUser(claims): AuthU
     let enabled = get_setting_bool(&state.db, vuln_sweeper::SETTING_ENABLED, true).await;
     let match_hour =
         get_setting_i64(&state.db, vuln_sweeper::SETTING_MATCH_HOUR, vuln_sweeper::DEFAULT_MATCH_HOUR).await.clamp(0, 23);
-    Ok(Json(json!({ "enabled": enabled, "match_hour": match_hour })))
+    let alert_min = vuln_sweeper::alert_min(&state.db).await;
+    Ok(Json(json!({ "enabled": enabled, "match_hour": match_hour, "alert_min": alert_min.as_str() })))
 }
 
 #[derive(Debug, Deserialize)]
 pub struct SettingsBody {
     pub enabled: bool,
     pub match_hour: i64,
+    /// `kev_and_fixable_high` or `critical_any`; left as it is when absent.
+    pub alert_min: Option<String>,
 }
 
 /// PUT /api/vulnerabilities/settings (admin)
@@ -509,9 +665,19 @@ pub async fn put_settings(
     if !(0..=23).contains(&body.match_hour) {
         return Err(err(StatusCode::BAD_REQUEST, "match_hour must be 0..=23"));
     }
+    let alert_min = match body.alert_min.as_deref() {
+        None => None,
+        Some(s) => Some(AlertMin::parse(s).ok_or_else(|| {
+            err(StatusCode::BAD_REQUEST, "alert_min must be kev_and_fixable_high or critical_any")
+        })?),
+    };
     let enabled = if body.enabled { "true" } else { "false" };
     let hour = body.match_hour.to_string();
-    for (key, value) in [(vuln_sweeper::SETTING_ENABLED, enabled), (vuln_sweeper::SETTING_MATCH_HOUR, hour.as_str())] {
+    let mut values = vec![(vuln_sweeper::SETTING_ENABLED, enabled), (vuln_sweeper::SETTING_MATCH_HOUR, hour.as_str())];
+    if let Some(m) = alert_min {
+        values.push((vuln_sweeper::SETTING_ALERT_MIN, m.as_str()));
+    }
+    for (key, value) in values {
         sqlx::query(
             "INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
         )
@@ -521,7 +687,115 @@ pub async fn put_settings(
         .await
         .map_err(|e| internal_error("save vulnerability scanner setting", e))?;
     }
-    Ok(Json(json!({ "enabled": body.enabled, "match_hour": body.match_hour })))
+    let alert_min = match alert_min {
+        Some(m) => m,
+        None => vuln_sweeper::alert_min(&state.db).await,
+    };
+    Ok(Json(json!({ "enabled": body.enabled, "match_hour": body.match_hour, "alert_min": alert_min.as_str() })))
+}
+
+// ── Exceptions (batch 2) ────────────────────────────────────────────────
+
+#[derive(Debug, Default, Deserialize)]
+pub struct AcceptBody {
+    pub reason: Option<String>,
+    /// RFC 3339.
+    pub expires_at: Option<String>,
+}
+
+/// Checks an exception request: a reason of 1 to 500 characters (trimmed) and
+/// an `expires_at` in `]now, now + 90 days]`.
+pub fn validate_exception(body: &AcceptBody, now: DateTime<Utc>) -> Result<(String, DateTime<Utc>), &'static str> {
+    let reason = body.reason.as_deref().map(str::trim).unwrap_or("");
+    if reason.is_empty() {
+        return Err("A reason is required");
+    }
+    if reason.chars().count() > EXCEPTION_REASON_MAX {
+        return Err("The reason is limited to 500 characters");
+    }
+    let expires_at = body
+        .expires_at
+        .as_deref()
+        .and_then(|s| DateTime::parse_from_rfc3339(s.trim()).ok())
+        .map(|d| d.with_timezone(&Utc))
+        .ok_or("expires_at must be an RFC 3339 date")?;
+    if expires_at <= now {
+        return Err("expires_at must be in the future");
+    }
+    if expires_at > now + chrono::Duration::days(EXCEPTION_MAX_DAYS) {
+        return Err("An exception lasts 90 days at most");
+    }
+    Ok((reason.to_string(), expires_at))
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct ExceptionRow {
+    id: Uuid,
+    target_id: Uuid,
+    vuln_id: String,
+    reason: String,
+    expires_at: DateTime<Utc>,
+    created_by: Option<Uuid>,
+    created_at: DateTime<Utc>,
+}
+
+/// POST /api/vulnerabilities/{finding_id}/accept (admin) -> 201 {"exception": {...}}
+pub async fn accept_exception(
+    State(state): State<AppState>,
+    AuthUser(claims): AuthUser,
+    Path(finding_id): Path<Uuid>,
+    Json(body): Json<AcceptBody>,
+) -> Result<(StatusCode, Json<Value>), ApiError> {
+    require_admin(&claims.role)?;
+    let (reason, expires_at) = validate_exception(&body, Utc::now()).map_err(|m| err(StatusCode::BAD_REQUEST, m))?;
+    let mut tx = state.db.begin().await.map_err(|e| internal_error("accept vulnerability", e))?;
+    let row: ExceptionRow = sqlx::query_as(ACCEPT_SQL)
+        .bind(finding_id)
+        .bind(&reason)
+        .bind(expires_at)
+        .bind(claims.sub)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| internal_error("accept vulnerability", e))?
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "Vulnerability not found"))?;
+    sqlx::query(ACCEPT_RENOTIFY_SQL)
+        .bind(row.target_id)
+        .bind(&row.vuln_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| internal_error("accept vulnerability", e))?;
+    tx.commit().await.map_err(|e| internal_error("accept vulnerability", e))?;
+    // The accepted CVE may have been the last one keeping the target's alert open.
+    vuln_sweeper::resolve_target_alert_if_clear(&state.db, row.target_id).await;
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({ "exception": {
+            "id": row.id, "target_id": row.target_id, "vuln_id": row.vuln_id, "reason": row.reason,
+            "expires_at": row.expires_at, "created_by": row.created_by, "created_at": row.created_at,
+        }})),
+    ))
+}
+
+/// DELETE /api/vulnerabilities/{finding_id}/accept (admin) -> {"ok": true}
+pub async fn remove_exception(
+    State(state): State<AppState>,
+    AuthUser(claims): AuthUser,
+    Path(finding_id): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    require_admin(&claims.role)?;
+    let (target_id, vuln_id): (Uuid, String) = sqlx::query_as(FINDING_KEY_SQL)
+        .bind(finding_id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| internal_error("remove vulnerability exception", e))?
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "Vulnerability not found"))?;
+    sqlx::query(DELETE_EXCEPTION_SQL)
+        .bind(target_id)
+        .bind(&vuln_id)
+        .execute(&state.db)
+        .await
+        .map_err(|e| internal_error("remove vulnerability exception", e))?;
+    Ok(Json(json!({ "ok": true })))
 }
 
 #[cfg(test)]
@@ -560,6 +834,9 @@ mod tests {
             t_app_name: None,
             t_git_deploy_id: None,
             t_exposed: Some(true),
+            acc_reason: None,
+            acc_expires_at: None,
+            acc_email: None,
         }
     }
 
@@ -605,6 +882,8 @@ mod tests {
                 "include_resolved" => q.include_resolved = v,
                 "limit" => q.limit = v,
                 "offset" => q.offset = v,
+                "include_accepted" => q.include_accepted = v,
+                "group_by" => q.group_by = v,
                 _ => unreachable!(),
             }
         }
@@ -663,5 +942,101 @@ mod tests {
             assert_eq!(severity_rank(s) as usize, i);
             assert!(ORDER_SQL.contains(&format!("WHEN '{s}' THEN {i}")) || *s == "unknown");
         }
+    }
+
+    #[test]
+    fn filters_read_include_accepted_and_group_by() {
+        let f = parse_filters(&q(&[])).unwrap();
+        assert!(!f.include_accepted && !f.group_by_vuln);
+        let f = parse_filters(&q(&[("include_accepted", "true"), ("group_by", "VULN")])).unwrap();
+        assert!(f.include_accepted && f.group_by_vuln);
+        assert!(!parse_filters(&q(&[("group_by", "")])).unwrap().group_by_vuln);
+        for bad in [q(&[("group_by", "package")]), q(&[("include_accepted", "maybe")])] {
+            assert_eq!(parse_filters(&bad).unwrap_err().0, StatusCode::BAD_REQUEST);
+        }
+    }
+
+    fn body(reason: Option<&str>, expires_at: Option<&str>) -> AcceptBody {
+        AcceptBody { reason: reason.map(Into::into), expires_at: expires_at.map(Into::into) }
+    }
+
+    #[test]
+    fn exception_expiry_must_be_within_90_days() {
+        let now = DateTime::parse_from_rfc3339("2026-11-20T12:00:00Z").unwrap().with_timezone(&Utc);
+        let ok = validate_exception(&body(Some("  vendor patch pending  "), Some("2026-12-20T12:00:00Z")), now).unwrap();
+        assert_eq!(ok.0, "vendor patch pending");
+        // Exactly 90 days is allowed, one second more is not.
+        assert!(validate_exception(&body(Some("r"), Some("2027-02-18T12:00:00Z")), now).is_ok());
+        assert!(validate_exception(&body(Some("r"), Some("2027-02-18T12:00:01Z")), now).is_err());
+        // Now or the past is refused.
+        assert!(validate_exception(&body(Some("r"), Some("2026-11-20T12:00:00Z")), now).is_err());
+        assert!(validate_exception(&body(Some("r"), Some("2026-01-01T00:00:00Z")), now).is_err());
+        // An offset is read correctly (13:00+01:00 is 12:00Z, so not in the future).
+        assert!(validate_exception(&body(Some("r"), Some("2026-11-20T13:00:00+01:00")), now).is_err());
+        assert!(validate_exception(&body(Some("r"), Some("next week")), now).is_err());
+        assert!(validate_exception(&body(Some("r"), None), now).is_err());
+    }
+
+    #[test]
+    fn exception_reason_is_required_and_bounded() {
+        let now = DateTime::parse_from_rfc3339("2026-11-20T12:00:00Z").unwrap().with_timezone(&Utc);
+        let exp = Some("2026-12-01T00:00:00Z");
+        assert!(validate_exception(&body(None, exp), now).is_err());
+        assert!(validate_exception(&body(Some("   "), exp), now).is_err());
+        assert!(validate_exception(&body(Some(&"é".repeat(500)), exp), now).is_ok());
+        assert!(validate_exception(&body(Some(&"é".repeat(501)), exp), now).is_err());
+    }
+
+    #[test]
+    fn accepted_hides_the_email_from_non_admins() {
+        let mut r = row(false, None, "high", "2026-11-01T00:00:00Z");
+        assert_eq!(r.to_json(true)["accepted"], Value::Null);
+        r.acc_reason = Some("not reachable".into());
+        r.acc_expires_at = Some(Utc::now());
+        r.acc_email = Some("admin@example.com".into());
+        assert_eq!(r.to_json(true)["accepted"]["created_by_email"], "admin@example.com");
+        assert_eq!(r.to_json(true)["accepted"]["reason"], "not reachable");
+        assert_eq!(r.to_json(false)["accepted"]["created_by_email"], Value::Null);
+        assert_eq!(r.to_json(false)["accepted"]["reason"], "not reachable");
+    }
+
+    #[test]
+    fn group_items_attach_their_own_packages() {
+        let mut a = row(true, None, "critical", "2026-11-01T00:00:00Z");
+        a.vuln_id = "CVE-1".into();
+        let mut b = row(false, None, "high", "2026-11-01T00:00:00Z");
+        b.vuln_id = "CVE-2".into();
+        let pkg = |vuln: &str, p: &str, target: Uuid| PackageRow {
+            target_id: target,
+            vuln_id: vuln.into(),
+            package: p.into(),
+            version: "1".into(),
+            fixed_version: None,
+            location: None,
+        };
+        let other = Uuid::from_u128(9);
+        let members = vec![
+            pkg("CVE-1", "linux-modules", Uuid::nil()),
+            pkg("CVE-2", "openssl", Uuid::nil()),
+            pkg("CVE-1", "linux-tools", Uuid::nil()),
+            pkg("CVE-1", "elsewhere", other),
+        ];
+        let items = group_items(&[a, b], &members, true);
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["vuln_id"], "CVE-1");
+        let names: Vec<&str> = items[0]["packages"].as_array().unwrap().iter().map(|p| p["package"].as_str().unwrap()).collect();
+        assert_eq!(names, ["linux-modules", "linux-tools"]);
+        assert_eq!(items[1]["packages"].as_array().unwrap().len(), 1);
+    }
+
+    /// A static segment (`targets`, `summary`, `settings`) next to
+    /// `{finding_id}` must not conflict, or the router panics at boot rather
+    /// than at compile time. Building the real router (no state needed)
+    /// checks every registered path, ours included, without registering a
+    /// second copy of the routes outside `routes/mod.rs`
+    /// (published-docs-truth-pin-e2e.sh counts registrars).
+    #[test]
+    fn route_shapes_do_not_conflict() {
+        let _ = crate::routes::router();
     }
 }

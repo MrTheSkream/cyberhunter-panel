@@ -13,7 +13,10 @@
 //! memory keeps the sweeper and the "scan now" button from running two passes
 //! on the same server at once.
 //!
-//! Contract: conception/13-scanner-cve-lot1-contrat.md.
+//! Batch 2 adds the `vuln_scan` alert after every merge (see "Alerts" below).
+//!
+//! Contracts: conception/13-scanner-cve-lot1-contrat.md and
+//! conception/13-scanner-cve-lots2-5-contrat.md ("Lot 2").
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, LazyLock, Mutex};
@@ -49,8 +52,8 @@ pub const SETTING_ENABLED: &str = "vuln_scan_enabled";
 pub const SETTING_MATCH_HOUR: &str = "vuln_match_hour";
 pub const DEFAULT_MATCH_HOUR: i64 = 4;
 
-/// Target kinds this batch inventories. `wordpress` (batch 4) is left alone by
-/// the sync so a later batch can own it.
+/// Target kinds the sync owns: a stored target of any other kind is left alone
+/// by the sync (none exists today; the guard keeps a future kind safe).
 const SYNCED_KINDS: &[&str] = &["site", "image", "system"];
 
 // Column widths of `vuln_findings` / `vuln_targets` (migration 20261201000000).
@@ -926,6 +929,10 @@ async fn run_match(
                         .bind("Could not store the findings")
                         .execute(pool)
                         .await?;
+                } else {
+                    // Batch 2: alert on what this merge made new, or resolve.
+                    // Logs its own errors; never fails the merge.
+                    evaluate_target_alert(pool, r.target_id).await;
                 }
             }
             "no_sbom" => {
@@ -978,6 +985,7 @@ async fn sweep_server(
     let targets = load_targets(pool, server_id).await?;
     let ids = select_match(&targets, full, checked.flatten());
     match_targets(pool, server_id, agent, &ids, shutdown).await?;
+    catch_up_alerts(pool, server_id).await;
 
     match db_error {
         Some(e) => Err(PassError::Failed(format!("database update failed: {e}"))),
@@ -1017,6 +1025,7 @@ pub async fn run(pool: PgPool, agents: AgentRegistry, mut shutdown_rx: Receiver<
                     }
                 }
             }
+            resolve_orphan_alerts(&pool).await;
         }
 
         tokio::select! {
@@ -1070,6 +1079,403 @@ async fn scan_target_inner(
         match_targets(pool, server_id, &agent, &[target_id], shutdown).await?;
     }
     Ok(())
+}
+
+// ── Alerts (batch 2) ────────────────────────────────────────────────────
+//
+// After every `ok` merge of a target, the open CVEs above the threshold that
+// have no active exception and were never notified are grouped into ONE
+// `vuln_scan` alert for that target, at most once per 24 hours. The alert is
+// resolved once the target has no open CVE above the threshold left (outside
+// exceptions). A plain alert row: never an incident, so it never blocks a
+// deployment. An alert failure is logged and never fails the merge or the pass.
+//
+// Contract: conception/13-scanner-cve-lots2-5-contrat.md, "Lot 2".
+
+pub const ALERT_TYPE: &str = "vuln_scan";
+pub const SETTING_ALERT_MIN: &str = "vuln_alert_min";
+const ALERT_KEY_PREFIX: &str = "vuln:";
+/// At most one alert per target in this window.
+const ALERT_WINDOW_HOURS: i64 = 24;
+/// Lines listed in one alert message before "... and <k> more".
+const ALERT_MAX_LINES: usize = 20;
+/// `alerts.title VARCHAR(200)`: a longer title fails the INSERT and the alert is lost.
+const W_ALERT_TITLE: usize = 200;
+
+/// The alert threshold (`vuln_alert_min`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AlertMin {
+    /// Actively exploited (KEV), or critical/high with a fix.
+    KevAndFixableHigh,
+    /// The above, or any critical (even without a fix).
+    CriticalAny,
+}
+
+impl AlertMin {
+    pub const ALL: [AlertMin; 2] = [AlertMin::KevAndFixableHigh, AlertMin::CriticalAny];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AlertMin::KevAndFixableHigh => "kev_and_fixable_high",
+            AlertMin::CriticalAny => "critical_any",
+        }
+    }
+
+    /// Only the two allow-listed values; anything else is `None`.
+    pub fn parse(s: &str) -> Option<AlertMin> {
+        Self::ALL.into_iter().find(|m| m.as_str() == s.trim())
+    }
+}
+
+/// The stored threshold, the default when unset or unknown.
+pub async fn alert_min(pool: &PgPool) -> AlertMin {
+    sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key = $1")
+        .bind(SETTING_ALERT_MIN)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|v| AlertMin::parse(&v))
+        .unwrap_or(AlertMin::KevAndFixableHigh)
+}
+
+/// SQL predicate: finding `f` has an active exception (`expires_at > now()`).
+pub const ACTIVE_EXCEPTION: &str = "EXISTS (SELECT 1 FROM vuln_exceptions e \
+    WHERE e.target_id = f.target_id AND e.vuln_id = f.vuln_id AND e.expires_at > now())";
+
+/// The `alerts.state_key` of a target's alert (41 characters, under the 100 limit).
+pub fn alert_state_key(target_id: Uuid) -> String {
+    format!("{ALERT_KEY_PREFIX}{target_id}")
+}
+
+/// An open finding as the alert decision sees it.
+#[derive(Debug, Clone, PartialEq, sqlx::FromRow)]
+pub struct AlertFinding {
+    pub id: Uuid,
+    pub vuln_id: String,
+    pub package: String,
+    pub version: String,
+    pub severity: String,
+    pub kev: bool,
+    pub risk: Option<f32>,
+    pub fix_state: String,
+    pub fixed_version: Option<String>,
+    pub notified: bool,
+    /// An active exception covers this CVE on this target.
+    pub excepted: bool,
+}
+
+/// True when the finding counts towards the alert threshold. An excepted
+/// finding never does.
+pub fn above_threshold(f: &AlertFinding, min: AlertMin) -> bool {
+    if f.excepted {
+        return false;
+    }
+    let fixable_high = matches!(f.severity.as_str(), "critical" | "high") && f.fix_state == "fixed";
+    f.kev || fixable_high || (min == AlertMin::CriticalAny && f.severity == "critical")
+}
+
+fn severity_order(s: &str) -> u8 {
+    match s {
+        "critical" => 0,
+        "high" => 1,
+        "medium" => 2,
+        "low" => 3,
+        _ => 4,
+    }
+}
+
+/// The findings to announce: open (the caller loads open ones only), above
+/// the threshold, not excepted, not yet notified. KEV first, then risk, then
+/// severity, then id (stable).
+pub fn alert_candidates(rows: &[AlertFinding], min: AlertMin) -> Vec<&AlertFinding> {
+    let mut out: Vec<&AlertFinding> = rows.iter().filter(|f| !f.notified && above_threshold(f, min)).collect();
+    out.sort_by(|a, b| {
+        b.kev
+            .cmp(&a.kev)
+            .then_with(|| match (a.risk, b.risk) {
+                (Some(x), Some(y)) => y.partial_cmp(&x).unwrap_or(std::cmp::Ordering::Equal),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => std::cmp::Ordering::Equal,
+            })
+            .then_with(|| severity_order(&a.severity).cmp(&severity_order(&b.severity)))
+            .then_with(|| a.id.cmp(&b.id))
+    });
+    out
+}
+
+/// True while the target still has something above the threshold (notified
+/// or not): its alert stays open.
+pub fn still_above_threshold(rows: &[AlertFinding], min: AlertMin) -> bool {
+    rows.iter().any(|f| above_threshold(f, min))
+}
+
+/// True when the target may raise an alert now: never alerted, or more than 24 hours ago.
+pub fn alert_due(alerted_at: Option<DateTime<Utc>>, now: DateTime<Utc>) -> bool {
+    alerted_at.is_none_or(|at| now - at > chrono::Duration::hours(ALERT_WINDOW_HOURS))
+}
+
+/// Text taken from an SBOM goes into an HTML e-mail as is (`try_fire_alert`
+/// does not escape): markup characters and control characters are dropped.
+fn plain(s: &str) -> String {
+    s.chars().filter(|c| !matches!(c, '<' | '>' | '&' | '"' | '\'') && !c.is_control()).collect()
+}
+
+/// One line of the alert message for one finding.
+pub fn alert_line(f: &AlertFinding) -> String {
+    let mut details = f.severity.clone();
+    if f.kev {
+        details.push_str(", actively exploited");
+    }
+    if let Some(v) = f.fixed_version.as_deref().filter(|v| !v.is_empty()) {
+        details.push_str(", fixed in ");
+        details.push_str(&plain(v));
+    }
+    plain(&format!("{} {} {} ({details})", f.vuln_id, f.package, f.version))
+}
+
+/// `(severity, title, message)` of the alert for `candidates` (already sorted).
+/// Critical if at least one is actively exploited, warning otherwise.
+pub fn alert_text(target_ref: &str, candidates: &[&AlertFinding]) -> (&'static str, String, String) {
+    let severity = if candidates.iter().any(|f| f.kev) { "critical" } else { "warning" };
+    let n = candidates.len();
+    let noun = if n == 1 { "vulnerability" } else { "vulnerabilities" };
+    let title = clip(&format!("{n} new {noun} on {}", plain(target_ref)), W_ALERT_TITLE);
+    let mut lines: Vec<String> = candidates.iter().take(ALERT_MAX_LINES).map(|f| alert_line(f)).collect();
+    if n > ALERT_MAX_LINES {
+        lines.push(format!("... and {} more", n - ALERT_MAX_LINES));
+    }
+    (severity, title, lines.join("\n"))
+}
+
+/// Administrators, plus the owner of the target's site when it is not one.
+pub fn alert_recipients(admins: &[Uuid], site_owner: Option<Uuid>) -> Vec<Uuid> {
+    let mut out = admins.to_vec();
+    if let Some(owner) = site_owner {
+        if !out.contains(&owner) {
+            out.push(owner);
+        }
+    }
+    out
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct AlertTarget {
+    server_id: Uuid,
+    kind: String,
+    #[sqlx(rename = "ref")]
+    ref_: String,
+    site_id: Option<Uuid>,
+    alerted_at: Option<DateTime<Utc>>,
+    site_owner: Option<Uuid>,
+}
+
+const ALERT_TARGET_SQL: &str = "SELECT t.server_id, t.kind, t.ref, t.site_id, t.alerted_at, s.user_id AS site_owner \
+     FROM vuln_targets t LEFT JOIN sites s ON s.id = t.site_id WHERE t.id = $1";
+
+const ALERT_ADMINS_SQL: &str = "SELECT id FROM users WHERE role = 'admin'";
+
+const MARK_NOTIFIED_SQL: &str = "UPDATE vuln_findings SET notified = TRUE WHERE target_id = $1 AND id = ANY($2)";
+
+const TARGET_ALERTED_SQL: &str = "UPDATE vuln_targets SET alerted_at = now() WHERE id = $1";
+
+/// Every user holding a firing alert for the key, whoever they are now (a
+/// demoted administrator or a former site owner keeps no stuck row).
+const FIRING_USERS_SQL: &str = "SELECT DISTINCT user_id, server_id FROM alerts \
+     WHERE alert_type = $1 AND state_key = $2 AND status = 'firing'";
+
+/// `resolve_alert` only closes `firing` rows. An acknowledged row (the
+/// operator stopped the re-pages while a fix was pending) is closed too, with
+/// no recovery notice: the operator already knows about it.
+const ACK_RESOLVE_SQL: &str = "UPDATE alerts SET status = 'resolved', resolved_at = NOW() \
+     WHERE alert_type = $1 AND state_key = $2 AND status = 'acknowledged'";
+
+/// Acknowledged `vuln_scan` alerts whose target no longer exists.
+const ACK_ORPHAN_RESOLVE_SQL: &str = "UPDATE alerts a SET status = 'resolved', resolved_at = NOW() \
+     WHERE a.alert_type = $1 AND a.status = 'acknowledged' AND NOT EXISTS \
+     (SELECT 1 FROM vuln_targets t WHERE $2::text || t.id::text = a.state_key)";
+
+/// Firing `vuln_scan` alerts whose target no longer exists (removed by the
+/// sync, or by the cascade of a deleted site).
+const ORPHAN_ALERTS_SQL: &str = "SELECT DISTINCT a.user_id, a.server_id, a.state_key FROM alerts a \
+     WHERE a.alert_type = $1 AND a.status = 'firing' AND NOT EXISTS \
+     (SELECT 1 FROM vuln_targets t WHERE $2::text || t.id::text = a.state_key)";
+
+/// Targets alerted between one and two windows ago that still hold
+/// un-notified open findings: what the 24-hour window held back at the last
+/// merge. Older ones were re-evaluated by a later daily merge already.
+const ALERT_PENDING_TARGETS_SQL: &str = "SELECT t.id FROM vuln_targets t \
+     WHERE t.server_id = $1 AND t.alerted_at IS NOT NULL \
+     AND t.alerted_at <= now() - make_interval(hours => $2::int) \
+     AND t.alerted_at > now() - make_interval(hours => 2 * $2::int) \
+     AND EXISTS (SELECT 1 FROM vuln_findings f \
+     WHERE f.target_id = t.id AND f.resolved_at IS NULL AND f.notified = FALSE)";
+
+async fn load_alert_findings(pool: &PgPool, target_id: Uuid) -> Result<Vec<AlertFinding>, sqlx::Error> {
+    sqlx::query_as(&format!(
+        "SELECT f.id, f.vuln_id, f.package, f.version, f.severity, f.kev, f.risk, f.fix_state, \
+         f.fixed_version, f.notified, {ACTIVE_EXCEPTION} AS excepted \
+         FROM vuln_findings f WHERE f.target_id = $1 AND f.resolved_at IS NULL"
+    ))
+    .bind(target_id)
+    .fetch_all(pool)
+    .await
+}
+
+/// Resolves the target's alert for every user who has it firing. Sends a
+/// recovery notice only where a row was actually firing (`resolve_alert`).
+async fn resolve_target_alert(pool: &PgPool, target_id: Uuid, target_ref: &str) -> Result<(), sqlx::Error> {
+    let key = alert_state_key(target_id);
+    let firing: Vec<(Uuid, Option<Uuid>)> =
+        sqlx::query_as(FIRING_USERS_SQL).bind(ALERT_TYPE).bind(&key).fetch_all(pool).await?;
+    let target_ref = plain(target_ref);
+    for (user_id, server_id) in firing {
+        crate::services::notifications::resolve_alert(
+            pool,
+            user_id,
+            server_id,
+            None,
+            ALERT_TYPE,
+            &key,
+            &clip(&format!("Vulnerability alert resolved: {target_ref}"), W_ALERT_TITLE),
+            &format!(
+                "{target_ref} has no open vulnerability above the alert threshold any more (fixed, or accepted as an exception)."
+            ),
+        )
+        .await;
+    }
+    sqlx::query(ACK_RESOLVE_SQL).bind(ALERT_TYPE).bind(&key).execute(pool).await?;
+    Ok(())
+}
+
+async fn evaluate_alert_inner(pool: &PgPool, target_id: Uuid) -> Result<(), sqlx::Error> {
+    let Some(target) =
+        sqlx::query_as::<_, AlertTarget>(ALERT_TARGET_SQL).bind(target_id).fetch_optional(pool).await?
+    else {
+        return Ok(());
+    };
+    let min = alert_min(pool).await;
+    let rows = load_alert_findings(pool, target_id).await?;
+    let candidates = alert_candidates(&rows, min);
+
+    if !candidates.is_empty() && alert_due(target.alerted_at, Utc::now()) {
+        let admins: Vec<Uuid> = sqlx::query_scalar(ALERT_ADMINS_SQL).fetch_all(pool).await?;
+        let owner = if target.kind == "site" { target.site_owner } else { None };
+        let recipients = alert_recipients(&admins, owner);
+        let (severity, title, message) = alert_text(&target.ref_, &candidates);
+        let key = alert_state_key(target_id);
+        let mut delivered = 0usize;
+        for user_id in &recipients {
+            match crate::services::notifications::try_fire_alert(
+                pool,
+                *user_id,
+                Some(target.server_id),
+                target.site_id,
+                ALERT_TYPE,
+                &key,
+                severity,
+                &title,
+                &message,
+            )
+            .await
+            {
+                Ok(true) => delivered += 1,
+                Ok(false) => {}
+                Err(e) => tracing::warn!("CVE scanner: alert for target {target_id} to user {user_id} not recorded: {e}"),
+            }
+        }
+        // Only a recorded alert counts as notified: if every INSERT failed, the
+        // candidates stay pending and the next pass tries again.
+        if delivered > 0 {
+            let ids: Vec<Uuid> = candidates.iter().map(|f| f.id).collect();
+            let mut tx = pool.begin().await?;
+            sqlx::query(MARK_NOTIFIED_SQL).bind(target_id).bind(&ids).execute(&mut *tx).await?;
+            sqlx::query(TARGET_ALERTED_SQL).bind(target_id).execute(&mut *tx).await?;
+            tx.commit().await?;
+        }
+    }
+
+    if !still_above_threshold(&rows, min) {
+        resolve_target_alert(pool, target_id, &target.ref_).await?;
+    }
+    Ok(())
+}
+
+/// Fires or resolves the target's alert. Never fails: errors are logged.
+pub async fn evaluate_target_alert(pool: &PgPool, target_id: Uuid) {
+    if let Err(e) = evaluate_alert_inner(pool, target_id).await {
+        tracing::warn!("CVE scanner: alert evaluation failed for target {target_id}: {e}");
+    }
+}
+
+/// Resolves the target's alert if nothing is above the threshold any more
+/// (after an exception is accepted). Never fires. Never fails: errors are logged.
+pub async fn resolve_target_alert_if_clear(pool: &PgPool, target_id: Uuid) {
+    let outcome: Result<(), sqlx::Error> = async {
+        let Some(target) =
+            sqlx::query_as::<_, AlertTarget>(ALERT_TARGET_SQL).bind(target_id).fetch_optional(pool).await?
+        else {
+            return Ok(());
+        };
+        let rows = load_alert_findings(pool, target_id).await?;
+        if !still_above_threshold(&rows, alert_min(pool).await) {
+            resolve_target_alert(pool, target_id, &target.ref_).await?;
+        }
+        Ok(())
+    }
+    .await;
+    if let Err(e) = outcome {
+        tracing::warn!("CVE scanner: alert resolution failed for target {target_id}: {e}");
+    }
+}
+
+/// End of a pass: targets of the server with findings still waiting for an
+/// alert (held by the 24-hour window when the previous merge came a little
+/// early) get their alert as soon as the window has passed, instead of
+/// waiting for the next day's merge.
+async fn catch_up_alerts(pool: &PgPool, server_id: Uuid) {
+    match sqlx::query_scalar::<_, Uuid>(ALERT_PENDING_TARGETS_SQL)
+        .bind(server_id)
+        .bind(ALERT_WINDOW_HOURS as i32)
+        .fetch_all(pool)
+        .await
+    {
+        Ok(ids) => {
+            for id in ids {
+                evaluate_target_alert(pool, id).await;
+            }
+        }
+        Err(e) => tracing::warn!("CVE scanner: pending alerts of server {server_id} not checked: {e}"),
+    }
+}
+
+/// Resolves firing and acknowledged alerts whose target is gone. Never fails: errors are logged.
+async fn resolve_orphan_alerts(pool: &PgPool) {
+    if let Err(e) = sqlx::query(ACK_ORPHAN_RESOLVE_SQL).bind(ALERT_TYPE).bind(ALERT_KEY_PREFIX).execute(pool).await {
+        tracing::warn!("CVE scanner: acknowledged orphan alerts not closed: {e}");
+    }
+    let rows: Vec<(Uuid, Option<Uuid>, String)> =
+        match sqlx::query_as(ORPHAN_ALERTS_SQL).bind(ALERT_TYPE).bind(ALERT_KEY_PREFIX).fetch_all(pool).await {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!("CVE scanner: orphan alerts not checked: {e}");
+                return;
+            }
+        };
+    for (user_id, server_id, key) in rows {
+        crate::services::notifications::resolve_alert(
+            pool,
+            user_id,
+            server_id,
+            None,
+            ALERT_TYPE,
+            &key,
+            "Vulnerability alert resolved: target removed",
+            "The scanned target of this alert no longer exists (site, image or server removed).",
+        )
+        .await;
+    }
 }
 
 #[cfg(test)]
@@ -1231,7 +1637,7 @@ mod tests {
             state(2, "site", Some("2026-11-18T10:00:00Z"), None, true),  // marked: not forced
             state(3, "image", None, None, false),                        // no SBOM: forced
             state(4, "system", Some("2026-11-01T10:00:00Z"), None, false), // stale: forced
-            state(5, "wordpress", None, None, true),                     // not this batch
+            state(5, "other", None, None, true),                         // not a synced kind
         ];
         assert_eq!(
             select_inventory(&targets, now),
@@ -1283,7 +1689,7 @@ mod tests {
             stored(1, "site", "gone.example", None),
             stored(2, "image", "nginx:1.25", Some("sha256:old")),
             stored(3, "image", "redis:7", Some("sha256:same")),
-            stored(4, "wordpress", "wp.example", None), // other batch: kept
+            stored(4, "other", "x.example", None), // not a synced kind: kept
         ];
         let plan = plan_target_sync(&want, &have);
         let flags: Vec<(&str, bool)> = plan.upserts.iter().map(|(d, c)| (d.ref_.as_str(), *c)).collect();
@@ -1327,5 +1733,139 @@ mod tests {
         let mut no_db = ok.clone();
         no_db["db"] = Value::Null;
         assert!(needs_install(&no_db));
+    }
+
+    // ── Alerts (batch 2) ──
+
+    fn af(n: u128, severity: &str, kev: bool, fix_state: &str) -> AlertFinding {
+        AlertFinding {
+            id: Uuid::from_u128(n),
+            vuln_id: format!("CVE-2026-{n:04}"),
+            package: "pkg".into(),
+            version: "1.0".into(),
+            severity: severity.into(),
+            kev,
+            risk: None,
+            fix_state: fix_state.into(),
+            fixed_version: None,
+            notified: false,
+            excepted: false,
+        }
+    }
+
+    #[test]
+    fn threshold_default_is_kev_or_fixable_critical_high() {
+        let m = AlertMin::KevAndFixableHigh;
+        assert!(above_threshold(&af(1, "low", true, "not-fixed"), m), "KEV whatever the severity");
+        assert!(above_threshold(&af(2, "critical", false, "fixed"), m));
+        assert!(above_threshold(&af(3, "high", false, "fixed"), m));
+        assert!(!above_threshold(&af(4, "critical", false, "not-fixed"), m), "no fix, not KEV");
+        assert!(!above_threshold(&af(5, "high", false, "unknown"), m));
+        assert!(!above_threshold(&af(6, "medium", false, "fixed"), m));
+    }
+
+    #[test]
+    fn threshold_critical_any_adds_unfixed_criticals_only() {
+        let m = AlertMin::CriticalAny;
+        assert!(above_threshold(&af(1, "critical", false, "not-fixed"), m));
+        assert!(above_threshold(&af(2, "critical", false, "wont-fix"), m));
+        assert!(!above_threshold(&af(3, "high", false, "not-fixed"), m));
+        assert!(above_threshold(&af(4, "high", false, "fixed"), m));
+        assert!(above_threshold(&af(5, "medium", true, "unknown"), m));
+    }
+
+    #[test]
+    fn threshold_never_counts_an_excepted_cve() {
+        for m in AlertMin::ALL {
+            let mut f = af(1, "critical", true, "fixed");
+            f.excepted = true;
+            assert!(!above_threshold(&f, m), "{m:?}");
+            assert!(!still_above_threshold(&[f.clone()], m));
+            assert!(alert_candidates(&[f], m).is_empty());
+        }
+    }
+
+    #[test]
+    fn alert_min_parses_only_the_allow_list() {
+        assert_eq!(AlertMin::parse("kev_and_fixable_high"), Some(AlertMin::KevAndFixableHigh));
+        assert_eq!(AlertMin::parse(" critical_any "), Some(AlertMin::CriticalAny));
+        assert_eq!(AlertMin::parse("high"), None);
+        assert_eq!(AlertMin::parse(""), None);
+        for m in AlertMin::ALL {
+            assert_eq!(AlertMin::parse(m.as_str()), Some(m));
+        }
+    }
+
+    #[test]
+    fn candidates_skip_notified_and_below_threshold_and_sort_kev_first() {
+        let mut notified = af(1, "critical", true, "fixed");
+        notified.notified = true;
+        let mut high_risky = af(2, "high", false, "fixed");
+        high_risky.risk = Some(80.0);
+        let mut crit = af(3, "critical", false, "fixed");
+        crit.risk = Some(10.0);
+        let kev = af(4, "low", true, "unknown");
+        let medium = af(5, "medium", false, "fixed");
+        let rows = vec![notified.clone(), high_risky, crit, kev, medium];
+        let ids: Vec<u128> =
+            alert_candidates(&rows, AlertMin::KevAndFixableHigh).iter().map(|f| f.id.as_u128()).collect();
+        assert_eq!(ids, [4, 2, 3]);
+        // A notified finding still keeps the alert open.
+        assert!(still_above_threshold(&[notified], AlertMin::KevAndFixableHigh));
+        assert!(!still_above_threshold(&[af(9, "medium", false, "fixed")], AlertMin::KevAndFixableHigh));
+    }
+
+    #[test]
+    fn alert_window_is_24_hours() {
+        let now = at("2026-11-20T12:00:00Z");
+        assert!(alert_due(None, now));
+        assert!(!alert_due(Some(at("2026-11-19T12:30:00Z")), now), "23h30 ago");
+        assert!(!alert_due(Some(at("2026-11-19T12:00:00Z")), now), "exactly 24h ago");
+        assert!(alert_due(Some(at("2026-11-19T11:59:00Z")), now), "24h01 ago");
+    }
+
+    #[test]
+    fn alert_text_lists_twenty_lines_then_the_rest() {
+        let mut first = af(1, "critical", true, "fixed");
+        first.package = "log4j-core".into();
+        first.version = "2.14.1".into();
+        first.fixed_version = Some("2.15.0".into());
+        let mut rows = vec![first];
+        rows.extend((2..=25).map(|n| af(n, "high", false, "fixed")));
+        let refs: Vec<&AlertFinding> = rows.iter().collect();
+        let (severity, title, message) = alert_text("java.cve.lab", &refs);
+        assert_eq!(severity, "critical");
+        assert_eq!(title, "25 new vulnerabilities on java.cve.lab");
+        let lines: Vec<&str> = message.lines().collect();
+        assert_eq!(lines.len(), 21);
+        assert_eq!(lines[0], "CVE-2026-0001 log4j-core 2.14.1 (critical, actively exploited, fixed in 2.15.0)");
+        assert_eq!(lines[1], "CVE-2026-0002 pkg 1.0 (high)");
+        assert_eq!(lines[20], "... and 5 more");
+    }
+
+    #[test]
+    fn alert_text_warning_singular_clipped_and_without_markup() {
+        let mut f = af(1, "high", false, "fixed");
+        f.package = "<img src=x onerror=alert(1)>".into();
+        f.fixed_version = Some("2.0&\"".into());
+        let (severity, title, message) = alert_text("a.example", &[&f]);
+        assert_eq!(severity, "warning");
+        assert_eq!(title, "1 new vulnerability on a.example");
+        assert_eq!(message, "CVE-2026-0001 img src=x onerror=alert(1) 1.0 (high, fixed in 2.0)");
+        let long_ref = "r".repeat(512);
+        let (_, title, _) = alert_text(&long_ref, &[&f]);
+        assert_eq!(title.chars().count(), W_ALERT_TITLE);
+    }
+
+    #[test]
+    fn alert_key_and_recipients() {
+        let id = Uuid::from_u128(42);
+        let key = alert_state_key(id);
+        assert_eq!(key, format!("vuln:{id}"));
+        assert!(key.len() <= 100);
+        let (a, b, owner) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3));
+        assert_eq!(alert_recipients(&[a, b], Some(owner)), [a, b, owner]);
+        assert_eq!(alert_recipients(&[a, b], Some(a)), [a, b], "an administrator owner is not paged twice");
+        assert_eq!(alert_recipients(&[a], None), [a]);
     }
 }

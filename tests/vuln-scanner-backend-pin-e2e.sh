@@ -16,7 +16,11 @@
 #   §D  a non-administrator only ever sees the `site` targets of its own sites:
 #       every handler in the route block goes through the shared visibility
 #       predicate or `require_admin`; the settings PUT is admin only.
-#   §E  no alert is raised in this batch (alerts are batch 2).
+#   §E  batch 2 took the alert over: the sweeper raises it through the plain
+#       fire path (try_fire_alert, never alert_engine or an incident), with
+#       the registered vuln_scan type; the routes never fire one themselves.
+#       (Batch 1 forbade any alert here; tests/vuln-scanner-alerts-pin-e2e.sh
+#       holds the detail.)
 #   §F  SQL stays parameterised: only constants are formatted into queries, and
 #       list filters go through allow-lists.
 #
@@ -84,8 +88,8 @@ else
   bad "A4 vuln_findings key: UNIQUE (target_id, vuln_id, package, version) with NOT NULL key columns (a NULL key never conflicts)"
 fi
 
-if grep -qE "CHECK \(kind IN \('site', 'image', 'system', 'wordpress'\)\)" <<< "$TARGETS"; then
-  ok "A5 the target kind is checked against site/image/system/wordpress"
+if grep -qE "CHECK \(kind IN \('site', 'image', 'system'\)\)" <<< "$TARGETS"; then
+  ok "A5 the target kind is checked against site/image/system (no WordPress target: batch 4 dropped)"
 else
   bad "A5 vuln_targets.kind CHECK list changed"
 fi
@@ -322,22 +326,25 @@ else
 fi
 
 echo
-echo "== §E  no alert in batch 1 =="
+echo "== §E  the alert path of batch 2: plain alert, never an incident =="
 
 if grep -qE 'fire_alert' panel/backend/src/routes/image_scans.rs; then
   ok "E1-control the alert call pattern is still found where it exists (image_scans.rs)"
 else
   bad "E1-control fire_alert no longer found in image_scans.rs - E2 may be vacuous"
 fi
-if ! grep -qE 'fire_alert|notifications::' "$SWEEPER" "$ROUTES"; then
-  ok "E2 neither the sweeper nor the routes raise an alert (alerts are batch 2)"
+if grep -qE 'notifications::try_fire_alert\(' "$SWEEPER" \
+   && ! grep -qE 'alert_engine::|INSERT INTO [a-z_]*incidents|fire_alert_with_retry' "$SWEEPER" \
+   && ! grep -qE 'fire_alert' "$ROUTES"; then
+  ok "E2 the sweeper raises the alert through try_fire_alert only (no alert_engine, no incident); the routes never fire"
 else
-  bad "E2 an alert call appeared in the batch-1 files"
+  bad "E2 the alert must go through notifications::try_fire_alert in the sweeper, never alert_engine or an incident, and never from the routes"
 fi
-if ! grep -rqE '"vuln_scan"' panel/backend/src; then
-  ok "E3 no vuln_scan alert type registered yet"
+if grep -qE '^pub const ALERT_TYPE: &str = "vuln_scan";' "$SWEEPER" \
+   && grep -qE '^    "vuln_scan",$' <<< "$(sed -n '/^pub const SUPPRESSIBLE_ALERT_TYPES: &\[&str\] = &\[/,/^\];/p' panel/backend/src/services/notifications.rs)"; then
+  ok "E3 the vuln_scan alert type is the sweeper's ALERT_TYPE and is registered as suppressible"
 else
-  bad "E3 a vuln_scan alert type appeared in batch 1"
+  bad "E3 ALERT_TYPE must be \"vuln_scan\" and listed in SUPPRESSIBLE_ALERT_TYPES"
 fi
 
 echo

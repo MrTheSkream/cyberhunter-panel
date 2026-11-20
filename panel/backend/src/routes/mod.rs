@@ -1400,6 +1400,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/vulnerabilities/settings", get(vulnerabilities::get_settings).put(vulnerabilities::put_settings))
         .route("/api/vulnerabilities/targets/{id}", get(vulnerabilities::target_detail))
         .route("/api/vulnerabilities/targets/{id}/scan", post(vulnerabilities::scan_target))
+        .route("/api/vulnerabilities/{finding_id}/accept", post(vulnerabilities::accept_exception).delete(vulnerabilities::remove_exception))
         // System
         .route("/api/health", get(system::health))
         .route("/api/system/info", get(system::info))
