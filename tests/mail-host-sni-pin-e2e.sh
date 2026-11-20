@@ -180,6 +180,10 @@ else
     has "g5 migration adds $c" "$MG" "$c"
   done
 fi
+# sqlx keys migrations by their numeric prefix: two files sharing one make the
+# API refuse to start (VersionMismatch), measured in the VM recette.
+DUPV=$(ls panel/backend/migrations/*.sql | sed -E 's#.*/([0-9]+)_.*#\1#' | sort | uniq -d | tr '\n' ' ')
+if [ -z "$DUPV" ]; then ok "g6 every migration version is unique"; else bad "g6 duplicate migration version(s): $DUPV"; fi
 
 echo "── h. auto-healer ──"
 if printf '%s' "$HL" | pycheck '
