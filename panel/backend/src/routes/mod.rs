@@ -66,6 +66,7 @@ pub mod telemetry;
 pub mod update;
 pub mod whmcs;
 pub mod wordpress;
+pub mod vulnerabilities;
 pub mod ws_metrics;
 
 use axum::{
@@ -1393,6 +1394,12 @@ pub fn router() -> Router<AppState> {
         // is most of the catalogue.
         .route("/api/sbom/image/{*image}", get(sboms::get_image_sbom))
         .route("/api/apps/{name}/sbom", get(sboms::download_app_sbom).post(sboms::generate_app))
+        // CVE scanner, batch 1 (findings, summary, on-demand scan, settings)
+        .route("/api/vulnerabilities", get(vulnerabilities::list))
+        .route("/api/vulnerabilities/summary", get(vulnerabilities::summary))
+        .route("/api/vulnerabilities/settings", get(vulnerabilities::get_settings).put(vulnerabilities::put_settings))
+        .route("/api/vulnerabilities/targets/{id}", get(vulnerabilities::target_detail))
+        .route("/api/vulnerabilities/targets/{id}/scan", post(vulnerabilities::scan_target))
         // System
         .route("/api/health", get(system::health))
         .route("/api/system/info", get(system::info))

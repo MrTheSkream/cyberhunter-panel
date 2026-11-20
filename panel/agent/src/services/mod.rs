@@ -78,3 +78,4 @@ pub mod web_stats;
 // --- user terminal (09) ---
 pub mod user_terminal;
 // --- end user terminal (09) ---
+pub mod vuln_scanner; // CVE scanner (13)

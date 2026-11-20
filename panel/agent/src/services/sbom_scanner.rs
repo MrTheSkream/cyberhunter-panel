@@ -11,10 +11,15 @@ use std::time::Duration;
 
 // Same hardened-sandbox-compatible install location used by image_scanner.rs.
 const SYFT_DIR: &str = "/var/lib/dockpanel/scanners";
-const SYFT_BIN: &str = "/var/lib/dockpanel/scanners/syft";
+pub const SYFT_BIN: &str = "/var/lib/dockpanel/scanners/syft";
 
 // Same pinning rationale as image_scanner.rs's GRYPE_VERSION - see that comment.
-const SYFT_VERSION: &str = "v1.51.1";
+const SYFT_VERSION: &str = "v1.57.2";
+
+/// The pinned syft release, without the leading `v` (as `syft version` prints it).
+pub fn pinned_version() -> &'static str {
+    SYFT_VERSION.trim_start_matches('v')
+}
 
 /// True if the syft binary is present at the managed path.
 pub async fn is_installed() -> bool {

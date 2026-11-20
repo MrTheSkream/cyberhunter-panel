@@ -273,6 +273,7 @@ async fn main() {
         .merge(routes::disk_usage::router()) // disk usage (07)
         .merge(routes::web_stats::router()) // web statistics (08)
         .merge(routes::user_terminal::router()) // user terminal (09)
+        .merge(routes::vulns::router()) // CVE scanner (13)
         .route("/auth/rotate-token", axum::routing::post(routes::rotate_token))
         .layer(middleware::from_fn_with_state(state.clone(), routes::auth_middleware))
         .layer(middleware::from_fn(routes::audit_middleware))

@@ -121,6 +121,7 @@
 | `telemetry_collector` | daily | Collect anonymous usage telemetry (opt-in, off by default) |
 | `cleanup` | 3600s | Expire provision logs and their deploy-owner rows |
 | `traffic_accounting_scheduler` | 300s | Accumulate per-site monthly bandwidth from access logs, enforce `bandwidth_quota_mb` |
+| `vuln_sweeper` | 30min | Inventory every site, image and the OS with syft (weekly or on change), match all SBOMs daily with grype (on by default) |
 
 ## CLI Commands
 

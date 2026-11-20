@@ -47,6 +47,7 @@ pub mod wordpress;
 // --- import-hestia (05) ---
 pub mod local_db; // W2
 // --- end import-hestia (05) ---
+pub mod vulns; // CVE scanner (13)
 
 use axum::{
     extract::Request,

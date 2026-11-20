@@ -461,6 +461,9 @@ async fn main() {
     spawn_supervised("wp_vuln_scanner", &shutdown_tx, move |rx| services::wp_vuln_scanner::run(s_db.clone(), s_agents.clone(), rx));
 
     let (s_db, s_agents) = (state.db.clone(), state.agents.clone());
+    spawn_supervised("vuln_sweeper", &shutdown_tx, move |rx| services::vuln_sweeper::run(s_db.clone(), s_agents.clone(), rx));
+
+    let (s_db, s_agents) = (state.db.clone(), state.agents.clone());
     spawn_supervised("av_scanner", &shutdown_tx, move |rx| services::av_scanner::run(s_db.clone(), s_agents.clone(), rx));
 
     // Per-site disk usage (feature 6): every 6 hours, one A-5 call per server.

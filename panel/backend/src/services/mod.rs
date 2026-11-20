@@ -26,6 +26,7 @@ pub mod email;
 pub mod image_scanner;
 pub mod issuance_lock;
 pub mod wp_vuln_scanner;
+pub mod vuln_sweeper;
 pub mod av_scanner;
 pub mod disk_usage;
 pub mod web_stats;

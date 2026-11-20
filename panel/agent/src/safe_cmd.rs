@@ -183,6 +183,26 @@ impl UnsandboxedCommand {
         self
     }
 
+    /// Set a property on the **transient unit** itself (`-p <p>`, for example
+    /// `MemoryMax=1536M` or `Nice=19`), not an argument of the inner binary.
+    ///
+    /// Inserted immediately before the `--` separator, the same technique as
+    /// [`insert_unit_arg`]: everything before the FIRST `--` is read by
+    /// `systemd-run` as its own options. Neither `-p` nor a property value is
+    /// ever `--`, so the separator stays the first `--` in `argv` and
+    /// `insert_unit_arg` keeps finding it, whatever order the two are called in.
+    pub fn property(&mut self, p: &str) -> &mut Self {
+        assert!(p != "--", "a unit property cannot be the argv separator");
+        let sep = self
+            .argv
+            .iter()
+            .position(|a| a == "--")
+            .expect("unsandboxed_prefix always pushes a `--` separator");
+        self.argv.insert(sep, std::ffi::OsString::from("-p"));
+        self.argv.insert(sep + 1, std::ffi::OsString::from(p));
+        self
+    }
+
     /// Run to completion, returning the inner command's status and output.
     pub async fn output(&mut self) -> std::io::Result<std::process::Output> {
         let cap = Capture::new()?;
@@ -817,6 +837,35 @@ mod tests {
             suffix.chars().all(|c| c.is_ascii_hexdigit()),
             "unit suffix must be plain hex: {suffix}"
         );
+    }
+
+    /// `property` must land `-p X` before the separator, keep the inner argv
+    /// untouched (even one holding its own `--`), and leave `insert_unit_arg`
+    /// putting `--unit=` immediately before that same separator.
+    #[test]
+    fn property_lands_before_the_separator_and_unit_arg_still_follows_it() {
+        let mut cmd = safe_command_unsandboxed("syft", &[("HOME", "/var/lib/dockpanel/scanners/home")]);
+        cmd.args(["scan", "dir:/x", "--", "-weird"]);
+        cmd.property("MemoryMax=1536M").property("Nice=19");
+        let argv = argv_of(&cmd);
+        let sep = argv.iter().position(|a| a == "--").expect("separator");
+        assert_eq!(&argv[sep + 1..], ["syft", "scan", "dir:/x", "--", "-weird"]);
+        assert_eq!(&argv[sep - 4..sep], ["-p", "MemoryMax=1536M", "-p", "Nice=19"]);
+
+        let (binary, unit) = insert_unit_arg(&mut cmd.argv);
+        assert_eq!(binary, "syft");
+        let argv = argv_of(&cmd);
+        let sep = argv.iter().position(|a| a == "--").expect("separator");
+        assert_eq!(argv[sep - 1], format!("--unit={unit}"));
+        assert_eq!(&argv[sep - 5..sep - 1], ["-p", "MemoryMax=1536M", "-p", "Nice=19"]);
+        assert_eq!(&argv[sep + 1..], ["syft", "scan", "dir:/x", "--", "-weird"]);
+
+        // A property added after the unit name still lands before `--`.
+        cmd.property("CPUQuota=50%");
+        let argv = argv_of(&cmd);
+        let sep = argv.iter().position(|a| a == "--").expect("separator");
+        assert_eq!(&argv[sep - 2..sep], ["-p", "CPUQuota=50%"]);
+        assert_eq!(&argv[sep + 1..], ["syft", "scan", "dir:/x", "--", "-weird"]);
     }
 
     /// PID1 runs as `init_t` and may not write `tmp_t`, so a capture directory

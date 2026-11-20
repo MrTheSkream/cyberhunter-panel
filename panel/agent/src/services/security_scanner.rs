@@ -436,11 +436,15 @@ async fn scan_container_vulnerabilities() -> Vec<Finding> {
         }
         scanned_images.insert(image.clone());
 
-        // Try grype first
+        // Try grype first: the managed binary, not a `grype` on PATH (the
+        // installer puts it under the data dir, never on PATH), with the same
+        // database cache as the image scanner.
         let result = tokio::time::timeout(
             std::time::Duration::from_secs(120),
-            safe_command("grype")
+            safe_command(crate::services::image_scanner::GRYPE_BIN)
                 .args([&image, "-o", "json", "--only-fixed"])
+                .env("GRYPE_DB_CACHE_DIR", crate::services::image_scanner::GRYPE_DB_CACHE)
+                .kill_on_drop(true)
                 .output(),
         )
         .await;

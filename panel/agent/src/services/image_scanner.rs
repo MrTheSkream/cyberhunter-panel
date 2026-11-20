@@ -13,8 +13,8 @@ use std::time::Duration;
 // agent sandbox (ProtectSystem=strict, ProtectHome=yes) without needing write
 // access to /usr/local/bin or $HOME.
 const GRYPE_DIR: &str = "/var/lib/dockpanel/scanners";
-const GRYPE_BIN: &str = "/var/lib/dockpanel/scanners/grype";
-const GRYPE_DB_CACHE: &str = "/var/lib/dockpanel/scanners/grype-db";
+pub const GRYPE_BIN: &str = "/var/lib/dockpanel/scanners/grype";
+pub const GRYPE_DB_CACHE: &str = "/var/lib/dockpanel/scanners/grype-db";
 
 // Pinned to a known release rather than "latest" so the exact binary we run is
 // reviewable and reproducible. Anchore's install.sh already sha256-verifies the
@@ -22,7 +22,12 @@ const GRYPE_DB_CACHE: &str = "/var/lib/dockpanel/scanners/grype-db";
 // upstream to confirm - not gated behind any flag), so this pin closes the
 // remaining gap: without a TAG argument the script both re-resolves "latest"
 // on every install AND is fetched from the mutable `main` ref. Bump deliberately.
-const GRYPE_VERSION: &str = "v0.118.0";
+const GRYPE_VERSION: &str = "v0.122.1";
+
+/// The pinned grype release, without the leading `v` (as `grype version` prints it).
+pub fn pinned_version() -> &'static str {
+    GRYPE_VERSION.trim_start_matches('v')
+}
 
 #[derive(Serialize, Clone)]
 pub struct ImageScanResult {
@@ -58,7 +63,27 @@ pub async fn install_grype() -> Result<(), String> {
     if is_installed().await {
         return Ok(());
     }
+    install_grype_binary().await?;
 
+    // Prime the vulnerability database so the first user-facing scan does
+    // not stall on a 200 MB download.
+    let _ = tokio::time::timeout(
+        Duration::from_secs(180),
+        safe_command(GRYPE_BIN)
+            .args(["db", "update"])
+            .env("GRYPE_DB_CACHE_DIR", GRYPE_DB_CACHE)
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await;
+
+    Ok(())
+}
+
+/// Install the pinned grype binary only, without priming the database.
+/// The CVE scanner (`vuln_scanner`) uses this and runs `db update` itself in
+/// a transient unit, outside the agent's 512M cgroup.
+pub async fn install_grype_binary() -> Result<(), String> {
     tokio::fs::create_dir_all(GRYPE_DIR)
         .await
         .map_err(|e| format!("create {GRYPE_DIR}: {e}"))?;
@@ -88,18 +113,6 @@ pub async fn install_grype() -> Result<(), String> {
             stderr.chars().take(300).collect::<String>()
         ));
     }
-
-    // Prime the vulnerability database so the first user-facing scan does
-    // not stall on a 200 MB download.
-    let _ = tokio::time::timeout(
-        Duration::from_secs(180),
-        safe_command(GRYPE_BIN)
-            .args(["db", "update"])
-            .env("GRYPE_DB_CACHE_DIR", GRYPE_DB_CACHE)
-            .kill_on_drop(true)
-            .output(),
-    )
-    .await;
 
     Ok(())
 }
