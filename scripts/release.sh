@@ -6,12 +6,15 @@
 # working copy.
 #
 # Usage:
-#   bash scripts/release.sh [--arm64] [--dry-run] [--notes-file <file>]
+#   bash scripts/release.sh [--arm64] [--dry-run] [--yes] [--notes-file <file>]
 #
 #   --arm64        also build the four aarch64 binaries
 #   --dry-run      build and check, then stop before tagging/publishing
 #                  (prints the repository it would publish to)
-#   --notes-file   release notes for `gh release create` (default: a one-liner)
+#   --yes          publish without the "Publish <tag>? [y/N]" question; without
+#                  it, a run whose stdin is not a terminal stops before building
+#   --notes-file   release notes for `gh release create` (default: a one-liner);
+#                  any path Git Bash understands, handed to gh as a Windows path
 #
 # Environment:
 #   CYBERHUNTER_RELEASE_REPO   GitHub repo the release is published on
@@ -81,17 +84,32 @@ fi
 
 ARM64=0
 DRY_RUN=0
+ASSUME_YES=0
 NOTES_FILE=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --arm64) ARM64=1 ;;
         --dry-run) DRY_RUN=1 ;;
+        --yes) ASSUME_YES=1 ;;
         --notes-file) shift; NOTES_FILE="${1:-}"; [ -n "$NOTES_FILE" ] || die "--notes-file needs a file" ;;
-        -h|--help) sed -n '2,48p' "$0"; exit 0 ;;
-        *) die "unknown argument: $1 (usage: release.sh [--arm64] [--dry-run] [--notes-file <file>])" ;;
+        -h|--help) sed -n '2,51p' "$0"; exit 0 ;;
+        *) die "unknown argument: $1 (usage: release.sh [--arm64] [--dry-run] [--yes] [--notes-file <file>])" ;;
     esac
     shift
 done
+
+# The notes path is resolved now, before the `cd` below, so a path relative
+# to the caller's directory still names the same file.
+if [ -n "$NOTES_FILE" ]; then
+    [ -f "$NOTES_FILE" ] || die "notes file not found: $NOTES_FILE"
+    NOTES_FILE="$(cd "$(dirname "$NOTES_FILE")" && pwd)/$(basename "$NOTES_FILE")"
+fi
+
+# A publishing run asks before tagging. Without a terminal that question reads
+# EOF and answers no, after the whole build: refuse now instead, unless --yes.
+if [ "$DRY_RUN" = "0" ] && [ "$ASSUME_YES" = "0" ] && [ ! -t 0 ]; then
+    die "stdin is not a terminal, so the publish question cannot be answered: pass --yes (or --dry-run)"
+fi
 
 REPO="${CYBERHUNTER_RELEASE_REPO:-MrTheSkream/cyberhunter-panel}"
 
@@ -111,7 +129,6 @@ done
 if [ "$DRY_RUN" = "0" ]; then
     command -v gh >/dev/null 2>&1 || die "gh is required to publish (or use --dry-run)"
 fi
-[ -z "$NOTES_FILE" ] || [ -f "$NOTES_FILE" ] || die "notes file not found: $NOTES_FILE"
 
 # ── 1. Versions, tag, clean tree ─────────────────────────────────────────
 step "1. Checking versions, tag and working tree"
@@ -251,11 +268,15 @@ if [ "$DRY_RUN" = "1" ]; then
     exit 0
 fi
 
-read -r -p "Publish ${TAG}? [y/N] " answer
-case "$answer" in
-    y|Y) ;;
-    *) echo "Not published."; exit 1 ;;
-esac
+if [ "$ASSUME_YES" = "1" ]; then
+    echo "Publish ${TAG}? [y/N] y (--yes)"
+else
+    read -r -p "Publish ${TAG}? [y/N] " answer
+    case "$answer" in
+        y|Y) ;;
+        *) echo "Not published."; exit 1 ;;
+    esac
+fi
 
 # ── 8. Tag and publish ───────────────────────────────────────────────────
 step "8. Tagging and publishing $TAG"
@@ -269,6 +290,8 @@ PRE_FLAG=()
 [ "$PRERELEASE" = "1" ] && PRE_FLAG=(--prerelease)
 FILES=()
 for f in "${REQUIRED[@]}" checksums.txt; do FILES+=("$DIST/$f"); done
+# MSYS_NO_PATHCONV=1 (above) also stops Git Bash from converting arguments for
+# gh.exe, which cannot open /c/...: the notes path goes through host_path.
 gh release create "$TAG" --repo "$REPO" --verify-tag --title "CyberHunter $TAG" "${PRE_FLAG[@]}" \
-    --notes-file "$NOTES_FILE" "${FILES[@]}"
+    --notes-file "$(host_path "$NOTES_FILE")" "${FILES[@]}"
 echo -e "${GREEN}Published $TAG on $REPO${NC}"
