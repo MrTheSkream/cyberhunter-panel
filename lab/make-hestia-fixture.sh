@@ -184,7 +184,7 @@ make_mail_domain "$MAIL_A" contact yes
 make_mail_domain "$MAIL_B" info no
 
 # --------------------------------------------------------------------------
-# Certificat mail.<a> : mail/a/conf/ssl/a.{crt,key,ca,pem}, 90 jours, signe CA.
+# Certificat mail.<a> : mail/a/conf/ssl/a.{crt,key,ca,pem}, CERT_DAYS jours (defaut 90), signe CA.
 # .crt = la feuille seule (l'agent refuse une chaine dans .crt), .ca = la CA,
 # .pem = crt + ca (comme v-add-*-ssl de Hestia).
 # --------------------------------------------------------------------------
@@ -201,7 +201,7 @@ subjectKeyIdentifier = hash
 authorityKeyIdentifier = keyid,issuer
 EOF
 openssl x509 -req -in "$T/mail.csr" -CA "$CA_CRT" -CAkey "$CA_KEY" -CAcreateserial \
-  -CAserial "$T/ca.srl" -days 90 -sha256 -extfile "$T/mail.ext" -out "$S/$MAIL_A.crt" 2>/dev/null \
+  -CAserial "$T/ca.srl" -days "${CERT_DAYS:-90}" -sha256 -extfile "$T/mail.ext" -out "$S/$MAIL_A.crt" 2>/dev/null \
   || die "signature du certificat mail par la CA impossible"
 openssl x509 -in "$CA_CRT" -out "$S/$MAIL_A.ca"
 cat "$S/$MAIL_A.crt" "$S/$MAIL_A.ca" > "$S/$MAIL_A.pem"

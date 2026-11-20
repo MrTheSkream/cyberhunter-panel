@@ -36,7 +36,7 @@ ce répertoire est indexé par nom de site, et les routes SSL le listent et le s
 - elle tient `site_lock` sur la clé `mail.<d>`.
 
 En cas de succès, elle reconstruit la configuration SNI (D6). La réponse contient `expiry`.
-Nouvelle route `POST /mail/tls/install`, utilisée par l'import (D8).
+Pour l'import (D8), la route est `POST /mail/hestia/import-host-cert` (section 6).
 
 **D4. État en base.** Migration sur `mail_domains` :
 - `host_cert_status TEXT NOT NULL DEFAULT 'none'`, parmi `none`, `pending_dns`, `active`, `imported`, `failed` ;
@@ -177,3 +177,65 @@ La création manuelle d'un domaine mail passe aussi par là : aucun appel de plu
 - `POST /api/mail/domains/{id}/host-cert/retry` : mêmes droits que les autres écritures sur le domaine. Lance D9 tout de suite
   pour ce domaine, en ignorant le délai entre deux essais mais **pas** le contrôle DNS. Renvoie
   `{ host_cert_status, host_cert_expiry, host_cert_error }`.
+
+## 7. Écarts d'implémentation
+
+- **Port 465.**
+  - Une entrée `smtps` ou `hôte:465` active compte comme déjà présente.
+  - Une entrée active est en colonne 0, avec un premier jeton exact et `inet` en deuxième.
+  - Si `postfix check` refuse le bloc à l'installation, seul 587 est gardé.
+- **Fichiers.**
+  - Une clé qui ne correspond pas à son certificat est classée `unreadable`.
+  - Sans aucun nom à présenter, la table, le `.db` et le drop-in sont supprimés.
+  - `mail_uninstall` ne supprime pas `/etc/dockpanel/mail-tls`.
+- **Réglage administrateur.** Une valeur `tls_server_sni_maps` posée par l'administrateur est gardée tant que rien n'est à présenter.
+- **Alerte d'échec.**
+  - Sa clé est `ssl_renewal_failure` / `mail_host_failed:<id du domaine mail>`.
+  - Elle n'est résolue que par un succès ultérieur.
+  - Elle reste active si le domaine est supprimé ou passe en `pending_dns`.
+- **Erreurs de transport et expiration illisible.**
+  - Une erreur de transport vers l'agent ne passe pas l'état à `failed`.
+  - Une expiration illisible est revérifiée une fois par jour.
+- **Retry.**
+  - `Retry now` force aussi la réémission d'un certificat valide. L'interface masque alors le bouton.
+  - Le bouton n'est visible que pour les admins, qui sont les seuls à avoir les droits d'écriture sur un domaine mail.
+- **Import.**
+  - Un domaine déjà `active` n'est pas remplacé à la réimportation.
+  - Une réimportation dans une nouvelle migration est refusée (`exists_not_ours`), comme avant.
+- **`provision_mail_host_cert` (apex).** La clôture du verrou vaut « déjà émis » seulement si le site n'était pas en TLS avant l'attente.
+- **Migration.** Elle est numérotée `20261130000200`, car `20261130000000` était déjà prise sur `main`. Sans ce changement, l'API refusait de démarrer (vu en VM). L'épingle g6 vérifie désormais l'unicité des versions.
+
+## 8. Recette (2026-11-20, VM Ubuntu 24.04 : Postfix 3.8.6, Dovecot 2.3.21, CA Pebble derrière nginx)
+
+**Scénario 1 : rc.4 avec le mail installé, et domaines `a` et `b.example.test` importés en rc.4, puis mise à jour vers la branche.**
+- Soin au démarrage : 465 écoute, le bloc `submissions` est posé.
+- Les deux domaines sont à `none`. Le contrôle DNS donne `pending_dns` tant que l'IP de la VM n'est pas déclarée dans les IP du serveur.
+- `Retry now` émet le certificat de `mail.a`. L'auto-heal, une fois activé, émet celui de `mail.b` en environ 80 s.
+- `openssl s_client`, sur 993, 587 (`-starttls smtp`) et 465 :
+  - avec SNI `mail.a.example.test` : bon certificat, code de vérification 0 ;
+  - sans SNI ou avec un nom inconnu : certificat par défaut.
+- Renouvellement forcé : le numéro de série change sur les 3 ports.
+- Drop-in Dovecot cassé :
+  - `sni_apply_failed`, et les fichiers SNI sont restaurés (md5 identiques) ;
+  - Postfix et Dovecot restent actifs ;
+  - après correction, `Retry now` rétablit l'état `active`.
+- Port 465 :
+  - AUTH et envoi depuis l'adresse liée : message remis ;
+  - expéditeur non lié : 553 ;
+  - envoi sans AUTH : 554.
+
+**Scénario 2 : installation neuve avec la branche, puis import Hestia.**
+- `mail_install` pose 465.
+- Le certificat `mail.a` de l'archive passe à `imported` et il est présenté tout de suite sur les 3 ports. Aucune commande ACME n'a lieu à l'import.
+- `b`, sans certificat dans l'archive, passe à `pending_dns`, puis l'auto-heal le fait passer à `active`.
+- `.db` et table SNI : 0600 root.
+- Désactiver `b` le retire du SNI et garde ses fichiers ; le réactiver le remet.
+- Supprimer `a` supprime son dossier et sa ligne SNI.
+- Archive avec un certificat valable 10 jours : `imported`, puis l'auto-heal le remplace par Let's Encrypt (Pebble) en environ 40 s, sur les 3 ports.
+
+**Non vérifié en VM**
+- Le badge et le bouton dans le navigateur.
+- Le repli sur un certificat Let's Encrypt du panel (le serveur de test n'en a pas : c'est le snakeoil qui est servi).
+- Dovecot 2.4 (tests unitaires seulement).
+
+**À savoir.** L'auto-heal est désactivé par défaut (`auto_heal_enabled = false`, migration `20260314000001`). Sans lui, rien n'est émis ni renouvelé automatiquement : il reste `Retry now`.
