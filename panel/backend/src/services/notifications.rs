@@ -1175,6 +1175,15 @@ pub mod ssl_renewal_key {
     /// whichever fired first mute the other for twelve hours, which is the
     /// defect `state_key` exists to prevent and the one v2.154.0 shipped to fix.
     pub const MAIL_HOST_CONFLICT: &str = "mail_host_conflict";
+    /// The certificate of a mail domain's `mail.<d>` host (conception 14, D9)
+    /// could not be issued or renewed. Raised by `services::mail_host_cert`
+    /// with no `site_id`, so its call site suffixes the mail domain's id
+    /// (`mail_host_failed:<uuid>`): the key alone tells two domains apart.
+    ///
+    /// ⚠ Not cleared by `renewal_success_clears`: that resolver is scoped by
+    /// `site_id` and this alert has none. `mail_host_cert` resolves it itself
+    /// when the mail host is issued.
+    pub const MAIL_HOST_FAILED: &str = "mail_host_failed";
 
     /// Every key above, so a consumer can decide about all of them without
     /// re-listing them and drifting. ⚠ A new `pub const` above MUST be added
@@ -1184,13 +1193,14 @@ pub mod ssl_renewal_key {
     /// declared length, because the compiler already enforces that and an arm
     /// that only counted it was satisfied by dropping a key and duplicating
     /// another.
-    pub const ALL: [&str; 6] = [
+    pub const ALL: [&str; 7] = [
         DECLINED,
         FAILED,
         BLOCKED,
         DNS01_DECLINED,
         DNS01_DOWNGRADED,
         MAIL_HOST_CONFLICT,
+        MAIL_HOST_FAILED,
     ];
 }
 
@@ -1701,6 +1711,8 @@ mod renewal_success_clears_tests {
         // A mail host's certificate was refused to protect a wildcard. Renewing
         // that wildcard does not remove the conflict.
         assert!(!renewal_success_clears(ssl_renewal_key::MAIL_HOST_CONFLICT));
+        // Raised without a site, resolved by `mail_host_cert` itself.
+        assert!(!renewal_success_clears(ssl_renewal_key::MAIL_HOST_FAILED));
     }
 
     #[test]

@@ -5,7 +5,8 @@
 //! (selector kept, `mail` on Hestia) and maildirs. Deliberately NOT
 //! `routes::mail::create_domain`: that generates a new DKIM key, publishes DNS
 //! records and requests a `mail.<d>` certificate - side effects that must not
-//! happen before the DNS switch-over.
+//! happen before the DNS switch-over. The archive's own `mail.<d>` certificate
+//! is installed when it is valid (conception 14, D8): no ACME order at import.
 //!
 //! Secrets (mailbox hashes, the DKIM private key) come from the agent's
 //! `POST /mail/hestia/secrets` and go only into `mail_domains` /
@@ -270,6 +271,99 @@ fn keep_ownership_flag(out: &mut [(String, ItemOutcome)], dkey: &str) {
     }
 }
 
+/// What `/mail/hestia/import-host-cert` answered, decided into the row's state
+/// (pure): `imported` with its expiry when installed, `pending_dns` otherwise.
+pub fn host_cert_import_state(
+    answer: &serde_json::Value,
+) -> (&'static str, Option<chrono::DateTime<chrono::Utc>>, Option<String>) {
+    let installed = answer.get("installed").and_then(|v| v.as_bool()).unwrap_or(false);
+    let expiry = answer
+        .get("expiry")
+        .and_then(|v| v.as_str())
+        .and_then(crate::helpers::parse_agent_cert_expiry);
+    if installed {
+        return (crate::services::mail_host_cert::STATUS_IMPORTED, expiry, None);
+    }
+    // Only the agent's closed vocabulary is repeated, never free text.
+    let reason = answer
+        .get("reason")
+        .and_then(|v| v.as_str())
+        .filter(|r| matches!(*r, "missing" | "expired" | "wrong_name" | "unreadable"))
+        .map(str::to_string);
+    (crate::services::mail_host_cert::STATUS_PENDING_DNS, None, reason)
+}
+
+/// Install the archive's `mail.<d>` certificate and record the state. Never
+/// fails the import: an agent error leaves `pending_dns` and a warning. No ACME
+/// order is placed here. A domain whose certificate CyberHunter - Panel already
+/// issued (`active`) is left alone - the archive's one is older.
+///
+/// Returns the state written, for the item's `details` (a status word, never
+/// a key or a hash).
+async fn import_host_cert(
+    ctx: &ImportCtx,
+    domain_id: Uuid,
+    domain: &str,
+    warnings: &mut Vec<String>,
+) -> &'static str {
+    use crate::services::mail_host_cert::{STATUS_ACTIVE, STATUS_PENDING_DNS};
+
+    let current: Option<String> =
+        sqlx::query_scalar("SELECT host_cert_status FROM mail_domains WHERE id = $1")
+            .bind(domain_id)
+            .fetch_optional(&ctx.db)
+            .await
+            .ok()
+            .flatten();
+    if current.as_deref() == Some(STATUS_ACTIVE) {
+        return STATUS_ACTIVE;
+    }
+
+    let answer = ctx
+        .agent
+        .post(
+            "/mail/hestia/import-host-cert",
+            Some(json!({ "migration_id": ctx.agent_migration_id, "domain": domain })),
+        )
+        .await;
+    let (status, expiry, error) = match answer {
+        Ok(v) => {
+            let (status, expiry, reason) = host_cert_import_state(&v);
+            if let Some(r) = reason.as_deref() {
+                if r != "missing" {
+                    warnings.push(format!(
+                        "mail.{domain} certificate of the backup not installed ({r}), \
+                         it will be issued once mail.{domain} points to this server"
+                    ));
+                }
+            }
+            (status, expiry, None::<String>)
+        }
+        Err(e) => {
+            tracing::warn!("Import: mail.{domain} certificate not installed: {e}");
+            warnings.push(format!(
+                "mail.{domain} certificate of the backup not installed (agent error), \
+                 it will be issued once mail.{domain} points to this server"
+            ));
+            (STATUS_PENDING_DNS, None, None)
+        }
+    };
+    if let Err(e) = sqlx::query(
+        "UPDATE mail_domains SET host_cert_status = $1, host_cert_expiry = $2, \
+         host_cert_error = $3, host_cert_checked_at = NULL, updated_at = NOW() WHERE id = $4",
+    )
+    .bind(status)
+    .bind(expiry)
+    .bind(error)
+    .bind(domain_id)
+    .execute(&ctx.db)
+    .await
+    {
+        warnings.push(format!("mail.{domain} certificate state not recorded: {e}"));
+    }
+    status
+}
+
 async fn import_mail_domain_inner(ctx: &ImportCtx, domain: &str) -> Vec<(String, ItemOutcome)> {
     let domain = domain.trim().to_ascii_lowercase();
     let dkey = format!("mail_domain:{domain}");
@@ -390,7 +484,9 @@ async fn import_mail_domain_inner(ctx: &ImportCtx, domain: &str) -> Vec<(String,
             }
         }
     };
-    // Maildir root only (`/var/vmail/<d>`): no DNS, no certificate.
+    // Maildir root only (`/var/vmail/<d>`): no DNS. No ACME order either: the
+    // archive's `mail.<d>` certificate is installed in (4b) if it is valid
+    // (conception 14, D8), and the auto-healer renews it once `mail.<d>` points here.
     let _ = ctx.agent.post("/mail/domains/configure", Some(json!({ "domain": domain }))).await;
 
     // (4) DKIM: Hestia's key under Hestia's selector.
@@ -421,6 +517,11 @@ async fn import_mail_domain_inner(ctx: &ImportCtx, domain: &str) -> Vec<(String,
         }
         None => domain_warnings.push("no DKIM key in the backup".into()),
     }
+
+    // (4b) The `mail.<d>` certificate of the archive (conception 14, D8). Read
+    // and installed by the agent from the staging, BY REFERENCE: the key never
+    // reaches the backend, the inventory, the result, the ledger or the SSE.
+    let host_cert = import_host_cert(ctx, domain_id, &domain, &mut domain_warnings).await;
 
     // (5) Mailboxes.
     let mut maildir_accounts: Vec<String> = Vec::new();
@@ -650,6 +751,7 @@ async fn import_mail_domain_inner(ctx: &ImportCtx, domain: &str) -> Vec<(String,
         "created_by_import": true,
         "selector": selector,
         "dkim": dkim_imported,
+        "host_cert": host_cert,
         "catch_all": catch_all.is_some(),
         "accounts": secrets.accounts.len(),
         "aliases": alias_count,
@@ -796,6 +898,31 @@ mod tests {
         assert!(plan_mailbox(&acc("..@d.be"), "d.be", &schemes()).is_err());
         assert!(plan_mailbox(&acc("@d.be"), "d.be", &schemes()).is_err());
         assert_eq!(plan_mailbox(&acc(" Info@D.be "), "d.be", &schemes()).unwrap().email, "info@d.be");
+    }
+
+    #[test]
+    fn an_installed_archive_certificate_is_imported_with_its_expiry() {
+        let (s, exp, reason) = host_cert_import_state(&json!({
+            "installed": true, "expiry": "2027-01-31T10:00:00Z", "reason": null
+        }));
+        assert_eq!(s, "imported");
+        assert_eq!(exp.map(|e| e.to_rfc3339()), Some("2027-01-31T10:00:00+00:00".to_string()));
+        assert_eq!(reason, None);
+    }
+
+    #[test]
+    fn a_certificate_not_installed_waits_for_dns() {
+        for r in ["missing", "expired", "wrong_name", "unreadable"] {
+            let (s, exp, reason) = host_cert_import_state(&json!({ "installed": false, "expiry": null, "reason": r }));
+            assert_eq!(s, "pending_dns");
+            assert_eq!(exp, None);
+            assert_eq!(reason.as_deref(), Some(r));
+        }
+        // Free text from the agent is never repeated; a malformed answer is "not installed".
+        let (s, _, reason) = host_cert_import_state(&json!({ "installed": false, "reason": "anything else" }));
+        assert_eq!((s, reason), ("pending_dns", None));
+        let (s, _, _) = host_cert_import_state(&json!({}));
+        assert_eq!(s, "pending_dns");
     }
 
     #[test]

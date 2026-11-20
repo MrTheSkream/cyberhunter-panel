@@ -534,6 +534,56 @@ async fn order_http01(
     names: &[String],
     opts: Option<&ProvisionOpts<'_>>,
 ) -> Result<CertInfo, String> {
+    let IssuedPems { chain_pem: cert_chain_pem, key_pem: private_key_pem } =
+        order_http01_pems(account, domain, names, opts).await?;
+    let profile_used = opts.and_then(|o| o.profile).map(String::from);
+
+    // Save certificate and private key
+    let cert_dir = format!("{SSL_DIR}/{domain}");
+    tokio::fs::create_dir_all(&cert_dir)
+        .await
+        .map_err(|e| format!("Failed to create cert dir: {e}"))?;
+
+    let cert_path = format!("{cert_dir}/fullchain.pem");
+    let key_path = format!("{cert_dir}/privkey.pem");
+
+    tokio::fs::write(&cert_path, &cert_chain_pem)
+        .await
+        .map_err(|e| format!("Failed to write cert: {e}"))?;
+    // Write the private key 0600-at-creation (no world-readable 0644 window).
+    write_key_file(&key_path, &private_key_pem).await?;
+
+    // Parse expiry for response
+    let expiry = get_cert_expiry(&cert_path).await;
+
+    tracing::info!("SSL certificate provisioned for {domain}");
+
+    Ok(CertInfo {
+        cert_path,
+        key_path,
+        expiry,
+        profile: profile_used,
+        names: names.to_vec(),
+        warnings: Vec::new(),
+    })
+}
+
+/// What an ACME order hands back, not yet written anywhere.
+pub struct IssuedPems {
+    pub chain_pem: String,
+    pub key_pem: String,
+}
+
+/// The ACME half of [`order_http01`]: the order, its HTTP-01 challenges (in
+/// `ACME_WEBROOT`, served by every vhost and by the default `:80` vhost) and
+/// the issued chain + key, returned without touching any vhost or file. Used
+/// directly for `mail.<d>` (services/mail_tls.rs), stored elsewhere.
+pub async fn order_http01_pems(
+    account: &Account,
+    domain: &str,
+    names: &[String],
+    opts: Option<&ProvisionOpts<'_>>,
+) -> Result<IssuedPems, String> {
     // Create order with optional profile + ARI replaces hint
     let identifiers: Vec<Identifier> = names.iter().map(|n| Identifier::Dns(n.clone())).collect();
     let mut new_order = NewOrder::new(&identifiers);
@@ -548,7 +598,6 @@ async fn order_http01(
             }
         }
     }
-    let profile_used = opts.and_then(|o| o.profile).map(String::from);
     let mut order = account
         .new_order(&new_order)
         .await
@@ -623,38 +672,11 @@ async fn order_http01(
         .await
         .map_err(|e| format!("{CA_DECLINED}The CA would not hand back the certificate: {e}"))?;
 
-    // Save certificate and private key
-    let cert_dir = format!("{SSL_DIR}/{domain}");
-    tokio::fs::create_dir_all(&cert_dir)
-        .await
-        .map_err(|e| format!("Failed to create cert dir: {e}"))?;
-
-    let cert_path = format!("{cert_dir}/fullchain.pem");
-    let key_path = format!("{cert_dir}/privkey.pem");
-
-    tokio::fs::write(&cert_path, &cert_chain_pem)
-        .await
-        .map_err(|e| format!("Failed to write cert: {e}"))?;
-    // Write the private key 0600-at-creation (no world-readable 0644 window).
-    write_key_file(&key_path, &private_key_pem).await?;
-
     // This order's challenge files go when `written_tokens` is dropped, on
     // every return path (see `ChallengeFiles`).
     drop(written_tokens);
 
-    // Parse expiry for response
-    let expiry = get_cert_expiry(&cert_path).await;
-
-    tracing::info!("SSL certificate provisioned for {domain}");
-
-    Ok(CertInfo {
-        cert_path,
-        key_path,
-        expiry,
-        profile: profile_used,
-        names: names.to_vec(),
-        warnings: Vec::new(),
-    })
+    Ok(IssuedPems { chain_pem: cert_chain_pem, key_pem: private_key_pem })
 }
 
 /// Provision a Let's Encrypt certificate using DNS-01 challenge via Cloudflare.

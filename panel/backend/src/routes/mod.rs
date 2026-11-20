@@ -1772,6 +1772,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/mail/domains/{id}", put(mail::update_domain).delete(mail::delete_domain))
         .route("/api/mail/domains/{id}/dns", get(mail::domain_dns))
         .route("/api/mail/domains/{id}/send-ip", put(mail::set_send_ip))
+        .route("/api/mail/domains/{id}/host-cert/retry", post(mail::retry_host_cert))
         .route("/api/mail/domains/{id}/accounts", get(mail::list_accounts).post(mail::create_account))
         .route("/api/mail/domains/{id}/accounts/{account_id}", put(mail::update_account).delete(mail::delete_account))
         .route("/api/mail/domains/{id}/aliases", get(mail::list_aliases).post(mail::create_alias))

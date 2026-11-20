@@ -67,8 +67,9 @@ niveau `server` casserait `/.well-known/acme-challenge/`), bloc `:443` par `if (
 Jamais dans l'include des redirections (ses analyseurs supposent des lignes `location =`).
 
 **D5. Mail.** Domaines, boîtes avec hash tel quel (`{BLF-CRYPT}...`), alias, redirections, fourre-tout, clés DKIM (sélecteur
-`mail` conservé, pas `dockpanel`), maildirs. N'appelle PAS `create_domain` (génération DKIM, DNS automatique, certificat `mail.<d>` :
-effets de bord à ne pas déclencher avant la bascule DNS). Schéma de hash non géré par le Dovecot cible : boîte importée
+`mail` conservé, pas `dockpanel`), maildirs. N'appelle PAS `create_domain` (génération DKIM, DNS automatique, commande ACME `mail.<d>` :
+effets de bord à ne pas déclencher avant la bascule DNS). Aucune commande ACME à l'import ; le certificat `mail.<d>` de l'archive
+est installé s'il est valide (voir 14). Schéma de hash non géré par le Dovecot cible : boîte importée
 `enabled=false` + action manuelle (aucun mot de passe généré ni stocké). Redirection avec copie locale (`FWD` sans `FWD_ONLY`) : le modèle de boîte gagne `keep_copy` (redirection + copie conservée), importé tel quel, avec bascule dans l'interface Mail. Seuls hashes mail et clés DKIM passent de l'agent au
 backend (le panel les stocke) ; ils ne sont écrits ni dans `inventory`, `result`, `migration_items`, ni dans le SSE.
 
@@ -132,7 +133,7 @@ Archive réduite (3 domaines : WP PHP 8.3 www canonique, un PHP 5.6, `example.be
 3. Site : `curl --resolve` HTTP et HTTPS (certificat Hestia servi, `www` vers canonique en un seul 301, ACME joignable en `:80`), HSTS ; PHP 5.6 : version du pool, page phpinfo ; `private/` lisible par PHP (include `../private`), 404 en HTTP.
 4. Sécurité fichiers : `/private`, `/conf`, `/hestia` : 404 ; PHP déposé dans `uploads` : 403 (nginx seul et Apache) ; un `.htaccess` `SetHandler none` d'uploads ne change rien ; `example.be` : 200 ; `+ExecCGI` sans effet ; `.user.ini` Wordfence réécrit, site sans erreur fatale.
 5. Bases : connexion `mariadb -u <dbuser>` avec l'ancien mot de passe, par socket ET par `-h127.0.0.1` ; base à point/tiret/majuscule ; `wp-config` inchangé ; nombre de tables = source ; collation `uca1400` ; MyISAM+InnoDB ; aucun `ch_tmp_%` résiduel ; interface (tables, requête, sauvegarde, reset mot de passe, suppression) OK pour `local`.
-6. Mail : `doveadm auth test` avec le mot de passe d'origine ; IMAP : dossiers et nombre de messages = source ; `opendkim-testkey -d <d> -s mail` ; envoi signé ; aucun enregistrement DNS ni certificat `mail.<d>` créé ; boîte à schéma inconnu désactivée.
+6. Mail : `doveadm auth test` avec le mot de passe d'origine ; IMAP : dossiers et nombre de messages = source ; `opendkim-testkey -d <d> -s mail` ; envoi signé ; aucun enregistrement DNS créé ; aucune commande ACME à l'import ; le certificat `mail.<d>` de l'archive est installé s'il est valide (voir 14) ; boîte à schéma inconnu désactivée.
 7. SFTP : connexion `sftp<uid>` avec le mot de passe Hestia ; chroot ; fichiers modifiables par PHP.
 8. Relance : import terminé relancé : tout `skipped`, rien d'écrit (somme de contrôle de `/var/www`, dump d'une base inchangés) ; agent tué en plein site : la relance reprend ; `force_items` d'une base : recréée.
 9. Renouvellement : `ssl_expiry` forcé à J+10, DNS non pointé : échec journalisé sans perte du certificat ; DNS pointé : certificat couvre `www.`.

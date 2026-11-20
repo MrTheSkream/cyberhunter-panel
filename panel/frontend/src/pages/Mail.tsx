@@ -42,6 +42,80 @@ interface MailDomain {
   /** IP mail actually leaves from; null = the primary IP. */
   effective_send_ip?: string | null;
   send_ip_source?: "forced" | "site" | "primary";
+  /** Certificate presented by SNI for `mail.<domain>` (Postfix 465/587, Dovecot). */
+  host_cert_status?: HostCertStatus;
+  /** Expiry of that certificate (ISO), null when there is none. */
+  host_cert_expiry?: string | null;
+  /** Short reason of the last failure, null otherwise. */
+  host_cert_error?: string | null;
+}
+
+type HostCertStatus = "none" | "pending_dns" | "active" | "imported" | "failed";
+
+/** What `POST /mail/domains/{id}/host-cert/retry` answers. */
+interface HostCertState {
+  host_cert_status: HostCertStatus;
+  host_cert_expiry: string | null;
+  host_cert_error: string | null;
+}
+
+/** Days left before `expiry`, null when unknown. */
+function hostCertDaysLeft(expiry: string | null | undefined): number | null {
+  if (!expiry) return null;
+  const t = new Date(expiry).getTime();
+  if (Number.isNaN(t)) return null;
+  return (t - Date.now()) / 86_400_000;
+}
+
+/** `Retry now` is pointless while a valid certificate has more than 30 days left:
+ *  the auto-healer renews it on its own below that. */
+function hostCertCanRetry(d: MailDomain): boolean {
+  const status = d.host_cert_status ?? "none";
+  if (status !== "active" && status !== "imported") return true;
+  const left = hostCertDaysLeft(d.host_cert_expiry);
+  return left === null || left <= 30;
+}
+
+/** Badge for the `mail.<domain>` certificate. Same date format as a site's SSL expiry. */
+function HostCertBadge({ domain, compact = false }: { domain: MailDomain; compact?: boolean }) {
+  const status = domain.host_cert_status ?? "none";
+  const host = `mail.${domain.domain}`;
+  const date = domain.host_cert_expiry ? new Date(domain.host_cert_expiry).toLocaleDateString() : null;
+  let label: string;
+  let tone: string;
+  let title: string | undefined;
+  switch (status) {
+    case "active":
+      label = date ? `Active until ${date}` : "Active";
+      tone = "bg-rust-500/10 text-rust-400 border-rust-500/20";
+      break;
+    case "imported":
+      label = date ? `Imported, until ${date}` : "Imported";
+      tone = "bg-accent-500/10 text-accent-400 border-accent-500/20";
+      break;
+    case "pending_dns":
+      label = "Waiting for DNS";
+      tone = "bg-warn-500/10 text-warn-400 border-warn-500/20";
+      title = `${host} does not point to this server yet`;
+      break;
+    case "failed":
+      label = `Failed: ${domain.host_cert_error || "unknown error"}`;
+      tone = "bg-danger-500/10 text-danger-400 border-danger-500/20";
+      title = domain.host_cert_error || undefined;
+      break;
+    default:
+      label = "No certificate";
+      tone = "bg-dark-700 text-dark-300 border-dark-500";
+  }
+  return (
+    <span
+      className={`inline-flex items-center gap-1 max-w-full px-2 py-0.5 rounded-full border font-medium ${compact ? "text-[10px]" : "text-xs"} ${tone}`}
+      title={title ?? `${host}: ${label}`}
+    >
+      {!compact && <span className="font-mono">{host}</span>}
+      <span className="truncate">{label}</span>
+    </span>
+  );
 }
 
 interface MailAccount {
@@ -496,6 +570,27 @@ export default function Mail() {
     } catch (e) {
       setSendIpMessage({ text: e instanceof Error ? e.message : "Save failed", error: true });
     } finally { setSavingSendIp(false); }
+  };
+
+  const [retryingHostCert, setRetryingHostCert] = useState<string | null>(null);
+  const handleRetryHostCert = async (domain: MailDomain) => {
+    setRetryingHostCert(domain.id);
+    try {
+      const res = await api.post<HostCertState>(`/mail/domains/${domain.id}/host-cert/retry`, {});
+      const patch = (d: MailDomain): MailDomain => (d.id === domain.id ? { ...d, ...res } : d);
+      setDomains((prev) => prev.map(patch));
+      setSelectedDomain((prev) => (prev ? patch(prev) : prev));
+      const host = `mail.${domain.domain}`;
+      if (res.host_cert_status === "active" || res.host_cert_status === "imported") {
+        setMessage({ text: `Certificate for ${host} is in place`, type: "success" });
+      } else if (res.host_cert_status === "pending_dns") {
+        setMessage({ text: `${host} does not point to this server yet`, type: "error" });
+      } else {
+        setMessage({ text: `Certificate for ${host} failed: ${res.host_cert_error || "unknown error"}`, type: "error" });
+      }
+    } catch (e) {
+      setMessage({ text: e instanceof Error ? e.message : "Retry failed", type: "error" });
+    } finally { setRetryingHostCert(null); }
   };
 
   const handleDeleteDomain = (domain: MailDomain) => {
@@ -1063,6 +1158,7 @@ export default function Mail() {
                     <div className="min-w-0">
                       <span className="text-sm font-medium text-dark-50 truncate font-mono block">{d.domain}</span>
                       <span className="text-[10px] text-dark-300">{d.dkim_public_key ? "DKIM ready" : "No DKIM"}</span>
+                      <span className="block mt-1"><HostCertBadge domain={d} compact /></span>
                     </div>
                     {/* `delete_domain` is AdminUser. A site owner manages the
                         mailboxes under a domain; the domain itself is the
@@ -1115,6 +1211,20 @@ export default function Mail() {
               <div className="px-5 py-4 border-b border-dark-600">
                 <h2 className="text-lg font-semibold text-dark-50 font-mono">{selectedDomain.domain}</h2>
                 <p className="text-xs text-dark-200">{accounts.length} mailbox{accounts.length !== 1 ? "es" : ""} · {aliases.length} alias{aliases.length !== 1 ? "es" : ""}</p>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <HostCertBadge domain={selectedDomain} />
+                  {/* The retry route is AdminUser, like every other write on the domain. */}
+                  {isAdmin && hostCertCanRetry(selectedDomain) && (
+                    <button
+                      onClick={() => handleRetryHostCert(selectedDomain)}
+                      disabled={retryingHostCert === selectedDomain.id}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium border border-dark-500 text-dark-100 hover:text-dark-50 hover:border-dark-300 disabled:opacity-50 transition-colors"
+                    >
+                      {retryingHostCert === selectedDomain.id && <span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
+                      Retry now
+                    </button>
+                  )}
+                </div>
               </div>
               <div className="flex border-b border-dark-600 px-5">
                 {/* Queue and Logs are the machine's mail queue and the whole

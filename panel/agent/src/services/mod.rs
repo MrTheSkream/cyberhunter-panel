@@ -27,6 +27,7 @@ pub mod firewall;
 pub mod git_build;
 pub mod image_scanner;
 pub mod logs;
+pub mod mail_tls;
 pub mod mail_transports;
 pub mod sbom_scanner;
 pub mod migration;
