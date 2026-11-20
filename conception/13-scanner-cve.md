@@ -99,9 +99,12 @@ Ordre d'affichage : exploitée activement d'abord, puis critique, puis haute.
 - Le scan d'un gros `node_modules` coûte du disque et du processeur : un seul inventaire à la fois par
   serveur, en priorité basse.
 
-## 9. Décisions à prendre
+## 9. Décisions (prises le 2026-11-19 et le 2026-11-20)
 
-1. **Base WordPress** : Wordfence Intelligence (proposé) ou WPScan.
+1. **Base WordPress** : **écartée** (2026-11-20). Ni Wordfence ni WPScan : l'utilisateur ne veut pas de
+   dépendance à un service externe. Le lot 4 (WordPress) n'est pas retenu ; les extensions WordPress ne
+   sont pas comparées à des CVE par ce scanner (les dépendances Composer et npm d'un site WordPress le
+   sont, comme pour tout site). La liste écrite en dur de `check_known_vulns` reste en l'état.
 2. **Activation** : activé par défaut à l'installation, ou opt-in comme aujourd'hui.
 3. **Seuil d'alerte** : celui de la section 6, ou toute CVE critique même sans correctif.
 4. **Refus au déploiement** : le garder optionnel ou l'activer par défaut pour les CVE du catalogue KEV.
@@ -112,7 +115,6 @@ Ordre d'affichage : exploitée activement d'abord, puis critique, puis haute.
 - Un site avec un `composer.lock` contenant une version vulnérable connue, un site Node avec un
   `package-lock.json` vulnérable, une application Java avec un `log4j-core` 2.14.1 : chaque CVE attendue
   remonte, Log4Shell marquée comme exploitée activement.
-- Un WordPress avec une extension dans une version vulnérable connue.
 - Un paquet apt volontairement en retard sur la VM.
 - Simulation d'une nouvelle CVE : base de grype figée à une date, puis mise à jour : seule la nouveauté
   déclenche une alerte.

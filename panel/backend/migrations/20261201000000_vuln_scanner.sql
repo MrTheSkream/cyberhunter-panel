@@ -5,7 +5,7 @@
 CREATE TABLE IF NOT EXISTS vuln_targets (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     server_id UUID NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
-    kind VARCHAR(16) NOT NULL CHECK (kind IN ('site', 'image', 'system', 'wordpress')),
+    kind VARCHAR(16) NOT NULL CHECK (kind IN ('site', 'image', 'system')),
     ref VARCHAR(512) NOT NULL,
     site_id UUID NULL REFERENCES sites(id) ON DELETE CASCADE,
     git_deploy_id UUID NULL REFERENCES git_deploys(id) ON DELETE SET NULL,
