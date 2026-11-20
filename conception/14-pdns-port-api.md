@@ -1,6 +1,7 @@
 # 14 - Port de l'API PowerDNS : choix sûr et réponses vérifiées
 
-Branche : `fix/pdns-api-port` (depuis `main`). Statut : conception à valider.
+Branche : `fix/pdns-api-port` (depuis `main`). Statut : conception validée
+(option 1), implémentée, recette VM réussie le 2026-11-20 (section en fin).
 
 ## Constat (recette réelle, Ubuntu 24.04)
 
