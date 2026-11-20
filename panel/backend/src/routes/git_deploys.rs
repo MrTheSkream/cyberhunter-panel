@@ -2887,6 +2887,44 @@ fn spawn_deploy_task(
         }
         }; // end nixpacks_image if/else
 
+        // CVE deploy gate on the image just built, before the running
+        // container is replaced (see `built_image_refusal`).
+        if let Some(reason) = built_image_refusal(
+            &db,
+            &agent,
+            config.server_id,
+            &image_tag,
+            &|label, status, msg| emit("scan", label, status, msg),
+        )
+        .await
+        {
+            emit("complete", "Deploy failed", "error", None);
+            record_failed_history(&db, git_deploy_id, &commit_hash, commit_message.as_deref().unwrap_or(""), &reason, &triggered).await;
+            if let Err(db_err) = sqlx::query("UPDATE git_deploys SET status = 'failed', updated_at = NOW() WHERE id = $1")
+                .bind(git_deploy_id)
+                .execute(&db)
+                .await
+            {
+                tracing::warn!("Failed to update git deploy status: {db_err}");
+            }
+            tracing::warn!("Git deploy {deploy_name} ({triggered}): {reason}");
+            notifications::notify_panel(&db, Some(user_id), &format!("Deploy blocked: {}", deploy_name), &reason, "warning", "deploy", Some("/git-deploys")).await;
+            if let Some(ref gh_token) = config.github_token {
+                if !gh_token.is_empty() && commit_hash != "unknown" {
+                    let token = gh_token.clone();
+                    let repo_url = config.repo_url.clone();
+                    let sha = commit_hash.clone();
+                    let target = config.domain.as_deref().map(|d| deploy_url(d, effective_mode));
+                    tokio::spawn(async move {
+                        set_github_status(&token, &repo_url, &sha, "failure", target).await;
+                    });
+                }
+            }
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            logs.lock().unwrap_or_else(|e| e.into_inner()).remove(&deploy_id);
+            return;
+        }
+
         // Step 3: Deploy
         emit("deploy", "Deploying container", "in_progress", None);
 
@@ -3467,6 +3505,49 @@ async fn compose_deploy_refusal(
     None
 }
 
+/// The CVE deploy gate for an image a Git deploy has just built.
+///
+/// Called by every path that builds an image and then runs it (manual, webhook
+/// and approved deploys through `spawn_deploy_task`, scheduled ones through
+/// `trigger_deploy_task`, previews through `handle_preview_deploy`), after the
+/// build and before `/git/deploy`, so a refusal leaves the running container
+/// untouched. The build and the run are already two agent calls, so the agent
+/// needed no change. Rollbacks are not gated: they put back an image that ran
+/// before, which is the remedy, the same reasoning as `update_app`.
+///
+/// `step` receives (label, status, message) for the live deploy log. Returns
+/// the refusal sentence, or `None` to go on (gate off, scan clean, or scanner
+/// unavailable, which is logged and never blocks).
+async fn built_image_refusal(
+    db: &sqlx::PgPool,
+    agent: &AgentHandle,
+    server_id: Uuid,
+    image_tag: &str,
+    step: &(dyn Fn(&str, &str, Option<String>) + Sync),
+) -> Option<String> {
+    use crate::routes::image_scans::{armed_gate, gate_built_image, BuiltImageGate};
+    let gate = armed_gate(db).await?;
+    step("Scanning image for vulnerabilities", "in_progress", None);
+    match gate_built_image(db, server_id, agent, &gate, image_tag).await {
+        BuiltImageGate::Passed(summary) => {
+            step("Image scan passed", "done", Some(summary));
+            None
+        }
+        BuiltImageGate::Skipped(why) => {
+            step(
+                "Image scan unavailable, deploy continues",
+                "done",
+                Some(why),
+            );
+            None
+        }
+        BuiltImageGate::Refused(reason) => {
+            step("Deploy blocked by image scan", "error", Some(reason.clone()));
+            Some(reason)
+        }
+    }
+}
+
 /// The eight filled circles `mask_github_token` substitutes for a stored token.
 /// Named once so the mask and the guard against re-storing it cannot drift apart.
 const GITHUB_TOKEN_MASK: &str = "\u{25CF}\u{25CF}\u{25CF}\u{25CF}\u{25CF}\u{25CF}\u{25CF}\u{25CF}";
@@ -3988,6 +4069,27 @@ pub async fn trigger_deploy_task(
         }
     };
 
+    // CVE deploy gate on the image just built (see `built_image_refusal`).
+    if let Some(reason) =
+        built_image_refusal(&db, &agent, config.server_id, &image_tag, &|_, _, _| {}).await
+    {
+        record_failed_history(&db, git_deploy_id, &commit_hash, &commit_message, &reason, &triggered_by).await;
+        if let Err(db_err) = sqlx::query("UPDATE git_deploys SET status = 'failed', updated_at = NOW() WHERE id = $1")
+            .bind(git_deploy_id).execute(&db).await
+        {
+            tracing::warn!("Failed to update git deploy status: {db_err}");
+        }
+        tracing::warn!("Deploy refused ({}): {}: {reason}", triggered_by, config.name);
+        notifications::notify_panel(&db, Some(user_id), &format!("Deploy blocked: {}", config.name), &reason, "warning", "deploy", Some("/git-deploys")).await;
+        if let Some(ref gh_token) = config.github_token {
+            if !gh_token.is_empty() && commit_hash != "unknown" {
+                set_github_status(gh_token, &config.repo_url, &commit_hash, "failure",
+                    config.domain.as_deref().map(|d| deploy_url(d, effective_mode))).await;
+            }
+        }
+        return;
+    }
+
     // An agent too old to honour `tls_mode`/`tls_certificate` silently drops
     // both and falls back to inferring the mode from `ssl_email` presence -
     // which `deploy_tls_email` withholds outright in `provided` mode, so an
@@ -4325,6 +4427,7 @@ async fn handle_preview_deploy(
     // Spawn deploy task
     let db = state.db.clone();
     let agent = agent.clone();
+    let server_id = config.server_id;
     let name = config.name.clone();
     let repo_url = config.repo_url.clone();
     let dockerfile = config.dockerfile.clone();
@@ -4420,6 +4523,24 @@ async fn handle_preview_deploy(
                 return;
             }
         };
+
+        // CVE deploy gate on the preview image (see `built_image_refusal`).
+        if let Some(reason) =
+            built_image_refusal(&db, &agent, server_id, &image_tag, &|_, _, _| {}).await
+        {
+            tracing::warn!("Preview deploy refused: {name}/{branch}: {reason}");
+            if let Err(db_err) = sqlx::query("UPDATE git_previews SET status = 'failed' WHERE git_deploy_id = $1 AND branch = $2")
+                .bind(deploy_id).bind(&branch).execute(&db).await
+            {
+                tracing::warn!("Failed to update git preview status: {db_err}");
+            }
+            if let Some(ref gh_token) = github_token {
+                if !gh_token.is_empty() {
+                    set_github_status(gh_token, &repo_url, &commit_hash, "failure", github_target.clone()).await;
+                }
+            }
+            return;
+        }
 
         // Deploy. memory_mb/cpu_percent are deliberately not inherited from the
         // parent app: preview containers have always run unbounded, and quietly

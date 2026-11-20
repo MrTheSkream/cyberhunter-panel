@@ -9,7 +9,7 @@ Scanning is **disabled by default**. Existing installs see no behaviour change a
 1. Go to **Settings → Services → Image Vulnerability Scanning**.
 2. Click **Install Scanner**. CyberHunter - Panel downloads grype (~70 MB) into `/var/lib/dockpanel/scanners/`, primes the CVE database, and registers it with the agent. This is self-contained - nothing is written to `/usr/local/bin`, and the database lives inside the agent's sandbox.
 3. *(Optional)* Toggle **Enable scheduled scans** to let the background sweeper rescan every running app's image at the configured interval (default 24 h, range 1 – 720).
-4. *(Optional)* Toggle **Scan on deploy** and pick a **Deploy-gate threshold** - `critical`, `high`, or `medium`. Leave at `none` to observe without blocking.
+4. *(Optional)* Toggle **Scan on deploy** and pick a **Deploy-gate threshold** - `kev` (actively exploited, CISA KEV catalog), `critical`, `high`, or `medium`. Leave at `none` to observe without blocking.
 
 ## What the Apps page shows
 
@@ -22,10 +22,14 @@ The drawer lists every vulnerability from the latest scan: CVE ID, severity, aff
 
 ## Deploy gate
 
-When the deploy gate is set to `critical`, `high`, or `medium`, every door that puts an image on a host checks it against the latest stored scan for that host - deploying a template, changing an app's image, deploying a compose file, and creating or editing a stack (each service in the file is checked):
+When the deploy gate is set to `kev`, `critical`, `high`, or `medium`, every door that puts an image on a host checks it against the latest stored scan for that host - deploying a template, changing an app's image, deploying a compose file, and creating or editing a stack (each service in the file is checked):
 
 - If the last scan is within the past 7 days and exceeds the threshold, the deploy is refused with a clear message naming the counts and the image.
 - If no recent scan exists, the deploy is allowed and a best-effort background scan starts. The next attempt of the same image will be gated.
+
+`kev` refuses an image that carries at least one CVE listed in CISA's Known Exploited Vulnerabilities catalog, whatever its severity, and the message names up to five of them. The other levels keep reading severities only.
+
+**Git deploys built from a Dockerfile (or nixpacks)** are judged differently: the image has just been built, so it is scanned synchronously after the build and before the container is replaced. A refusal leaves the previous container running, records a `failed` entry in the deploy history and sends a "Deploy blocked" notification. If the scanner is not installed or the scan fails, the deploy continues and the agent logs a warning: a scanner outage never blocks a deploy. Rollbacks are exempt (they restore an image that was already running). Redeploying the *same* commit after a refusal reuses its image tag, so prefer a new commit that fixes the base image.
 
 The gate is intentionally soft on first contact - it never blocks the very first deploy of an image on a cold database, so operators aren't stuck waiting 30–180 s on a blocking scan the first time they use a template.
 

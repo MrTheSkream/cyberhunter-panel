@@ -132,8 +132,8 @@ if [ "$(countin "$IMAGE_SCANNER" "^pub async fn install_grype" "kill_on_drop(tru
 else
   bad "install_grype is missing kill_on_drop(true) on one or both of its spawns"
 fi
-if bodyhas "$IMAGE_SCANNER" "^pub async fn scan_image" "kill_on_drop(true)"; then
-  ok "scan_image sets kill_on_drop(true) on the grype invocation"
+if bodyhas "$IMAGE_SCANNER" "^pub async fn scan_image" "kill_on_drop(true)"    || { bodyhas "$IMAGE_SCANNER" "^pub async fn scan_image" "vuln_scanner::grype_image_report("         && bodyhas panel/agent/src/services/vuln_scanner.rs "^pub async fn grype_image_report" ".output_with_timeout(timeout)"; }; then
+  ok "scan_image sets kill_on_drop(true) on the grype invocation, or runs it in a transient unit stopped on timeout"
 else
   bad "scan_image is missing kill_on_drop(true) - a timed-out scan can orphan"
 fi

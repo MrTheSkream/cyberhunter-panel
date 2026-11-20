@@ -144,6 +144,36 @@ fn scanner_command(binary: &str, auto_update: bool) -> UnsandboxedCommand {
     cmd
 }
 
+/// Raw grype JSON report of one image (`image_scanner::scan_image`, which the
+/// deploy gate calls on every armed Git deploy), run in the same capped
+/// transient unit as every other scanner run: inside the agent's own 512M
+/// cgroup, loading the 3.3 GiB database pinned the agent at its memory limit
+/// (lab, 2026-11-20). Database auto update stays on, as before, so a server
+/// that only uses image scanning still refreshes its database. The report is
+/// written to a file, never read from stdout; the unit is stopped on timeout.
+pub async fn grype_image_report(image: &str, timeout: Duration) -> Result<String, String> {
+    ensure_dirs()?;
+    let out = Path::new(TMP_DIR).join(format!("image-{}.json", uuid::Uuid::new_v4()));
+    let res = scanner_command(image_scanner::GRYPE_BIN, true)
+        .args([
+            image.to_string(),
+            "-o".to_string(),
+            format!("json={}", out.display()),
+            "-q".to_string(),
+        ])
+        .output_with_timeout(timeout)
+        .await;
+    let report = match res {
+        Err(e) => Err(e),
+        Ok(r) if !r.status.success() => Err(format!("grype scan failed: {}", stderr_tail(&r, 400))),
+        Ok(_) => tokio::fs::read_to_string(&out)
+            .await
+            .map_err(|e| format!("read grype report: {e}")),
+    };
+    let _ = std::fs::remove_file(&out);
+    report
+}
+
 /// Last `n` characters of a process's stderr, for an error message.
 fn stderr_tail(out: &std::process::Output, n: usize) -> String {
     let s = String::from_utf8_lossy(&out.stderr);

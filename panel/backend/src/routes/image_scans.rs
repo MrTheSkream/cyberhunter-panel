@@ -24,6 +24,9 @@ pub struct Vuln {
     pub installed_version: String,
     pub fixed_version: Option<String>,
     pub description: Option<String>,
+    /// In the CISA KEV catalogue. Absent from an older agent's report.
+    #[serde(default)]
+    pub kev: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -35,6 +38,10 @@ pub struct ImageScanResult {
     pub medium_count: u32,
     pub low_count: u32,
     pub unknown_count: u32,
+    /// Matches in the CISA KEV catalogue. An older agent does not send it,
+    /// and rows stored before it existed read 0.
+    #[serde(default)]
+    pub kev_count: u32,
     pub vulnerabilities: Vec<Vuln>,
     pub scanned_at: String,
 }
@@ -48,6 +55,7 @@ pub struct ScanFindingRow {
     pub medium_count: i32,
     pub low_count: i32,
     pub unknown_count: i32,
+    pub kev_count: i32,
     pub vulnerabilities: serde_json::Value,
     pub scanned_at: chrono::DateTime<chrono::Utc>,
 }
@@ -96,12 +104,17 @@ pub async fn read_settings(pool: &sqlx::PgPool) -> Result<(bool, bool, String, i
 }
 
 fn valid_gate(g: &str) -> bool {
-    matches!(g, "none" | "critical" | "high" | "medium")
+    matches!(g, "none" | "kev" | "critical" | "high" | "medium")
 }
 
 /// True if the result exceeds the configured deploy-gate threshold.
+///
+/// `kev` refuses an image with at least one actively exploited CVE (CISA KEV),
+/// whatever its severity. It is not a rung of the severity ladder: `critical`,
+/// `high` and `medium` keep reading severities only.
 pub fn exceeds_threshold(gate: &str, r: &ImageScanResult) -> bool {
     match gate {
+        "kev" => r.kev_count > 0,
         "critical" => r.critical_count > 0,
         "high" => r.critical_count > 0 || r.high_count > 0,
         "medium" => r.critical_count > 0 || r.high_count > 0 || r.medium_count > 0,
@@ -148,7 +161,7 @@ pub async fn update_settings(
     require_admin(&claims.role)?;
 
     if !valid_gate(&body.deploy_gate) {
-        return Err(err(StatusCode::BAD_REQUEST, "Invalid deploy_gate (none|critical|high|medium)"));
+        return Err(err(StatusCode::BAD_REQUEST, "Invalid deploy_gate (none|kev|critical|high|medium)"));
     }
     if !(1..=720).contains(&body.interval_hours) {
         return Err(err(StatusCode::BAD_REQUEST, "interval_hours must be 1..=720"));
@@ -255,10 +268,10 @@ pub async fn get_app_scan(
     // scoped server too. Reading by image alone answered with whichever host
     // scanned that name last - a badge about a container the operator is not
     // looking at.
-    let row: Option<(String, String, i32, i32, i32, i32, i32, serde_json::Value, chrono::DateTime<chrono::Utc>)> =
+    let row: Option<(String, String, i32, i32, i32, i32, i32, i32, serde_json::Value, chrono::DateTime<chrono::Utc>)> =
         sqlx::query_as(
             "SELECT image, scanner, critical_count, high_count, medium_count, low_count, \
-             unknown_count, vulnerabilities, scanned_at \
+             unknown_count, kev_count, vulnerabilities, scanned_at \
              FROM image_scan_findings \
              WHERE server_id = $1 AND image = $2 \
              ORDER BY scanned_at DESC LIMIT 1",
@@ -287,11 +300,11 @@ pub async fn list_recent(
 ) -> Result<Json<Vec<ScanFindingRow>>, ApiError> {
     require_admin(&claims.role)?;
 
-    let rows: Vec<(String, String, i32, i32, i32, i32, i32, serde_json::Value, chrono::DateTime<chrono::Utc>)> =
+    let rows: Vec<(String, String, i32, i32, i32, i32, i32, i32, serde_json::Value, chrono::DateTime<chrono::Utc>)> =
         sqlx::query_as(
             "SELECT DISTINCT ON (image) \
                 image, scanner, critical_count, high_count, medium_count, low_count, \
-                unknown_count, vulnerabilities, scanned_at \
+                unknown_count, kev_count, vulnerabilities, scanned_at \
              FROM image_scan_findings \
              WHERE server_id = $1 \
              ORDER BY image, scanned_at DESC",
@@ -305,7 +318,7 @@ pub async fn list_recent(
 }
 
 fn row_to_finding(
-    r: (String, String, i32, i32, i32, i32, i32, serde_json::Value, chrono::DateTime<chrono::Utc>),
+    r: (String, String, i32, i32, i32, i32, i32, i32, serde_json::Value, chrono::DateTime<chrono::Utc>),
 ) -> ScanFindingRow {
     ScanFindingRow {
         image: r.0,
@@ -315,8 +328,9 @@ fn row_to_finding(
         medium_count: r.4,
         low_count: r.5,
         unknown_count: r.6,
-        vulnerabilities: r.7,
-        scanned_at: r.8,
+        kev_count: r.7,
+        vulnerabilities: r.8,
+        scanned_at: r.9,
     }
 }
 
@@ -375,7 +389,9 @@ async fn gate_is_armed(pool: &sqlx::PgPool) -> Result<bool, ApiError> {
 ///
 /// Every door that can put an image on a host calls this: the template deploy
 /// through [`preflight_gate`] above, and `update_image`, `compose_deploy`,
-/// `stacks::create` and `stacks::update` directly.
+/// `stacks::create` and `stacks::update` directly. A Git deploy that builds an
+/// image (Dockerfile, auto-detect, Nixpacks) is judged after the build instead,
+/// by [`gate_built_image`], which scans the new image before it runs.
 ///
 /// ⚠ `update_app` deliberately does NOT call it, and that is not an oversight.
 /// It re-pulls the SAME reference the app already runs, so the only scan on file
@@ -397,8 +413,11 @@ pub async fn preflight_gate_image(
     let image = image.to_string();
 
     // Look up the most recent scan within 7 days
-    let recent: Option<(i32, i32, i32, i32, i32)> = sqlx::query_as(
-        "SELECT critical_count, high_count, medium_count, low_count, unknown_count \
+    // `vulnerabilities` too, so a `kev` refusal can name the exploited CVEs
+    // (lab, 2026-11-20: the message only carried the count).
+    let recent: Option<(i32, i32, i32, i32, i32, i32, serde_json::Value)> = sqlx::query_as(
+        "SELECT critical_count, high_count, medium_count, low_count, unknown_count, kev_count, \
+                vulnerabilities \
          FROM image_scan_findings \
          WHERE server_id = $1 AND image = $2 AND scanned_at > NOW() - INTERVAL '7 days' \
          ORDER BY scanned_at DESC LIMIT 1",
@@ -410,7 +429,7 @@ pub async fn preflight_gate_image(
     .map_err(|e| internal_error("read recent scan", e))?;
 
     match recent {
-        Some((critical, high, medium, low, unknown)) => {
+        Some((critical, high, medium, low, unknown, kev, vulns)) => {
             let result = ImageScanResult {
                 image: image.clone(),
                 scanner: "grype".into(),
@@ -419,16 +438,16 @@ pub async fn preflight_gate_image(
                 medium_count: medium as u32,
                 low_count: low as u32,
                 unknown_count: unknown as u32,
-                vulnerabilities: vec![],
+                kev_count: kev.max(0) as u32,
+                // Rows from before the kev column, or unreadable JSON: no ids,
+                // the count alone still decides.
+                vulnerabilities: serde_json::from_value(vulns).unwrap_or_default(),
                 scanned_at: "".into(),
             };
             if exceeds_threshold(&gate, &result) {
                 return Err(err(
                     StatusCode::UNPROCESSABLE_ENTITY,
-                    &format!(
-                        "Deploy blocked by image scan gate ({gate}): {} critical / {} high / {} medium in {}",
-                        critical, high, medium, image
-                    ),
+                    &refusal_message(&gate, &result),
                 ));
             }
             Ok(())
@@ -464,6 +483,100 @@ pub(crate) async fn resolve_template_image(
         }
     }
     None
+}
+
+/// The refusal sentence for a result over `gate`. The severity counts keep the
+/// wording every existing door has always shown; the `kev` level leads with the
+/// actively exploited CVEs, naming at most five of them.
+fn refusal_message(gate: &str, r: &ImageScanResult) -> String {
+    let mut kev_part = String::new();
+    if gate == "kev" {
+        let mut ids: Vec<&str> = Vec::new();
+        for v in r.vulnerabilities.iter().filter(|v| v.kev) {
+            if ids.len() < 5 && !ids.contains(&v.cve.as_str()) {
+                ids.push(v.cve.as_str());
+            }
+        }
+        kev_part = format!("{} actively exploited (CISA KEV)", r.kev_count);
+        if !ids.is_empty() {
+            kev_part.push_str(&format!(" including {}", ids.join(", ")));
+        }
+        kev_part.push_str("; ");
+    }
+    format!(
+        "Deploy blocked by image scan gate ({gate}): {kev_part}{} critical / {} high / {} medium in {}",
+        r.critical_count, r.high_count, r.medium_count, r.image
+    )
+}
+
+// ── Gate on a freshly built image (Git deploys) ─────────────────────────
+
+/// The configured threshold when the deploy gate is armed, `None` when it is
+/// off (the default). A settings read that fails counts as off and is logged:
+/// a database hiccup must not refuse a deploy.
+pub async fn armed_gate(pool: &sqlx::PgPool) -> Option<String> {
+    match read_settings(pool).await {
+        Ok((enabled, on_deploy, gate, _hours)) if enabled && on_deploy && gate != "none" => Some(gate),
+        Ok(_) => None,
+        Err(e) => {
+            tracing::warn!("Image scan gate skipped: could not read its settings: {e}");
+            None
+        }
+    }
+}
+
+/// What [`gate_built_image`] decided.
+#[derive(Debug, PartialEq)]
+pub enum BuiltImageGate {
+    /// Scanned and under the threshold; carries a one-line summary.
+    Passed(String),
+    /// The scan could not run (scanner not installed, timeout, agent error).
+    /// The deploy goes on, as the soft gate does; carries the reason.
+    Skipped(String),
+    /// Over the threshold; carries the refusal sentence.
+    Refused(String),
+}
+
+/// Scan an image a Git deploy has just built, before it replaces the running
+/// container, and judge it against `gate`.
+///
+/// Unlike the soft gate of the other doors there is no "no recent scan" case:
+/// the image is new by construction, so it is scanned now, synchronously
+/// (bounded by `scan_and_store`'s 240 s agent call, the agent itself stopping
+/// grype at 180 s). A scanner that is missing or fails does not block the
+/// deploy: it is logged and reported as `Skipped`.
+pub async fn gate_built_image(
+    pool: &sqlx::PgPool,
+    server_id: uuid::Uuid,
+    agent: &crate::services::agent::AgentHandle,
+    gate: &str,
+    image: &str,
+) -> BuiltImageGate {
+    match scan_and_store(pool, server_id, agent, image).await {
+        Ok(r) => judge_built_image(gate, &r),
+        Err(e) => {
+            let why = e
+                .1
+                .0
+                .get("error")
+                .and_then(|v| v.as_str())
+                .unwrap_or("image scan failed")
+                .to_string();
+            tracing::warn!("Image scan gate skipped for {image}, deploy continues: {why}");
+            BuiltImageGate::Skipped(why)
+        }
+    }
+}
+
+/// The verdict on a completed scan (split out so it is testable without an agent).
+fn judge_built_image(gate: &str, r: &ImageScanResult) -> BuiltImageGate {
+    if exceeds_threshold(gate, r) {
+        return BuiltImageGate::Refused(refusal_message(gate, r));
+    }
+    BuiltImageGate::Passed(format!(
+        "{} actively exploited, {} critical, {} high, {} medium (gate: {gate})",
+        r.kev_count, r.critical_count, r.high_count, r.medium_count
+    ))
 }
 
 // ── Internal helpers ────────────────────────────────────────────────────
@@ -548,8 +661,8 @@ pub async fn scan_and_store(
 
     sqlx::query(
         "INSERT INTO image_scan_findings \
-         (server_id, image, scanner, critical_count, high_count, medium_count, low_count, unknown_count, vulnerabilities) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+         (server_id, image, scanner, critical_count, high_count, medium_count, low_count, unknown_count, kev_count, vulnerabilities) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
     )
     .bind(server_id)
     .bind(&result.image)
@@ -559,6 +672,7 @@ pub async fn scan_and_store(
     .bind(result.medium_count as i32)
     .bind(result.low_count as i32)
     .bind(result.unknown_count as i32)
+    .bind(result.kev_count as i32)
     .bind(&vuln_json)
     .execute(pool)
     .await
@@ -657,8 +771,21 @@ mod tests {
             medium_count: m,
             low_count: 0,
             unknown_count: 0,
+            kev_count: 0,
             vulnerabilities: vec![],
             scanned_at: "now".into(),
+        }
+    }
+
+    fn vuln(cve: &str, kev: bool) -> Vuln {
+        Vuln {
+            cve: cve.into(),
+            severity: "low".into(),
+            package: "p".into(),
+            installed_version: "1".into(),
+            fixed_version: None,
+            description: None,
+            kev,
         }
     }
 
@@ -680,14 +807,69 @@ mod tests {
     }
 
     #[test]
+    fn kev_gate_reads_the_kev_count_only() {
+        let mut kev_low = r(0, 0, 0);
+        kev_low.kev_count = 1;
+        assert!(exceeds_threshold("kev", &kev_low));
+        // A critical without KEV does not trip the kev level...
+        assert!(!exceeds_threshold("kev", &r(3, 2, 1)));
+        assert!(!exceeds_threshold("kev", &r(0, 0, 0)));
+        // ...and the severity levels keep ignoring KEV.
+        assert!(!exceeds_threshold("critical", &kev_low));
+        assert!(!exceeds_threshold("medium", &kev_low));
+        assert!(!exceeds_threshold("none", &kev_low));
+    }
+
+    #[test]
+    fn result_from_an_older_agent_has_no_kev() {
+        let json = serde_json::json!({
+            "image": "nginx:1.21", "scanner": "grype",
+            "critical_count": 1, "high_count": 0, "medium_count": 0, "low_count": 0, "unknown_count": 0,
+            "vulnerabilities": [{"cve": "CVE-1", "severity": "critical", "package": "p",
+                                  "installed_version": "1", "fixed_version": null, "description": null}],
+            "scanned_at": "now"
+        });
+        let parsed: ImageScanResult = serde_json::from_value(json).unwrap();
+        assert_eq!(parsed.kev_count, 0);
+        assert!(!parsed.vulnerabilities[0].kev);
+    }
+
+    #[test]
+    fn refusal_names_kev_ids_once_and_keeps_the_severity_wording() {
+        let mut res = r(1, 2, 3);
+        res.kev_count = 3;
+        res.vulnerabilities = vec![vuln("CVE-2021-23017", true), vuln("CVE-2021-23017", true), vuln("CVE-9", false)];
+        let msg = refusal_message("kev", &res);
+        assert_eq!(
+            msg,
+            "Deploy blocked by image scan gate (kev): 3 actively exploited (CISA KEV) including CVE-2021-23017; 1 critical / 2 high / 3 medium in x"
+        );
+        assert_eq!(
+            refusal_message("high", &res),
+            "Deploy blocked by image scan gate (high): 1 critical / 2 high / 3 medium in x"
+        );
+    }
+
+    #[test]
+    fn built_image_verdict() {
+        let mut res = r(0, 0, 0);
+        assert!(matches!(judge_built_image("kev", &res), BuiltImageGate::Passed(_)));
+        res.kev_count = 1;
+        assert!(matches!(judge_built_image("kev", &res), BuiltImageGate::Refused(m) if m.contains("(kev)")));
+        assert!(matches!(judge_built_image("critical", &res), BuiltImageGate::Passed(_)));
+    }
+
+    #[test]
     fn validates_gate() {
         assert!(valid_gate("none"));
+        assert!(valid_gate("kev"));
         assert!(valid_gate("critical"));
         assert!(valid_gate("high"));
         assert!(valid_gate("medium"));
         assert!(!valid_gate("low"));
         assert!(!valid_gate(""));
         assert!(!valid_gate("bogus"));
+        assert!(!valid_gate("KEV"));
     }
 
     #[test]

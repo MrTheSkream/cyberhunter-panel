@@ -38,6 +38,9 @@ pub struct ImageScanResult {
     pub medium_count: u32,
     pub low_count: u32,
     pub unknown_count: u32,
+    /// Matches whose CVE is in the CISA KEV catalogue (actively exploited).
+    /// Counted over every match, before the stored list is capped.
+    pub kev_count: u32,
     pub vulnerabilities: Vec<Vuln>,
     pub scanned_at: String,
 }
@@ -50,6 +53,8 @@ pub struct Vuln {
     pub installed_version: String,
     pub fixed_version: Option<String>,
     pub description: Option<String>,
+    /// In the CISA KEV catalogue (read on the match or on a related record).
+    pub kev: bool,
 }
 
 /// True if the scanner binary is present at the managed path.
@@ -142,28 +147,12 @@ pub async fn scan_image(image: &str) -> Result<ImageScanResult, String> {
         return Err("Scanner not installed. Install grype first.".to_string());
     }
 
-    let output = tokio::time::timeout(
-        Duration::from_secs(180),
-        safe_command(GRYPE_BIN)
-            .args([image, "-o", "json"])
-            .env("GRYPE_DB_CACHE_DIR", GRYPE_DB_CACHE)
-            .kill_on_drop(true)
-            .output(),
-    )
-    .await
-    .map_err(|_| "Image scan timed out after 180s".to_string())?
-    .map_err(|e| format!("grype invocation failed: {e}"))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!(
-            "grype scan failed: {}",
-            stderr.chars().take(400).collect::<String>()
-        ));
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    parse_grype_output(image, &stdout)
+    // Runs in the CVE scanner's capped transient unit (MemoryMax, Nice 19,
+    // idle IO), not in the agent's own 512M cgroup; the unit is stopped when
+    // the 180s timeout fires, which is what kill_on_drop(true) used to cover.
+    let report =
+        crate::services::vuln_scanner::grype_image_report(image, Duration::from_secs(180)).await?;
+    parse_grype_output(image, &report)
 }
 
 #[derive(Deserialize)]
@@ -175,6 +164,10 @@ struct GrypeReport {
 struct GrypeMatch {
     vulnerability: GrypeVuln,
     artifact: GrypeArtifact,
+    // Lenient on purpose: an entry that fails to parse would fail the whole
+    // scan, and a failed scan lets the deploy through.
+    #[serde(default, rename = "relatedVulnerabilities")]
+    related: Option<Vec<GrypeKevCarrier>>,
 }
 
 #[derive(Deserialize)]
@@ -183,6 +176,24 @@ struct GrypeVuln {
     severity: String,
     description: Option<String>,
     fix: Option<GrypeFix>,
+    #[serde(default, rename = "knownExploited")]
+    known_exploited: Option<Vec<serde::de::IgnoredAny>>,
+}
+
+/// Only the KEV list of a related record; everything else is ignored.
+#[derive(Deserialize, Default)]
+struct GrypeKevCarrier {
+    #[serde(default, rename = "knownExploited")]
+    known_exploited: Option<Vec<serde::de::IgnoredAny>>,
+}
+
+/// Same rule as `vuln_scanner::finding_of`: a match is KEV when its own record
+/// or any related record (a GHSA usually carries KEV only on its related CVE)
+/// has a non-empty `knownExploited` list.
+fn match_is_kev(m: &GrypeMatch) -> bool {
+    let listed = |k: &Option<Vec<serde::de::IgnoredAny>>| k.as_ref().is_some_and(|v| !v.is_empty());
+    listed(&m.vulnerability.known_exploited)
+        || m.related.as_deref().unwrap_or_default().iter().any(|r| listed(&r.known_exploited))
 }
 
 #[derive(Deserialize)]
@@ -205,6 +216,7 @@ fn parse_grype_output(image: &str, json_str: &str) -> Result<ImageScanResult, St
     let mut medium = 0u32;
     let mut low = 0u32;
     let mut unknown = 0u32;
+    let mut kev_count = 0u32;
     let mut vulnerabilities = Vec::new();
 
     if let Some(matches) = report.matches {
@@ -216,6 +228,10 @@ fn parse_grype_output(image: &str, json_str: &str) -> Result<ImageScanResult, St
                 "medium" => medium += 1,
                 "low" => low += 1,
                 _ => unknown += 1,
+            }
+            let kev = match_is_kev(&m);
+            if kev {
+                kev_count += 1;
             }
 
             let fixed_version = m
@@ -234,6 +250,7 @@ fn parse_grype_output(image: &str, json_str: &str) -> Result<ImageScanResult, St
                     installed_version: m.artifact.version,
                     fixed_version,
                     description: m.vulnerability.description,
+                    kev,
                 });
             }
         }
@@ -247,6 +264,7 @@ fn parse_grype_output(image: &str, json_str: &str) -> Result<ImageScanResult, St
         medium_count: medium,
         low_count: low,
         unknown_count: unknown,
+        kev_count,
         vulnerabilities,
         scanned_at: chrono::Utc::now().to_rfc3339(),
     })
@@ -285,6 +303,45 @@ mod tests {
         assert_eq!(result.low_count, 1); // Negligible folds into low
         assert_eq!(result.vulnerabilities.len(), 3);
         assert_eq!(result.vulnerabilities[0].fixed_version.as_deref(), Some("1.2.3"));
+        assert_eq!(result.kev_count, 0);
+        assert!(result.vulnerabilities.iter().all(|v| !v.kev));
+    }
+
+    #[test]
+    fn reads_kev_on_the_match_and_on_related_vulnerabilities() {
+        let json = r#"{
+          "matches": [
+            {"vulnerability":{"id":"CVE-2021-44228","severity":"Critical",
+               "knownExploited":[{"cve":"CVE-2021-44228","knownRansomwareCampaignUse":"Known"}]},
+             "artifact":{"name":"log4j-core","version":"2.14.1"}},
+            {"vulnerability":{"id":"GHSA-jfh8-c2jp-5v3q","severity":"Critical","knownExploited":null},
+             "relatedVulnerabilities":[
+               {"id":"CVE-2021-44228","knownExploited":[{"cve":"CVE-2021-44228"}]}],
+             "artifact":{"name":"log4j-api","version":"2.14.1"}},
+            {"vulnerability":{"id":"CVE-2",
+               "severity":"High","knownExploited":[]},
+             "relatedVulnerabilities":[{"id":"CVE-2","knownExploited":[]}, {"id":null, "cvss":null}],
+             "artifact":{"name":"libbar","version":"2.0.0"}},
+            {"vulnerability":{"id":"CVE-3","severity":"Low"},
+             "relatedVulnerabilities":null,
+             "artifact":{"name":"libbaz","version":"0.1"}}
+          ]
+        }"#;
+        let result = parse_grype_output("app:1", json).unwrap();
+        assert_eq!(result.kev_count, 2);
+        let kev: Vec<bool> = result.vulnerabilities.iter().map(|v| v.kev).collect();
+        assert_eq!(kev, vec![true, true, false, false]);
+        assert_eq!(result.critical_count, 2);
+    }
+
+    #[test]
+    fn kev_count_is_taken_before_the_stored_list_is_capped() {
+        let one = r#"{"vulnerability":{"id":"CVE-9","severity":"Low","knownExploited":[{}]},
+                      "artifact":{"name":"p","version":"1"}}"#;
+        let json = format!("{{\"matches\":[{}]}}", vec![one; 600].join(","));
+        let result = parse_grype_output("app:1", &json).unwrap();
+        assert_eq!(result.vulnerabilities.len(), 500);
+        assert_eq!(result.kev_count, 600);
     }
 
     #[test]

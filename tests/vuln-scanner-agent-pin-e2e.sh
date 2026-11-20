@@ -166,8 +166,14 @@ if has "$DBU" "scanner_command(image_scanner::GRYPE_BIN, true)" && has "$DBU" '"
   ok "B3 only run_db_update allows the download"
 else bad "B3 run_db_update no longer runs grype db update with auto update on"; fi
 N_AU=$(grep -cE 'scanner_command\([^)]*, true\)' <<< "$VSC" || true)
-if [ "$N_AU" -eq 1 ]; then ok "B4 exactly one scanner run with auto update on"
-else bad "B4 $N_AU scanner runs with auto update on (expected 1)"; fi
+GIR=$(fnof "$VSC" '^pub async fn grype_image_report[(]')
+if [ "$N_AU" -eq 2 ] && grep -qF 'scanner_command(image_scanner::GRYPE_BIN, true)' <<< "$GIR"; then
+  ok "B4 auto update on only for db update and the historical image scan (its old behaviour)"
+else bad "B4 $N_AU scanner runs with auto update on (expected 2: db update, grype_image_report)"; fi
+ISCAN=$(fnof "$ISC" '^pub async fn scan_image[(]')
+if grep -qF 'vuln_scanner::grype_image_report(' <<< "$ISCAN" && ! grep -qF 'safe_command(GRYPE_BIN)' <<< "$ISCAN"; then
+  ok "B4b the historical image scan (deploy gate) runs grype in the capped transient unit, not the agent cgroup"
+else bad "B4b scan_image runs grype inside the agent's own 512M cgroup again"; fi
 SARGS=$(fnof "$VSC" '^pub fn syft_args[(]')
 if has "$SARGS" 'format!("syft-json={}", out.display())'; then ok "B5 syft writes its SBOM to a file (-o syft-json=<path>)"
 else bad "B5 syft no longer writes -o syft-json=<path>"; fi
