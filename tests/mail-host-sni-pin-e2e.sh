@@ -98,7 +98,12 @@ echo "── b. master.cf submissions (465) block ──"
 if printf '%s' "$AG" | pycheck '
 import re, sys
 s = sys.stdin.read()
-for m in re.finditer(r"submissions\s+inet", s):
+# The block is rendered from a service-name parameter (`submissions`, or `465`
+# when /etc/services lacks the name), so accept `{service} inet` too, provided
+# the source picks `submissions` / `465` for it.
+if not re.search(r"\"submissions\"\s*\}?\s*else\s*\{\s*\"465\"", s) and not re.search(r"submissions\s+inet", s):
+    sys.exit(1)
+for m in re.finditer(r"(?:submissions|\{service\})\s+inet", s):
     w = s[m.start():m.start() + 1500]
     # The next master.cf entry ends the block, whether the source breaks the
     # line for real or with an escaped \n inside a Rust literal.
