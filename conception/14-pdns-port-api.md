@@ -124,3 +124,31 @@ son port.
    refusés en 502, aucune ligne `dns_zones` ajoutée.
 4. Sans app sur 8081 : comportement inchangé (8081).
 5. Mesurer en passant les en-têtes réels de pdns (`curl -i`) pour 200/204/401.
+
+## Résultats de recette (2026-11-20)
+
+VM `cyberhunter-pdns` : clone du snapshot `propre-avant-recette` de
+`cyberhunter-mailsni-b` (Ubuntu 24.04, panel 3.0.0-rc.4, app `traefik/whoami`
+publiée sur `127.0.0.1:8081`), passée en 192.168.250.17 avec sa propre MAC.
+Snapshot propre `propre-avant-recette-pdns`, restauré avant chaque série.
+API appelée par tunnel SSH vers `127.0.0.1:3080` (nginx du clone lié à
+l'ancienne IP).
+
+| Cas | Résultat |
+| --- | --- |
+| Avant correctif (rc.4), 8081 pris | bug reproduit : installation « réussie », `pdns_api_url` sur 8081 tenu par docker-proxy, `create_zone` 201 avec ligne fantôme, enregistrement 201, `dig` vide |
+| Correctif, 8081 pris | port 18081, tenu par `pdns_server` ; `pdns_api_url` = `http://127.0.0.1:18081` ; zone 201, enregistrement 201, `dig` = l'IP |
+| Faux pdns sur 18081 (pdns arrêté, cache expiré) | `create_zone` et création d'enregistrement en 502 avec le message prévu, 0 ligne `dns_zones` |
+| Faux pdns dans la fenêtre du cache (< 60 s) | idem 502, 0 ligne, l'enregistrement n'existe pas dans pdns |
+| Réinstallation, 18082-18099 pris | pdns arrêté avant la sonde, récupère son 18081 |
+| Réinstallation, 8081 et 18081-18099 pris | refus `No free port ...`, conf et `pdns_api_url` inchangées, pdns relancé |
+| Cas normal, 8081 libre | port 8081 comme avant ; zone, enregistrement, `dig` OK ; suppression d'enregistrement et de zone OK (204 strict accepté) |
+
+En-têtes réels de pdns 4.8.3 : **aucun** en-tête `Server`. 200 et 204 portent
+`Access-Control-Allow-Origin` et les en-têtes de sécurité ; le 401 sans clé
+porte `Www-Authenticate: X-API-Key realm="PowerDNS"` et le corps
+`Unauthorized`.
+
+Non testé en VM : backend pgsql, échec de la vérification HTTP après le
+démarrage (course entre la sonde et le démarrage), DNS automatique des apps,
+du mail et des sites (même module, couvert par les tests unitaires).
