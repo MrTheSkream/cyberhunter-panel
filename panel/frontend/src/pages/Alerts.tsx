@@ -103,6 +103,7 @@ const TYPE_LABELS: Record<string, string> = {
   security: "Security scan",
   image_scan: "Image scan",
   wp_vuln_scan: "WordPress vuln scan",
+  vuln_scan: "Vulnerability scan",
   malware: "Malware detected",
   av_signatures: "Antivirus signatures outdated",
   av_down: "Antivirus not responding",

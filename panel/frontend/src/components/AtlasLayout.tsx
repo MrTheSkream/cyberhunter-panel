@@ -41,6 +41,7 @@ export default function AtlasLayout() {
       databases: "Databases",
       apps: "Docker Apps",
       "git-deploys": "Git Deploy",
+      vulnerabilities: "Vulnerabilities",
       dns: "DNS",
       mail: "Mail",
       monitoring: "Monitoring",

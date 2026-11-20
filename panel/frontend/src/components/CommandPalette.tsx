@@ -40,6 +40,7 @@ export default function CommandPalette() {
     { id: "wp-toolkit", label: "WP Toolkit", icon, path: "/wordpress-toolkit", category: "Hosting", keywords: "wordpress bulk updates vulnerabilities hardening" },
     { id: "apps", label: "Docker Apps", icon: "M21 7.5l-2.25-1.313M21 7.5v2.25m0-2.25l-2.25 1.313M3 7.5l2.25-1.313M3 7.5l2.25 1.313M3 7.5v2.25m9 3l2.25-1.313M12 12.75l-2.25-1.313M12 12.75V15", path: "/apps", category: "Hosting", keywords: "containers docker deploy template compose images registries" },
     { id: "git-deploys", label: "Git Deploy", icon, path: "/git-deploys", category: "Hosting", keywords: "git webhook preview deploy rollback zero-downtime" },
+    { id: "vulnerabilities", label: "Vulnerabilities", icon, path: "/vulnerabilities", category: "Hosting", keywords: "cve vulnerability scanner kev exploited epss grype syft sbom packages" },
     { id: "migration", label: "Migration", icon, path: "/migration", category: "Hosting", keywords: "cpanel hestia import migrate backup" },
 
     // Operations

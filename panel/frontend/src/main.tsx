@@ -118,6 +118,7 @@ const Users = lazyRetry(() => import("./pages/Users"));
 const ContainerPolicies = lazyRetry(() => import("./pages/ContainerPolicies"));
 const ServerIps = lazyRetry(() => import("./pages/ServerIps"));
 const Php = lazyRetry(() => import("./pages/Php"));
+const Vulnerabilities = lazyRetry(() => import("./pages/Vulnerabilities"));
 const System = lazyRetry(() => import("./pages/System"));
 const Telemetry = lazyRetry(() => import("./pages/Telemetry"));
 const UserTerminal = lazyRetry(() => import("./pages/UserTerminal"));
@@ -182,6 +183,7 @@ createRoot(document.getElementById("root")!).render(
               <Route path="/logs" element={<Logs />} />
               <Route path="/apps" element={<Apps />} />
               <Route path="/git-deploys" element={<GitDeploys />} />
+              <Route path="/vulnerabilities" element={<Vulnerabilities />} />
               <Route path="/extensions" element={<Navigate to="/integrations" replace />} />
               <Route path="/security" element={<Security />} />
               <Route path="/diagnostics" element={<Navigate to="/security?tab=diagnostics" replace />} />

@@ -53,6 +53,7 @@ const SUPPRESSIBLE_ALERT_TYPES: { key: string; label: string }[] = [
   { key: "security", label: "Security scan" },
   { key: "image_scan", label: "Image scan" },
   { key: "wp_vuln_scan", label: "WordPress vuln scan" },
+  { key: "vuln_scan", label: "Vulnerability scan" },
   { key: "malware", label: "Malware detected" },
   { key: "av_signatures", label: "Antivirus signatures outdated" },
   { key: "av_down", label: "Antivirus not responding" },
@@ -2468,6 +2469,9 @@ export default function Settings() {
         {/* Image Vulnerability Scanning */}
         <ImageScanSettings setMessage={setMessage} />
 
+        {/* CVE scanner (conception 13): sites, images and systems, daily */}
+        <VulnScannerSettings setMessage={setMessage} />
+
         {/* WordPress Vulnerability Scanning (direct peer of the above) */}
         <WpVulnScanSettings setMessage={setMessage} />
 
@@ -3433,6 +3437,7 @@ function ImageScanSettings({ setMessage }: { setMessage: (m: { text: string; typ
               className="w-full px-3 py-2 bg-dark-800 border border-dark-500 rounded text-sm text-dark-50"
             >
               <option value="none">None - never block</option>
+              <option value="kev">Actively exploited (KEV)</option>
               <option value="critical">Critical only</option>
               <option value="high">High or Critical</option>
               <option value="medium">Medium, High, or Critical</option>
@@ -3455,6 +3460,139 @@ function ImageScanSettings({ setMessage }: { setMessage: (m: { text: string; typ
               className="w-full px-3 py-2 bg-dark-800 border border-dark-500 rounded text-sm text-dark-50 font-mono"
             />
             <p className="text-[10px] text-dark-300 mt-2">Background sweep skips images scanned within this window.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Vulnerability scanner (CVE scanner, conception 13) ──────────────────
+// Sites, Docker images and systems of every server, matched once a day. The
+// PUT takes the whole body, so every save sends all three fields.
+
+const VULN_ALERT_THRESHOLDS: { value: string; label: string }[] = [
+  { value: "kev_and_fixable_high", label: "Actively exploited, or critical/high with a fix" },
+  { value: "critical_any", label: "Also every critical" },
+];
+
+interface VulnScannerSettingsState {
+  enabled: boolean;
+  match_hour: number;
+  alert_min: string;
+}
+
+function VulnScannerSettings({ setMessage }: { setMessage: (m: { text: string; type: string }) => void }) {
+  const [s, setS] = useState<VulnScannerSettingsState | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const load = () => {
+    setLoadError(null);
+    api.get<Partial<VulnScannerSettingsState>>("/vulnerabilities/settings")
+      .then(r => setS({
+        enabled: r.enabled !== false,
+        match_hour: typeof r.match_hour === "number" ? r.match_hour : 4,
+        alert_min: VULN_ALERT_THRESHOLDS.some(t => t.value === r.alert_min) ? r.alert_min! : "kev_and_fixable_high",
+      }))
+      .catch((e: unknown) => {
+        setS(null);
+        setLoadError(e instanceof Error ? e.message : "Failed to load settings");
+      });
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const update = async (patch: Partial<VulnScannerSettingsState>) => {
+    if (!s) return;
+    const next = { ...s, ...patch };
+    setS(next);
+    setSaving(true);
+    try {
+      await api.put("/vulnerabilities/settings", {
+        enabled: next.enabled,
+        match_hour: next.match_hour,
+        alert_min: next.alert_min,
+      });
+      setMessage({ text: "Vulnerability scanner settings saved", type: "success" });
+    } catch (e) {
+      setMessage({ text: `Save failed: ${(e as Error).message || "unknown"}`, type: "error" });
+      load();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!s) {
+    return (
+      <div className="bg-dark-800 rounded-lg border border-dark-500 overflow-hidden">
+        <div className="px-5 py-3 border-b border-dark-600">
+          <h3 className="text-xs font-medium text-dark-300 uppercase font-mono tracking-widest">Vulnerability scanner</h3>
+        </div>
+        {loadError ? (
+          <div className="p-5 flex items-center justify-between gap-3">
+            <p className="text-sm text-danger-400">Could not load scanner settings: {loadError}</p>
+            <button type="button" onClick={load} className="px-3 py-1.5 bg-dark-600 text-dark-50 rounded-lg text-xs font-medium hover:bg-dark-500 shrink-0">Retry</button>
+          </div>
+        ) : (
+          <div className="p-5 text-sm text-dark-300">Loading...</div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-dark-800 rounded-lg border border-dark-500 overflow-hidden">
+      <div className="px-5 py-3 border-b border-dark-600">
+        <h3 className="text-xs font-medium text-dark-300 uppercase font-mono tracking-widest">Vulnerability scanner</h3>
+        <p className="text-xs text-dark-200 mt-0.5">Inventories the packages of every site, Docker image and system (syft) and matches them against known CVEs once a day (grype). Results are on the Vulnerabilities page.</p>
+      </div>
+      <div className="p-5 space-y-4">
+        <label className="flex items-start gap-3 border border-dark-600 bg-dark-900/50 rounded p-4 cursor-pointer hover:bg-dark-900">
+          <input
+            type="checkbox"
+            checked={s.enabled}
+            disabled={saving}
+            onChange={e => update({ enabled: e.target.checked })}
+            className="mt-1"
+          />
+          <div>
+            <div className="text-sm font-medium text-dark-50">Enabled</div>
+            <p className="text-[10px] text-dark-300 mt-0.5">The scanner installs itself on each server on its first pass. Its database takes about 3.3 GB of disk.</p>
+          </div>
+        </label>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="border border-dark-600 bg-dark-900/50 rounded p-4">
+            <label htmlFor="vuln-match-hour" className="block text-xs font-mono text-dark-300 uppercase tracking-widest mb-2">Daily match hour (UTC)</label>
+            <select
+              id="vuln-match-hour"
+              value={s.match_hour}
+              disabled={saving}
+              onChange={e => update({ match_hour: parseInt(e.target.value, 10) })}
+              className="w-full px-3 py-2 bg-dark-800 border border-dark-500 rounded text-sm text-dark-50 font-mono"
+            >
+              {Array.from({ length: 24 }, (_, h) => (
+                <option key={h} value={h}>{String(h).padStart(2, "0")}:00</option>
+              ))}
+            </select>
+            <p className="text-[10px] text-dark-300 mt-2">The database is refreshed and every target matched again after this hour.</p>
+          </div>
+
+          <div className="border border-dark-600 bg-dark-900/50 rounded p-4">
+            <label htmlFor="vuln-alert-min" className="block text-xs font-mono text-dark-300 uppercase tracking-widest mb-2">Alert threshold</label>
+            <select
+              id="vuln-alert-min"
+              value={s.alert_min}
+              disabled={saving}
+              onChange={e => update({ alert_min: e.target.value })}
+              className="w-full px-3 py-2 bg-dark-800 border border-dark-500 rounded text-sm text-dark-50"
+            >
+              {VULN_ALERT_THRESHOLDS.map(t => (
+                <option key={t.value} value={t.value}>{t.label}</option>
+              ))}
+            </select>
+            <p className="text-[10px] text-dark-300 mt-2">At most one alert per target a day. Accepted CVEs never alert.</p>
           </div>
         </div>
       </div>

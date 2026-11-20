@@ -150,6 +150,8 @@ export const navGroups: NavGroup[] = [
       { to: "/wordpress-toolkit", label: "WP Toolkit", iconName: "wordpress", adminOnly: true },
       { to: "/apps", label: "Docker Apps", iconName: "apps", adminOnly: true },
       { to: "/git-deploys", label: "Git Deploy", iconName: "gitDeploys", adminOnly: true },
+      // Open to every role: the API returns only the targets the caller may see.
+      { to: "/vulnerabilities", label: "Vulnerabilities", iconName: "security" },
       { to: "/migration", label: "Migration", iconName: "migration", adminOnly: true },
     ],
   },

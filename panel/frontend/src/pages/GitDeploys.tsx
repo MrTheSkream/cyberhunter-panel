@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { api } from "../api";
 import ProvisionLog from "../components/ProvisionLog";
 import ConfirmDialog from "../components/ConfirmDialog";
+import VulnBadge, { useVulnSummary } from "../components/VulnBadge";
 
 /**
  * Hide credentials embedded in a repository URL before it reaches the screen.
@@ -129,6 +130,8 @@ function statusBadge(status: string) {
 
 export default function GitDeploys() {
   const { user } = useAuth();
+  // CVE scanner badges: one summary request for the whole list.
+  const vulnState = useVulnSummary(user?.role === "admin");
   if (!user || user.role !== "admin") return <Navigate to="/" replace />;
   const [deploys, setDeploys] = useState<GitDeploy[]>([]);
   const [loading, setLoading] = useState(true);
@@ -736,6 +739,13 @@ export default function GitDeploys() {
                         Protected
                       </span>
                     )}
+                    <span className="ml-2 inline-flex">
+                      <VulnBadge
+                        state={vulnState}
+                        target={vulnState.summary?.targets.find((t) => t.kind === "image" && t.git_deploy_id === d.id)}
+                        subject={`Git deploy ${d.name}`}
+                      />
+                    </span>
                   </td>
                   <td className="px-5 py-4 text-sm text-dark-200 font-mono truncate max-w-xs hidden md:table-cell">
                     {maskRepoCredentials(d.repo_url).replace(/^https?:\/\//, "").replace(/\.git$/, "")}

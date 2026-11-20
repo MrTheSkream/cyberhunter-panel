@@ -7,6 +7,7 @@ import ProvisionLog from "../components/ProvisionLog";
 import { PrereqList, usePrereqs } from "../components/Prerequisite";
 import { FieldHelp } from "../components/FieldHelp";
 import { timeAgo } from "../utils/format";
+import VulnBadge, { useVulnSummary } from "../components/VulnBadge";
 
 /// What the agent substitutes for an environment value it will not show. The
 /// edit dialog is seeded from that response, so this is what an untouched
@@ -369,6 +370,8 @@ const statusColors: Record<string, string> = {
 export default function Apps() {
   const { user } = useAuth();
   const { activeServer } = useServer();
+  // CVE scanner badges: one summary request for the whole list.
+  const vulnState = useVulnSummary(user?.role === "admin");
   if (!user || user.role !== "admin") return <Navigate to="/" replace />;
 
   // Where a port-only app can actually be reached.
@@ -1850,6 +1853,17 @@ volumes:
                             </button>
                           );
                         })()}
+                        {/* CVE scanner (conception 13): beside the image scan
+                            badge above, which keeps opening its own drawer. The
+                            same image on two servers is two targets. */}
+                        {app.image && (
+                          <VulnBadge
+                            state={vulnState}
+                            target={vulnState.summary?.targets.find((t) =>
+                              t.kind === "image" && t.ref === app.image && (!activeServer || t.server_id === activeServer.id))}
+                            subject={`image ${app.image}`}
+                          />
+                        )}
                         <select
                           value={appTags[app.container_id] || ''}
                           onChange={e => {

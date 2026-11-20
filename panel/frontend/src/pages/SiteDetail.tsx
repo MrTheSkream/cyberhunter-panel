@@ -7,6 +7,7 @@ import { PrereqCallout, useDnsPrereq, prereqBlocks } from "../components/Prerequ
 import PhpVersionPicker from "../components/PhpVersionPicker";
 import PhpSettingsCard from "../components/PhpSettingsCard";
 import { SiteAntivirusStatus, SiteAntivirusDetections, type AvSiteStatus } from "../components/AntivirusTab";
+import VulnBadge, { useVulnSummary } from "../components/VulnBadge";
 import { useAuth } from "../context/AuthContext";
 import { useFtpStatus } from "../components/FtpServerCard";
 import DiskUsageCard, { type DiskUsage } from "../components/DiskUsageCard";
@@ -120,6 +121,8 @@ export default function SiteDetail() {
   const { user } = useAuth();
   /** Holds sites, cannot claim a new domain - see `domain_claim::ensure_claimable`. */
   const isClient = user?.role === "client";
+  // CVE scanner badge: one summary request for the page, never an error here.
+  const vulnState = useVulnSummary();
   const [site, setSiteState] = useState<Site | null>(null);
   // Several update routes answer with the bare `sites` row, which does not
   // carry `disk_usage` (its own table, 07-ftp-quotas B-3). Keep the last known
@@ -859,6 +862,11 @@ export default function SiteDetail() {
               showSecurityLink={isAdmin}
               refreshKey={avRefreshKey}
               onStatus={setAvStatus}
+            />
+            <VulnBadge
+              state={vulnState}
+              target={vulnState.summary?.targets.find((t) => t.kind === "site" && t.site_id === site.id)}
+              subject={`site ${site.domain}`}
             />
           </div>
         </div>
