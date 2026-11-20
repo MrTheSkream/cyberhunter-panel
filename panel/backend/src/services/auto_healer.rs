@@ -68,6 +68,9 @@ pub async fn run(
             auto_restart_services(&pool, &agents).await;
             auto_clean_disk(&pool, &agents).await;
             auto_renew_ssl(&pool, &agents).await;
+            // `mail.<d>` certificates (conception 14, D9): the same switch as the
+            // sites' renewals, each on the mail domain's own server.
+            auto_renew_mail_host_certs(&pool, &agents).await;
             auto_sleep_idle_containers(&pool, &agents).await;
         }
 
@@ -1316,6 +1319,14 @@ async fn auto_renew_ssl(pool: &PgPool, agents: &AgentRegistry) {
             SSL_RENEWALS_FAILURE.fetch_add(1, Ordering::Relaxed);
         }
     }
+}
+
+/// Issue and renew the `mail.<d>` certificate of every enabled mail domain that
+/// is due (`services::mail_host_cert`). Each domain runs against the agent of
+/// its own server (`AgentRegistry::for_server`); an unreachable server is
+/// skipped this cycle, never replaced by another host.
+async fn auto_renew_mail_host_certs(pool: &PgPool, agents: &AgentRegistry) {
+    crate::services::mail_host_cert::auto_renew_mail_host_certs(pool, agents).await;
 }
 
 /// Fallback renewal margin when the CA doesn't advertise ARI. Maps profile

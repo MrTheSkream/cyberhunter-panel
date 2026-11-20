@@ -9,6 +9,7 @@ pub mod backup_policy_executor;
 pub mod backup_scheduler;
 pub mod backup_verifier;
 pub mod mail_dns_backup;
+pub mod mail_host_cert;
 pub mod chain_report;
 pub mod deploy_incidents;
 pub mod deploy_scheduler;

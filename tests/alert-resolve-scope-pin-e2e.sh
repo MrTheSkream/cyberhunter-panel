@@ -542,10 +542,13 @@ INLINE=$(printf '%s\n%s\n' "$DEDUP_H" "$DEDUP_S" | grep -E '"ssl_renewal_failure
 # elsewhere. Reusing BLOCKED instead would have kept this number at five and
 # given two opposite messages about the same site one dedup subject, which is the
 # suppression defect v2.154.0 shipped to fix.
-if [ "$KEYDEFS" -eq 6 ] && [ "$INLINE" -eq 0 ]; then
-  ok "G5 all six keys are named constants in one module, and no call site inlines a literal"
+# 6 -> 7 with conception 14: MAIL_HOST_FAILED, raised from services/mail_host_cert.rs
+# when issuing a mail.<d> certificate failed (suffixed with the mail domain id,
+# since that alert carries no site_id). Not a healer/scanner loop subject either.
+if [ "$KEYDEFS" -eq 7 ] && [ "$INLINE" -eq 0 ]; then
+  ok "G5 all seven keys are named constants in one module, and no call site inlines a literal"
 else
-  bad "G5 all six keys are named constants in one module - $KEYDEFS defined, $INLINE inline literal(s) at call sites"
+  bad "G5 all seven keys are named constants in one module - $KEYDEFS defined, $INLINE inline literal(s) at call sites"
 fi
 
 echo

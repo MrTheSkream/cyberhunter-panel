@@ -94,7 +94,7 @@ struct MailboxBackupRequest {
 }
 
 const VMAIL_DIR: &str = "/var/vmail";
-const POSTFIX_VIRTUAL_DOMAINS: &str = "/etc/postfix/virtual_domains";
+pub(crate) const POSTFIX_VIRTUAL_DOMAINS: &str = "/etc/postfix/virtual_domains";
 const POSTFIX_VIRTUAL_MAILBOX: &str = "/etc/postfix/virtual_mailbox_maps";
 const POSTFIX_VIRTUAL_ALIAS: &str = "/etc/postfix/virtual_alias_maps";
 /// Which SASL login may use which envelope sender. Nothing bound the two until
@@ -171,12 +171,15 @@ pub fn router() -> Router<AppState> {
         // TLS Enforcement
         .route("/mail/tls/status", get(tls_status))
         .route("/mail/tls/enforce", post(tls_enforce))
+        // mail.<d> certificates presented by SNI (14)
+        .route("/mail/tls/issue", post(mail_tls_issue))
         // Uninstall
         .route("/mail/uninstall", post(mail_uninstall))
         // --- import-hestia (05) ---
         .route("/mail/hestia/secrets", post(hestia_secrets))
         .route("/mail/dkim/import", post(dkim_import))
         .route("/mail/hestia/import-maildir", post(hestia_import_maildir))
+        .route("/mail/hestia/import-host-cert", post(hestia_import_host_cert))
         // --- end import-hestia (05) ---
 }
 
@@ -194,7 +197,7 @@ fn coded(status: StatusCode, msg: &str, code: &str) -> ApiErr {
     (status, Json(serde_json::json!({ "error": msg, "code": code })))
 }
 
-fn valid_mail_domain(domain: &str) -> bool {
+pub(crate) fn valid_mail_domain(domain: &str) -> bool {
     !domain.contains("..") && super::is_valid_domain(domain)
 }
 
@@ -441,6 +444,101 @@ async fn import_maildir_job(
 
 // --- end import-hestia (05) ---
 
+// ── mail.<d> host certificates (14) ─────────────────────────────────────
+
+#[derive(Deserialize)]
+struct MailTlsIssueRequest {
+    domain: String,
+    email: String,
+}
+
+/// POST /mail/tls/issue `{domain, email}` -> `{ok, host, expiry}`
+///
+/// HTTP-01 order for `mail.<d>` alone (challenge served by the default :80
+/// vhost from /var/www/acme), no vhost touched, stored under
+/// `/etc/dockpanel/mail-tls/mail.<d>/`, then SNI rebuilt.
+/// Errors: `invalid_domain`, `acme_failed`, `sni_apply_failed` (issued and
+/// installed, configuration restored).
+async fn mail_tls_issue(
+    Json(body): Json<MailTlsIssueRequest>,
+) -> Result<Json<serde_json::Value>, ApiErr> {
+    use crate::services::{mail_tls, ssl};
+    let domain = body.domain.trim().to_ascii_lowercase();
+    if !valid_mail_domain(&domain) {
+        return Err(coded(StatusCode::BAD_REQUEST, "Invalid domain format", "invalid_domain"));
+    }
+    let host = mail_tls::host_of(&domain);
+    let _guard = crate::site_lock::hold_site(&host).await;
+
+    let acme_err = |e: String| {
+        let msg: String = e.trim_start_matches(ssl::CA_DECLINED).chars().take(300).collect();
+        tracing::warn!("certificate for {host} not issued: {msg}");
+        coded(StatusCode::BAD_GATEWAY, &msg, "acme_failed")
+    };
+    let account = ssl::load_or_create_account(body.email.trim()).await.map_err(acme_err)?;
+    let issued = ssl::order_http01_pems(&account, &host, std::slice::from_ref(&host), None)
+        .await
+        .map_err(acme_err)?;
+    let expiry = ssl::cert_metadata(&issued.chain_pem)
+        .map(|m| m.not_after.to_rfc3339())
+        .map_err(|e| acme_err(format!("issued certificate unreadable: {e}")))?;
+    mail_tls::install_pair(&domain, &issued.chain_pem, &issued.key_pem)
+        .await
+        .map_err(|e| coded(StatusCode::INTERNAL_SERVER_ERROR, &format!("certificate issued but not stored: {e}"), "acme_failed"))?;
+    tracing::info!("certificate issued for {host}");
+
+    let sni = mail_tls::rebuild_sni().await;
+    if let Some(e) = sni.error {
+        return Err(coded(StatusCode::INTERNAL_SERVER_ERROR, &e, "sni_apply_failed"));
+    }
+    Ok(Json(serde_json::json!({ "ok": true, "host": host, "expiry": expiry })))
+}
+
+/// POST /mail/hestia/import-host-cert `{migration_id, domain}`
+/// -> `{installed, expiry, reason}` (reason: missing|expired|wrong_name|unreadable)
+///
+/// Installs the staged Hestia `mail/<d>/conf/ssl/<d>.{crt,ca,key}` when it
+/// covers `mail.<d>` and is not expired, then rebuilds SNI. The key never
+/// leaves the agent.
+async fn hestia_import_host_cert(
+    Json(body): Json<HestiaDomainRequest>,
+) -> Result<Json<serde_json::Value>, ApiErr> {
+    use crate::services::mail_tls;
+    let domain = body.domain.trim().to_ascii_lowercase();
+    if !valid_mail_domain(&domain) {
+        return Err(coded(StatusCode::BAD_REQUEST, "Invalid domain format", "invalid_domain"));
+    }
+    let root = crate::services::migration::archive_root(&body.migration_id)
+        .map_err(|e| coded(StatusCode::NOT_FOUND, &e, "not_in_backup"))?;
+    let host = mail_tls::host_of(&domain);
+    let _guard = crate::site_lock::hold_site(&host).await;
+
+    let read = {
+        let domain = domain.clone();
+        tokio::task::spawn_blocking(move || mail_tls::read_hestia_host_cert(&root, &domain, chrono::Utc::now()))
+            .await
+            .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &format!("read failed: {e}")))?
+    };
+    let cert = match read {
+        Ok(c) => c,
+        Err(p) => {
+            tracing::info!("Hestia certificate for {host} not imported ({})", p.code());
+            return Ok(Json(serde_json::json!({ "installed": false, "expiry": null, "reason": p.code() })));
+        }
+    };
+    mail_tls::install_pair(&domain, &cert.chain_pem, &cert.key_pem)
+        .await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &format!("Failed to install the certificate: {e}")))?;
+    tracing::info!("Hestia certificate for {host} installed");
+    let sni = mail_tls::rebuild_sni().await;
+    Ok(Json(serde_json::json!({
+        "installed": true,
+        "expiry": cert.expiry.to_rfc3339(),
+        "reason": null,
+        "sni_error": sni.error,
+    })))
+}
+
 // ── Mail server status + installation ────────────────────────────────────
 
 async fn mail_status() -> Result<Json<serde_json::Value>, ApiErr> {
@@ -660,16 +758,18 @@ non_smtpd_milters = {OPENDKIM_MILTER}
     // forever - so every re-run appended another live block and Postfix warned
     // "duplicate master.cf entry for service submission". Since a failed
     // install is retried by hand, re-running was the normal case.
-    let master_cf = tokio::fs::read_to_string("/etc/postfix/master.cf").await.unwrap_or_default();
-    let has_active_submission = master_cf.lines().any(|l| {
-        let t = l.trim_start();
-        !t.starts_with('#') && t.starts_with("submission") && t.contains("inet")
-    });
-    if !has_active_submission {
-        let submission_config = "\nsubmission inet n - y - - smtpd\n  -o syslog_name=postfix/submission\n  -o smtpd_tls_security_level=encrypt\n  -o smtpd_sasl_auth_enable=yes\n  -o smtpd_recipient_restrictions=permit_sasl_authenticated,reject\n";
-        let new_master = format!("{master_cf}\n{submission_config}");
-        write_file_atomic("/etc/postfix/master.cf", &new_master).await
+    // The match is exact on the first token (`submission` no longer matches
+    // `submissions`). 465 (`submissions`, D7 of 14) is added in the same pass
+    // and checked by `postfix check`; refused, only 587 is kept.
+    let master_cf = tokio::fs::read_to_string(POSTFIX_MASTER_CF).await.unwrap_or_default();
+    if let Some(new_master) = crate::services::mail_tls::master_cf_with_submission_ports(&master_cf).await {
+        write_file_atomic(POSTFIX_MASTER_CF, &new_master).await
             .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &format!("Failed to write master.cf: {e}")))?;
+        if let Err(e) = postfix_check().await {
+            let fallback = crate::services::mail_tls::ensure_submission(&master_cf).unwrap_or(master_cf);
+            let _ = write_file_atomic(POSTFIX_MASTER_CF, &fallback).await;
+            tracing::warn!("postfix check refused the submission blocks, 465 left out: {e}");
+        }
     }
 
     // 6. Write Dovecot configuration for virtual users.
@@ -869,6 +969,12 @@ service auth {{
     // 11. A listener the firewall drops is not an installed service.
     open_mail_ports().await;
 
+    // 12. mail.<d> certificates already on disk (reinstall).
+    let sni = crate::services::mail_tls::rebuild_sni().await;
+    if let Some(e) = sni.error {
+        tracing::warn!("mail SNI not applied after install: {e}");
+    }
+
     tracing::info!("Mail server installation complete");
 
     Ok(ok("Mail server installed and configured"))
@@ -935,7 +1041,7 @@ async fn mail_uninstall() -> Result<Json<serde_json::Value>, ApiErr> {
 /// Any failure to determine the version (binary missing, unparseable output)
 /// defaults to `false` - the syntax every prior install has always used, and
 /// the one still correct on the overwhelming majority of boxes today.
-async fn dovecot_needs_v24_syntax() -> bool {
+pub(crate) async fn dovecot_needs_v24_syntax() -> bool {
     let Ok(out) = safe_command("dovecot").arg("--version").output().await else {
         return false;
     };
@@ -1355,6 +1461,13 @@ async fn domain_remove(
         tracing::warn!("DKIM keys removed for {domain} but tables not rebuilt: {e}");
     }
 
+    // mail.<d> certificate (D10 of 14), then SNI without it.
+    crate::services::mail_tls::remove_domain_files(&domain.to_ascii_lowercase()).await;
+    let sni = crate::services::mail_tls::rebuild_sni().await;
+    if let Some(e) = sni.error {
+        tracing::warn!("mail SNI not rebuilt after removing {domain}: {e}");
+    }
+
     // Note: we don't delete the maildir - that's destructive.
     // The sync_config will remove the domain from Postfix/Dovecot maps.
 
@@ -1566,6 +1679,10 @@ async fn sync_config(
     let _ = safe_command("postmap").arg(POSTFIX_VIRTUAL_MAILBOX).output().await;
     let _ = safe_command("postmap").arg(POSTFIX_VIRTUAL_ALIAS).output().await;
 
+    // 6b. mail.<d> certificates by SNI, from the virtual_domains just written
+    // (validates and restores itself; never fails the sync).
+    let host_tls = crate::services::mail_tls::rebuild_sni().await;
+
     // 7. Reload Postfix and Dovecot
     for service in &["postfix", "dovecot"] {
         if let Ok(out) = safe_command("systemctl").args(["reload", service]).output().await {
@@ -1598,19 +1715,21 @@ async fn sync_config(
             "ok": true,
             "message": "Mail configuration synced",
             "ip_transports": { "applied": outcome.applied, "skipped": outcome.skipped },
+            "host_tls": host_tls,
         }))),
         Err((e, skipped)) => Err((
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({
                 "error": format!("Mail configuration synced, but the per-domain sending IPs were not applied: {e}"),
                 "ip_transports": { "applied": false, "skipped": skipped },
+                "host_tls": host_tls,
             })),
         )),
     }
 }
 
-const POSTFIX_MASTER_CF: &str = "/etc/postfix/master.cf";
-const POSTFIX_MAIN_CF: &str = "/etc/postfix/main.cf";
+pub(crate) const POSTFIX_MASTER_CF: &str = "/etc/postfix/master.cf";
+pub(crate) const POSTFIX_MAIN_CF: &str = "/etc/postfix/main.cf";
 
 /// Outcome of [`apply_ip_transports`], reported in the sync response as
 /// `ip_transports: {applied, skipped}`.
@@ -1651,7 +1770,7 @@ impl PostfixSnapshot {
 
 /// `postfix check`, judged on its exit status only (it prints warnings for
 /// harmless things on stock installs).
-async fn postfix_check() -> Result<(), String> {
+pub(crate) async fn postfix_check() -> Result<(), String> {
     match safe_command("postfix").arg("check").output().await {
         Ok(o) if o.status.success() => Ok(()),
         Ok(o) => Err(String::from_utf8_lossy(&o.stderr).trim().to_string()),
@@ -3090,7 +3209,7 @@ async fn tls_enforce(Json(body): Json<serde_json::Value>) -> Result<Json<serde_j
 
 // ── Helper ──────────────────────────────────────────────────────────────
 
-async fn write_file_atomic(path: &str, content: &str) -> Result<(), String> {
+pub(crate) async fn write_file_atomic(path: &str, content: &str) -> Result<(), String> {
     let tmp_path = format!("{path}.tmp");
     tokio::fs::write(&tmp_path, content).await.map_err(|e| e.to_string())?;
     tokio::fs::rename(&tmp_path, path).await.map_err(|e| e.to_string())?;

@@ -33,6 +33,12 @@ pub struct MailDomain {
     /// `"forced"` | `"site"` | `"primary"`. Response-only, see [`fill_send_ips`].
     #[sqlx(default)]
     pub send_ip_source: String,
+    /// Certificate of `mail.<domain>` presented by SNI (conception 14, D4):
+    /// `none` | `pending_dns` | `active` | `imported` | `failed`.
+    pub host_cert_status: String,
+    pub host_cert_expiry: Option<chrono::DateTime<chrono::Utc>>,
+    /// Short reason of the last failure, never a secret.
+    pub host_cert_error: Option<String>,
 }
 
 /// Fill the response-only send-address fields, with the one resolution the
@@ -57,7 +63,8 @@ async fn fill_send_ips(db: &sqlx::PgPool, domains: &mut [MailDomain]) {
 
 /// The projection every `MailDomain` read uses.
 const MAIL_DOMAIN_COLUMNS: &str =
-    "id, domain, dkim_selector, dkim_public_key, catch_all, enabled, created_at, send_ip_id";
+    "id, domain, dkim_selector, dkim_public_key, catch_all, enabled, created_at, send_ip_id, \
+     host_cert_status, host_cert_expiry, host_cert_error";
 
 #[derive(serde::Serialize, sqlx::FromRow)]
 pub struct MailAccount {
@@ -369,7 +376,8 @@ pub async fn list_domains(
 ) -> Result<Json<Vec<MailDomain>>, ApiError> {
     let domains: Vec<MailDomain> = sqlx::query_as(
         "SELECT md.id, md.domain, md.dkim_selector, md.dkim_public_key, md.catch_all, \
-         md.enabled, md.created_at, md.send_ip_id FROM mail_domains md WHERE (\
+         md.enabled, md.created_at, md.send_ip_id, md.host_cert_status, md.host_cert_expiry, \
+         md.host_cert_error FROM mail_domains md WHERE (\
          EXISTS (SELECT 1 FROM users u WHERE u.id = $2 AND u.role = 'admin') \
          AND (md.server_id = $1 OR md.server_id IS NULL)) \
          OR (EXISTS (\
@@ -669,6 +677,51 @@ pub async fn set_send_ip(
         ));
     }
     Ok(Json(row))
+}
+
+/// POST /api/mail/domains/{id}/host-cert/retry - issue `mail.<domain>` now
+/// (conception 14, D9/D11 "Retry now").
+///
+/// The same authorisation as every other write on a mail domain
+/// ([`mail_domain_agent_for_caller`], admin only). The delay between two attempts
+/// is ignored; the DNS gate is NOT: a `mail.<d>` that does not point here ends in
+/// `pending_dns` without any ACME order.
+pub async fn retry_host_cert(
+    State(state): State<AppState>,
+    AdminUser(claims): AdminUser,
+    Path(id): Path<Uuid>,
+    headers: axum::http::HeaderMap,
+) -> Result<Json<crate::services::mail_host_cert::HostCertState>, ApiError> {
+    use crate::services::mail_host_cert::{self as host_cert, ProcessError};
+
+    let (domain, _server_id, _agent) = mail_domain_agent_for_caller(&state, id, &claims).await?;
+
+    let enabled: bool = sqlx::query_scalar("SELECT enabled FROM mail_domains WHERE id = $1")
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| internal_error("mail host cert retry", e))?
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "Domain not found"))?;
+    if !enabled {
+        return Err(err(StatusCode::CONFLICT, "This mail domain is disabled"));
+    }
+
+    let result = host_cert::process_one(&state.db, &state.agents, id, true)
+        .await
+        .map_err(|e| match e {
+            ProcessError::NotFound => err(StatusCode::NOT_FOUND, "Domain not found"),
+            ProcessError::NoServer => err(StatusCode::CONFLICT, "This mail domain is not associated with a server"),
+            ProcessError::AgentUnavailable(_) => err(StatusCode::BAD_GATEWAY, "The mail domain's server is unreachable"),
+            ProcessError::Db(e) => internal_error("mail host cert retry", e),
+        })?;
+
+    let ip = crate::routes::client_ip(&headers);
+    activity::log_activity(
+        &state.db, claims.sub, &claims.email, "mail.domain.host_cert_retry",
+        Some("mail"), Some(&domain), Some(&result.host_cert_status), ip.as_deref(), claims.key_id,
+    ).await;
+
+    Ok(Json(result))
 }
 
 /// DELETE /api/mail/domains/{id}
@@ -1460,6 +1513,7 @@ async fn provision_mail_host_cert(
     };
 
     let site_id_for_names = site.as_ref().map(|(id, ..)| *id);
+    let site_ssl_before = site.as_ref().map(|(_, _, enabled, ..)| *enabled).unwrap_or(false);
     if let Some((site_id, site_owner, ssl_enabled, ssl_wildcard, ssl_challenge)) = site {
         if let MailCertVerdict::Refuse(blocker) = mail_cert_verdict(
             ssl_enabled,
@@ -1483,6 +1537,34 @@ async fn provision_mail_host_cert(
             .await;
         return;
     }
+
+    // One issuance per site at a time (`services::issuance_lock`, conception 14
+    // D5): `/ssl/provision/{domain}` writes the same-named site's certificate and
+    // vhost, so it is held from the order to `rebuild_vhost_for_domain` below,
+    // as `routes/sites.rs` does for the auto-SSL at creation. "Already issued"
+    // means only "the issuance we waited for gave the site its certificate": a
+    // site that already served TLS before we waited is refreshed as before.
+    let _issuance = match site_id_for_names {
+        Some(site_id) => match crate::services::issuance_lock::begin(
+            site_id,
+            crate::services::issuance_lock::ISSUANCE_WAIT,
+            || async move {
+                !site_ssl_before && crate::services::issuance_lock::ssl_enabled_now(db, site_id).await
+            },
+        )
+        .await
+        {
+            Ok(guard) => Some(guard),
+            Err(blocked) => {
+                tracing::info!(
+                    "Auto-SSL (mail): {domain} not provisioned - the same-named site's issuance \
+                     lock is held ({blocked:?})"
+                );
+                return;
+            }
+        },
+        None => None,
+    };
 
     let mut body = serde_json::json!({
         "email": user_email,

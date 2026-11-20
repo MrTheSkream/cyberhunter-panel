@@ -331,6 +331,10 @@ async fn main() {
     // was never installed.
     tokio::spawn(routes::mail::heal_webmail_nginx());
 
+    // mail.<d> certificates by SNI and the 465 listener on an existing mail
+    // install (14). No-op when mail is not installed.
+    tokio::spawn(services::mail_tls::heal_mail_tls());
+
     // Same shape, one file over: the agent's OWN unit is written only by an
     // installer, so the sandbox `install-agent.sh` never applied could not
     // reach a single fleet member that already existed. The binary is the one
