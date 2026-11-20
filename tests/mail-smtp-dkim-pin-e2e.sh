@@ -142,7 +142,14 @@ if hasre "$CODE" 'if !Path::new\(path\).exists\(\)'; then
 else
   bad "map files truncated unconditionally - a re-run erases every mailbox"
 fi
-if hasre "$CODE" 'let has_active_submission'; then
+# Since doc 14 (465 submissions) the guard lives in services/mail_tls.rs:
+# routes/mail.rs goes through master_cf_with_submission_ports, whose 587 step
+# appends only when has_active_service finds no ACTIVE `submission` entry
+# (active_inet_service skips commented and continuation lines).
+TLS_CODE="$(strip_rust "$REPO/panel/agent/src/services/mail_tls.rs")"
+if has "$CODE" 'mail_tls::master_cf_with_submission_ports(&master_cf)' \
+   && has "$TLS_CODE" '!has_active_service(master_cf, SUBMISSION_NAMES)' \
+   && has "$TLS_CODE" "line.starts_with(char::is_whitespace) || line.starts_with('#')"; then
   ok "submission guard tests for an ACTIVE entry, not the commented stock line"
 else
   bad "submission guard back to substring match - re-runs duplicate the service"
