@@ -1,6 +1,6 @@
 [package]
 name = "dockpanel-agent"
-version = "3.0.0"
+version = "3.1.0-rc.1"
 license = "AGPL-3.0-only"
 edition = "2024"
 
