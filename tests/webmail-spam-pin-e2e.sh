@@ -188,8 +188,84 @@ else
   ok "update.sh carries no fragment internals"
 fi
 
+echo "── 5. W4: Roundcube dials the PANEL host, never the selected domain ──"
+#
+# W4  The mail page sent `{ domain: selectedDomain?.domain || "localhost" }`
+#     and the agent wrote it verbatim into ROUNDCUBEMAIL_DEFAULT_HOST /
+#     SMTP_SERVER. That apex has no certificate on the box (Postfix/Dovecot
+#     present the panel's by default and mail.<d> ones by SNI only), so
+#     Roundcube's peer verification failed every login: "Could not connect to
+#     ssl://<apex>:993". `localhost` is the container itself. Webmail is
+#     server-wide; its host is the panel's, gated on the panel certificate.
+
+MAILPAGE=panel/frontend/src/pages/Mail.tsx
+[ -f "$MAILPAGE" ] || { echo "missing source file: $MAILPAGE"; exit 1; }
+
+if hasre "$MAIL" 'ROUNDCUBEMAIL_DEFAULT_HOST=ssl://\{mail_host\}' && hasre "$MAIL" 'ROUNDCUBEMAIL_SMTP_SERVER=tls://\{mail_host\}'; then
+  ok "IMAP and SMTP hosts are both the resolved mail_host"
+else
+  bad "ROUNDCUBEMAIL_DEFAULT_HOST / SMTP_SERVER no longer use the resolved mail_host"
+fi
+
+if hasre "$MAIL" 'ssl://\{domain\}|tls://\{domain\}'; then
+  bad "a Roundcube host is built from a client-sent domain again - the apex has no mail certificate"
+else
+  ok "no Roundcube host is built from {domain}"
+fi
+
+# One docker run, shared by install and heal: two copies drift (W3's lesson).
+n_dh=$(code "$MAIL" | grep -cF 'ROUNDCUBEMAIL_DEFAULT_HOST=ssl://')
+if [ "$n_dh" -eq 1 ]; then
+  ok "ROUNDCUBEMAIL_DEFAULT_HOST is spelled exactly once (deploy_roundcube)"
+else
+  bad "ROUNDCUBEMAIL_DEFAULT_HOST spelled $n_dh times - the install and the heal can drift"
+fi
+
+if hasre "$MAIL" 'fn webmail_mail_host\(' && has "$MAIL" 'panel_tls_paths().is_some()'; then
+  ok "the host is the panel's, gated on its certificate actually existing"
+else
+  bad "webmail_mail_host is gone or no longer checks panel_tls_paths - a server_name alone proves no certificate"
+fi
+
+if has "$MAIL" 'Webmail needs the panel served on a hostname' && hasre "$MAIL" 'let Some\(mail_host\) = resolve_webmail_mail_host\(\) else'; then
+  ok "no verifiable host refuses the install instead of deploying a webmail nobody can log in to"
+else
+  bad "the install no longer refuses when there is no verifiable host"
+fi
+
+if hasre "$MAIL" 'pub async fn heal_webmail_host\(' && has "$MAIN" "heal_webmail_host"; then
+  ok "existing installs are healed onto the panel host at agent startup"
+else
+  bad "heal_webmail_host is gone or never called from main.rs - the fix reaches no existing install"
+fi
+
+# A recreate without the db bind mount erases identities and contacts.
+if has "$MAIL" 'm == ROUNDCUBE_DB_MOUNT' && has "$MAIL" 'WebmailHostHeal::FlagOnly =>'; then
+  ok "the heal recreates only a container whose database is bind-mounted, flags otherwise"
+else
+  bad "the heal no longer checks the database bind mount before docker rm"
+fi
+
+if has "$MAIL" '"mail_host_ok": mail_host_ok'; then
+  ok "status reports whether Roundcube dials the expected host"
+else
+  bad "webmail status no longer reports mail_host_ok"
+fi
+
+if hasre "$MAILPAGE" 'selectedDomain\?\.domain \|\| "localhost"|webmail/install", \{ domain'; then
+  bad "Mail.tsx sends the selected domain to the webmail install again"
+else
+  ok "Mail.tsx sends no domain to the webmail install"
+fi
+
+if has "$MAILPAGE" 'webmail.mail_host_ok === false'; then
+  ok "the webmail card flags a wrong host and offers a reinstall"
+else
+  bad "the webmail card no longer shows a wrong IMAP/SMTP host"
+fi
+
 echo
-printf 'webmail/spam pins: \033[0;32m%d passed\033[0m, ' "$PASS"
+printf 'webmail/spam pins:\033[0;32m%d passed\033[0m, ' "$PASS"
 if [ "$FAIL" -gt 0 ]; then
   printf '\033[0;31m%d failed\033[0m\n' "$FAIL"
   exit 1

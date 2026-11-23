@@ -332,6 +332,13 @@ async fn main() {
     // was never installed.
     tokio::spawn(routes::mail::heal_webmail_nginx());
 
+    // An existing Roundcube that dials another IMAP/SMTP host than the panel's
+    // own (the selected domain's apex, before this fix) can log nobody in: no
+    // certificate on the box covers that name. Recreated onto the panel host
+    // when its database survives a recreate; flagged otherwise. No-op when
+    // webmail was never installed.
+    tokio::spawn(routes::mail::heal_webmail_host());
+
     // mail.<d> certificates by SNI and the 465 listener on an existing mail
     // install (14). No-op when mail is not installed.
     tokio::spawn(services::mail_tls::heal_mail_tls());

@@ -2412,20 +2412,138 @@ async fn remove_webmail_nginx() {
     }
 }
 
-/// POST /mail/webmail/install - Deploy Roundcube webmail via Docker.
+const ROUNDCUBE_CONTAINER: &str = "dockpanel-roundcube";
+/// Where the image keeps its SQLite database; bound to the host by [`deploy_roundcube`].
+const ROUNDCUBE_DB_MOUNT: &str = "/var/roundcube/db";
+
+/// The host Roundcube dials for IMAP (993) and SMTP submission (587).
 ///
-/// Idempotent: tears down any prior `dockpanel-roundcube` container before
-/// recreating, so env-var additions across releases apply on next Install
-/// click. Also writes the panel-vhost reverse-proxy fragment so the Open
-/// button at `${panel}/webmail/` works on both HTTP-on-IP and HTTPS-domain
-/// installs.
-async fn webmail_install(Json(body): Json<serde_json::Value>) -> Result<Json<serde_json::Value>, ApiErr> {
-    let domain = body.get("domain").and_then(|v| v.as_str()).unwrap_or("localhost");
-    let port = body.get("port").and_then(|v| v.as_u64()).unwrap_or(8888) as u16;
+/// Webmail is server-wide - every hosted mail domain logs in through the same
+/// Roundcube - so the host must not depend on which domain the mail page
+/// happened to have selected. It used to be that domain's apex
+/// (`ssl://example.com`), which no certificate on the box ever covers:
+/// Postfix and Dovecot present the panel's own certificate by default and
+/// `mail.<d>` ones by SNI only (conception/14). Roundcube verifies its peer, so
+/// every login failed with "Erreur de connexion au serveur de stockage"
+/// (`Could not connect to ssl://<apex>:993`). `localhost`, the other old
+/// default, is the container itself.
+///
+/// The panel's hostname is the one name both daemons always present a valid
+/// certificate for, so it is the only answer - and only when that certificate
+/// actually exists (`panel_tls_paths`), not merely when nginx has a
+/// `server_name`. `None` = nothing on this box that Roundcube could verify.
+/// Pure: the caller resolves both inputs.
+fn webmail_mail_host(panel_host: Option<&str>, panel_has_cert: bool) -> Option<String> {
+    let host = panel_host?.trim().trim_end_matches('.').to_ascii_lowercase();
+    (panel_has_cert && !host.is_empty()).then_some(host)
+}
 
-    tracing::info!("Installing Roundcube webmail on port {port}...");
+/// [`webmail_mail_host`] for this box.
+fn resolve_webmail_mail_host() -> Option<String> {
+    webmail_mail_host(panel_server_name().as_deref(), panel_tls_paths().is_some())
+}
 
-    let _ = safe_command("docker").args(["rm", "-f", "dockpanel-roundcube"]).output().await;
+/// The host part of `ROUNDCUBEMAIL_DEFAULT_HOST` in a container's environment,
+/// one `KEY=VALUE` per line (`docker inspect` `.Config.Env`). Pure.
+fn webmail_default_host_from_env(env: &str) -> Option<String> {
+    env.lines().find_map(|l| {
+        let v = l.trim().strip_prefix("ROUNDCUBEMAIL_DEFAULT_HOST=")?;
+        let host = v.split_once("://").map(|(_, h)| h).unwrap_or(v);
+        let host = host.split([':', '/']).next().unwrap_or("").trim().to_ascii_lowercase();
+        (!host.is_empty()).then_some(host)
+    })
+}
+
+/// What the startup heal does with an existing Roundcube container.
+#[derive(Debug, PartialEq, Eq)]
+enum WebmailHostHeal {
+    /// Already dialling the right host (or nothing to do).
+    Keep,
+    /// Wrong host, and recreating is safe: the database survives on the host.
+    Recreate(String),
+    /// Wrong host, but the container predates the database bind mount, so
+    /// `docker rm` would take every identity and contact with it. Flagged by
+    /// the status route; a deliberate reinstall is the user's call.
+    FlagOnly,
+}
+
+/// Pure decision for [`heal_webmail_host`].
+fn webmail_host_heal(current: Option<&str>, desired: Option<&str>, has_db_mount: bool) -> WebmailHostHeal {
+    let Some(desired) = desired else { return WebmailHostHeal::Keep };
+    if current == Some(desired) {
+        return WebmailHostHeal::Keep;
+    }
+    if has_db_mount {
+        WebmailHostHeal::Recreate(desired.to_string())
+    } else {
+        WebmailHostHeal::FlagOnly
+    }
+}
+
+/// `(Config.Env, mount destinations)` of the Roundcube container, `None` when
+/// there is no such container.
+async fn inspect_roundcube() -> Option<(String, Vec<String>)> {
+    let out = safe_command("docker")
+        .args([
+            "inspect", "--format",
+            "{{range .Config.Env}}{{println .}}{{end}}---MOUNTS---\n{{range .Mounts}}{{println .Destination}}{{end}}",
+            ROUNDCUBE_CONTAINER,
+        ])
+        .output().await.ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+    let (env, mounts) = text.split_once("---MOUNTS---").unwrap_or((&text, ""));
+    let mounts = mounts.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect();
+    Some((env.to_string(), mounts))
+}
+
+/// Host port Roundcube is published on, `None` when not found.
+async fn roundcube_port() -> Option<u16> {
+    let out = safe_command("docker")
+        .args(["inspect", "--format", "{{range .NetworkSettings.Ports}}{{range .}}{{.HostPort}}{{end}}{{end}}", ROUNDCUBE_CONTAINER])
+        .output().await.ok()?;
+    String::from_utf8_lossy(&out.stdout).trim().parse::<u16>().ok()
+}
+
+/// Bring an existing Roundcube container onto the right IMAP/SMTP host.
+///
+/// A fix to [`webmail_mail_host`] would otherwise reach nobody who already
+/// installed webmail - the same trap [`heal_webmail_nginx`] exists for. Runs at
+/// agent startup; recreates the container only when it exists, dials another
+/// host than the one this box can present a certificate for, and keeps its
+/// database on the host. Never installs webmail for someone who does not have it.
+pub async fn heal_webmail_host() {
+    let Some((env, mounts)) = inspect_roundcube().await else { return };
+    let current = webmail_default_host_from_env(&env);
+    let desired = resolve_webmail_mail_host();
+    let has_db_mount = mounts.iter().any(|m| m == ROUNDCUBE_DB_MOUNT);
+    match webmail_host_heal(current.as_deref(), desired.as_deref(), has_db_mount) {
+        WebmailHostHeal::Keep => {}
+        WebmailHostHeal::FlagOnly => tracing::warn!(
+            "Roundcube dials {} instead of {}, but its container has no {ROUNDCUBE_DB_MOUNT} bind mount: \
+             not recreated (would lose its data). Reinstall webmail to fix logins.",
+            current.as_deref().unwrap_or("?"), desired.as_deref().unwrap_or("?"),
+        ),
+        WebmailHostHeal::Recreate(host) => {
+            let port = roundcube_port().await.unwrap_or(8888);
+            match deploy_roundcube(port, &host).await {
+                Ok(()) => tracing::info!(
+                    "Healed Roundcube: IMAP/SMTP host {} -> {host} (port {port})",
+                    current.as_deref().unwrap_or("?"),
+                ),
+                Err(e) => tracing::warn!("Roundcube host heal failed: {e}"),
+            }
+        }
+    }
+}
+
+/// Create (or recreate) the Roundcube container dialling `mail_host`.
+/// The single place this `docker run` is spelled, shared by the install route
+/// and [`heal_webmail_host`].
+async fn deploy_roundcube(port: u16, mail_host: &str) -> Result<(), String> {
+    let _ = safe_command("docker").args(["rm", "-f", ROUNDCUBE_CONTAINER]).output().await;
 
     // Webmail keeps its accounts, identities, contacts and preferences in a SQLite
     // database, which its image places under this path whenever no external database is
@@ -2446,13 +2564,13 @@ async fn webmail_install(Json(body): Json<serde_json::Value>) -> Result<Json<ser
     let panel_host = panel_server_name();
     let mut args: Vec<String> = vec![
         "run".into(), "-d".into(),
-        "--name".into(), "dockpanel-roundcube".into(),
+        "--name".into(), ROUNDCUBE_CONTAINER.into(),
         "--restart".into(), "unless-stopped".into(),
         "-p".into(), format!("127.0.0.1:{port}:80"),
-        "-v".into(), format!("{webmail_db}:/var/roundcube/db"),
-        "-e".into(), format!("ROUNDCUBEMAIL_DEFAULT_HOST=ssl://{domain}"),
+        "-v".into(), format!("{webmail_db}:{ROUNDCUBE_DB_MOUNT}"),
+        "-e".into(), format!("ROUNDCUBEMAIL_DEFAULT_HOST=ssl://{mail_host}"),
         "-e".into(), "ROUNDCUBEMAIL_DEFAULT_PORT=993".into(),
-        "-e".into(), format!("ROUNDCUBEMAIL_SMTP_SERVER=tls://{domain}"),
+        "-e".into(), format!("ROUNDCUBEMAIL_SMTP_SERVER=tls://{mail_host}"),
         "-e".into(), "ROUNDCUBEMAIL_SMTP_PORT=587".into(),
         "-e".into(), "ROUNDCUBEMAIL_UPLOAD_MAX_FILESIZE=25M".into(),
         "-e".into(), "ROUNDCUBEMAIL_PROXY_WHITELIST=127.0.0.1".into(),
@@ -2487,38 +2605,78 @@ async fn webmail_install(Json(body): Json<serde_json::Value>) -> Result<Json<ser
     let output = safe_command("docker")
         .args(args.iter().map(|s| s.as_str()))
         .output().await
-        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &format!("Docker failed: {e}")))?;
+        .map_err(|e| format!("Docker failed: {e}"))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(err(StatusCode::INTERNAL_SERVER_ERROR, &format!("Roundcube deploy failed: {}", &stderr[..200.min(stderr.len())])));
+        return Err(format!("Roundcube deploy failed: {}", &stderr[..200.min(stderr.len())]));
     }
+    Ok(())
+}
+
+/// POST /mail/webmail/install - Deploy Roundcube webmail via Docker.
+///
+/// Idempotent: tears down any prior `dockpanel-roundcube` container before
+/// recreating, so env-var additions across releases apply on next Install
+/// click. Also writes the panel-vhost reverse-proxy fragment so the Open
+/// button at `${panel}/webmail/` works on both HTTP-on-IP and HTTPS-domain
+/// installs.
+///
+/// A `domain` in the body is ignored: the IMAP/SMTP host is the panel's own
+/// (see [`webmail_mail_host`]). Refused with 412 when the box has no panel
+/// certificate, rather than deploying a webmail no one can log in to.
+async fn webmail_install(Json(body): Json<serde_json::Value>) -> Result<Json<serde_json::Value>, ApiErr> {
+    let port = body.get("port").and_then(|v| v.as_u64()).unwrap_or(8888) as u16;
+    if let Some(d) = body.get("domain").and_then(|v| v.as_str()) {
+        tracing::info!("webmail install: ignoring client-sent domain {d:?}, the IMAP/SMTP host is the panel's");
+    }
+    let Some(mail_host) = resolve_webmail_mail_host() else {
+        return Err(err(
+            StatusCode::PRECONDITION_FAILED,
+            "Webmail needs the panel served on a hostname with a Let's Encrypt certificate: \
+             Roundcube verifies the IMAP/SMTP certificate, and without one no login can succeed. \
+             Set up the panel domain and its certificate first.",
+        ));
+    };
+
+    tracing::info!("Installing Roundcube webmail on port {port}, IMAP/SMTP host {mail_host}...");
+    deploy_roundcube(port, &mail_host).await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
 
     write_webmail_nginx(port).await?;
 
     tracing::info!("Roundcube webmail deployed on port {port}, panel-vhost /webmail/ proxy active");
-    Ok(Json(serde_json::json!({ "ok": true, "port": port })))
+    Ok(Json(serde_json::json!({ "ok": true, "port": port, "mail_host": mail_host })))
 }
 
-/// GET /mail/webmail/status - Check if Roundcube is running.
+/// GET /mail/webmail/status - Check if Roundcube is running, and whether it
+/// dials the IMAP/SMTP host this box can present a valid certificate for.
 async fn webmail_status() -> Json<serde_json::Value> {
     let output = safe_command("docker")
-        .args(["inspect", "--format", "{{.State.Running}}", "dockpanel-roundcube"])
+        .args(["inspect", "--format", "{{.State.Running}}", ROUNDCUBE_CONTAINER])
         .output().await;
     let running = output.map(|o| String::from_utf8_lossy(&o.stdout).trim() == "true").unwrap_or(false);
 
-    // Get port
-    let port_output = safe_command("docker")
-        .args(["inspect", "--format", "{{range .NetworkSettings.Ports}}{{range .}}{{.HostPort}}{{end}}{{end}}", "dockpanel-roundcube"])
-        .output().await;
-    let port = port_output.ok().and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse::<u16>().ok()).unwrap_or(0);
+    let port = roundcube_port().await.unwrap_or(0);
 
-    Json(serde_json::json!({ "installed": running || port > 0, "running": running, "port": port }))
+    let current = inspect_roundcube().await.and_then(|(env, _)| webmail_default_host_from_env(&env));
+    let expected = resolve_webmail_mail_host();
+    // `null` when not installed; otherwise false whenever logins cannot verify.
+    let mail_host_ok = current.as_ref().map(|c| expected.as_deref() == Some(c.as_str()));
+
+    Json(serde_json::json!({
+        "installed": running || port > 0,
+        "running": running,
+        "port": port,
+        "mail_host": current,
+        "expected_mail_host": expected,
+        "mail_host_ok": mail_host_ok,
+    }))
 }
 
 /// POST /mail/webmail/remove - Remove Roundcube container + panel-vhost fragment.
 async fn webmail_remove() -> Result<Json<serde_json::Value>, ApiErr> {
-    let _ = safe_command("docker").args(["rm", "-f", "dockpanel-roundcube"]).output().await;
+    let _ = safe_command("docker").args(["rm", "-f", ROUNDCUBE_CONTAINER]).output().await;
     remove_webmail_nginx().await;
     Ok(ok("Roundcube removed"))
 }
@@ -3253,6 +3411,49 @@ async fn write_dovecot_users(content: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The live defect: the mail page sent the selected domain, so Roundcube
+    /// dialled `ssl://<apex>:993`, a name no certificate on the box covers.
+    /// Only the panel host qualifies, and only with its certificate present.
+    #[test]
+    fn webmail_host_is_the_panel_host_with_a_certificate() {
+        assert_eq!(webmail_mail_host(Some("panel.example.test"), true).as_deref(), Some("panel.example.test"));
+        assert_eq!(webmail_mail_host(Some("Panel.Example.Test."), true).as_deref(), Some("panel.example.test"));
+        // A server_name without a Let's Encrypt pair: Dovecot presents the
+        // snakeoil, so nothing would verify - refuse rather than guess.
+        assert_eq!(webmail_mail_host(Some("panel.example.test"), false), None);
+        assert_eq!(webmail_mail_host(None, true), None);
+        assert_eq!(webmail_mail_host(Some("  "), true), None);
+    }
+
+    #[test]
+    fn default_host_parsed_from_container_env() {
+        let env = "PATH=/usr/bin\nROUNDCUBEMAIL_DEFAULT_HOST=ssl://casino.example.test\nROUNDCUBEMAIL_DEFAULT_PORT=993\n";
+        assert_eq!(webmail_default_host_from_env(env).as_deref(), Some("casino.example.test"));
+        assert_eq!(
+            webmail_default_host_from_env("ROUNDCUBEMAIL_DEFAULT_HOST=ssl://Panel.Example.Test:993/\n").as_deref(),
+            Some("panel.example.test"),
+        );
+        assert_eq!(webmail_default_host_from_env("ROUNDCUBEMAIL_DEFAULT_HOST=localhost\n").as_deref(), Some("localhost"));
+        // The SMTP key must not be mistaken for the IMAP one.
+        assert_eq!(webmail_default_host_from_env("ROUNDCUBEMAIL_SMTP_SERVER=tls://x.test\n"), None);
+        assert_eq!(webmail_default_host_from_env(""), None);
+    }
+
+    #[test]
+    fn heal_recreates_only_a_wrong_host_whose_database_survives() {
+        let panel = Some("panel.example.test");
+        assert_eq!(webmail_host_heal(Some("panel.example.test"), panel, true), WebmailHostHeal::Keep);
+        assert_eq!(
+            webmail_host_heal(Some("casino.example.test"), panel, true),
+            WebmailHostHeal::Recreate("panel.example.test".into()),
+        );
+        assert_eq!(webmail_host_heal(None, panel, true), WebmailHostHeal::Recreate("panel.example.test".into()));
+        // No bind mount: `docker rm` would erase identities and contacts.
+        assert_eq!(webmail_host_heal(Some("casino.example.test"), panel, false), WebmailHostHeal::FlagOnly);
+        // Nothing verifiable to move to: leave the container alone.
+        assert_eq!(webmail_host_heal(Some("casino.example.test"), None, true), WebmailHostHeal::Keep);
+    }
 
     /// The regression this helper exists for: between s268 and s270 the value
     /// on the line was `inet:127.0.0.1:8891`, and the old code matched the
