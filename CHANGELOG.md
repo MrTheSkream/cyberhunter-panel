@@ -4,6 +4,41 @@ All notable changes to CyberHunter - Panel will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Fix: webmail logins all failed - Roundcube dialled the selected domain's apex
+
+Installing Roundcube from the mail page sent whichever mail domain happened to be selected
+(`{ domain: selectedDomain?.domain || "localhost" }`), and the agent wrote it verbatim into
+`ROUNDCUBEMAIL_DEFAULT_HOST=ssl://<apex>` and `ROUNDCUBEMAIL_SMTP_SERVER=tls://<apex>`. No
+certificate on the box ever covers that name - Postfix and Dovecot present the panel's own
+certificate by default and `mail.<d>` ones by SNI only (conception/14) - so Roundcube's peer
+verification refused every connection: "Erreur de connexion au serveur de stockage" in the
+browser, `Could not connect to ssl://<apex>:993: Unknown reason` in Roundcube's log and
+`Connection closed (no auth attempts in 0 secs)` in Dovecot's. The `localhost` fallback was no
+better: inside the container it is the container itself.
+
+- **The IMAP/SMTP host is now the panel's own hostname**, the one name both daemons always present
+  a valid certificate for, and only when that Let's Encrypt pair actually exists
+  (`panel_tls_paths`), not merely when nginx has a `server_name`. Webmail is server-wide - every
+  hosted domain logs in through it - so it no longer depends on a selected domain; a `domain` in
+  the request body is ignored.
+- **No verifiable host, no install**: without a panel certificate the install is refused with 412
+  and the remedy, instead of deploying a webmail no one can log in to. This is a behaviour change
+  for IP-only installs, where webmail could never log in anyway.
+- **Existing installs are healed at agent startup**: a Roundcube container dialling another host is
+  recreated onto the panel host, on its port, when its database is bind-mounted (so nothing is
+  lost); a container that predates that bind mount is only flagged, since `docker rm` would take
+  its identities and contacts with it.
+- **`GET /api/mail/webmail/status`** now reports `mail_host`, `expected_mail_host` and
+  `mail_host_ok`; the mail page warns on a wrong host and offers a Reinstall.
+
+Pinned by `webmail-spam-pin-e2e.sh` §5 (W4), which fails on the previous source; unit tests cover
+host selection, parsing the container's environment and the heal decision. Not yet driven on a
+box from this build: the diagnosis and the remedy (reinstalling onto the panel host, then IMAPS
+993 and submission 587 verified from inside the container) were confirmed on a live install by
+hand.
+
 ## [2.242.1]
 
 ### Fix: stack-owned databases had zero backup coverage

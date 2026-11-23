@@ -52,6 +52,18 @@ interface MailDomain {
 
 type HostCertStatus = "none" | "pending_dns" | "active" | "imported" | "failed";
 
+/** What `GET /mail/webmail/status` answers. `mail_host` is the IMAP/SMTP host
+ *  Roundcube dials; `mail_host_ok` is false when it is not the panel host
+ *  (no certificate on the box covers it, so every login fails). */
+interface WebmailStatus {
+  installed: boolean;
+  running: boolean;
+  port: number;
+  mail_host?: string | null;
+  expected_mail_host?: string | null;
+  mail_host_ok?: boolean | null;
+}
+
 /** What `POST /mail/domains/{id}/host-cert/retry` answers. */
 interface HostCertState {
   host_cert_status: HostCertStatus;
@@ -361,7 +373,7 @@ export default function Mail() {
 
   // Mail services
   const [rspamd, setRspamd] = useState<{ installed: boolean; running: boolean } | null>(null);
-  const [webmail, setWebmail] = useState<{ installed: boolean; running: boolean; port: number } | null>(null);
+  const [webmail, setWebmail] = useState<WebmailStatus | null>(null);
   const [relay, setRelay] = useState<{ configured: boolean; relayhost: string } | null>(null);
   const [relayHost, setRelayHost] = useState("");
   const [relayPort, setRelayPort] = useState("587");
@@ -401,6 +413,16 @@ export default function Mail() {
   const [bulkImportText, setBulkImportText] = useState("");
   const [importing, setImporting] = useState(false);
   const [pendingConfirm, setPendingConfirm] = useState<{ type: string; label: string; data?: Record<string, unknown> } | null>(null);
+
+  // No domain in the body: webmail is server-wide, and the agent dials the
+  // panel's own host (the selected domain's apex has no mail certificate).
+  const installWebmail = async () => {
+    try {
+      const r = await api.post<{ port: number; mail_host?: string }>("/mail/webmail/install", { port: webmail?.port || 8888 });
+      setWebmail({ installed: true, running: true, port: r.port || 8888, mail_host: r.mail_host ?? null, expected_mail_host: r.mail_host ?? null, mail_host_ok: true });
+      setMessage({ text: "Roundcube deployed", type: "success" });
+    } catch (e) { setMessage({ text: e instanceof Error ? e.message : "Failed", type: "error" }); }
+  };
 
   const loadMailStatus = async () => {
     try {
@@ -511,7 +533,7 @@ export default function Mail() {
     loadMailStatus();
     loadStorage();
     api.get<{ installed: boolean; running: boolean }>("/mail/rspamd/status").then(setRspamd).catch(() => {});
-    api.get<{ installed: boolean; running: boolean; port: number }>("/mail/webmail/status").then(setWebmail).catch(() => {});
+    api.get<WebmailStatus>("/mail/webmail/status").then(setWebmail).catch(() => {});
     api.get<{ configured: boolean; relayhost: string }>("/mail/relay/status").then(setRelay).catch(() => {});
     api.get<{ configured: boolean; rate: string }>("/mail/rate-limit/status").then(setRateLimit).catch(() => {});
     api.get<TlsStatus>("/mail/tls/status").then(setTls).catch(() => {});
@@ -923,14 +945,18 @@ export default function Mail() {
               <p className="text-sm text-dark-100 mb-3">
                 {webmail.running ? `Running (:${webmail.port})` : webmail.installed ? "Stopped" : "Not installed"}
               </p>
+              {webmail.installed && webmail.mail_host_ok === false && (
+                <p className="text-xs text-warn-500 mb-3" title={webmail.expected_mail_host ? `Expected ${webmail.expected_mail_host}` : "The panel has no certificate yet"}>
+                  {`Connects to ${webmail.mail_host ?? "an unknown host"}, which no certificate covers: logins fail. Reinstall to use the panel host.`}
+                </p>
+              )}
               {!webmail.installed ? (
-                <button onClick={async () => {
-                  const domain = selectedDomain?.domain || "localhost";
-                  try { const r = await api.post<{ port: number }>("/mail/webmail/install", { domain, port: 8888 }); setWebmail({ installed: true, running: true, port: r.port || 8888 }); setMessage({ text: "Roundcube deployed", type: "success" }); }
-                  catch (e) { setMessage({ text: e instanceof Error ? e.message : "Failed", type: "error" }); }
-                }} className="w-full px-3 py-1.5 bg-rust-500 text-white rounded text-xs font-medium hover:bg-rust-600 transition-colors">Install Roundcube</button>
+                <button onClick={installWebmail} className="w-full px-3 py-1.5 bg-rust-500 text-white rounded text-xs font-medium hover:bg-rust-600 transition-colors">Install Roundcube</button>
               ) : (
                 <div className="flex gap-2">
+                  {webmail.mail_host_ok === false && (
+                    <button onClick={installWebmail} className="flex-1 px-3 py-1.5 bg-rust-500 text-white rounded text-xs font-medium hover:bg-rust-600 transition-colors">Reinstall</button>
+                  )}
                   {webmail.running && (
                     <a href="/webmail/" target="_blank" rel="noopener noreferrer" className="flex-1 px-3 py-1.5 bg-dark-700 text-dark-100 rounded text-xs font-medium hover:bg-dark-600 transition-colors text-center">Open</a>
                   )}
