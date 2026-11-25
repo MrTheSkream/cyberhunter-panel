@@ -5,7 +5,7 @@ use chrono::{Datelike, Timelike};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::services::agent::{AgentHandle, AgentRegistry};
+use crate::services::agent::{AgentError, AgentHandle, AgentRegistry};
 use crate::services::mail_dns_backup as mdb;
 use crate::services::notifications;
 
@@ -931,6 +931,255 @@ enum RetentionTarget<'a> {
     DnsSnapshot { server_id: Uuid, backend: &'a str },
 }
 
+// ── Local retention of site archives ────────────────────────────────────────
+
+/// How old an unregistered archive must be before it is reported. The run that
+/// writes an archive records it only after its upload (up to half an hour), and a
+/// manual backup may be between the two right now.
+pub const ORPHAN_GRACE_SECS: i64 = 3 * 3600;
+
+/// The `%Y%m%d-%H%M%S` stamp of a site archive named `{domain}-{stamp}.tar.gz`,
+/// or `None` for anything else - including another site's archive whose domain
+/// merely starts with ours (`a.com-b.org-…`).
+pub fn site_archive_stamp(domain: &str, filename: &str) -> Option<chrono::NaiveDateTime> {
+    let stamp = filename.strip_prefix(domain)?.strip_prefix('-')?.strip_suffix(".tar.gz")?;
+    if stamp.len() != 15 {
+        return None;
+    }
+    chrono::NaiveDateTime::parse_from_str(stamp, "%Y%m%d-%H%M%S").ok()
+}
+
+/// What to do with the archives on disk that no `backups` row names.
+#[derive(Debug, Default, PartialEq)]
+pub struct OrphanPlan {
+    /// Older than the site's `retention` newest archives: retention would
+    /// already have removed them had they been recorded.
+    pub delete: Vec<(String, u64)>,
+    /// Past the grace period but inside the retention window - reported, kept.
+    pub report: Vec<(String, u64)>,
+}
+
+/// Sort a site's unregistered archives into "delete" and "report".
+///
+/// An archive with no row cannot be listed, restored or pruned from the panel:
+/// that is how the two archives of every timed-out-then-retried backup piled up
+/// at about 7 GB a night - on sites that, failing every night, never had a row at
+/// all. So the window is ranked over EVERY archive of the site on disk, recorded
+/// or not: the `retention` newest are the window, and an unrecorded archive older
+/// than all of them is deleted, which bounds the disk even when nothing was ever
+/// recorded. Only a file named exactly like this site's archives is considered,
+/// and nothing younger than the grace period is touched. Unrecorded archives
+/// inside the window are reported, not deleted - pre-deploy and CLI snapshots
+/// never get a row by design.
+pub fn plan_site_orphans(
+    domain: &str,
+    on_disk: &[(String, u64)],
+    registered: &[String],
+    retention: i32,
+    now: chrono::NaiveDateTime,
+) -> OrphanPlan {
+    let mut window: Vec<chrono::NaiveDateTime> = registered
+        .iter()
+        .map(String::as_str)
+        .chain(on_disk.iter().map(|(n, _)| n.as_str()).filter(|n| !registered.iter().any(|r| r == n)))
+        .filter_map(|f| site_archive_stamp(domain, f))
+        .collect();
+    window.sort_unstable_by(|a, b| b.cmp(a));
+    let cutoff = if retention > 0 { window.get(retention as usize - 1).copied() } else { None };
+
+    let mut plan = OrphanPlan::default();
+    for (name, size) in on_disk {
+        if registered.iter().any(|r| r == name) {
+            continue;
+        }
+        let Some(stamp) = site_archive_stamp(domain, name) else { continue };
+        if (now - stamp).num_seconds() < ORPHAN_GRACE_SECS {
+            // Another backup may be between its archive and its row right now.
+            continue;
+        }
+        if cutoff.is_some_and(|c| stamp < c) {
+            plan.delete.push((name.clone(), *size));
+        } else {
+            plan.report.push((name.clone(), *size));
+        }
+    }
+    plan
+}
+
+/// What [`enforce_local_site_retention`] did for one site.
+#[derive(Debug, Default)]
+pub struct LocalRetention {
+    pub pruned: u64,
+    pub orphans_deleted: u64,
+    pub orphans_reported: Vec<(String, u64)>,
+    pub errors: Vec<String>,
+}
+
+/// `DELETE /backups/{domain}/{filename}` on the site's own agent. A file that is
+/// already gone counts as deleted.
+async fn delete_site_archive(agent: &AgentHandle, domain: &str, filename: &str) -> Result<(), String> {
+    if filename.contains('/') || filename.contains("..") || filename.is_empty() {
+        return Err(format!("refusing to delete a suspicious file name '{filename}'"));
+    }
+    match agent.delete(&format!("/backups/{domain}/{filename}")).await {
+        Ok(_) => Ok(()),
+        Err(AgentError::Status(_, body)) if body.contains("not found") => Ok(()),
+        Err(e) => Err(format!("could not delete {filename}: {e}")),
+    }
+}
+
+/// Keep the `retention` newest local archives of one site, right after a new one
+/// was recorded, then deal with the archives on disk that no row names.
+///
+/// Before this the only local prune of site archives was the auto-healer's daily
+/// sweep, on its own 24 h clock and only for sites with a per-site schedule - so a
+/// site held `retention + 1` archives between a backup and the next sweep, and a
+/// site covered by a policy alone was never pruned locally at all (its rows carried
+/// no `policy_id` to prune by).
+///
+/// `policy_id: Some` prunes that policy's archives of the site; `None` (a per-site
+/// schedule) prunes the site's archives no policy took. Goes
+/// through the site's own agent, so it reaches a site on any server.
+pub async fn enforce_local_site_retention(
+    db: &PgPool,
+    agent: &AgentHandle,
+    site_id: Uuid,
+    domain: &str,
+    policy_id: Option<Uuid>,
+    retention: i32,
+) -> LocalRetention {
+    let mut out = LocalRetention::default();
+    prune_recorded_site_archives(db, agent, site_id, domain, policy_id, retention, &mut out).await;
+    sweep_unrecorded_site_archives(db, agent, site_id, domain, retention, &mut out).await;
+    out
+}
+
+/// The recorded half of [`enforce_local_site_retention`]: only after a new
+/// archive was recorded, so a failed run never evicts a good archive.
+pub async fn prune_recorded_site_archives(
+    db: &PgPool,
+    agent: &AgentHandle,
+    site_id: Uuid,
+    domain: &str,
+    policy_id: Option<Uuid>,
+    retention: i32,
+    out: &mut LocalRetention,
+) {
+    if retention <= 0 {
+        return;
+    }
+
+    let excess: Result<Vec<(Uuid, String)>, sqlx::Error> = match policy_id {
+        Some(pid) => sqlx::query_as(
+            "SELECT id, filename FROM backups WHERE site_id = $1 AND policy_id = $2 \
+             ORDER BY created_at DESC OFFSET $3",
+        )
+        .bind(site_id).bind(pid).bind(retention as i64)
+        .fetch_all(db).await,
+        // A per-site schedule prunes only archives no policy took: a schedule
+        // keeping 7 must not evict the archives a policy keeps 30 of.
+        None => sqlx::query_as(
+            "SELECT id, filename FROM backups WHERE site_id = $1 AND policy_id IS NULL \
+             ORDER BY created_at DESC OFFSET $2",
+        )
+        .bind(site_id).bind(retention as i64)
+        .fetch_all(db).await,
+    };
+    match excess {
+        Ok(rows) => {
+            for (id, filename) in rows {
+                // The row goes only once the file is gone: it is the only record
+                // of where the archive lives.
+                match delete_site_archive(agent, domain, &filename).await {
+                    Ok(()) => match sqlx::query("DELETE FROM backups WHERE id = $1").bind(id).execute(db).await {
+                        Ok(_) => out.pruned += 1,
+                        Err(e) => out.errors.push(format!("deleted {filename} but not its record: {e}")),
+                    },
+                    Err(e) => out.errors.push(e),
+                }
+            }
+        }
+        Err(e) => out.errors.push(format!("could not list the archives beyond retention: {e}")),
+    }
+}
+
+/// The unrecorded half of [`enforce_local_site_retention`]: what is on disk
+/// against what is recorded, from the site's own agent. Runs whatever the
+/// backup's outcome - the sites whose archives piled up were exactly the ones
+/// failing every night, with no row to prune by. See [`plan_site_orphans`].
+pub async fn sweep_unrecorded_site_archives(
+    db: &PgPool,
+    agent: &AgentHandle,
+    site_id: Uuid,
+    domain: &str,
+    retention: i32,
+    out: &mut LocalRetention,
+) {
+    if retention <= 0 {
+        return;
+    }
+    let on_disk: Vec<(String, u64)> = match agent.get(&format!("/backups/{domain}/list")).await {
+        Ok(v) => v
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|b| {
+                        let name = b.get("filename")?.as_str()?.to_string();
+                        Some((name, b.get("size_bytes").and_then(|s| s.as_u64()).unwrap_or(0)))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+        Err(e) => {
+            out.errors.push(format!("could not list the archives on disk: {e}"));
+            return;
+        }
+    };
+    let registered: Vec<String> = match sqlx::query_scalar::<_, String>("SELECT filename FROM backups WHERE site_id = $1")
+        .bind(site_id)
+        .fetch_all(db)
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            out.errors.push(format!("could not read the recorded archives: {e}"));
+            return;
+        }
+    };
+    let plan = plan_site_orphans(domain, &on_disk, &registered, retention, chrono::Utc::now().naive_utc());
+    for (name, _) in &plan.delete {
+        match delete_site_archive(agent, domain, name).await {
+            Ok(()) => {
+                out.orphans_deleted += 1;
+                tracing::warn!("Retention: deleted unrecorded archive {name} of {domain} (older than the site's {retention} newest archives)");
+            }
+            Err(e) => out.errors.push(e),
+        }
+    }
+    out.orphans_reported = plan.report;
+}
+
+/// One line for the system log about the unrecorded archives a run left alone.
+pub fn orphan_summary(per_site: &[(String, Vec<(String, u64)>)]) -> Option<String> {
+    let files: usize = per_site.iter().map(|(_, v)| v.len()).sum();
+    if files == 0 {
+        return None;
+    }
+    let bytes: u64 = per_site.iter().flat_map(|(_, v)| v.iter().map(|(_, s)| *s)).sum();
+    let sites: Vec<String> = per_site
+        .iter()
+        .filter(|(_, v)| !v.is_empty())
+        .map(|(d, v)| format!("{d} ({})", v.len()))
+        .collect();
+    Some(format!(
+        "{files} site archive(s), {:.2} GB, sit in /var/backups/dockpanel with no record in the panel, \
+         so no retention removes them: {}. A pre-deploy or pre-delete snapshot is one of these by design; \
+         anything else is usually an interrupted backup and can be deleted.",
+        bytes as f64 / 1_073_741_824.0,
+        sites.join(", ")
+    ))
+}
+
 // ── Mail and DNS legs (lot 3) ───────────────────────────────────────────────
 
 /// The run's counters and error log, lent to the mail and DNS legs.
@@ -1606,6 +1855,9 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
             }
         };
 
+        // Unrecorded archives local retention left in place, per site.
+        let mut site_orphans: Vec<(String, Vec<(String, u64)>)> = Vec::new();
+
         for (site_id, domain, site_server_id) in &sites {
             // Resolve THIS site's host. Never fall back to local: archiving a member's
             // site against the panel's own /var/www either fails every night for ever,
@@ -1625,6 +1877,8 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
                 }
             };
             let agent = &agent;
+            // What local retention did for this site, filled below.
+            let mut local = LocalRetention::default();
             // WITH the site's databases - a policy-driven backup that omitted
             // them would reintroduce, on the automated path, exactly the gap
             // v2.34.0 closed on the manual one.
@@ -1639,11 +1893,32 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
             }
             let agent_body = serde_json::json!({ "databases": site_dbs.specs });
 
-            let mut result = agent.post(&format!("/backups/{domain}/create"), Some(agent_body.clone())).await;
-            // Retry once on failure
-            if result.is_err() {
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                result = agent.post(&format!("/backups/{domain}/create"), Some(agent_body)).await;
+            // The long-op call, with a budget above the agent's own ceiling: under the
+            // old 60 s `post` every archive that took longer than a minute was
+            // finished by the agent and abandoned by the panel (see
+            // `agent::SITE_BACKUP_TIMEOUT_SECS`).
+            let create_path = format!("/backups/{domain}/create");
+            let mut result = agent
+                .post_long(&create_path, Some(agent_body.clone()), crate::services::agent::SITE_BACKUP_TIMEOUT_SECS)
+                .await;
+            // Retry once - but only a failure that proves no archive is being
+            // written. Retrying a timeout is what wrote a second, equally
+            // unregistered archive of the same site every night.
+            let mut retried = false;
+            if let Err(e) = &result {
+                if crate::services::agent::site_backup_retryable(e) {
+                    retried = true;
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    result = agent
+                        .post_long(&create_path, Some(agent_body), crate::services::agent::SITE_BACKUP_TIMEOUT_SECS)
+                        .await;
+                } else {
+                    tracing::warn!(
+                        "Policy '{}': site backup for {domain} not retried - the agent may still be \
+                         writing the archive ({e})",
+                        policy.name
+                    );
+                }
             }
             match result {
                 Ok(resp) => {
@@ -1654,6 +1929,14 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
                         failures += 1;
                         tracing::error!("Policy '{}': site backup for {domain} returned no file name", policy.name);
                         log.push("site", domain.as_str(), "the agent's answer named no archive file");
+                        // An archive may still have been written: sweep before moving on.
+                        sweep_unrecorded_site_archives(db, agent, *site_id, domain, policy.retention_count, &mut local).await;
+                        for e in local.errors {
+                            log.push("retention", domain.as_str(), format!("local retention: {e}"));
+                        }
+                        if !local.orphans_reported.is_empty() {
+                            site_orphans.push((domain.clone(), local.orphans_reported));
+                        }
                         continue;
                     }
                     let size_bytes = resp.get("size_bytes").and_then(|v| v.as_u64()).unwrap_or(0) as i64;
@@ -1719,9 +2002,13 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
                     // The realistic trigger is not "the database is down" - it is
                     // deleting a backup destination mid-run, which makes every
                     // remaining insert in that run a foreign-key violation.
+                    //
+                    // `policy_id` is what lets retention find this policy's archives
+                    // of the site: without it, a site covered by a policy alone was
+                    // never pruned locally.
                     match sqlx::query(
-                        "INSERT INTO backups (site_id, filename, size_bytes, destination_id, uploaded, databases_included, databases_expected, sha256_hash, previous_hash) \
-                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
+                        "INSERT INTO backups (site_id, filename, size_bytes, destination_id, uploaded, databases_included, databases_expected, sha256_hash, previous_hash, policy_id) \
+                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"
                     )
                     .bind(site_id).bind(filename).bind(size_bytes)
                     .bind(destination.as_ref().map(|d| d.id)).bind(uploaded)
@@ -1729,8 +2016,17 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
                     .bind(db_expected)
                     .bind(if sha256_hash.is_empty() { None } else { Some(&sha256_hash) })
                     .bind(previous_hash.as_deref())
+                    .bind(policy.id)
                     .execute(db).await {
-                        Ok(_) => successes += 1,
+                        Ok(_) => {
+                            successes += 1;
+                            // Prune NOW, after the new archive is recorded, so the
+                            // site holds exactly `retention_count` archives - not one
+                            // more until the daily sweep comes round.
+                            prune_recorded_site_archives(
+                                db, agent, *site_id, domain, Some(policy.id), policy.retention_count, &mut local,
+                            ).await;
+                        }
                         Err(e) => {
                             tracing::error!("Policy '{}': site backup for {domain} was created but could not be recorded: {e}", policy.name);
                             failures += 1;
@@ -1739,11 +2035,48 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
                     }
                 }
                 Err(e) => {
-                    tracing::error!("Policy '{}': site backup failed for {domain} (after retry): {e}", policy.name);
+                    let when = if retried {
+                        "after retry"
+                    } else {
+                        "not retried: the agent may still be writing the archive"
+                    };
+                    tracing::error!("Policy '{}': site backup failed for {domain} ({when}): {e}", policy.name);
                     failures += 1;
-                    log.push("site", domain.as_str(), format!("backup failed (after retry): {e}"));
+                    log.push("site", domain.as_str(), format!("backup failed ({when}): {e}"));
                 }
             }
+
+            // Whatever the outcome: the sites whose archives piled up on disk were
+            // the ones failing every night, which never reach the success arm.
+            sweep_unrecorded_site_archives(db, agent, *site_id, domain, policy.retention_count, &mut local).await;
+            if local.pruned > 0 || local.orphans_deleted > 0 {
+                tracing::info!(
+                    "Policy '{}': local retention for {domain}: {} pruned, {} unrecorded deleted",
+                    policy.name, local.pruned, local.orphans_deleted
+                );
+            }
+            for e in local.errors {
+                log.push("retention", domain.as_str(), format!("local retention: {e}"));
+            }
+            if !local.orphans_reported.is_empty() {
+                tracing::warn!(
+                    "Policy '{}': {} unrecorded archive(s) of {domain} kept: {:?}",
+                    policy.name, local.orphans_reported.len(), local.orphans_reported
+                );
+                site_orphans.push((domain.clone(), local.orphans_reported));
+            }
+        }
+
+        // Once per run, not once per site: these are a standing condition of the
+        // disk, not an event of this run, so they do not mark the run partial.
+        if let Some(summary) = orphan_summary(&site_orphans) {
+            crate::services::system_log::log_event(
+                db,
+                "warning",
+                "backup_policy_executor",
+                &format!("Policy '{}': unrecorded site archives on disk", policy.name),
+                Some(&summary),
+            ).await;
         }
     }
 
@@ -2350,6 +2683,165 @@ fn field_matches(field: &&str, value: i32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── Site archives: retry, retention, orphans ────────────────────────────
+
+    /// A timeout is the ambiguous case: the agent may still be writing the
+    /// archive, so a retry would write a second one. That is what doubled every
+    /// nightly archive of a site whose backup outlasted the old 60 s cap.
+    #[test]
+    fn a_site_backup_is_retried_only_when_no_archive_can_be_in_flight() {
+        use crate::services::agent::site_backup_retryable as retryable;
+        assert!(!retryable(&AgentError::Request("agent request timed out after 60s".into())));
+        assert!(!retryable(&AgentError::Request("agent request timed out after 3600s".into())));
+        assert!(!retryable(&AgentError::Response("connection reset".into())));
+        assert!(!retryable(&AgentError::Parse("bad json".into())));
+        assert!(retryable(&AgentError::Connection("refused".into())));
+        assert!(retryable(&AgentError::CircuitOpen("open".into())));
+        assert!(retryable(&AgentError::Status(500, "{\"error\":\"Backup failed: tar\"}".into())));
+        // A proxy in front of a remote agent that stopped waiting is a timeout too.
+        for code in [408u16, 502, 503, 504, 520, 524] {
+            assert!(!retryable(&AgentError::Status(code, String::new())), "{code}");
+        }
+        assert!(retryable(&AgentError::Request(
+            "timed out after 3600s waiting for a free long operation slot; the operation never started".into()
+        )));
+    }
+
+    /// The budget stays above what the agent itself allows one archive.
+    #[test]
+    fn the_site_backup_budget_covers_the_agents_own_ceiling() {
+        use crate::services::agent::{SITE_BACKUP_PREDELETE_TIMEOUT_SECS, SITE_BACKUP_TIMEOUT_SECS};
+        // `black_box` keeps these runtime checks (clippy::assertions_on_constants).
+        let site = std::hint::black_box(SITE_BACKUP_TIMEOUT_SECS);
+        let predelete = std::hint::black_box(SITE_BACKUP_PREDELETE_TIMEOUT_SECS);
+        // agent: 300 s tar + 600 s per attached database dump.
+        assert!(site >= 300 + 600 * 5, "{site}");
+        // Runs inside the 300 s TimeoutLayer of DELETE /api/sites/{id}.
+        assert!(predelete > 60 && predelete < 300, "{predelete}");
+    }
+
+    #[test]
+    fn a_site_archive_stamp_is_read_from_its_own_name_only() {
+        let s = site_archive_stamp("casino.be", "casino.be-20261124-020027.tar.gz").unwrap();
+        assert_eq!(s.format("%Y-%m-%d %H:%M:%S").to_string(), "2026-11-24 02:00:27");
+        // Another site whose domain extends ours.
+        assert!(site_archive_stamp("a.com", "a.com-b.org-20261124-020027.tar.gz").is_none());
+        // A temporary, an encrypted copy, a stranger.
+        assert!(site_archive_stamp("a.com", ".a.com-20261124-020027.tar.gz.part").is_none());
+        assert!(site_archive_stamp("a.com", "a.com-20261124-020027.tar.gz.enc").is_none());
+        assert!(site_archive_stamp("a.com", "a.com-latest.tar.gz").is_none());
+        assert!(site_archive_stamp("a.com", "a.com-20261324-020027.tar.gz").is_none());
+    }
+
+    fn at(s: &str) -> chrono::NaiveDateTime {
+        chrono::NaiveDateTime::parse_from_str(s, "%Y%m%d-%H%M%S").unwrap()
+    }
+
+    /// Retention 3, three recorded archives, and the two unrecorded copies of
+    /// earlier nights - the abandoned attempt and its retry. Those outside the
+    /// window go; one inside it is reported; tonight's is not touched.
+    #[test]
+    fn unrecorded_archives_older_than_retention_are_deleted_the_rest_reported() {
+        let d = "casino.be";
+        let name = |s: &str| format!("{d}-{s}.tar.gz");
+        let registered = vec![name("20261124-020300"), name("20261123-020300"), name("20261122-020300")];
+        let mut on_disk: Vec<(String, u64)> = registered.iter().map(|n| (n.clone(), 1)).collect();
+        for s in ["20261121-020027", "20261121-020132", "20261120-020027"] {
+            on_disk.push((name(s), 1_900_000_000));
+        }
+        // Inside the retention window, past the grace: reported, never deleted.
+        on_disk.push((name("20261123-120000"), 7));
+        // Brand new and unrecorded: another backup is between archive and row.
+        on_disk.push((name("20261124-095900"), 9));
+        // Not this site's.
+        on_disk.push(("casino.be-old.tar.gz".into(), 5));
+        on_disk.push(("casino.be-x.org-20261101-000000.tar.gz".into(), 5));
+
+        let plan = plan_site_orphans(d, &on_disk, &registered, 3, at("20261124-100000"));
+        let deleted: Vec<&str> = plan.delete.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(
+            deleted,
+            vec![
+                "casino.be-20261121-020027.tar.gz",
+                "casino.be-20261121-020132.tar.gz",
+                "casino.be-20261120-020027.tar.gz",
+            ]
+        );
+        assert_eq!(plan.report, vec![(name("20261123-120000"), 7)]);
+    }
+
+    /// The live incident exactly: the site failed every night, so it never had a
+    /// row - only two complete, unrecorded archives per night (the abandoned
+    /// attempt and its retry). The window is ranked over every archive on disk,
+    /// so the disk stays bounded even with nothing recorded.
+    #[test]
+    fn a_site_with_no_recorded_archive_is_still_bounded() {
+        let d = "casino.be";
+        let mut on_disk = Vec::new();
+        for night in ["20261121", "20261122", "20261123", "20261124"] {
+            for t in ["020027", "020132"] {
+                on_disk.push((format!("{d}-{night}-{t}.tar.gz"), 1_900_000_000u64));
+            }
+        }
+        let plan = plan_site_orphans(d, &on_disk, &[], 3, at("20261124-100000"));
+        let names = |v: &Vec<(String, u64)>| v.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>();
+        assert_eq!(
+            names(&plan.delete),
+            vec![
+                "casino.be-20261121-020027.tar.gz",
+                "casino.be-20261121-020132.tar.gz",
+                "casino.be-20261122-020027.tar.gz",
+                "casino.be-20261122-020132.tar.gz",
+                "casino.be-20261123-020027.tar.gz",
+            ]
+        );
+        assert_eq!(
+            names(&plan.report),
+            vec![
+                "casino.be-20261123-020132.tar.gz",
+                "casino.be-20261124-020027.tar.gz",
+                "casino.be-20261124-020132.tar.gz",
+            ]
+        );
+        // Inside the grace period nothing is touched, whatever its rank.
+        let plan = plan_site_orphans(d, &on_disk, &[], 3, at("20261124-030000"));
+        assert!(!names(&plan.delete).iter().any(|n| n.contains("20261124")));
+        assert!(!names(&plan.report).iter().any(|n| n.contains("20261124")));
+    }
+
+    /// With fewer archives on disk than the retention count nothing is outside
+    /// the window, so nothing is deleted - only reported.
+    #[test]
+    fn nothing_is_deleted_while_the_window_is_not_full() {
+        let d = "a.com";
+        let registered = vec!["a.com-20261124-020000.tar.gz".to_string()];
+        let on_disk = vec![
+            ("a.com-20261124-020000.tar.gz".to_string(), 1),
+            ("a.com-20261001-020000.tar.gz".to_string(), 2),
+        ];
+        let plan = plan_site_orphans(d, &on_disk, &registered, 3, at("20261124-100000"));
+        assert!(plan.delete.is_empty());
+        assert_eq!(plan.report, vec![("a.com-20261001-020000.tar.gz".to_string(), 2)]);
+        let plan = plan_site_orphans(d, &on_disk, &registered, 0, at("20261124-100000"));
+        assert!(plan.delete.is_empty());
+    }
+
+    #[test]
+    fn the_orphan_summary_counts_files_and_bytes_once() {
+        assert!(orphan_summary(&[]).is_none());
+        assert!(orphan_summary(&[("a.com".into(), vec![])]).is_none());
+        let s = orphan_summary(&[
+            ("a.com".into(), vec![("a.com-20261101-000000.tar.gz".into(), 1_073_741_824)]),
+            ("b.com".into(), vec![
+                ("b.com-20261101-000000.tar.gz".into(), 1_073_741_824),
+                ("b.com-20261102-000000.tar.gz".into(), 0),
+            ]),
+        ])
+        .unwrap();
+        assert!(s.starts_with("3 site archive(s), 2.00 GB"), "{s}");
+        assert!(s.contains("a.com (1), b.com (2)"), "{s}");
+    }
 
     // s248 / lesson #70: encrypt (execute_policy) and decrypt (restore_db_backup) MUST derive
     // the backup key from the same single source of truth. These pin that derivation so the two

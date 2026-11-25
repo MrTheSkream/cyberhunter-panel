@@ -2549,9 +2549,11 @@ fn spawn_deploy_task(
         // Pre-deploy backup: snapshot before deploying (best-effort, don't block deploy on failure)
         if let Some(ref domain) = config.domain {
             emit("backup", "Pre-deploy backup", "in_progress", None);
-            let _ = agent.post(
+            // Long-op call: the deploy must not start while `tar` still reads the tree.
+            let _ = agent.post_long(
                 &format!("/backups/{}/create", domain),
                 Some(serde_json::json!({"reason": "pre-deploy"})),
+                crate::services::agent::SITE_BACKUP_TIMEOUT_SECS,
             ).await;
             emit("backup", "Pre-deploy backup", "done", None);
             tracing::info!("Pre-deploy backup requested for {domain}");
@@ -3859,9 +3861,11 @@ pub async fn trigger_deploy_task(
 
     // Pre-deploy backup: snapshot before deploying (best-effort, don't block deploy on failure)
     if let Some(ref domain) = config.domain {
-        let _ = agent.post(
+        // Long-op call: the deploy must not start while `tar` still reads the tree.
+        let _ = agent.post_long(
             &format!("/backups/{}/create", domain),
             Some(serde_json::json!({"reason": "pre-deploy"})),
+            crate::services::agent::SITE_BACKUP_TIMEOUT_SECS,
         ).await;
         tracing::info!("Pre-deploy backup requested for {domain}");
     }

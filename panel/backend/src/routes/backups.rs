@@ -168,8 +168,13 @@ pub async fn create(
 
         emit("backup", "Creating backup", "in_progress", None);
 
+        // Detached task feeding SSE, so no route ceiling applies: the long-op call
+        // with the budget every background site backup uses.
         let agent_path = format!("/backups/{}/create", domain_clone);
-        match agent.post(&agent_path, Some(agent_body)).await {
+        match agent
+            .post_long(&agent_path, Some(agent_body), crate::services::agent::SITE_BACKUP_TIMEOUT_SECS)
+            .await
+        {
             Ok(result) => {
                 let filename = result.get("filename").and_then(|v| v.as_str()).unwrap_or("").to_string();
                 let size_bytes = result.get("size_bytes").and_then(|v| v.as_u64()).unwrap_or(0) as i64;

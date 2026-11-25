@@ -6,6 +6,65 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fix: big sites' backups filled the disk - the panel abandoned archives the agent finished
+
+Seen on a live v3.0.0 install, where it took a 77 GB disk to 98 % in four days. A Backup
+Orchestrator policy ended `partial` every night with `backup failed (after retry): agent request
+timed out after 60s` for its two biggest sites (archives of ~1.8 GB). Every site archive went
+through the agent client's plain 60 s call, while the agent gives the same request 300 s of `tar`
+plus 600 s per database dump. The agent finished the archive; the panel recorded a failure,
+retried unconditionally, and the retry wrote a second complete archive ~65 s later. Neither was
+registered, so retention never saw them: about 7 GB a night, until volume backups failed with
+507 "Not enough free disk space".
+
+- **Every site archive now uses the long-op call** with a budget derived from the agent's own
+  ceiling (`SITE_BACKUP_TIMEOUT_SECS`, 3600 s: tar plus five dumps): the policy executor, per-site
+  schedules, the manual backup and both pre-deploy snapshots (which also no longer let a deploy
+  start while `tar` is still reading the tree). The pre-delete snapshot runs inside
+  `DELETE /api/sites/{id}`, under the 300 s route ceiling, so it gets a bounded 180 s.
+- **A retry never follows an ambiguous failure.** The executor retries a site archive only when the
+  failure proves nothing is being written (agent unreachable, breaker open, no long-op slot, or an
+  HTTP answer from the agent itself). A timeout, a broken response or a gateway status (408,
+  502-504, 520-527: a proxy in front of a remote agent that stopped waiting) is not retried, and
+  the run says so.
+- **The agent publishes only finished archives.** `tar` writes into a hidden
+  `.{name}.tar.gz.part`, created `0600`, renamed into place on success and removed on every other
+  way out, the agent's own 5-minute timeout included. That timeout path used to leave a truncated
+  archive under its final, valid-looking name. **Site archives are now `0600`** like the database
+  dumps beside them; they landed `0644` and were only tightened at the next agent restart.
+- **Site archives are pruned right after the new one is recorded.** The "4 archives with
+  retention 3" is not an arithmetic off-by-one (`OFFSET n` keeps n). The likely cause is the next
+  point: four nights of policy archives that nothing pruned. Whether those sites also have a
+  `backup_schedules` row settles it; with one, the daily sweep's own 24 h clock would also leave
+  one extra archive between a backup and the next sweep. The executor and per-site schedules now
+  prune after recording, through the site's own agent, so remote servers are covered too.
+- **Policy-only sites are pruned locally at all.** The daily sweep only covered sites with a
+  per-site schedule, and `backups` rows carried no `policy_id`, so a site backed up by a policy
+  alone kept every archive for ever. New migration `20261203000000_site_backup_policy.sql` adds
+  `backups.policy_id`. A policy prunes its own archives of each site, and the daily sweep does the
+  same as a backstop. A site under both a schedule and a policy keeps each one's count: the
+  schedule now prunes only archives no policy took (`policy_id IS NULL`), in its own run and in
+  the daily sweep, where it used to evict a policy's archives down to the schedule's count.
+  **Rows written before this release have no `policy_id`**, so a policy does not prune them; on a
+  policy-only site they stay until deleted by hand. Which policy took them cannot be recovered.
+- **Unrecorded archives are dealt with.** After each site's backup, failed or not, the panel
+  compares the `{domain}-YYYYMMDD-HHMMSS.tar.gz` files on disk with the rows it holds. The
+  retention window is the `retention_count` newest archives on disk, recorded or not, so a site
+  that never got a row (the incident's two sites) is bounded too. An unrecorded archive outside
+  the window is deleted, since retention would have removed it had it been recorded; this clears
+  the backlog the bug left. One inside the window is kept and reported once per run in the system
+  log, with its count and size. Nothing younger than 3 hours is touched. **Behaviour change:** pre-deploy and CLI snapshots never get a row, so they too are
+  reported while inside the window and deleted once older than it; they were previously kept
+  forever. A deleted site's directory is never touched: it has no row to compare with, and its
+  pre-delete snapshot may be the only copy left.
+
+Pinned by the new `site-backup-long-call-pin-e2e.sh` (43 assertions, all of which fail on the
+previous source). Backend unit tests cover the retry rule (gateway statuses included), the
+budgets, archive-name parsing and the orphan plan, including the incident's exact shape: no
+recorded archive and two unrecorded copies a night. Agent unit tests cover the `0600` mode, the
+absence of a leftover temporary and the exclusive temporary. Not compiled or driven on a box from
+this build.
+
 ### Fix: webmail logins all failed - Roundcube dialled the selected domain's apex
 
 Installing Roundcube from the mail page sent whichever mail domain happened to be selected

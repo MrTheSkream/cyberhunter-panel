@@ -2424,12 +2424,13 @@ pub async fn remove(
     // databases are included, since they are still alive at this point.
     let predelete_dbs = crate::routes::backups::site_databases(&state, id).await;
     match agent
-        .post(
+        .post_long(
             &format!("/backups/{}/create", site.domain),
             Some(serde_json::json!({
                 "reason": "pre-delete",
                 "databases": predelete_dbs.specs,
             })),
+            crate::services::agent::SITE_BACKUP_PREDELETE_TIMEOUT_SECS,
         )
         .await
     {

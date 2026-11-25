@@ -221,9 +221,13 @@ async fn run_scheduled_backup(
     let db_expected = site_dbs.expected() as i32;
     let agent_body = serde_json::json!({ "databases": site_dbs.specs });
 
+    // The long-op call: plain `post` gave up after 60 s while the agent went on
+    // writing an archive this schedule then never recorded (see
+    // `agent::SITE_BACKUP_TIMEOUT_SECS`). No retry here - a scheduled run that
+    // fails is re-run at its next slot.
     let agent_path = format!("/backups/{}/create", row.domain);
     let backup_result = agent
-        .post(&agent_path, Some(agent_body))
+        .post_long(&agent_path, Some(agent_body), crate::services::agent::SITE_BACKUP_TIMEOUT_SECS)
         .await
         .map_err(|e| format!("Backup creation failed: {e}"))?;
 
@@ -475,6 +479,26 @@ async fn run_scheduled_backup(
     .execute(db)
     .await {
         return Err(format!("Backup created but could not be recorded: {e}"));
+    }
+
+    // Prune right after recording, as the policy executor does: the daily sweep
+    // alone left `retention_count + 1` archives on disk between this run and its
+    // next pass. Same scope as that sweep - every archive of the site.
+    use crate::services::backup_policy_executor as local_bpe;
+    let r = local_bpe::enforce_local_site_retention(db, &agent, row.site_id, &row.domain, None, row.retention_count).await;
+    for e in &r.errors {
+        tracing::warn!("Local retention for {}: {e}", row.domain);
+    }
+    if !r.orphans_reported.is_empty() {
+        if let Some(summary) = local_bpe::orphan_summary(&[(row.domain.clone(), r.orphans_reported)]) {
+            crate::services::system_log::log_event(
+                db,
+                "warning",
+                "backup_scheduler",
+                &format!("Unrecorded site archives on disk for {}", row.domain),
+                Some(&summary),
+            ).await;
+        }
     }
 
     if let Some(why) = upload_failed {
