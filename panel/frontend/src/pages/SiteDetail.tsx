@@ -10,6 +10,7 @@ import { SiteAntivirusStatus, SiteAntivirusDetections, type AvSiteStatus } from 
 import VulnBadge, { useVulnSummary } from "../components/VulnBadge";
 import { useAuth } from "../context/AuthContext";
 import { useFtpStatus } from "../components/FtpServerCard";
+import SiteConnectionMethods, { useSiteAccessInfo } from "../components/SiteConnectionMethods";
 import DiskUsageCard, { type DiskUsage } from "../components/DiskUsageCard";
 import WebStatsSection from "../components/WebStatsSection";
 import { useServerIps, serverIpOptionLabel } from "../utils/serverIps";
@@ -362,6 +363,9 @@ export default function SiteDetail() {
   const [ftpToggling, setFtpToggling] = useState(false);
   const [ftpMsg, setFtpMsg] = useState<{ text: string; error: boolean } | null>(null);
   const { status: ftpStatus } = useFtpStatus(isAdmin && site?.status === "active", site?.server_id ?? null);
+  // How the site's account can really connect (FTPS allow-list, sshd password
+  // policy for sftp_sites), for every role that can see the site.
+  const siteAccess = useSiteAccessInfo(id, site?.status === "active" && site?.sftp_enabled === true);
   const [copied, setCopied] = useState("");
 
   const copyToClipboard = (text: string, label: string) => {
@@ -2263,16 +2267,15 @@ export default function SiteDetail() {
               content directory; this only happens once, when you click Enable.
             </p>
             {site.sftp_enabled && (site.sftp_username || site.sftp_uid != null) && (
-              <div className="grid grid-cols-2 gap-3 text-xs font-mono">
-                <div>
-                  <div className="text-dark-400 uppercase tracking-wide mb-1">Username</div>
-                  <div className="text-dark-100">{site.sftp_username || `sftp${site.sftp_uid}`}</div>
-                </div>
-                <div>
-                  <div className="text-dark-400 uppercase tracking-wide mb-1">Host / Port</div>
-                  <div className="text-dark-100">{site.domain} / 22</div>
-                </div>
-              </div>
+              // One block per real connection method, with the port and password
+              // policy the server reports - never a hardcoded "domain / 22".
+              <SiteConnectionMethods
+                domain={site.domain}
+                username={siteAccess.info?.username || site.sftp_username || `sftp${site.sftp_uid}`}
+                info={siteAccess.info}
+                error={siteAccess.error}
+                loading={siteAccess.loading}
+              />
             )}
             {!site.sftp_enabled && (
               <div className="max-w-xs">
@@ -2422,8 +2425,6 @@ export default function SiteDetail() {
                   : ftpStatus && !ftpStatus.installed
                     ? "Install the FTP server in Settings > Services"
                     : "";
-              const ftpUser = site.sftp_username || (site.sftp_uid != null ? `sftp${site.sftp_uid}` : "-");
-              const ftpHost = window.location.hostname;
               return (
                 <div className="border-t border-dark-600 pt-4 space-y-3">
                   <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -2445,6 +2446,8 @@ export default function SiteDetail() {
                             const r = await api.post<{ ftp_enabled: boolean }>(`/sites/${id}/ftp`, { enabled });
                             setSite(s => s ? { ...s, ftp_enabled: r.ftp_enabled } : s);
                             setFtpMsg({ text: r.ftp_enabled ? "FTP enabled" : "FTP disabled", error: false });
+                            // The FTPS block follows the allow-list the agent just rewrote.
+                            siteAccess.refresh();
                           } catch (err) {
                             if (err instanceof ApiError && err.status === 412 && /not installed/i.test(err.message)) {
                               setFtpMsg({ text: "FTP server not installed. An administrator can install it in Settings > Services.", error: true });
@@ -2471,41 +2474,6 @@ export default function SiteDetail() {
                     <p className="text-xs px-3 py-2 rounded-lg bg-warn-500/10 text-warn-400 border border-warn-500/30">
                       FTP server not installed. FTP access comes back once it is installed in Settings &gt; Services.
                     </p>
-                  )}
-                  {ftpOn && site.sftp_enabled && (
-                    <div className="bg-dark-900 rounded-lg border border-dark-600 p-4 space-y-3">
-                      <h3 className="text-xs font-medium text-dark-300 uppercase font-mono tracking-widest">Connection details</h3>
-                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs">
-                        <div>
-                          <div className="text-dark-400 uppercase tracking-wide mb-1">Host</div>
-                          <div className="text-dark-100 font-mono break-all">{ftpHost}</div>
-                        </div>
-                        <div>
-                          <div className="text-dark-400 uppercase tracking-wide mb-1">Port</div>
-                          <div className="text-dark-100 font-mono">{ftpStatus?.ports?.control ?? 21}</div>
-                        </div>
-                        <div>
-                          <div className="text-dark-400 uppercase tracking-wide mb-1">Username</div>
-                          <div className="text-dark-100 font-mono break-all">{ftpUser}</div>
-                        </div>
-                        <div>
-                          <div className="text-dark-400 uppercase tracking-wide mb-1">Encryption</div>
-                          <div className="text-dark-100">Require explicit FTP over TLS</div>
-                        </div>
-                        <div>
-                          <div className="text-dark-400 uppercase tracking-wide mb-1">Mode</div>
-                          <div className="text-dark-100">Passive</div>
-                        </div>
-                        <div>
-                          <div className="text-dark-400 uppercase tracking-wide mb-1">Password</div>
-                          <div className="text-dark-100">Same password as SFTP</div>
-                        </div>
-                      </div>
-                      <p className="text-xs text-dark-400">
-                        You land in the account's root folder: the site files are in <span className="font-mono">content/</span>.
-                        {ftpStatus?.cert?.kind === "self_signed" && " The server uses a self-signed certificate: your FTP client will ask you to trust it."}
-                      </p>
-                    </div>
                   )}
                 </div>
               );

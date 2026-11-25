@@ -68,6 +68,7 @@ pub mod quarantine;
 // --- end clamav (06) ---
 // --- ftp + disk quotas (07) ---
 pub mod disk_usage;
+pub mod connection_info; // SFTP/FTP access card facts
 pub mod ftp;
 pub mod panel_tls;
 pub mod site_owner;

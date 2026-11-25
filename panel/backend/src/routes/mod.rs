@@ -1152,6 +1152,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/sites/{id}/sftp/enable", post(sites::enable_sftp))
         .route("/api/sites/{id}/sftp/disable", post(sites::disable_sftp))
         .route("/api/sites/{id}/sftp/reset-password", post(sites::reset_sftp_password))
+        .route("/api/sites/{id}/access-info", get(sites::sftp_access_info))
         // FTP (FTPS) and disk quotas (feature 6)
         .route("/api/sites/{id}/ftp", post(sites::set_ftp))
         .route("/api/sites/{id}/disk-quota", put(sites::set_disk_quota))
