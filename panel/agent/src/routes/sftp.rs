@@ -4,9 +4,9 @@
 //! other route module here.
 
 use axum::{
-    extract::Path,
+    extract::{Path, Query},
     http::StatusCode,
-    routing::post,
+    routing::{get, post},
     Json, Router,
 };
 use serde::Deserialize;
@@ -112,8 +112,30 @@ async fn set_password(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
+#[derive(Deserialize)]
+struct AccessInfoQuery {
+    username: String,
+}
+
+/// GET /sftp/sites/{domain}/access-info?username= - read-only: how this
+/// site's account can connect (FTPS allow-list and ports, the effective sshd
+/// port and password policy for the account). Changes nothing.
+async fn access_info(
+    Path(domain): Path<String>,
+    Query(q): Query<AccessInfoQuery>,
+) -> Result<Json<serde_json::Value>, ApiErr> {
+    if !is_valid_domain(&domain) {
+        return Err(err(StatusCode::BAD_REQUEST, "Invalid domain"));
+    }
+    crate::services::connection_info::access_info(&q.username)
+        .await
+        .map(Json)
+        .map_err(|e| err(StatusCode::BAD_REQUEST, &e))
+}
+
 pub fn router() -> Router<AppState> {
     Router::new()
+        .route("/sftp/sites/{domain}/access-info", get(access_info))
         .route("/sftp/sites/{domain}/enable", post(enable))
         .route("/sftp/sites/{domain}/disable", post(disable))
         .route("/sftp/sites/{domain}/password", post(set_password))

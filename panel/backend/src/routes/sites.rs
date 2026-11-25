@@ -4773,6 +4773,59 @@ pub async fn reset_sftp_password(
     Ok(Json(serde_json::json!({ "ok": true, "password": password })))
 }
 
+/// The answer when the site's agent predates `/access-info` (a remote server
+/// not updated yet): nothing is known, so nothing is claimed. The card then
+/// says the SFTP password policy is unknown instead of implying it works.
+pub(crate) fn access_info_unknown(username: &str) -> serde_json::Value {
+    serde_json::json!({
+        "username": username,
+        "sftp": {
+            "port": null,
+            "ports": [],
+            "password_login": null,
+            "error": "The agent on this server is too old to report its SSH settings",
+        },
+        "ftps": null,
+    })
+}
+
+/// GET /api/sites/{id}/access-info - how the site's account can connect.
+///
+/// Read-only, same visibility as the site itself (`SITE_FOR_CALLER_ALL`): the
+/// FTPS facts (installed, account on the allow-list, ports, certificate name)
+/// and the SFTP facts (sshd port, whether password login is accepted for the
+/// `sftp_sites` group) come from the agent, which reads the live config
+/// (`sshd -T`, vsftpd.conf). Nothing is written or logged as an action.
+pub async fn sftp_access_info(
+    State(state): State<AppState>,
+    AuthUser(claims): AuthUser,
+    Path(id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let site: Site = sqlx::query_as(SITE_FOR_CALLER_ALL.as_str())
+        .bind(id)
+        .bind(claims.sub)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| internal_error("sftp access info", e))?
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "Site not found"))?;
+
+    if !site.sftp_enabled {
+        return Err(err(StatusCode::BAD_REQUEST, "SFTP is not enabled for this site"));
+    }
+    let username = sftp_account_name(&site);
+    let agent = crate::helpers::agent_for_site_server(&state, site.server_id, &site.domain).await?;
+    let path = format!(
+        "/sftp/sites/{}/access-info?username={}",
+        site.domain,
+        urlencoding::encode(&username)
+    );
+    match agent.get(&path).await {
+        Ok(v) => Ok(Json(v)),
+        Err(crate::services::agent::AgentError::Status(404, _)) => Ok(Json(access_info_unknown(&username))),
+        Err(e) => Err(agent_error("SFTP access info", e)),
+    }
+}
+
 // ── Feature 6: FTP (FTPS) and disk quotas ────────────────────────────────
 
 /// Untick FTP and resync the whitelist before the site's SFTP account goes away
@@ -6804,6 +6857,16 @@ mod tests {
         assert_eq!(sftp_account_name(&site), "sftp7");
         site.sftp_username = Some("adm-jim_x".into());
         assert_eq!(sftp_account_name(&site), "adm-jim_x");
+    }
+
+    #[test]
+    fn access_info_from_an_old_agent_claims_nothing() {
+        let v = access_info_unknown("sftp30001");
+        assert_eq!(v["username"], "sftp30001");
+        // Unknown is null, never `true`: the card must not imply the password works.
+        assert!(v["sftp"]["password_login"].is_null());
+        assert!(v["sftp"]["port"].is_null());
+        assert!(v["ftps"].is_null());
     }
 
     #[test]
