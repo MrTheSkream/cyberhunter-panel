@@ -266,6 +266,16 @@ else bad "E7 the 5000-finding cap is gone"; fi
 if has "$(fnof "$VSC" '^pub fn finalize_findings[(]')" "seen.insert((f.vuln_id.clone(), f.package.clone(), f.version.clone()))"; then
   ok "E8 dedup on (vuln_id, package, version) - the backend's unique key"
 else bad "E8 dedup key changed"; fi
+# 2026-11-25: a cut result also names every key before the cap, or the panel
+# can never resolve on a target that always passes it (the system one).
+FIN=$(fnof "$VSC" '^pub fn finalize_findings[(]')
+PRESENT_AT=$(grep -n 'let present = ' <<< "$FIN" | head -1 | cut -d: -f1)
+CUT_AT=$(grep -n 'findings.truncate(MAX_FINDINGS);' <<< "$FIN" | head -1 | cut -d: -f1)
+if has "$FIN" "let present = (truncated && findings.len() <= MAX_PRESENT_KEYS).then(|| seen.into_iter().collect());" \
+   && [ -n "$PRESENT_AT" ] && [ -n "$CUT_AT" ] && [ "$PRESENT_AT" -lt "$CUT_AT" ] \
+   && has "$VSC" '#[serde(skip_serializing_if = "Option::is_none")]'; then
+  ok "E8b a truncated result carries the full key list, built before the cap and left out past MAX_PRESENT_KEYS"
+else bad "E8b the present key list of a truncated result is gone, built after the cap, or no longer bounded"; fi
 if [ -f panel/agent/src/services/testdata/grype-v0.122-report.json ] && \
    grep -qF '"knownRansomwareCampaignUse": "Known"' panel/agent/src/services/testdata/grype-v0.122-report.json; then
   ok "E9 the grype fixture carries KEV on a related record"

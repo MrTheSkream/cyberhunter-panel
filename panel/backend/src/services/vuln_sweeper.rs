@@ -224,6 +224,28 @@ pub struct MatchResult {
     pub error: Option<String>,
     pub truncated: bool,
     pub findings: Vec<Finding>,
+    /// On a truncated result, the key of every finding of the complete result
+    /// (the agent's `present` list); `None` when the agent sent none (an older
+    /// agent, or a list too big to send) or sent a malformed one.
+    pub present: Option<HashSet<(String, String, String)>>,
+}
+
+/// Reads the agent's `present` list, keys normalised as [`parse_finding`]
+/// normalises a finding so they match the stored ones. All or nothing: a
+/// malformed entry voids the list, since a list missing a key would resolve
+/// that finding. An entry without vulnerability id or package is skipped, as
+/// [`parse_finding`] skips such a finding (no stored row can carry it).
+fn parse_present(v: &Value) -> Option<HashSet<(String, String, String)>> {
+    let text = |x: &str, max: usize| Some(x.trim()).filter(|s| !s.is_empty()).map(|s| clip(s, max));
+    let mut out = HashSet::new();
+    for entry in v.as_array()? {
+        let [vuln_id, package, version] = entry.as_array()?.as_slice() else { return None };
+        let (vuln_id, package, version) = (vuln_id.as_str()?, package.as_str()?, version.as_str()?);
+        if let (Some(vuln_id), Some(package)) = (text(vuln_id, W_VULN_ID), text(package, W_PACKAGE)) {
+            out.insert((vuln_id, package, text(version, W_VERSION).unwrap_or_default()));
+        }
+    }
+    Some(out)
 }
 
 /// Reads a `/vulns/match` report: the database build time and one result per target.
@@ -246,6 +268,7 @@ pub fn parse_match_report(v: &Value) -> (Option<DateTime<Utc>>, Vec<MatchResult>
             error: opt_text(r, "error", MAX_TEXT),
             truncated: r.get("truncated").and_then(|x| x.as_bool()).unwrap_or(false),
             findings,
+            present: r.get("present").and_then(parse_present),
         });
     }
     (built, out)
@@ -486,10 +509,13 @@ pub struct MergePlan {
 
 /// Merges one target's match result into its stored findings.
 ///
-/// Only a complete `ok` result can resolve anything: `error` and `no_sbom`
-/// leave everything as it is, and a truncated result (capped at 5000 by the
-/// agent) adds and refreshes but does not resolve, since what it lacks may
-/// simply be past the cap.
+/// Only an `ok` result can resolve anything: `error` and `no_sbom` leave
+/// everything as it is. A truncated result (capped at 5000 by the agent) lacks
+/// the findings past the cap, so it resolves against the agent's `present`
+/// list of every key of the complete result; without that list it adds and
+/// refreshes but resolves nothing, since what it lacks may be past the cap.
+/// (The system target always passes the cap - every kernel CVE is repeated on
+/// each `linux-*` package - so without the list a purged kernel stayed open.)
 pub fn plan_merge(existing: &[ExistingFinding], result: &MatchResult) -> MergePlan {
     let mut plan = MergePlan::default();
     if result.status != "ok" {
@@ -511,9 +537,11 @@ pub fn plan_merge(existing: &[ExistingFinding], result: &MatchResult) -> MergePl
             Some(e) => plan.update.push((e.id, f.clone())),
         }
     }
-    if !result.truncated {
+    // Every key of the complete result, when known.
+    let complete = if !result.truncated { Some(&seen) } else { result.present.as_ref() };
+    if let Some(complete) = complete {
         for e in existing {
-            if !e.resolved && !seen.contains(&(e.vuln_id.clone(), e.package.clone(), e.version.clone())) {
+            if !e.resolved && !complete.contains(&(e.vuln_id.clone(), e.package.clone(), e.version.clone())) {
                 plan.resolve.push(e.id);
             }
         }
@@ -1491,7 +1519,7 @@ mod tests {
     }
 
     fn result(status: &str, truncated: bool, findings: Vec<Finding>) -> MatchResult {
-        MatchResult { target_id: Uuid::nil(), status: status.into(), error: None, truncated, findings }
+        MatchResult { target_id: Uuid::nil(), status: status.into(), error: None, truncated, findings, present: None }
     }
 
     fn existing(n: u128, vuln: &str, pkg: &str, ver: &str, resolved: bool) -> ExistingFinding {
@@ -1531,10 +1559,69 @@ mod tests {
 
     #[test]
     fn merge_does_not_resolve_on_truncated_result() {
+        // An older agent sends no `present` list: nothing can be resolved.
         let stored = vec![existing(1, "CVE-1", "a", "1.0", false), existing(2, "CVE-2", "b", "1.0", false)];
         let plan = plan_merge(&stored, &result("ok", true, vec![finding("CVE-1", "a", "1.0")]));
         assert_eq!(plan.update.len(), 1);
         assert!(plan.resolve.is_empty());
+    }
+
+    /// The 2026-11-25 production case: the system target always passes the
+    /// 5000 cap, a kernel is purged between two scans, and its findings must
+    /// resolve while those of the kept kernel that fall past the cap stay open.
+    #[test]
+    fn merge_resolves_a_package_gone_between_two_scans_of_a_truncated_target() {
+        let id = Uuid::new_v4();
+        let key = |v: &str, ver: &str| json!([v, "linux-modules", ver]);
+        let f = |v: &str, ver: &str| json!({"vuln_id": v, "package": "linux-modules", "version": ver});
+        // Scan 1: both kernels installed. The cap kept CVE-1 of each; CVE-2 of
+        // each is past it, present only in the key list.
+        let scan1 = json!({"results": [{"target_id": id.to_string(), "status": "ok", "truncated": true,
+            "findings": [f("CVE-1", "6.8.0-136"), f("CVE-1", "6.8.0-151")],
+            "present": [key("CVE-1", "6.8.0-136"), key("CVE-2", "6.8.0-136"),
+                        key("CVE-1", "6.8.0-151"), key("CVE-2", "6.8.0-151")]}]});
+        let (_, r1) = parse_match_report(&scan1);
+        let plan1 = plan_merge(&[], &r1[0]);
+        assert_eq!(plan1.insert.len(), 2);
+        assert!(plan1.resolve.is_empty());
+        // What scan 1 stored, plus a CVE-2 row of 6.8.0-151 stored by an earlier
+        // scan back when it still ranked inside the cap.
+        let stored = vec![
+            existing(1, "CVE-1", "linux-modules", "6.8.0-136", false),
+            existing(2, "CVE-1", "linux-modules", "6.8.0-151", false),
+            existing(3, "CVE-2", "linux-modules", "6.8.0-151", false),
+        ];
+        // Scan 2: 6.8.0-136 purged. Still truncated (the rest of the system).
+        let scan2 = json!({"results": [{"target_id": id.to_string(), "status": "ok", "truncated": true,
+            "findings": [f("CVE-1", "6.8.0-151")],
+            "present": [key("CVE-1", "6.8.0-151"), key("CVE-2", "6.8.0-151")]}]});
+        let (_, r2) = parse_match_report(&scan2);
+        let plan2 = plan_merge(&stored, &r2[0]);
+        assert_eq!(plan2.resolve, [Uuid::from_u128(1)], "the purged kernel resolves");
+        assert_eq!(plan2.update.iter().map(|(id, _)| *id).collect::<Vec<_>>(), [Uuid::from_u128(2)]);
+        assert!(plan2.insert.is_empty() && plan2.reopen.is_empty(), "the finding past the cap stays as it is");
+    }
+
+    #[test]
+    fn parse_present_normalises_keys_and_voids_a_malformed_list() {
+        let read = |present: Value| {
+            let (_, r) = parse_match_report(&json!({"results": [{"target_id": Uuid::nil().to_string(),
+                "status": "ok", "truncated": true, "findings": [], "present": present}]}));
+            r[0].present.clone()
+        };
+        let long = "p".repeat(W_PACKAGE + 10);
+        let got = read(json!([[" CVE-1 ", "a", " 1.0 "], ["CVE-2", long, ""], ["", "a", "1"], ["CVE-3", " ", "1"]]))
+            .expect("a well-formed list");
+        let want: HashSet<_> = [
+            ("CVE-1".to_string(), "a".to_string(), "1.0".to_string()),
+            ("CVE-2".to_string(), "p".repeat(W_PACKAGE), String::new()),
+        ]
+        .into();
+        assert_eq!(got, want, "trimmed and clipped like a finding; no id or no package skipped");
+        assert_eq!(read(json!([["CVE-1", "a"]])), None, "an entry of the wrong length voids the list");
+        assert_eq!(read(json!([["CVE-1", "a", 1]])), None, "a non-string entry voids the list");
+        assert_eq!(read(json!("nope")), None);
+        assert_eq!(read(Value::Null), None);
     }
 
     #[test]
@@ -1586,6 +1673,7 @@ mod tests {
         assert_eq!(built, Some(at("2026-11-19T06:23:00Z")));
         assert_eq!(results.len(), 2);
         assert!(results[0].truncated);
+        assert_eq!(results[0].present, None, "no `present` list sent");
         assert_eq!(results[0].findings.len(), 1);
         assert_eq!(results[1].error.as_deref(), Some("boom"));
     }

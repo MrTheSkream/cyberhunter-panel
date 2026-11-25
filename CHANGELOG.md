@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fix: CVEs of a removed package never resolved on the system target
+
+Seen on a live v3.1.0-rc.3 install: the old kernel 6.8.0-136 was purged and the system target
+rescanned, yet its 2520 findings stayed open (last seen at the previous scan) and kept counting
+in the summary. The agent caps a match result at 5000 findings by risk and flags it `truncated`.
+The merge then resolved nothing, since a missing finding could just be past the cap. The system
+target always passes that cap (every kernel CVE is repeated on each `linux-*` package), so
+nothing on it could ever resolve.
+
+- **A truncated result now carries `present`, the key of every finding before the cap**, and
+  the merge resolves what is absent from that list. A finding past the cap stays open.
+- **Without the list, nothing is resolved, as before.** That covers an older agent, a list over
+  30 000 keys (left out to stay inside the 50 MB response cap) and a malformed list (read all
+  or nothing).
+- **Findings already stuck resolve on their own** at the target's next match once both the
+  panel and the agent are updated: the next daily full match after the database update, or
+  Scan now on the target.
+
 ### Fix: every database verification left a Docker volume behind - 7.5 GB in five days
 
 Seen on a live v3.1.0-rc.2 install: 51 orphan anonymous volumes, created at 04:43, 10:43, 16:43
