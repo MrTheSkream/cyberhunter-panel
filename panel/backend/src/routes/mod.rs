@@ -1871,5 +1871,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/sites/{id}/php-no-exec", put(sites::set_php_no_exec)) // W3
         .route("/api/sites/{id}/ssl-options", put(sites::set_ssl_options)) // W3
         .route("/api/sites/{id}/proxy-options", put(sites::set_proxy_options))
+        .route("/api/sites/{id}/proxy-port", put(sites::set_proxy_port))
+        .route("/api/sites/{id}/git-deploy", get(sites::get_git_deploy_link).put(sites::set_git_deploy))
         // --- end import-hestia (05) ---
 }

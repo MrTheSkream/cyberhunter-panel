@@ -229,6 +229,14 @@ pub struct Site {
     #[sqlx(default)]
     #[serde(default)]
     pub disk_quota_mb: Option<i32>,
+    /// The Git Deploy this proxy site follows. `None` = the site's `proxy_port`
+    /// is its own. When set, `proxy_port` holds a copy of the deploy's
+    /// `host_port`, written in the same transaction by
+    /// [`crate::routes::sites::set_git_deploy`], so every reader of `proxy_port`
+    /// renders the right upstream without knowing about the link.
+    #[sqlx(default)]
+    #[serde(default)]
+    pub git_deploy_id: Option<Uuid>,
     /// The last measurement of `site_disk_usage`, for the API response only -
     /// NOT a column. Filled by [`crate::services::disk_usage::fill_disk_usage`]
     /// in the handlers that return sites (detail and list).
