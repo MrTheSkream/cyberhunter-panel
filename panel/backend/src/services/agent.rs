@@ -107,6 +107,53 @@ pub const DB_RESTORE_TIMEOUT_SECS: u64 = 270;
 /// the 360s worst case for container pull/start overhead on a cold box.
 pub const DRILL_TIMEOUT_SECS: u64 = 420;
 
+/// How long a site archive (`POST /backups/{domain}/create`) may take before the panel
+/// stops waiting, for every caller that runs in the background: the policy executor,
+/// per-site schedules, the manual backup (a detached task feeding SSE) and pre-deploy
+/// snapshots.
+///
+/// It used to be plain `post`'s 60 s. The agent gives the same request one 600 s dump per
+/// attached database (`agent/src/services/database_backup.rs`), then 300 s of `tar`
+/// (`agent/src/services/backups.rs::TAR_TIMEOUT_SECS`), then a `sha256sum`. A 1.8 GB archive
+/// takes longer than a minute, so the panel gave up while the agent carried on: the
+/// archive landed, the panel recorded a failure, retried, and the retry wrote a second
+/// complete archive. Neither was ever registered, so retention never saw them - about
+/// 7 GB a night for two sites, until the disk was full.
+///
+/// One hour covers the tar ceiling plus five databases at their own ceiling. The only cost
+/// of the headroom is how long a wedged agent holds one long-op permit.
+pub const SITE_BACKUP_TIMEOUT_SECS: u64 = 3600;
+
+/// The pre-delete snapshot runs INSIDE `DELETE /api/sites/{id}`, under the server's 300 s
+/// `TimeoutLayer`, and the teardown still has to run after it. Long enough for an archive
+/// of several gigabytes, short enough to leave the teardown two minutes. A snapshot that
+/// overruns is abandoned, never retried: the deletion that follows removes the webroot,
+/// which fails the agent's `tar`, which removes its temporary.
+pub const SITE_BACKUP_PREDELETE_TIMEOUT_SECS: u64 = 180;
+
+/// Whether a failed `POST /backups/{domain}/create` may be retried without risking a
+/// second archive.
+///
+/// Only when the failure proves the agent never started or has already finished: it could
+/// not be reached, the breaker refused the call, the long-op pool had no slot ("the
+/// operation never started"), or it answered with an HTTP status (its handler returned, and
+/// a failed archive removes its own temporary). A timeout, a broken response or an
+/// unreadable body all mean the agent may still be writing - or may have written - an
+/// archive the panel would never register; retrying those is exactly what doubled the
+/// archives of every site whose backup outlasted the old 60 s cap.
+///
+/// A gateway status (408, 502-504, and Cloudflare's 520-527) is NOT an answer from the
+/// agent: a remote agent behind a proxy or tunnel gets one when the proxy stops waiting,
+/// which is the same timeout in disguise.
+pub fn site_backup_retryable(e: &AgentError) -> bool {
+    match e {
+        AgentError::Status(code, _) => !matches!(code, 408 | 502..=504 | 520..=527),
+        AgentError::Connection(_) | AgentError::CircuitOpen(_) => true,
+        AgentError::Request(m) => m.contains("the operation never started"),
+        AgentError::Response(_) | AgentError::Parse(_) | AgentError::NotFound(_) => false,
+    }
+}
+
 /// Effectively-disabled total timeout for streamed remote requests.
 ///
 /// reqwest only offers a *total* per-request timeout, and the client default

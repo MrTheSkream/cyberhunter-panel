@@ -1714,7 +1714,9 @@ async fn run_retention_cleanup(pool: &PgPool) {
     for (_schedule_id, site_id, retention_count, domain, server_id) in &schedules {
         // Find backups exceeding retention_count (ordered newest first, skip retention_count)
         let excess: Vec<(uuid::Uuid, String)> = sqlx::query_as(
-            "SELECT id, filename FROM backups WHERE site_id = $1 \
+            // `policy_id IS NULL`: a policy's archives are pruned by that policy's
+            // own count (below), not by a per-site schedule's.
+            "SELECT id, filename FROM backups WHERE site_id = $1 AND policy_id IS NULL \
              ORDER BY created_at DESC OFFSET $2"
         )
         .bind(site_id)
@@ -1768,6 +1770,32 @@ async fn run_retention_cleanup(pool: &PgPool) {
             // disk and its only record destroyed.
             let filepath = format!("/var/backups/dockpanel/databases/{db_name}/{filename}");
             if prune_policy_backup(pool, "database_backups", *id, &filepath, *server_id, local_server_id).await {
+                total_pruned += 1;
+            }
+        }
+
+        // Site archives, per SITE. Until `backups.policy_id` existed a site covered
+        // by a policy alone was never pruned here at all - only per-site schedules
+        // were - and its archives accumulated for ever. The executor now prunes
+        // right after each run (`enforce_local_site_retention`); this is the
+        // backstop for a run that could not. `sites.server_id` is NOT NULL, so the
+        // owning host is always known and the guard below can refuse a remote one.
+        let excess_site: Vec<(uuid::Uuid, String, String, uuid::Uuid)> = sqlx::query_as(
+            "SELECT r.id, r.filename, s.domain, s.server_id FROM ( \
+                 SELECT id, filename, site_id, \
+                        ROW_NUMBER() OVER (PARTITION BY site_id ORDER BY created_at DESC) AS rn \
+                 FROM backups WHERE policy_id = $1 \
+             ) r JOIN sites s ON s.id = r.site_id WHERE r.rn > $2"
+        )
+        .bind(policy_id).bind(*retention_count)
+        .fetch_all(pool).await.unwrap_or_default();
+
+        for (id, filename, domain, server_id) in &excess_site {
+            if filename.contains('/') || filename.contains("..") {
+                continue;
+            }
+            let filepath = format!("/var/backups/dockpanel/{domain}/{filename}");
+            if prune_policy_backup(pool, "backups", *id, &filepath, Some(*server_id), local_server_id).await {
                 total_pruned += 1;
             }
         }

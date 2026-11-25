@@ -480,9 +480,12 @@ async fn execute_deploy(
     triggered_by: &str,
 ) -> Result<DeployLog, ApiError> {
     // Pre-deploy backup: snapshot before deploying (best-effort, don't block deploy on failure)
-    let _ = agent.post(
+    // Waited for in full (long-op call): under the 60 s `post` a big site's deploy
+    // started while `tar` was still reading the files it was about to change.
+    let _ = agent.post_long(
         &format!("/backups/{}/create", domain),
         Some(serde_json::json!({"reason": "pre-deploy"})),
+        crate::services::agent::SITE_BACKUP_TIMEOUT_SECS,
     ).await;
     tracing::info!("Pre-deploy backup requested for {domain}");
 

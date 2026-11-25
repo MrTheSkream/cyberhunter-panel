@@ -421,6 +421,75 @@ fn backup_dir(domain: &str) -> PathBuf {
     backups_root().join(domain)
 }
 
+/// The agent's own ceiling on the `tar` of one site archive. The panel's budget
+/// for `/backups/{domain}/create` (`SITE_BACKUP_TIMEOUT_SECS` in the backend's
+/// `services/agent.rs`) is derived from it and must stay above it plus the
+/// database dumps, so the agent always answers before the panel stops waiting.
+pub const TAR_TIMEOUT_SECS: u64 = 300;
+
+/// The hidden temporary an archive is written to before it is renamed into
+/// place: `.{filename}.part`, the shape `remove_stale_partials` sweeps.
+fn partial_path(dir: &Path, filename: &str) -> PathBuf {
+    dir.join(format!(".{filename}.part"))
+}
+
+/// Create `path` empty and `0600` from the first byte, refusing one that
+/// already exists (a second backup of the same site in the same second).
+fn create_private_file(path: &Path) -> Result<(), String> {
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    opts.open(path).map(|_| ()).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::AlreadyExists {
+            "Another backup of this site started in the same second - retry in a second".to_string()
+        } else {
+            format!("Failed to create the backup file: {e}")
+        }
+    })
+}
+
+/// Make `path` readable by root only. Errors are returned: an archive that
+/// cannot be made private must not be published under its final name.
+fn set_private(path: &Path) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+            .map_err(|e| format!("Failed to restrict the backup file to root: {e}"))?;
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+    Ok(())
+}
+
+/// Removes a temporary archive when dropped, unless [`PartialFile::disarm`]
+/// was called after it was renamed into place.
+struct PartialFile {
+    path: PathBuf,
+    armed: bool,
+}
+
+impl PartialFile {
+    fn new(path: PathBuf) -> Self {
+        Self { path, armed: true }
+    }
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for PartialFile {
+    fn drop(&mut self) {
+        if self.armed {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+}
+
 /// Create a backup of the site's webroot, plus a dump of each database the panel
 /// passes in.
 ///
@@ -439,7 +508,25 @@ pub async fn create_backup(domain: &str, databases: &[DbSpec]) -> Result<BackupI
     let timestamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
     let filename = format!("{domain}-{timestamp}.tar.gz");
     let filepath = dest_dir.join(&filename);
+    // tar writes into a hidden temporary that is renamed into place only once the
+    // archive is complete. Writing straight to the final name left, on every
+    // failure tar did not report itself (the 5-minute timeout, a killed agent), a
+    // truncated archive under a name every listing and every restore treats as a
+    // good backup. The `.{name}.part` shape is the one `list_backups` ignores and
+    // `remove_stale_partials` sweeps at startup.
+    let part = partial_path(&dest_dir, &filename);
+    if filepath.exists() {
+        return Err(format!("A backup named {filename} already exists - retry in a second"));
+    }
+    create_private_file(&part)?;
+    // Removes the temporary on EVERY way out of this function that is not the
+    // final rename - an early `?`, tar's own failure, the timeout, or this future
+    // being dropped mid-tar.
+    let mut part_guard = PartialFile::new(part.clone());
 
+    let part_str = part
+        .to_str()
+        .ok_or_else(|| "Invalid backup path encoding".to_string())?;
     let filepath_str = filepath
         .to_str()
         .ok_or_else(|| "Invalid backup path encoding".to_string())?;
@@ -504,7 +591,7 @@ pub async fn create_backup(domain: &str, databases: &[DbSpec]) -> Result<BackupI
 
     let mut tar_args: Vec<String> = vec![
         "czf".into(),
-        filepath_str.into(),
+        part_str.into(),
         "-C".into(),
         site_root_str.into(),
         ".".into(),
@@ -519,7 +606,7 @@ pub async fn create_backup(domain: &str, databases: &[DbSpec]) -> Result<BackupI
     }
 
     let tar_result = tokio::time::timeout(
-        std::time::Duration::from_secs(300),
+        std::time::Duration::from_secs(TAR_TIMEOUT_SECS),
         // safe_command sets no kill_on_drop, so a timed-out (dropped) future
         // would otherwise leave `tar` running in the background against the
         // staged plaintext copy below - see git_build.rs/deploy.rs's fetch
@@ -535,15 +622,28 @@ pub async fn create_backup(domain: &str, databases: &[DbSpec]) -> Result<BackupI
         let _ = std::fs::remove_dir_all(stage);
     }
 
+    // Every early return below drops `part_guard`, which removes the temporary:
+    // before, the timeout arm returned with tar's half-written output left
+    // under the FINAL archive name.
     let output = tar_result
-        .map_err(|_| "Backup timed out (5 minutes)".to_string())?
+        .map_err(|_| format!("Backup timed out ({} minutes)", TAR_TIMEOUT_SECS / 60))?
         .map_err(|e| format!("Failed to run tar: {e}"))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        std::fs::remove_file(&filepath).ok();
         return Err(format!("Backup failed: {stderr}"));
     }
+
+    // tar opens the pre-created temporary with O_TRUNC, which keeps its 0600 -
+    // re-assert it anyway, so an archive never becomes visible under its final
+    // name readable by the `www-data` every hosted site's PHP runs as.
+    set_private(&part)?;
+    if filepath.exists() {
+        return Err(format!("A backup named {filename} appeared while this one was written - not overwriting it"));
+    }
+    std::fs::rename(&part, &filepath)
+        .map_err(|e| format!("Failed to move the finished archive into place: {e}"))?;
+    part_guard.disarm();
 
     let meta = std::fs::metadata(&filepath)
         .map_err(|e| format!("Failed to read backup metadata: {e}"))?;
@@ -1065,6 +1165,50 @@ mod db_payload_tests {
         );
         assert!(info.databases_included.is_empty());
         assert!(info.databases_failed.is_empty());
+    }
+
+    /// A finished archive is root-only and nothing temporary is left beside it.
+    /// Site archives used to land 0644 (tar under the agent's umask) while every
+    /// database dump next to them was 0600.
+    #[tokio::test]
+    async fn the_archive_lands_private_and_leaves_no_temporary() {
+        use std::os::unix::fs::PermissionsExt;
+        let site = TestSite::new("private");
+        let info = create_backup(site.domain(), &[]).await.expect("backup");
+        let dir = backup_dir(site.domain());
+        let archive = dir.join(&info.filename);
+        let mode = std::fs::metadata(&archive).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "a site archive must not be readable beyond root");
+        let leftovers: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| n.ends_with(".part"))
+            .collect();
+        assert!(leftovers.is_empty(), "temporary left behind: {leftovers:?}");
+        assert!(!partial_path(&dir, &info.filename).exists());
+    }
+
+    /// The temporary is created exclusively, so two backups of one site in the
+    /// same second cannot write into the same file.
+    #[test]
+    fn a_temporary_that_already_exists_is_refused() {
+        let dir = std::env::temp_dir().join(format!("dp-part-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = partial_path(&dir, "a.test-20261124-020027.tar.gz");
+        assert_eq!(p.file_name().unwrap(), ".a.test-20261124-020027.tar.gz.part");
+        create_private_file(&p).expect("first create");
+        assert!(create_private_file(&p).is_err(), "a second create must be refused");
+        {
+            let _guard = PartialFile::new(p.clone());
+        }
+        assert!(!p.exists(), "an armed guard removes its temporary");
+        create_private_file(&p).unwrap();
+        let mut g = PartialFile::new(p.clone());
+        g.disarm();
+        drop(g);
+        assert!(p.exists(), "a disarmed guard leaves the file alone");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     /// A database that cannot be dumped is REPORTED, never silently dropped.
