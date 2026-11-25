@@ -11,8 +11,9 @@ use crate::services::notifications;
 /// finds nothing, marks a good archive `failed`, and - because the driving queries skip
 /// any backup that already has a verification row - never looks at it again.
 ///
-/// `jwt_secret` derives the passphrase of an encrypted app data archive, which
-/// cannot be read without it (see `backup_policy_executor::volume_check_body`).
+/// `jwt_secret` derives the passphrase of an encrypted database dump or app data
+/// archive, which cannot be read without it (see `backup_policy_executor::db_check_body`
+/// and `volume_check_body`).
 pub async fn run(db: PgPool, agents: AgentRegistry, jwt_secret: String, mut shutdown_rx: tokio::sync::broadcast::Receiver<()>) {
     tracing::info!("Backup verifier started");
 
@@ -75,8 +76,8 @@ async fn tick(db: &PgPool, agents: &AgentRegistry, jwt_secret: &str) -> Result<(
     // not through `database_backups.server_id`: that column is nullable and a policy
     // with no server writes NULL into it. `sites.server_id` is NOT NULL, so this join
     // cannot produce an ambiguous host. Same join `create_db_backup` already makes.
-    let db_backups: Vec<(Uuid, String, String, String, Uuid)> = sqlx::query_as(
-        "SELECT db.id, db.db_type, db.db_name, db.filename, s.server_id FROM database_backups db \
+    let db_backups: Vec<(Uuid, String, String, String, Uuid, bool, i16)> = sqlx::query_as(
+        "SELECT db.id, db.db_type, db.db_name, db.filename, s.server_id, db.encrypted, db.encryption_key_version FROM database_backups db \
          JOIN databases d ON d.id = db.database_id \
          JOIN sites s ON s.id = d.site_id \
          LEFT JOIN backup_verifications bv ON bv.backup_type = 'database' AND bv.backup_id = db.id \
@@ -85,8 +86,11 @@ async fn tick(db: &PgPool, agents: &AgentRegistry, jwt_secret: &str) -> Result<(
     )
     .fetch_all(db).await.map_err(|e| e.to_string())?;
 
-    for (backup_id, db_type, db_name, filename, server_id) in &db_backups {
-        verify_one(db, agents, *server_id, "database", *backup_id, db_name, filename, Some(db_type), None, None).await;
+    for (backup_id, db_type, db_name, filename, server_id, encrypted, key_version) in &db_backups {
+        // An encrypted dump is decrypted by the agent before it is restored: the
+        // passphrase comes from the row's own key version, as for restore.
+        let key = crate::services::backup_policy_executor::row_encryption_key(*encrypted, *key_version, jwt_secret);
+        verify_one(db, agents, *server_id, "database", *backup_id, db_name, filename, Some(db_type), None, key.as_deref()).await;
     }
 
     // A volume backup has no site to join through, so `vb.server_id` is the only
@@ -177,12 +181,20 @@ async fn verify_one(
             agent.post("/backups/verify/site", Some(body)).await
         }
         "database" => {
-            let body = serde_json::json!({
+            let mut body = serde_json::json!({
                 "db_type": db_type.unwrap_or("postgres"),
                 "db_name": name,
                 "filename": filename,
             });
-            agent.post("/backups/verify/database", Some(body)).await
+            if let Some(k) = encryption_key {
+                body["encryption_key"] = serde_json::Value::String(k.to_string());
+            }
+            // Decrypting, starting a scratch engine and restoring outlasts plain `post`'s 60s.
+            agent.post_long(
+                "/backups/verify/database",
+                Some(body),
+                crate::services::backup_policy_executor::DB_VERIFY_TIMEOUT_SECS,
+            ).await
         }
         "volume" => {
             let mut body = serde_json::json!({

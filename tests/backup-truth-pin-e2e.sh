@@ -305,7 +305,8 @@ fi
 # functions, so a new caller cannot hide behind a `use` alias or a doc comment.
 # The socle's version only counted files naming `encrypt_file`, which the
 # streaming rewrite moved behind `encrypt_backup` - it measured nothing.
-ENC_ALLOWED="panel/agent/src/routes/database_backup.rs panel/agent/src/services/mail_backup.rs panel/agent/src/services/volume_backup.rs"
+# backup_verify.rs only DECRYPTS database dumps to verify them (open_dump), the same files database_backup.rs restores.
+ENC_ALLOWED="panel/agent/src/routes/database_backup.rs panel/agent/src/services/backup_verify.rs panel/agent/src/services/mail_backup.rs panel/agent/src/services/volume_backup.rs"
 ENC_PAT='encryption::|\b(encrypt_file|decrypt_file|verify_file|encrypt_backup|decrypt_backup|is_content_error)\b'
 ENC_USERS=""
 for f in $(find panel/agent/src -name '*.rs' ! -path '*/services/encryption.rs' | sort); do

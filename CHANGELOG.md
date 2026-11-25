@@ -6,6 +6,82 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fix: every database verification left a Docker volume behind - 7.5 GB in five days
+
+Seen on a live v3.1.0-rc.2 install: 51 orphan anonymous volumes, created at 04:43, 10:43, 16:43
+and 22:43 UTC (the backup verifier's 6-hourly ticks), 168 MB each for PostgreSQL and 12-75 MB
+for MariaDB. Verify restores each dump into a scratch `mariadb:11` or `postgres:16-alpine`
+container. Both images declare a `VOLUME` for their data directory, and the container was removed
+with `docker rm -f` without `-v`, so its anonymous volume stayed behind every time. The database
+drill had the same shape.
+
+- **Scratch containers are removed with their volumes** (`docker rm -f -v`): verify, the database
+  drill, and for uniformity the site and volume drills, through one helper.
+- **Leftovers are swept at agent startup**, before it serves anything. The sweep removes any
+  `dockpanel-verify-*` / `dockpanel-drill-*` container an interrupted check left, with its
+  volumes, and any `dockpanel-drill-vol-*` scratch volume. Names are matched in the agent, never
+  with a blanket `docker volume prune`.
+- **Volumes already orphaned are not touched.** Their container is gone, so nothing ties them to
+  verify, and telling them apart from a user's would be a guess. Remove them by hand once:
+  `docker volume ls -qf dangling=true` lists them, to be checked before `docker volume rm`.
+
+### Fix: encrypted database backups always failed verification
+
+With a policy's Encrypt option on, dumps are `*.sql.gz.enc`. Verify piped the `.enc` straight to
+`zcat`, and the panel never sent the passphrase, so the restore always failed ("Failed to restore
+dump"). The alert engine then raised "Backup verification failed" for every database, every day.
+The database drill had the same defect.
+
+- **Verify and the database drill now decrypt first, as app data verify already did.** The
+  panel sends the passphrase derived from the row's own `encryption_key_version`, as restore
+  does, from the verifier service, the Verify and Drill buttons and the drill scheduler, all
+  through one `db_check_body`. The agent checks the integrity tag, decrypts to a hidden `.part`
+  next to the dump (removed afterwards, swept at startup after a crash) and restores that. A
+  wrong tag (tampered file or wrong passphrase) is a failed `integrity` check. A missing key is
+  a 400. An untagged dump (encrypted before the integrity fix) is decrypted unauthenticated, as
+  restore accepts it; gzip's CRC and the restore still check its contents.
+- **Database verify uses the long-op call** (`DB_VERIFY_TIMEOUT_SECS`, 600 s). Plain `post`
+  stopped waiting after 60 s, while the agent gives the scratch engine 40 s to start and the
+  restore 120 s.
+- **Dumps already marked `failed` are not re-verified automatically**: the verifier only picks
+  backups that have no verification row yet. Use the Verify button, or delete those rows, to
+  check them again.
+
+Pinned by the new `backup-verify-scratch-pin-e2e.sh` (35 assertions, 34 of which fail on
+v3.1.0-rc.2; the other guards against a blanket prune). Agent unit tests cover the `-v`
+arguments, the sweep's name filter and opening a dump: plain, encrypted, wrong key, tampered,
+no key, legacy untagged, and no temporary left behind. A backend unit test covers the body and
+its key version. Not driven on a box from this build.
+
+### Fix: site archives a policy took before rc.2 escaped retention for ever
+
+rc.2 gave `backups` a `policy_id` and prunes site archives per policy, but rows written before
+it carry NULL. On a site with no per-site schedule, neither sweep reaches them: 132 such rows on
+the install that reported it.
+
+- **New migration `20261203000100_site_backup_policy_backfill.sql` hands a legacy row to a policy
+  only on run evidence.** A blanket update is unsafe: the manual "Back up now" route and per-site
+  schedules also write NULL rows that look exactly the same. A row is attributed when all of
+  these hold:
+  - its site has no per-site schedule;
+  - it lies inside a finished `backup_policy_runs` window of a policy that covers the site;
+  - that run reported no failure for the site;
+  - it is the only archive of the site in that window;
+  - exactly one policy qualifies.
+
+  Everything else stays NULL and is kept as before: manual archives, ambiguous windows, and rows
+  older than the run history. The migration is idempotent and is tested against a real
+  PostgreSQL 16 with 13 cases. A preview of what the next sweep deletes equals what it actually
+  deletes.
+- **Blast radius:** attributed rows beyond the policy's `retention_count` are deleted by the
+  first daily sweep, minutes after the panel restarts (the next policy run for remote servers).
+  Preview them before upgrading with `scripts/preview-site-backup-backfill.sql` (read-only).
+- Every path by which a policy takes a site archive already records its `policy_id` (there is no
+  run-now path), so no new row can be stranded.
+
+Pinned by the new `site-backup-policy-backfill-pin-e2e.sh` (28 assertions) and a backend unit
+test over the migration and both sweeps' queries.
+
 ### Fix: big sites' backups filled the disk - the panel abandoned archives the agent finished
 
 Seen on a live v3.0.0 install, where it took a 77 GB disk to 98 % in four days. A Backup

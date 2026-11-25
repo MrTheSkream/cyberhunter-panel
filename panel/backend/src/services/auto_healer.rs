@@ -2631,4 +2631,52 @@ mod tests {
     fn cooldown_none_is_six_hours() {
         assert_eq!(profile_cooldown(None), chrono::Duration::hours(6));
     }
+
+    /// The two site-archive sweeps of `run_retention_cleanup` split `backups` on
+    /// `policy_id`, and 20261203000100 hands legacy NULL rows to a policy only on
+    /// run-history evidence. A blanket backfill would let a policy's retention
+    /// delete manual archives, which carry the same NULL.
+    #[test]
+    fn legacy_site_archives_reach_a_policy_only_on_run_evidence() {
+        let src = include_str!("auto_healer.rs");
+        let code = &src[..src.find("#[cfg(test)]").unwrap()];
+        assert!(code.contains("FROM backups WHERE site_id = $1 AND policy_id IS NULL"));
+        // The policy sweep prunes its site archives per site.
+        let (before, _) = code.split_once("FROM backups WHERE policy_id = $1").unwrap();
+        assert!(before.rfind("PARTITION BY site_id").is_some_and(|i| before.len() - i < 200));
+
+        let mig = include_str!("../../migrations/20261203000100_site_backup_policy_backfill.sql");
+        // SQL without its `--` header, so the explanation cannot satisfy a check.
+        let sql: String = mig
+            .lines()
+            .map(|l| l.split("--").next().unwrap())
+            .collect::<Vec<_>>()
+            .join("\n");
+        for needle in [
+            "WHERE b.policy_id IS NULL",
+            "r.finished_at IS NOT NULL",
+            "b.created_at BETWEEN r.started_at AND r.finished_at",
+            "p.backup_sites",
+            "p.user_id = s.user_id",
+            "bs.site_id = b.site_id AND bs.retention_count > 0",
+            "(e->>'kind' = 'site' AND e->>'subject' = s.domain)",
+            "OR (e->>'kind' = 'listing' AND e->>'subject' = 'sites')",
+            "HAVING COUNT(DISTINCT policy_id) = 1",
+            "AND p.retention_count > 0",
+        ] {
+            assert!(sql.contains(needle), "backfill lost: {needle}");
+        }
+        // Every row of the site in the window counts, not only NULL ones: an rc.2
+        // policy row already has its id, and a manual archive beside it must not
+        // be the one row the window "explains".
+        let count = sql.split("SELECT COUNT(*) FROM backups o").nth(1).unwrap();
+        let count = &count[..count.find(") = 1").unwrap()];
+        assert!(count.contains("o.created_at BETWEEN r.started_at AND r.finished_at"));
+        assert!(!count.contains("policy_id"));
+        // Only the attributed set is written, and never over an existing id.
+        let update = &sql[sql.find("UPDATE backups b").unwrap()..];
+        assert!(update.contains("FROM attributed a") && update.contains("AND b.policy_id IS NULL"));
+        assert_eq!(sql.matches("UPDATE backups").count(), 1);
+        assert!(!sql.contains("_sqlx_migrations"));
+    }
 }

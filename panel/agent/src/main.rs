@@ -105,6 +105,23 @@ async fn main() {
         ),
     }
     services::mail_backup::report_stale_restores();
+    // Same reasoning for Docker: nothing runs yet, so a `dockpanel-verify-*` or
+    // `dockpanel-drill-*` container is one an interrupted verify or drill never
+    // removed. It goes with its anonymous data volume. Bounded, so a Docker that
+    // hangs at boot cannot keep the agent from serving.
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(120),
+        services::backup_verify::sweep_scratch_leftovers(),
+    )
+    .await
+    {
+        Ok((0, 0)) => {}
+        Ok((removed, 0)) => tracing::info!("Removed {removed} leftover verify/drill scratch container(s) or volume(s)"),
+        Ok((removed, failed)) => tracing::error!(
+            "Removed {removed} leftover verify/drill scratch container(s) or volume(s), failed to remove {failed}"
+        ),
+        Err(_) => tracing::warn!("Gave up sweeping verify/drill scratch containers: Docker did not answer within 120s"),
+    }
     std::fs::create_dir_all("/var/www/acme/.well-known/acme-challenge").ok();
 
     // One-shot migration, idempotent: give static vhosts already on disk the denies
