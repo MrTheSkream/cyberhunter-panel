@@ -113,8 +113,8 @@ async fn tick(db: &PgPool, agents: &AgentRegistry, jwt_secret: &str) -> Result<(
 /// always claimed (one policy's drills in flight per server) without a leg starving
 /// its own sibling.
 async fn dispatch_policy_drills(db: &PgPool, agents: &AgentRegistry, policy: &DuePolicy, jwt_secret: &str) -> bool {
-    let db_row: Option<(Uuid, Option<Uuid>, String, String, String)> = sqlx::query_as(
-        "SELECT id, server_id, db_type, db_name, filename \
+    let db_row: Option<(Uuid, Option<Uuid>, String, String, String, bool, i16)> = sqlx::query_as(
+        "SELECT id, server_id, db_type, db_name, filename, encrypted, encryption_key_version \
          FROM database_backups \
          WHERE policy_id = $1 \
          ORDER BY created_at DESC LIMIT 1"
@@ -176,14 +176,13 @@ async fn dispatch_policy_drills(db: &PgPool, agents: &AgentRegistry, policy: &Du
 
     let mut dispatched = false;
 
-    if let Some((backup_id, _, db_type, db_name, filename)) = db_row {
+    if let Some((backup_id, _, db_type, db_name, filename, encrypted, key_version)) = db_row {
+        // An encrypted dump carries its passphrase, from the row's own key version.
         enqueue_drill(
             db, &agent, "database", backup_id, server_id,
-            serde_json::json!({
-                "db_type": db_type,
-                "db_name": db_name,
-                "filename": filename,
-            }),
+            crate::services::backup_policy_executor::db_check_body(
+                &db_type, &db_name, &filename, encrypted, key_version, jwt_secret,
+            ),
             "/backups/drill/db",
         ).await;
         dispatched = true;

@@ -49,10 +49,7 @@ pub async fn drill_site_backup(domain: &str, filename: &str) -> Result<DrillResu
     let result = run_site_drill(&backup_path, &scratch_dir, &container_name, start).await;
 
     // Cleanup container (best-effort - `--rm` should already handle it but make sure).
-    let _ = safe_command("docker")
-        .args(["rm", "-f", &container_name])
-        .output()
-        .await;
+    crate::services::backup_verify::remove_scratch_container(&container_name).await;
 
     // Cleanup scratch dir (best-effort).
     let _ = std::fs::remove_dir_all(&scratch_dir);
@@ -194,10 +191,15 @@ fn is_valid_db_name(name: &str) -> bool {
 /// DB drill: spin a temp engine container, restore the gzipped dump, then
 /// sum row counts across user tables. Pass = restore succeeded AND total
 /// rows > 0 (or schema-only databases pass with rows == 0 IFF tables > 0).
+///
+/// An encrypted dump (`.enc`) needs `encryption_key`: it is checked and
+/// decrypted to a hidden temporary first, exactly as verify does
+/// (`backup_verify::open_dump`). A wrong tag fails the drill.
 pub async fn drill_db_backup(
     db_type: &str,
     db_name: &str,
     filename: &str,
+    encryption_key: Option<&str>,
 ) -> Result<DrillResult, String> {
     let start = std::time::Instant::now();
 
@@ -208,10 +210,20 @@ pub async fn drill_db_backup(
         return Err("Invalid filename".to_string());
     }
 
-    let backup_path = format!("/var/backups/dockpanel/databases/{db_name}/{filename}");
-    if !std::path::Path::new(&backup_path).exists() {
+    let dir = std::path::PathBuf::from(format!("/var/backups/dockpanel/databases/{db_name}"));
+    if !dir.join(filename).exists() {
         return Err("Backup file not found".to_string());
     }
+
+    // Before any container exists, so no exit path below can skip its cleanup.
+    let dump = match crate::services::backup_verify::open_dump(&dir, filename, encryption_key).await {
+        Ok(d) => d,
+        Err(crate::services::backup_verify::DumpOpenError::Integrity(m)) => {
+            return Ok(drill_failure(start, format!("integrity check failed: {m}")));
+        }
+        Err(crate::services::backup_verify::DumpOpenError::Other(m)) => return Err(m),
+    };
+    let backup_path = dump.path.as_path();
 
     let drill_id = uuid::Uuid::new_v4().to_string();
     let container_name = format!("dockpanel-drill-db-{}", &drill_id[..8]);
@@ -219,25 +231,24 @@ pub async fn drill_db_backup(
 
     let result = match db_type {
         "mysql" | "mariadb" => {
-            run_mysql_drill(&backup_path, &container_name, db_name, test_password, start).await
+            run_mysql_drill(backup_path, &container_name, db_name, test_password, start).await
         }
         "postgres" | "postgresql" => {
-            run_postgres_drill(&backup_path, &container_name, db_name, test_password, start).await
+            run_postgres_drill(backup_path, &container_name, db_name, test_password, start).await
         }
         _ => drill_failure(start, format!("Unsupported DB type for drill: {db_type}")),
     };
 
-    // Best-effort cleanup of the scratch container.
-    let _ = safe_command("docker")
-        .args(["rm", "-f", &container_name])
-        .output()
-        .await;
+    // Best-effort cleanup of the scratch container AND its anonymous data
+    // volume (`mariadb:11` and `postgres:16-alpine` declare one).
+    crate::services::backup_verify::remove_scratch_container(&container_name).await;
+    drop(dump);
 
     Ok(result)
 }
 
 async fn run_mysql_drill(
-    backup_path: &str,
+    backup_path: &std::path::Path,
     container_name: &str,
     db_name: &str,
     password: &str,
@@ -376,7 +387,7 @@ async fn run_mysql_scalar(container_name: &str, password: &str, db_name: &str, s
 }
 
 async fn run_postgres_drill(
-    backup_path: &str,
+    backup_path: &std::path::Path,
     container_name: &str,
     db_name: &str,
     password: &str,
@@ -593,8 +604,8 @@ pub async fn drill_volume_backup(
 
     // Best-effort cleanup on every exit path. Containers first (they hold
     // the volume open), then the volume itself.
-    let _ = safe_command("docker").args(["rm", "-f", &restore_container]).output().await;
-    let _ = safe_command("docker").args(["rm", "-f", &probe_container]).output().await;
+    crate::services::backup_verify::remove_scratch_container(&restore_container).await;
+    crate::services::backup_verify::remove_scratch_container(&probe_container).await;
     let _ = safe_command("docker").args(["volume", "rm", "-f", &scratch_volume]).output().await;
 
     Ok(result)

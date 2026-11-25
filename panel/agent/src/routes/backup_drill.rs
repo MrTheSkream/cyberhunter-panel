@@ -40,6 +40,9 @@ pub struct DrillDbRequest {
     pub db_type: String,
     pub db_name: String,
     pub filename: String,
+    /// Required for a `.enc` dump (a policy with Encrypt on).
+    #[serde(default)]
+    pub encryption_key: Option<String>,
 }
 
 /// POST /backups/drill/db - DB drill: scratch engine container + full restore + row probe.
@@ -51,9 +54,9 @@ async fn drill_db(
         "mysql" | "mariadb" | "postgres" | "postgresql" => {}
         _ => return Err(err(StatusCode::BAD_REQUEST, "Unsupported db_type")),
     }
-    let result = backup_drill::drill_db_backup(&req.db_type, &req.db_name, &req.filename)
+    let result = backup_drill::drill_db_backup(&req.db_type, &req.db_name, &req.filename, req.encryption_key.as_deref())
         .await
-        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+        .map_err(|e| err(volume_check_status(&e), &e))?;
     Ok(Json(result))
 }
 
@@ -79,7 +82,7 @@ async fn drill_volume(
     Ok(Json(result))
 }
 
-/// A volume verify/drill refusal the caller can fix is a 4xx, so the panel
+/// A database or volume drill refusal the caller can fix is a 4xx, so the panel
 /// relays the sentence instead of an incident id.
 fn volume_check_status(e: &str) -> StatusCode {
     if e == "Backup file not found" {

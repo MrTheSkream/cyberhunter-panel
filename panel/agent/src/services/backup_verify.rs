@@ -117,11 +117,177 @@ fn is_valid_name(name: &str) -> bool {
         && name.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '.')
 }
 
+// ── Scratch engine containers ───────────────────────────────────────────────
+
+/// Name prefixes of the throwaway containers verify and drill start, and only
+/// they: nothing else on a host is named like this.
+///
+/// `mariadb:11` and `postgres:16-alpine` declare a `VOLUME` for their data
+/// directory, so each of these containers gets an ANONYMOUS volume, which a
+/// plain `docker rm -f` leaves behind. In production that was one 12-168 MB
+/// volume per database verification, four ticks a day: 7.5 GB in five days.
+pub(crate) const SCRATCH_CONTAINER_PREFIXES: [&str; 2] = ["dockpanel-verify-", "dockpanel-drill-"];
+
+/// Name prefix of the named scratch volumes the volume drill creates.
+pub(crate) const SCRATCH_VOLUME_PREFIX: &str = "dockpanel-drill-vol-";
+
+/// `docker` arguments that remove a scratch container together with its
+/// anonymous volumes (`-v`): see [`SCRATCH_CONTAINER_PREFIXES`].
+pub(crate) fn scratch_rm_args(container_name: &str) -> [&str; 4] {
+    ["rm", "-f", "-v", container_name]
+}
+
+/// Best-effort removal of one scratch container and its anonymous volumes.
+pub(crate) async fn remove_scratch_container(container_name: &str) {
+    let _ = safe_command("docker")
+        .args(scratch_rm_args(container_name))
+        .output()
+        .await;
+}
+
+/// The names in `listing` (one per line, as `docker ps --format {{.Names}}`
+/// or `docker volume ls -q` print them) that are one of ours: a known prefix
+/// followed by a non-empty `[A-Za-z0-9-]` suffix (the agent appends a UUID
+/// slice). Anything else, a user's container included, is left alone.
+pub(crate) fn scratch_names(listing: &str, prefixes: &[&str]) -> Vec<String> {
+    listing
+        .lines()
+        .map(|l| l.trim().trim_start_matches('/'))
+        .filter(|name| {
+            prefixes.iter().any(|p| {
+                name.strip_prefix(p).is_some_and(|rest| {
+                    !rest.is_empty() && rest.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+                })
+            })
+        })
+        .map(String::from)
+        .collect()
+}
+
+/// Stdout of a `docker` listing command, or `None` when Docker cannot answer
+/// (not installed, not running yet): nothing to sweep then.
+async fn docker_listing(args: &[&str]) -> Option<String> {
+    match safe_command("docker").args(args).output().await {
+        Ok(o) if o.status.success() => Some(String::from_utf8_lossy(&o.stdout).to_string()),
+        _ => None,
+    }
+}
+
+/// Remove the scratch containers (with their anonymous volumes) and scratch
+/// volumes an interrupted verify or drill left behind. Called once at startup,
+/// before the agent serves anything, so none of them can belong to a check in
+/// progress. Returns `(removed, failed)`.
+///
+/// It cannot reach an anonymous volume whose container is already gone: such a
+/// volume carries nothing that ties it to verify, and telling it apart from a
+/// user's would be a guess.
+pub async fn sweep_scratch_leftovers() -> (usize, usize) {
+    let mut removed = 0;
+    let mut failed = 0;
+
+    if let Some(out) = docker_listing(&["ps", "-a", "--format", "{{.Names}}"]).await {
+        for name in scratch_names(&out, &SCRATCH_CONTAINER_PREFIXES) {
+            match safe_command("docker").args(scratch_rm_args(&name)).output().await {
+                Ok(o) if o.status.success() => removed += 1,
+                _ => {
+                    failed += 1;
+                    tracing::error!("Failed to remove leftover scratch container {name}");
+                }
+            }
+        }
+    }
+    if let Some(out) = docker_listing(&["volume", "ls", "-q"]).await {
+        for name in scratch_names(&out, &[SCRATCH_VOLUME_PREFIX]) {
+            match safe_command("docker").args(["volume", "rm", "-f", &name]).output().await {
+                Ok(o) if o.status.success() => removed += 1,
+                _ => {
+                    failed += 1;
+                    tracing::error!("Failed to remove leftover scratch volume {name}");
+                }
+            }
+        }
+    }
+    (removed, failed)
+}
+
+// ── Encrypted dumps ─────────────────────────────────────────────────────────
+
+/// A dump ready for `zcat`: the stored file, or a decrypted copy of it (a
+/// hidden `.part` next to it, removed when this is dropped and swept at
+/// startup after a crash).
+pub(crate) struct ReadableDump {
+    pub path: std::path::PathBuf,
+    /// For a `.enc`: what the integrity check found, reported as a check.
+    pub integrity: Option<String>,
+    _plain: Option<crate::services::volume_backup::PlainTemp>,
+}
+
+/// Why a dump could not be opened.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum DumpOpenError {
+    /// The FILE's fault: tampered with, truncated, or the wrong passphrase.
+    /// A failed `integrity` check, not an error.
+    Integrity(String),
+    /// The caller's or the host's: no key, I/O, openssl, no space.
+    Other(String),
+}
+
+/// Open `{dir}/{filename}` for the restore. A plain `.sql.gz` is read as is.
+/// An encrypted `.sql.gz.enc` (a policy with Encrypt on) needs `key`: its
+/// integrity tag is checked, then it is decrypted to a temporary in the same
+/// directory. Piping the `.enc` itself to `zcat`, as verify used to, can only
+/// fail, so every encrypted database was reported "verification failed".
+///
+/// An untagged file (encrypted before the integrity fix) is decrypted
+/// unauthenticated, as the real restore (`routes/database_backup.rs`) does:
+/// refusing it here would fail a dump that restore accepts. Its contents are
+/// still checked by gzip's CRC and the restore itself.
+pub(crate) async fn open_dump(
+    dir: &std::path::Path,
+    filename: &str,
+    key: Option<&str>,
+) -> Result<ReadableDump, DumpOpenError> {
+    use crate::services::encryption;
+
+    let src = dir.join(filename);
+    if !filename.ends_with(".enc") {
+        return Ok(ReadableDump { path: src, integrity: None, _plain: None });
+    }
+    let key = key
+        .filter(|k| !k.is_empty())
+        .ok_or_else(|| DumpOpenError::Other("Encryption key required for encrypted backup".into()))?;
+    let classify = |e: String| {
+        if encryption::is_content_error(&e) { DumpOpenError::Integrity(e) } else { DumpOpenError::Other(e) }
+    };
+
+    let note = match encryption::verify_file(&src, key).await.map_err(classify)? {
+        encryption::TagStatus::Verified => "Integrity tag matches the passphrase; dump decrypted",
+        encryption::TagStatus::Legacy => {
+            "No integrity tag (encrypted before the integrity fix); dump decrypted, contents checked by the restore"
+        }
+    };
+    let len = std::fs::metadata(&src).map(|m| m.len()).unwrap_or(0);
+    crate::services::volume_backup::check_space(dir, len, "the decrypted dump")
+        .map_err(|e| DumpOpenError::Other(e.to_string()))?;
+    // Short and hidden, like `volume_backup::decrypted_copy`: never listed as a
+    // dump, never pruned, removed by `backups::remove_stale_partials` at startup.
+    let plain = crate::services::volume_backup::PlainTemp {
+        path: dir.join(format!(".dec-{:016x}.part", rand::random::<u64>())),
+    };
+    encryption::decrypt_file(&src, &plain.path, key).await.map_err(classify)?;
+    Ok(ReadableDump { path: plain.path.clone(), integrity: Some(note.to_string()), _plain: Some(plain) })
+}
+
 /// Verify a database backup by restoring to a temporary container.
+///
+/// An encrypted dump (`.enc`) needs `encryption_key`: see [`open_dump`]. A
+/// wrong tag (tampered file or wrong passphrase) is a failed `integrity`
+/// check, not an error.
 pub async fn verify_db_backup(
     db_type: &str,
     db_name: &str,
     filename: &str,
+    encryption_key: Option<&str>,
 ) -> Result<VerificationResult, String> {
     let start = std::time::Instant::now();
     let mut checks = Vec::new();
@@ -133,8 +299,9 @@ pub async fn verify_db_backup(
         return Err("Invalid filename".to_string());
     }
 
-    let backup_path = format!("/var/backups/dockpanel/databases/{db_name}/{filename}");
-    if !std::path::Path::new(&backup_path).exists() {
+    let dir = std::path::PathBuf::from(format!("/var/backups/dockpanel/databases/{db_name}"));
+    let backup_path = dir.join(filename);
+    if !backup_path.exists() {
         return Err("Backup file not found".to_string());
     }
 
@@ -147,13 +314,34 @@ pub async fn verify_db_backup(
         message: format!("Dump file size: {} bytes", meta.len()),
     });
 
+    // Before any container exists, so no exit path below can skip its cleanup.
+    let dump = match open_dump(&dir, filename, encryption_key).await {
+        Ok(d) => d,
+        Err(DumpOpenError::Integrity(m)) => {
+            checks.push(VerificationCheck { name: "integrity".into(), passed: false, message: m });
+            let checks_run = checks.len() as i32;
+            let checks_passed = checks.iter().filter(|c| c.passed).count() as i32;
+            return Ok(VerificationResult {
+                passed: false,
+                checks_run,
+                checks_passed,
+                details: checks,
+                duration_ms: start.elapsed().as_millis() as u64,
+            });
+        }
+        Err(DumpOpenError::Other(m)) => return Err(m),
+    };
+    if let Some(note) = &dump.integrity {
+        checks.push(VerificationCheck { name: "integrity".into(), passed: true, message: note.clone() });
+    }
+
     let container_name = format!("dockpanel-verify-{}", &uuid::Uuid::new_v4().to_string()[..8]);
     let test_password = "verify_test_pass_12345";
 
     // Check 2: Spin up temporary database container and restore
     let restore_ok = match db_type {
-        "mysql" | "mariadb" => verify_mysql_restore(&backup_path, &container_name, db_name, test_password, &mut checks).await,
-        "postgres" | "postgresql" => verify_postgres_restore(&backup_path, &container_name, db_name, test_password, &mut checks).await,
+        "mysql" | "mariadb" => verify_mysql_restore(&dump.path, &container_name, db_name, test_password, &mut checks).await,
+        "postgres" | "postgresql" => verify_postgres_restore(&dump.path, &container_name, db_name, test_password, &mut checks).await,
         _ => {
             checks.push(VerificationCheck {
                 name: "restore".into(),
@@ -164,12 +352,9 @@ pub async fn verify_db_backup(
         }
     };
 
-    // Cleanup: remove temporary container
-    safe_command("docker")
-        .args(["rm", "-f", &container_name])
-        .output()
-        .await
-        .ok();
+    // Cleanup: remove the temporary container AND its anonymous data volume.
+    remove_scratch_container(&container_name).await;
+    drop(dump);
 
     let checks_run = checks.len() as i32;
     let checks_passed = checks.iter().filter(|c| c.passed).count() as i32;
@@ -184,7 +369,7 @@ pub async fn verify_db_backup(
 }
 
 async fn verify_mysql_restore(
-    backup_path: &str,
+    backup_path: &std::path::Path,
     container_name: &str,
     db_name: &str,
     password: &str,
@@ -340,7 +525,7 @@ async fn verify_mysql_restore(
 }
 
 async fn verify_postgres_restore(
-    backup_path: &str,
+    backup_path: &std::path::Path,
     container_name: &str,
     db_name: &str,
     password: &str,
@@ -664,6 +849,129 @@ mod tests {
             chk("has_entry_point", false),
         ];
         assert!(site_backup_passed(&checks));
+    }
+
+    // ── Scratch containers: the anonymous-volume leak ──────────────────────
+
+    #[test]
+    fn scratch_rm_removes_anonymous_volumes() {
+        // Without -v every mariadb/postgres verify left its data volume behind
+        // (51 orphans, 7.5 GB in five days on a production box).
+        let args = scratch_rm_args("dockpanel-verify-1a2b3c4d");
+        assert_eq!(args, ["rm", "-f", "-v", "dockpanel-verify-1a2b3c4d"]);
+    }
+
+    #[test]
+    fn scratch_names_keeps_only_ours() {
+        let listing = "dockpanel-verify-1a2b3c4d\n\
+                       /dockpanel-drill-db-9f8e7d6c\n\
+                       dockpanel-drill-0011aabb\n\
+                       wordpress-db\n\
+                       dockpanel-postgres\n\
+                       dockpanel-verify-\n\
+                       dockpanel-verify-x;rm\n\
+                       my-dockpanel-verify-1234\n\
+                       \n";
+        assert_eq!(
+            scratch_names(listing, &SCRATCH_CONTAINER_PREFIXES),
+            vec!["dockpanel-verify-1a2b3c4d", "dockpanel-drill-db-9f8e7d6c", "dockpanel-drill-0011aabb"],
+        );
+        let volumes = "dockpanel-drill-vol-1a2b3c4d\nwordpress_data\n4f1c0e2d9a\n";
+        assert_eq!(scratch_names(volumes, &[SCRATCH_VOLUME_PREFIX]), vec!["dockpanel-drill-vol-1a2b3c4d"]);
+    }
+
+    // ── Encrypted dumps ────────────────────────────────────────────────────
+
+    /// Test-only passphrase, the one the committed fixtures were made with.
+    const FIXTURE_PASS: &str = "fixture-test-passphrase-not-a-secret";
+    const FIXTURE_PLAIN: &[u8] = include_bytes!("../../tests/fixtures/encryption/plain.txt");
+    const FIXTURE_CURRENT: &[u8] = include_bytes!("../../tests/fixtures/encryption/current.sql.enc");
+    const FIXTURE_LEGACY: &[u8] = include_bytes!("../../tests/fixtures/encryption/legacy.sql.enc");
+
+    /// A unique scratch directory, removed on drop.
+    struct Scratch(std::path::PathBuf);
+    impl Scratch {
+        fn with(name: &str, bytes: &[u8]) -> Self {
+            let p = std::env::temp_dir().join(format!("dp-verify-test-{:016x}", rand::random::<u64>()));
+            std::fs::create_dir_all(&p).unwrap();
+            std::fs::write(p.join(name), bytes).unwrap();
+            Scratch(p)
+        }
+        fn entries(&self) -> Vec<String> {
+            let mut v: Vec<String> = std::fs::read_dir(&self.0)
+                .unwrap()
+                .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+                .collect();
+            v.sort();
+            v
+        }
+    }
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    const DUMP: &str = "app-20261125-044300.sql.gz.enc";
+
+    #[tokio::test]
+    async fn open_dump_reads_a_plain_dump_in_place() {
+        let s = Scratch::with("app-20261125-044300.sql.gz", b"not really gzip");
+        let d = open_dump(&s.0, "app-20261125-044300.sql.gz", None).await.unwrap();
+        assert_eq!(d.path, s.0.join("app-20261125-044300.sql.gz"));
+        assert!(d.integrity.is_none());
+        drop(d);
+        assert_eq!(s.entries(), vec!["app-20261125-044300.sql.gz"]);
+    }
+
+    #[tokio::test]
+    async fn open_dump_decrypts_an_encrypted_dump_to_a_hidden_temporary() {
+        let s = Scratch::with(DUMP, FIXTURE_CURRENT);
+        let d = open_dump(&s.0, DUMP, Some(FIXTURE_PASS)).await.unwrap();
+        let name = d.path.file_name().unwrap().to_string_lossy().to_string();
+        assert!(name.starts_with(".dec-") && name.ends_with(".part"), "{name}");
+        assert_eq!(d.path.parent().unwrap(), s.0.as_path());
+        assert_eq!(std::fs::read(&d.path).unwrap(), FIXTURE_PLAIN, "zcat must read the plaintext, not the .enc");
+        assert!(d.integrity.as_deref().unwrap().starts_with("Integrity tag matches"));
+        drop(d);
+        assert_eq!(s.entries(), vec![DUMP], "the decrypted copy must not outlive the verification");
+    }
+
+    #[tokio::test]
+    async fn open_dump_wrong_key_is_a_failed_integrity_check() {
+        let s = Scratch::with(DUMP, FIXTURE_CURRENT);
+        let e = open_dump(&s.0, DUMP, Some("not-the-passphrase")).await.err().unwrap();
+        assert!(matches!(e, DumpOpenError::Integrity(ref m) if m.starts_with("Backup integrity check failed")), "{e:?}");
+        assert_eq!(s.entries(), vec![DUMP]);
+    }
+
+    #[tokio::test]
+    async fn open_dump_tampered_file_is_a_failed_integrity_check() {
+        let mut bytes = FIXTURE_CURRENT.to_vec();
+        bytes[40] ^= 0x01;
+        let s = Scratch::with(DUMP, &bytes);
+        let e = open_dump(&s.0, DUMP, Some(FIXTURE_PASS)).await.err().unwrap();
+        assert!(matches!(e, DumpOpenError::Integrity(_)), "{e:?}");
+        assert_eq!(s.entries(), vec![DUMP]);
+    }
+
+    #[tokio::test]
+    async fn open_dump_without_key_is_refused_not_verified() {
+        let s = Scratch::with(DUMP, FIXTURE_CURRENT);
+        for key in [None, Some("")] {
+            let e = open_dump(&s.0, DUMP, key).await.err().unwrap();
+            assert_eq!(e, DumpOpenError::Other("Encryption key required for encrypted backup".into()));
+        }
+    }
+
+    #[tokio::test]
+    async fn open_dump_accepts_a_legacy_untagged_dump_like_restore_does() {
+        let s = Scratch::with(DUMP, FIXTURE_LEGACY);
+        let d = open_dump(&s.0, DUMP, Some(FIXTURE_PASS)).await.unwrap();
+        assert_eq!(std::fs::read(&d.path).unwrap(), FIXTURE_PLAIN);
+        assert!(d.integrity.as_deref().unwrap().starts_with("No integrity tag"));
+        drop(d);
+        assert_eq!(s.entries(), vec![DUMP]);
     }
 
     #[test]

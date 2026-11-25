@@ -652,6 +652,38 @@ pub fn volume_check_body(
     b
 }
 
+/// Budget of `/backups/verify/database`: an encrypted dump is first checked
+/// and decrypted to a temporary file, then a scratch engine container is
+/// started (up to 40 s) and the dump restored into it (up to 120 s). Plain
+/// `post`'s 60 s cut the verification short and recorded it `failed` while the
+/// agent was still restoring. Always called detached (the verifier service, or
+/// a task spawned by the Verify button).
+pub const DB_VERIFY_TIMEOUT_SECS: u64 = 600;
+
+/// Body of `/backups/verify/database` and `/backups/drill/db` for one row:
+/// `{db_type, db_name, filename}`, plus `encryption_key` when the dump is
+/// encrypted - derived from the row's own key version, the same passphrase
+/// `routes::backup_orchestrator::restore_db_backup` uses. Without it the agent piped the `.enc` to
+/// `zcat`, and every encrypted database failed verification.
+pub fn db_check_body(
+    db_type: &str,
+    db_name: &str,
+    filename: &str,
+    encrypted: bool,
+    key_version: i16,
+    jwt_secret: &str,
+) -> serde_json::Value {
+    let mut b = serde_json::json!({
+        "db_type": db_type,
+        "db_name": db_name,
+        "filename": filename,
+    });
+    if let Some(k) = row_encryption_key(encrypted, key_version, jwt_secret) {
+        b["encryption_key"] = serde_json::Value::String(k);
+    }
+    b
+}
+
 /// What the agent reports about an archive it just wrote.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CreatedArchive {
@@ -3256,6 +3288,23 @@ mod tests {
         assert_eq!(b["encryption_key"], "backup-enc-abcdefghijklmnopqrstuvwxyz012345");
         let b = volume_check_body("demo", "demo-v-db-20261119-020000.tar.gz.enc", true, 2, jwt);
         assert_eq!(b["encryption_key"].as_str(), Some(derive_backup_encryption_key(jwt).as_str()));
+    }
+
+    #[test]
+    fn db_check_body_carries_the_rows_own_key_only_when_encrypted() {
+        // Every encrypted database failed verification because verify was sent
+        // no key and piped the .enc straight to zcat.
+        let jwt = "abcdefghijklmnopqrstuvwxyz0123456789EXTRA";
+        assert_eq!(
+            db_check_body("mysql", "wp", "wp-20261125-044300.sql.gz", false, 2, jwt),
+            serde_json::json!({"db_type":"mysql","db_name":"wp","filename":"wp-20261125-044300.sql.gz"})
+        );
+        let b = db_check_body("postgres", "app", "app-20261125-044300.sql.gz.enc", true, 2, jwt);
+        assert_eq!(b["db_type"], "postgres");
+        assert_eq!(b["filename"], "app-20261125-044300.sql.gz.enc");
+        assert_eq!(b["encryption_key"].as_str(), Some(derive_backup_encryption_key_for_version(2, jwt).as_str()));
+        let b = db_check_body("postgres", "app", "app-20260801-044300.sql.gz.enc", true, 1, jwt);
+        assert_eq!(b["encryption_key"], "backup-enc-abcdefghijklmnopqrstuvwxyz012345", "a v1 row keeps its v1 key");
     }
 
     /// What the agent's `stamp_only` prune accepts: exactly

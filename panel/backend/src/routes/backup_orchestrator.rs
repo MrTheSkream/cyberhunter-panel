@@ -1949,14 +1949,20 @@ pub async fn trigger_verify(
                 }
             }
             "database" => {
-                let row = sqlx::query_as::<_, (String, String, String)>(
-                    "SELECT db_type, db_name, filename FROM database_backups WHERE id = $1"
+                let row = sqlx::query_as::<_, (String, String, String, bool, i16)>(
+                    "SELECT db_type, db_name, filename, encrypted, encryption_key_version FROM database_backups WHERE id = $1"
                 ).bind(backup_id).fetch_optional(&db).await;
 
                 match row {
-                    Ok(Some((db_type, db_name, filename))) => {
-                        let body = serde_json::json!({ "db_type": db_type, "db_name": db_name, "filename": filename });
-                        agent.post("/backups/verify/database", Some(body)).await.map_err(|e| e.to_string())
+                    Ok(Some((db_type, db_name, filename, encrypted, key_version))) => {
+                        let body = crate::services::backup_policy_executor::db_check_body(
+                            &db_type, &db_name, &filename, encrypted, key_version, &jwt_secret,
+                        );
+                        agent.post_long(
+                            "/backups/verify/database",
+                            Some(body),
+                            crate::services::backup_policy_executor::DB_VERIFY_TIMEOUT_SECS,
+                        ).await.map_err(|e| e.to_string())
                     }
                     Ok(None) => Err("Database backup not found".to_string()),
                     Err(e) => {
@@ -2152,17 +2158,15 @@ pub async fn trigger_drill(
                 }
             }
             "database" => {
-                let row = sqlx::query_as::<_, (String, String, String)>(
-                    "SELECT db_type, db_name, filename FROM database_backups WHERE id = $1"
+                let row = sqlx::query_as::<_, (String, String, String, bool, i16)>(
+                    "SELECT db_type, db_name, filename, encrypted, encryption_key_version FROM database_backups WHERE id = $1"
                 ).bind(backup_id).fetch_optional(&db).await;
 
                 match row {
-                    Ok(Some((db_type, db_name, filename))) => {
-                        let body = serde_json::json!({
-                            "db_type": db_type,
-                            "db_name": db_name,
-                            "filename": filename,
-                        });
+                    Ok(Some((db_type, db_name, filename, encrypted, key_version))) => {
+                        let body = crate::services::backup_policy_executor::db_check_body(
+                            &db_type, &db_name, &filename, encrypted, key_version, &jwt_secret,
+                        );
                         agent.post_long("/backups/drill/db", Some(body), crate::services::agent::DRILL_TIMEOUT_SECS).await.map_err(|e| e.to_string())
                     }
                     Ok(None) => Err("Database backup not found".to_string()),
