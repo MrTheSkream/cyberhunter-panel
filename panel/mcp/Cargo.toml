@@ -1,6 +1,6 @@
 [package]
 name = "dockpanel-mcp"
-version = "3.1.0-rc.2"
+version = "3.1.0-rc.3"
 license = "AGPL-3.0-only"
 edition = "2024"
 description = "MCP server exposing read-only CyberHunter - Panel introspection to AI agents"
