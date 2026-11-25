@@ -404,7 +404,7 @@ that reads the source and fails if the fix is undone - including the shapes that
 are easy to undo by accident. The mail pins assert, among other things, that the
 sandbox was **not** widened to include `/etc/opendkim.conf`, since widening it
 would have "fixed" the bug while destroying the reason the bug was
-survivable. One-hundred-fifty-one suites, **5241 assertions**, all green at the current commit:
+survivable. One-hundred-fifty-one suites, **5243 assertions**, all green at the current commit:
 
 | Suite | Assertions |
 |---|---|
@@ -554,8 +554,8 @@ survivable. One-hundred-fifty-one suites, **5241 assertions**, all green at the 
 | `variables-hash-pin-e2e.sh` | 40 |
 | `multi-admin-server-scope-pin-e2e.sh` | 12 |
 | `mail-host-sni-pin-e2e.sh` | 41 |
-| `vuln-scanner-agent-pin-e2e.sh` | 84 |
-| `vuln-scanner-backend-pin-e2e.sh` | 38 |
+| `vuln-scanner-agent-pin-e2e.sh` | 85 |
+| `vuln-scanner-backend-pin-e2e.sh` | 39 |
 | `vuln-scanner-alerts-pin-e2e.sh` | 36 |
 | `vuln-scanner-ui-pin-e2e.sh` | 45 |
 | `vuln-scanner-deploy-gate-pin-e2e.sh` | 40 |

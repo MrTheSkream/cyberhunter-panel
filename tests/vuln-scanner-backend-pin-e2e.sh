@@ -11,8 +11,9 @@
 #       server at a time, records a server's failure and moves on, and gives
 #       way to the shutdown broadcast while it waits on an agent job.
 #   §C  the merge resolves NOTHING on an `error` or `no_sbom` result (a failed
-#       match must not mark every CVE of a target as fixed), nor on a truncated
-#       one, and stays the only writer of `resolved_at`.
+#       match must not mark every CVE of a target as fixed); on a truncated one
+#       only what the agent's complete `present` key list lacks (nothing without
+#       it), and stays the only writer of `resolved_at`.
 #   §D  a non-administrator only ever sees the `site` targets of its own sites:
 #       every handler in the route block goes through the shared visibility
 #       predicate or `require_admin`; the settings PUT is admin only.
@@ -207,7 +208,7 @@ else
 fi
 
 echo
-echo "== §C  the merge resolves nothing on error / no_sbom / truncated =="
+echo "== §C  the merge resolves nothing on error / no_sbom, only against present when truncated =="
 
 MERGE=$(body "$SWEEPER" '^pub fn plan_merge\(')
 NMERGE=$(grep -c . <<< "$MERGE")
@@ -228,10 +229,22 @@ else
   bad "C2 the non-ok guard must return the empty plan before any resolve - guard=${GUARD_LINE:-none} return=${RETURN_LINE:-none} resolve=${RESOLVE_LINE:-none}"
 fi
 
-if grep -qE 'if !result\.truncated \{' <<< "$MERGE"; then
-  ok "C3 a truncated result (capped at 5000) does not resolve what it lacks"
+if grep -qF 'let complete = if !result.truncated { Some(&seen) } else { result.present.as_ref() };' <<< "$MERGE" \
+   && grep -qE 'if let Some\(complete\) = complete \{' <<< "$MERGE"; then
+  ok "C3 a truncated result (capped at 5000) resolves only against the agent's complete key list, never on what it merely lacks"
 else
-  bad "C3 resolution must be skipped on a truncated result"
+  bad "C3 a truncated result must resolve against \`present\` alone - and nothing without it"
+fi
+
+# 2026-11-25: the system target always passes the cap, so a truncated result
+# that resolves nothing left a purged kernel open for good. The list is read
+# all or nothing - a list missing one key would resolve that finding.
+PRESENT=$(body "$SWEEPER" '^fn parse_present\(')
+if grep -qF 'entry.as_array()?.as_slice() else { return None };' <<< "$PRESENT" \
+   && grep -qF 'fn merge_resolves_a_package_gone_between_two_scans_of_a_truncated_target()' "$SWEEPER"; then
+  ok "C3b a malformed \`present\` entry voids the whole list, and a unit test drives a package gone between two truncated scans"
+else
+  bad "C3b parse_present must void the list on a malformed entry, and the two-scan truncated test must stay"
 fi
 
 TEST_ERR=$(awk '/fn merge_resolves_nothing_on_error_or_no_sbom\(/{i=1} i{print} i && /^    }$/{exit}' "$SWEEPER")

@@ -43,6 +43,11 @@ const DPKG_STATUS: &str = "/var/lib/dpkg/status";
 const MIN_FREE_BYTES: u64 = 8 * 1024 * 1024 * 1024;
 /// Findings kept per target (highest `risk` first).
 pub const MAX_FINDINGS: usize = 5000;
+/// Bound on the `present` key list sent beside a truncated result. A key is
+/// ~100 bytes of JSON, so this stays near 3 MB per target, well inside the
+/// panel's 50 MB response cap for a match job of 5 targets. Past it the list is
+/// left out and the panel resolves nothing for that target, as before.
+pub const MAX_PRESENT_KEYS: usize = 30_000;
 /// Bound on targets per request.
 const MAX_TARGETS: usize = 10_000;
 
@@ -1095,10 +1100,19 @@ fn finding_of(m: GrypeMatch) -> Finding {
     }
 }
 
+/// `(vuln_id, package, version)`: the backend's unique key of a finding.
+pub type FindingKey = (String, String, String);
+/// What [`finalize_findings`] returns: findings, truncated, key list.
+pub type Finalized = (Vec<Finding>, bool, Option<Vec<FindingKey>>);
+
 /// Highest risk first (then KEV, then CVSS), duplicates on
 /// `(vuln_id, package, version)` dropped (the riskiest one is kept), capped at
-/// [`MAX_FINDINGS`]. Returns the findings and whether the cap cut any.
-pub fn finalize_findings(mut findings: Vec<Finding>) -> (Vec<Finding>, bool) {
+/// [`MAX_FINDINGS`]. Returns the findings, whether the cap cut any, and on a
+/// cut result the key of every finding before the cap (`None` when not cut,
+/// or when that list would pass [`MAX_PRESENT_KEYS`]): without it the panel
+/// cannot tell a finding past the cap from one that is gone, and never
+/// resolves anything on a target that always passes the cap.
+pub fn finalize_findings(mut findings: Vec<Finding>) -> Finalized {
     findings.sort_by(|a, b| {
         b.risk
             .total_cmp(&a.risk)
@@ -1108,12 +1122,13 @@ pub fn finalize_findings(mut findings: Vec<Finding>) -> (Vec<Finding>, bool) {
     let mut seen: HashSet<(String, String, String)> = HashSet::new();
     findings.retain(|f| seen.insert((f.vuln_id.clone(), f.package.clone(), f.version.clone())));
     let truncated = findings.len() > MAX_FINDINGS;
+    let present = (truncated && findings.len() <= MAX_PRESENT_KEYS).then(|| seen.into_iter().collect());
     findings.truncate(MAX_FINDINGS);
-    (findings, truncated)
+    (findings, truncated, present)
 }
 
 /// Read a grype JSON report (`-o json=<file>`) as a stream into findings.
-pub fn parse_grype_report<R: std::io::Read>(r: R) -> Result<(Vec<Finding>, bool), String> {
+pub fn parse_grype_report<R: std::io::Read>(r: R) -> Result<Finalized, String> {
     let doc: GrypeDoc = serde_json::from_reader(std::io::BufReader::new(r))
         .map_err(|e| format!("invalid grype report: {e}"))?;
     Ok(finalize_findings(doc.matches.into_iter().map(finding_of).collect()))
@@ -1126,6 +1141,10 @@ pub struct MatchResult {
     pub error: Option<String>,
     pub truncated: bool,
     pub findings: Vec<Finding>,
+    /// Only on a truncated `ok` result: every key of the complete result, so
+    /// the panel can resolve what is gone without the details past the cap.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub present: Option<Vec<FindingKey>>,
 }
 
 async fn match_one(target_id: &str) -> MatchResult {
@@ -1135,6 +1154,7 @@ async fn match_one(target_id: &str) -> MatchResult {
         error,
         truncated,
         findings,
+        present: None,
     };
     let sbom = sbom_path(target_id);
     if !sbom.is_file() {
@@ -1166,7 +1186,7 @@ async fn match_one(target_id: &str) -> MatchResult {
     };
     let _ = std::fs::remove_file(&out);
     match parsed {
-        Ok((findings, truncated)) => result("ok", None, truncated, findings),
+        Ok((findings, truncated, present)) => MatchResult { present, ..result("ok", None, truncated, findings) },
         Err(e) => result("error", Some(e), false, Vec::new()),
     }
 }
@@ -1337,7 +1357,7 @@ mod tests {
 
     const FIXTURE: &str = include_str!("testdata/grype-v0.122-report.json");
 
-    fn parse_fixture() -> (Vec<Finding>, bool) {
+    fn parse_fixture() -> Finalized {
         parse_grype_report(FIXTURE.as_bytes()).expect("fixture parses")
     }
 
@@ -1347,8 +1367,9 @@ mod tests {
 
     #[test]
     fn ghsa_takes_cve_kev_and_epss_from_related_vulnerabilities() {
-        let (f, truncated) = parse_fixture();
+        let (f, truncated, present) = parse_fixture();
         assert!(!truncated);
+        assert_eq!(present, None, "no key list on a complete result");
         let log4j = by_id(&f, "CVE-2021-44228", "log4j-core");
         assert_eq!(log4j.aliases, vec!["GHSA-jfh8-c2jp-5v3q".to_string()]);
         assert!(log4j.kev);
@@ -1371,7 +1392,7 @@ mod tests {
 
     #[test]
     fn distro_match_keeps_its_cve_and_reads_cvss_from_related() {
-        let (f, _) = parse_fixture();
+        let (f, ..) = parse_fixture();
         let o = by_id(&f, "CVE-2023-0464", "libssl3");
         assert_eq!(o.severity, "low", "negligible folds into low");
         assert_eq!(o.fix_state, "not-fixed");
@@ -1391,7 +1412,7 @@ mod tests {
 
     #[test]
     fn unknown_severity_and_nulls_are_tolerated() {
-        let (f, _) = parse_fixture();
+        let (f, ..) = parse_fixture();
         let w = by_id(&f, "CVE-2022-1234", "zlib1g");
         assert_eq!(w.fix_state, "wont-fix");
         assert_eq!(w.severity, "high", "unknown on the distro record, high on the related one");
@@ -1404,7 +1425,7 @@ mod tests {
 
     #[test]
     fn ghsa_without_cve_keeps_its_own_id() {
-        let (f, _) = parse_fixture();
+        let (f, ..) = parse_fixture();
         let g = by_id(&f, "GHSA-xxxx-yyyy-zzzz", "lodash");
         assert!(g.aliases.is_empty());
         assert_eq!(g.severity, "medium");
@@ -1416,7 +1437,7 @@ mod tests {
 
     #[test]
     fn duplicates_are_dropped_keeping_the_riskiest() {
-        let (f, _) = parse_fixture();
+        let (f, ..) = parse_fixture();
         let n = f
             .iter()
             .filter(|x| x.vuln_id == "CVE-2021-44228" && x.package == "log4j-core" && x.version == "2.14.1")
@@ -1447,14 +1468,43 @@ mod tests {
             title: None,
             url: None,
         };
-        let (f, truncated) = finalize_findings((0..MAX_FINDINGS + 3).map(mk).collect());
+        let (f, truncated, present) = finalize_findings((0..MAX_FINDINGS + 3).map(mk).collect());
         assert!(truncated);
         assert_eq!(f.len(), MAX_FINDINGS);
         assert_eq!(f[0].risk, (MAX_FINDINGS + 2) as f64);
         assert_eq!(f.last().unwrap().risk, 3.0);
-        let (f, truncated) = finalize_findings((0..10).map(mk).collect());
+        // The key list names every finding, the three cut by the cap included.
+        let present = present.expect("a cut result carries its key list");
+        assert_eq!(present.len(), MAX_FINDINGS + 3);
+        for i in 0..3 {
+            assert!(present.contains(&(format!("CVE-2024-{i}"), "p".into(), "1".into())), "cut CVE-2024-{i}");
+        }
+        let (f, truncated, present) = finalize_findings((0..10).map(mk).collect());
         assert!(!truncated);
+        assert_eq!(present, None);
         assert_eq!(f.len(), 10);
+        // A key list too big for the response is left out, never sent partial.
+        let (_, truncated, present) = finalize_findings((0..MAX_PRESENT_KEYS + 1).map(mk).collect());
+        assert!(truncated);
+        assert_eq!(present, None);
+    }
+
+    /// The wire shape the panel's `parse_present` reads.
+    #[test]
+    fn match_result_sends_present_as_triples_and_omits_it_when_none() {
+        let mut r = MatchResult {
+            target_id: "t".into(),
+            status: "ok",
+            error: None,
+            truncated: true,
+            findings: vec![],
+            present: Some(vec![("CVE-1".into(), "linux-modules".into(), "6.8.0-151".into())]),
+        };
+        let v = serde_json::to_value(&r).unwrap();
+        assert_eq!(v["present"], serde_json::json!([["CVE-1", "linux-modules", "6.8.0-151"]]));
+        r.present = None;
+        let v = serde_json::to_value(&r).unwrap();
+        assert!(v.get("present").is_none(), "no key at all when there is no list");
     }
 
     #[test]
