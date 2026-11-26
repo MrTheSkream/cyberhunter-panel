@@ -75,8 +75,15 @@ ssh -L 5433:127.0.0.1:<port> root@your-server
 # then point your local client at 127.0.0.1:5433
 ```
 
-**From a container** - not possible for a **site-owned** managed database. If you
-need a containerised tool to reach one, either run a plain database container
+**From a Git Deploy** - link the database to the deployment (**Linked
+Database** on the deploy form). On its next deploy the app and the database share
+a private network of their own, where the database answers as host `db`, and the
+app is given `DATABASE_URL` unless it already sets one. Only a database you own,
+on the same server, can be linked, and previews never get it. See
+[Linked database](git-deploy.md#linked-database).
+
+**From any other container** - not possible for a **site-owned** managed
+database. If you need a containerised tool to reach one, either run a plain database container
 **inside the same compose stack** as the tool (services in one stack share a
 network and resolve each other by service name), or provision a **Stack-owned
 managed database** instead - see below, which gives you the panel's own
@@ -235,7 +242,10 @@ dockpanel backup db-list mydb        # shows importable dumps, and rejected ones
 Being explicit, so you do not go looking:
 
 - **No database GUI that works against a site-owned managed database from a
-  container.** Covered above; this is a design decision, not a gap.
+  container.** Covered above; this is a design decision, not a gap. The one
+  container that can be given a route is a Git Deploy's, through its own
+  per-deployment link - see [Linked database](git-deploy.md#linked-database).
+- **One linked database per Git Deploy**, and none for a preview.
 - **No managed database for a bare, single-container Docker App.** Only Sites
   and Stacks can own one - see [Databases owned by a Stack](#databases-owned-by-a-stack).
   If you want a standalone database for a plain Docker App, run it in the app's
