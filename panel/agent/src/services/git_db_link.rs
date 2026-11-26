@@ -253,11 +253,40 @@ async fn remove_network(docker: &Docker, network: &str, attached: &[String]) -> 
     Ok(())
 }
 
-fn attached_ids(net: &bollard::models::Network) -> Vec<String> {
-    net.containers
+/// Every container attached to `network`, running OR NOT.
+///
+/// `inspect_network`'s `Containers` lists only live endpoints, so a container
+/// that is created or stopped - attached in its own config, joining the moment
+/// it starts - is invisible there. Found by the real-Docker drill below: a
+/// created-but-not-started stranger survived the membership check. The
+/// `network` filter on a full container listing reads each container's own
+/// config, so the union of both is the real membership.
+async fn attached_ids(
+    docker: &Docker,
+    network: &str,
+    net: &bollard::models::Network,
+) -> Vec<String> {
+    let mut ids: Vec<String> = net
+        .containers
         .as_ref()
         .map(|c| c.keys().cloned().collect())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    let filters = HashMap::from([("network", vec![network])]);
+    if let Ok(listed) = docker
+        .list_containers(Some(ListContainersOptions {
+            all: true,
+            filters,
+            ..Default::default()
+        }))
+        .await
+    {
+        for id in listed.into_iter().filter_map(|c| c.id) {
+            if !ids.contains(&id) {
+                ids.push(id);
+            }
+        }
+    }
+    ids
 }
 
 async fn create_network(
@@ -318,7 +347,12 @@ pub async fn reconcile(
 
     let Some(db) = desired else {
         if let Some(net) = existing {
-            remove_network(docker, &network, &attached_ids(&net)).await?;
+            remove_network(
+                docker,
+                &network,
+                &attached_ids(docker, &network, &net).await,
+            )
+            .await?;
         }
         return Ok(None);
     };
@@ -327,12 +361,12 @@ pub async fn reconcile(
         Some(ref net) if points_elsewhere(net.labels.as_ref(), &db.id) => {
             // Re-pointed at another database. Labels are immutable, so the
             // network is rebuilt; the app is re-attached by the caller.
-            remove_network(docker, &network, &attached_ids(net)).await?;
+            remove_network(docker, &network, &attached_ids(docker, &network, net).await).await?;
             create_network(docker, &network, name, &db.id).await?;
         }
         Some(ref net) => {
             // Same database. Enforce the membership rule before going on.
-            for cid in attached_ids(net) {
+            for cid in attached_ids(docker, &network, net).await {
                 let labels = docker
                     .inspect_container(&cid, None)
                     .await
@@ -385,7 +419,13 @@ pub async fn release_for_database(docker: &Docker, db_container_id: &str) {
         let owner = net.labels.as_ref().and_then(|l| l.get(LINK_LABEL)).cloned();
         match owner {
             Some(name) if network_is_ours(net.labels.as_ref(), &name) => {
-                if let Err(e) = remove_network(docker, &network, &attached_ids(&net)).await {
+                if let Err(e) = remove_network(
+                    docker,
+                    &network,
+                    &attached_ids(docker, &network, &net).await,
+                )
+                .await
+                {
                     tracing::warn!("Database removal: could not release {network}: {e}");
                 }
             }

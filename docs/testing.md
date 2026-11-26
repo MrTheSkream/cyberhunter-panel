@@ -387,7 +387,7 @@ found things from coming back.
   a real 1960. The paragraph above correctly names the
   reason - nothing recomputes it - so the warning was not the missing part.
   Treat every figure on this page that no suite re-derives as suspect by
-  default, and note that six unit tests are `#[ignore]`d and therefore
+  default, and note that seven unit tests are `#[ignore]`d and therefore
   excluded from the count above: they need a Docker daemon and are described
   under the drills.
 - **`cargo audit` on all three crates, enforcing.** A real advisory fails the
@@ -422,7 +422,7 @@ survivable. One-hundred-fifty-three suites, **5385 assertions**, all green at th
 | `site-backup-databases-pin-e2e.sh` | 52 |
 | `git-deploy-sandbox-pin-e2e.sh` | 42 |
 | `git-deploy-volumes-pin-e2e.sh` | 28 |
-| `git-deploy-linked-db-pin-e2e.sh` | 82 |
+| `git-deploy-linked-db-pin-e2e.sh` | 85 |
 | `ssl-correctness-pin-e2e.sh` | 97 |
 | `dns01-renewal-pin-e2e.sh` | 63 |
 | `acme-account-identity-pin-e2e.sh` | 20 |
