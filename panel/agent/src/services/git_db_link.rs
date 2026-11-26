@@ -163,7 +163,6 @@ pub fn may_stay(
 pub struct VerifiedDb {
     /// Full container id.
     pub id: String,
-    pub db_name: String,
 }
 
 /// Prove the requested container is the managed database the panel named.
@@ -182,7 +181,6 @@ pub async fn verify_db(docker: &Docker, req: &LinkedDbRequest) -> Result<Verifie
     )?;
     Ok(VerifiedDb {
         id: info.id.unwrap_or_else(|| req.container_id.clone()),
-        db_name: req.name.clone(),
     })
 }
 

@@ -394,9 +394,17 @@ Create a git deployment.
   "container_port": 3000,
   "auto_deploy": true,
   "build_context": ".",
-  "preview_ttl_hours": 24
+  "preview_ttl_hours": 24,
+  "database_id": "3f0c9a5e-1d2b-4c6a-9e8f-0a1b2c3d4e5f"
 }
 ```
+
+`database_id` links one of your managed databases on the same server (see
+[Linked database](guides/git-deploy.md#linked-database)): the app reaches it as
+host `db` and gets `DATABASE_URL` unless its env already sets it. On
+`PUT /api/git-deploys/{id}`, omit the key to keep the link, send `""` to unlink,
+or send an id to (re)link. A database you do not own, on another server, on the
+shared local MariaDB, or with only an imported password hash is refused with `400`.
 
 ### `POST /api/git-deploys/{id}/deploy`
 Trigger a build + deploy. Returns `202` in **two different shapes**, and a client that
