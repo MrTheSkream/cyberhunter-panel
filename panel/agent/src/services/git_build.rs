@@ -712,6 +712,7 @@ pub async fn deploy_or_update(
     cpu_percent: Option<u64>,
     tls: TlsIntent<'_>,
     volumes: &[String],
+    linked_db: Option<&super::git_db_link::LinkedDbRequest>,
 ) -> Result<GitDeployResult, String> {
     // Held for the whole deploy/update, including the internal blue-green
     // swap this function may perform - `blue_green_update` is called FROM
@@ -828,6 +829,30 @@ pub async fn deploy_or_update(
         }
     }
 
+    // LINKED DATABASE (see `git_db_link`). Settled BEFORE anything below stops,
+    // removes or swaps a container: proving the database is the one the panel
+    // named, and bringing the per-deployment link network to the desired state,
+    // are the two steps that can refuse - and a refusal must leave the running
+    // app exactly as it was. `None` is not "skip": it tears down a link an
+    // earlier deploy made, which is how unlinking takes effect.
+    //
+    // Only the `Deploy` space is ever linked. The route already refuses a link
+    // for a preview; this guard is what keeps a `PreviewLegacy` teardown-space
+    // name - which can equal a deployment's - from reconciling that
+    // deployment's network.
+    let link_network = if scope == ownership::GitScope::Deploy {
+        let verified = match linked_db {
+            Some(req) => Some(super::git_db_link::verify_db(&docker, req).await?),
+            None => None,
+        };
+        if let Some(ref db) = verified {
+            labels.insert(super::git_db_link::LINK_DB_LABEL.to_string(), db.id.clone());
+        }
+        super::git_db_link::reconcile(&docker, name, verified.as_ref()).await?
+    } else {
+        None
+    };
+
     match existing {
         Some(Found { id: container_id, domain: existing_domain, host_port: existing_port, .. }) => {
             // Does the request still name the domain the running container was
@@ -881,6 +906,7 @@ pub async fn deploy_or_update(
                     old_port,
                     bg_domain,
                     &host_config,
+                    link_network.as_deref(),
                 )
                 .await;
             }
@@ -1002,6 +1028,7 @@ pub async fn deploy_or_update(
                 &labels,
                 &exposed_ports,
                 host_config,
+                link_network.as_deref(),
             )
             .await?;
 
@@ -1069,6 +1096,7 @@ pub async fn deploy_or_update(
                 &labels,
                 &exposed_ports,
                 host_config,
+                link_network.as_deref(),
             )
             .await?;
 
@@ -1313,6 +1341,16 @@ pub async fn cleanup_container(
         .ok();
 
     tracing::info!("Removed git container: {container_name}");
+
+    // A linked database's network goes with the deployment; the database
+    // itself is the operator's and is never touched here. `Deploy` only: the
+    // legacy preview space shares names with real deployments, and a preview
+    // is never linked (see `deploy_or_update`).
+    if scope == ownership::GitScope::Deploy
+        && let Err(e) = super::git_db_link::reconcile(&docker, name, None).await
+    {
+        tracing::warn!("Removed {container_name} but kept its link network: {e}");
+    }
 
     // The legacy preview space is shared with real deployments, so there a bare
     // name proves nothing once the container that would have vouched for it is gone.
@@ -1795,6 +1833,7 @@ async fn create_and_start(
     labels: &HashMap<String, String>,
     exposed_ports: &HashMap<String, HashMap<(), ()>>,
     host_config: bollard::service::HostConfig,
+    link_network: Option<&str>,
 ) -> Result<String, String> {
     let config = Config {
         image: Some(image_tag.to_string()),
@@ -1820,10 +1859,23 @@ async fn create_and_start(
         .await
         .map_err(|e| format!("Failed to create container: {e}"))?;
 
-    if let Err(e) = docker
-        .start_container(&container.id, None::<StartContainerOptions<String>>)
-        .await
-    {
+    // Attached between create and start, so the app's very first connection
+    // attempt already resolves `db`. A failure is treated exactly like a start
+    // failure: the container never ran, so it is removed with its volumes.
+    let attached = match link_network {
+        Some(network) => {
+            super::git_db_link::attach(docker, network, &container.id, None).await
+        }
+        None => Ok(()),
+    };
+    let started = match attached {
+        Ok(()) => docker
+            .start_container(&container.id, None::<StartContainerOptions<String>>)
+            .await
+            .map_err(|e| e.to_string()),
+        Err(e) => Err(e),
+    };
+    if let Err(e) = started {
         // Clean up orphaned container on start failure. The explicit `false` here
         // dated from this feature's first commit and carried no reason; it is the
         // same start-failure shape as the app and database teardowns, where the
@@ -1957,6 +2009,7 @@ async fn blue_green_update(
     old_port: u16,
     domain: &str,
     base_host_config: &bollard::service::HostConfig,
+    link_network: Option<&str>,
 ) -> Result<GitDeployResult, String> {
     let temp_port = crate::services::docker_apps::find_free_port()?;
     tracing::info!(
@@ -2019,6 +2072,19 @@ async fn blue_green_update(
         )
         .await
         .map_err(|e| format!("Failed to create blue container: {e}"))?;
+
+    // The stand-in joins the link network BEFORE it starts and before the
+    // health check, so a new build that cannot reach its database fails the
+    // swap while the old container is still serving - the whole point of
+    // blue-green. A linked database never blocks blue-green by itself: unlike
+    // a bind-mounted SQLite file it is a separate server built for concurrent
+    // clients (the volume guard in `deploy_or_update` is what decides that).
+    if let Some(network) = link_network
+        && let Err(e) = super::git_db_link::attach(docker, network, &new_container.id, None).await
+    {
+        cleanup_blue(docker, &new_container.id).await;
+        return Err(format!("Blue container could not reach its linked database: {e}"));
+    }
 
     // Start the blue container
     if let Err(e) = docker

@@ -367,6 +367,12 @@ async fn main() {
     // unit. No-op when the bytes already match, which is every panel box.
     tokio::spawn(services::agent_unit::heal_agent_unit());
 
+    // Re-attach Git Deploys to their linked databases. Docker keeps network
+    // attachments across restarts, so this is normally a no-op; it repairs a
+    // link network pruned by hand or a database recreated under a new id
+    // (the latter is logged and left for the next deploy to re-prove).
+    tokio::spawn(services::git_db_link::reattach_all());
+
     // --- import-hestia (05) ---
     // Work dirs of a site import killed with the previous process (W1-I).
     tokio::task::spawn_blocking(services::migration_files::sweep_stale_import_dirs);
