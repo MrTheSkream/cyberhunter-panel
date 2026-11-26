@@ -12,6 +12,7 @@ import { useAuth } from "../context/AuthContext";
 import { useFtpStatus } from "../components/FtpServerCard";
 import SiteConnectionMethods, { useSiteAccessInfo } from "../components/SiteConnectionMethods";
 import DiskUsageCard, { type DiskUsage } from "../components/DiskUsageCard";
+import SiteUpstreamCard from "../components/SiteUpstreamCard";
 import WebStatsSection from "../components/WebStatsSection";
 import { useServerIps, serverIpOptionLabel } from "../utils/serverIps";
 import {
@@ -31,6 +32,8 @@ interface Site {
   runtime: string;
   status: string;
   proxy_port: number | null;
+  /** Git Deploy whose host port this proxy site follows; null = its own port. */
+  git_deploy_id?: string | null;
   php_version: string | null;
   ssl_enabled: boolean;
   ssl_expiry: string | null;
@@ -2480,6 +2483,16 @@ export default function SiteDetail() {
             })()}
           </div>
         </div>
+      )}
+
+      {/* Upstream port, or the Git Deploy it follows (reverse proxy sites) */}
+      {site.runtime === "proxy" && (
+        <SiteUpstreamCard
+          siteId={site.id}
+          proxyPort={site.proxy_port}
+          gitDeployId={site.git_deploy_id}
+          onChange={(patch) => setSite(s => s ? { ...s, ...patch } : s)}
+        />
       )}
 
       {/* Disk usage and quota (07-ftp-quotas) */}
