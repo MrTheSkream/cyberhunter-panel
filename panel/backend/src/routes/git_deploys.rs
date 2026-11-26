@@ -2726,8 +2726,8 @@ fn spawn_deploy_task(
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
 
-            if let Some(reason) =
-                compose_deploy_refusal(&db, &agent, config.server_id, config.user_id, yaml).await
+            if let Some(reason) = crate::services::git_db_link::compose_refusal(config.database_id)
+                .or(compose_deploy_refusal(&db, &agent, config.server_id, config.user_id, yaml).await)
             {
                 emit(
                     "compose",
@@ -4036,8 +4036,8 @@ pub async fn trigger_deploy_task(
         let is_compose = compose_result.get("found").and_then(|v| v.as_bool()).unwrap_or(false);
         if is_compose {
             let yaml = compose_result.get("content").and_then(|v| v.as_str()).unwrap_or("");
-            if let Some(reason) =
-                compose_deploy_refusal(&db, &agent, config.server_id, config.user_id, yaml).await
+            if let Some(reason) = crate::services::git_db_link::compose_refusal(config.database_id)
+                .or(compose_deploy_refusal(&db, &agent, config.server_id, config.user_id, yaml).await)
             {
                 tracing::warn!("Git deploy {git_deploy_id}: compose refused: {reason}");
                 record_failed_history(

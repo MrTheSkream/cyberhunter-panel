@@ -196,6 +196,9 @@ hasnt "no SQL writes DATABASE_URL into git_deploys" "$BACKEND_FLAT" "DATABASE_UR
 has "the URL uses the engine's own port, not the host-published one" "$PANEL_FLAT" '("postgresql","5432","PG")'
 has "credentials in the URL are percent-encoded" "$PANEL_FLAT" 'urlencoding::encode(&link.password)'
 
+COMPOSE=$(printf '%s' "$BACKEND_FLAT" | grep -o 'git_db_link::compose_refusal(config.database_id)' | wc -l)
+if [ "$COMPOSE" -ge 2 ]; then ok "both compose doors refuse a linked deploy instead of running it unlinked ($COMPOSE)"; else bad "a compose door would run a linked deploy without its database ($COMPOSE)"; fi
+
 echo
 echo "§8 version skew: a link the agent did not confirm fails the deploy"
 CONF=$(printf '%s' "$BACKEND_FLAT" | grep -o 'git_db_link::require_confirmed(' | wc -l)
@@ -212,12 +215,12 @@ echo
 echo "§10 unit tests exist where a mistake would otherwise be silent"
 for t in only_a_network_labelled_for_this_deployment_is_ours a_relink_to_another_database_rebuilds_the_network \
          db_identity_requires_name_and_labels_to_agree only_this_deployment_and_its_database_may_stay_on_the_link \
-         request_shape_is_checked_before_docker_is_asked; do
+         request_shape_is_checked_before_docker_is_asked a_linked_app_resolves_db_and_unlink_removes_the_network; do
   has "agent unit test: $t" "$LINK_FLAT" "fn${t}("
 done
 for t in wire_shape_is_absent_keeps_empty_clears_value_sets postgres_url_uses_the_alias_and_the_engine_port_with_credentials_encoded \
          a_variable_the_user_set_is_never_overwritten a_link_the_agent_did_not_confirm_is_a_failure \
-         unlinkable_rows_are_refused_with_a_reason; do
+         unlinkable_rows_are_refused_with_a_reason a_compose_deploy_with_a_link_is_refused_not_run_unlinked; do
   has "panel unit test: $t" "$PANEL_FLAT" "fn${t}("
 done
 has "panel unit test: a_linked_database_reaches_the_agent_and_the_env_without_touching_the_column" "$BACKEND_FLAT" 'fna_linked_database_reaches_the_agent_and_the_env_without_touching_the_column('

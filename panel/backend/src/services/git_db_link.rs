@@ -41,7 +41,16 @@ pub(crate) struct LinkedDb {
 }
 
 /// `(id, name, engine, db_user, db_password_enc, container_id, kind, imported_hash)`
-type LinkRow = (Uuid, String, String, String, String, Option<String>, String, bool);
+type LinkRow = (
+    Uuid,
+    String,
+    String,
+    String,
+    String,
+    Option<String>,
+    String,
+    bool,
+);
 
 /// The one ownership predicate, shared by the save-time check and the
 /// deploy-time load so the two can never disagree.
@@ -93,11 +102,20 @@ fn refusal(row: &LinkRow) -> Option<String> {
              password under Databases, then link it."
         ));
     }
-    if container_id.as_deref().map(str::trim).filter(|c| !c.is_empty()).is_none() {
-        return Some(format!("{name} has no container recorded, so it cannot be linked."));
+    if container_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|c| !c.is_empty())
+        .is_none()
+    {
+        return Some(format!(
+            "{name} has no container recorded, so it cannot be linked."
+        ));
     }
     if !matches!(engine.as_str(), "postgres" | "mysql" | "mariadb") {
-        return Some(format!("{name} uses an engine ({engine}) that cannot be linked."));
+        return Some(format!(
+            "{name} uses an engine ({engine}) that cannot be linked."
+        ));
     }
     None
 }
@@ -235,7 +253,10 @@ pub(crate) fn confirmed(requested: bool, agent_response: &serde_json::Value) -> 
     if !requested {
         return Ok(());
     }
-    match agent_response.get("linked_db_network").and_then(|v| v.as_str()) {
+    match agent_response
+        .get("linked_db_network")
+        .and_then(|v| v.as_str())
+    {
         Some(n) if !n.is_empty() => Ok(()),
         _ => Err(
             "The container was deployed but its server's agent did not attach the linked \
@@ -244,6 +265,18 @@ pub(crate) fn confirmed(requested: bool, agent_response: &serde_json::Value) -> 
                 .to_string(),
         ),
     }
+}
+
+/// A compose-file deploy goes through the compose engine, not `/git/deploy`,
+/// so it would silently run WITHOUT the linked database. Refused instead, with
+/// the way out.
+pub(crate) fn compose_refusal(database_id: Option<Uuid>) -> Option<String> {
+    database_id.map(|_| {
+        "This deployment has a linked database, and its repository holds a compose file: a \
+         compose deploy does not attach linked databases. Remove the compose file (the \
+         Dockerfile build supports the link), or unlink the database."
+            .to_string()
+    })
 }
 
 /// [`confirmed`], applied to the agent call itself, so every deploy door turns
@@ -278,23 +311,36 @@ mod tests {
         assert_eq!(parse_change(Some("  ")), Ok(LinkChange::Clear));
         let id = Uuid::new_v4();
         assert_eq!(parse_change(Some(&id.to_string())), Ok(LinkChange::Set(id)));
-        assert!(parse_change(Some("not-a-uuid")).is_err(), "garbage must not read as unlink");
+        assert!(
+            parse_change(Some("not-a-uuid")).is_err(),
+            "garbage must not read as unlink"
+        );
     }
 
     #[test]
     fn postgres_url_uses_the_alias_and_the_engine_port_with_credentials_encoded() {
-        let env: HashMap<_, _> = injected_env(&link("postgres", "shop", "p@ss:w/rd")).into_iter().collect();
-        assert_eq!(env["DATABASE_URL"], "postgresql://shop:p%40ss%3Aw%2Frd@db:5432/shop");
+        let env: HashMap<_, _> = injected_env(&link("postgres", "shop", "p@ss:w/rd"))
+            .into_iter()
+            .collect();
+        assert_eq!(
+            env["DATABASE_URL"],
+            "postgresql://shop:p%40ss%3Aw%2Frd@db:5432/shop"
+        );
         assert_eq!(env["PGHOST"], "db");
         assert_eq!(env["PGPORT"], "5432");
-        assert_eq!(env["PGPASSWORD"], "p@ss:w/rd", "the discrete variable is NOT url-encoded");
+        assert_eq!(
+            env["PGPASSWORD"], "p@ss:w/rd",
+            "the discrete variable is NOT url-encoded"
+        );
         assert!(!env.contains_key("MYSQL_HOST"));
     }
 
     #[test]
     fn mysql_and_mariadb_get_a_mysql_url_on_3306() {
         for engine in ["mysql", "mariadb"] {
-            let env: HashMap<_, _> = injected_env(&link(engine, "shop", "x")).into_iter().collect();
+            let env: HashMap<_, _> = injected_env(&link(engine, "shop", "x"))
+                .into_iter()
+                .collect();
             assert_eq!(env["DATABASE_URL"], "mysql://shop:x@db:3306/shop");
             assert_eq!(env["MYSQL_HOST"], "db");
             assert!(!env.contains_key("PGHOST"));
@@ -306,30 +352,57 @@ mod tests {
         let mut env = serde_json::json!({ "DATABASE_URL": "postgres://mine", "DB_HOST": "" });
         merge_env(&mut env, &link("postgres", "shop", "secret"));
         assert_eq!(env["DATABASE_URL"], "postgres://mine");
-        assert_eq!(env["DB_HOST"], "", "an explicit empty value is still the user's choice");
+        assert_eq!(
+            env["DB_HOST"], "",
+            "an explicit empty value is still the user's choice"
+        );
         assert_eq!(env["PGPASSWORD"], "secret", "an absent key is filled in");
+    }
+
+    #[test]
+    fn a_compose_deploy_with_a_link_is_refused_not_run_unlinked() {
+        assert!(compose_refusal(None).is_none());
+        assert!(compose_refusal(Some(Uuid::new_v4())).is_some());
     }
 
     #[test]
     fn a_link_the_agent_did_not_confirm_is_a_failure() {
         assert!(confirmed(false, &serde_json::json!({})).is_ok());
         assert!(confirmed(true, &serde_json::json!({ "container_id": "x" })).is_err());
-        assert!(confirmed(true, &serde_json::json!({ "linked_db_network": "dockpanel-link-shop" })).is_ok());
+        assert!(
+            confirmed(
+                true,
+                &serde_json::json!({ "linked_db_network": "dockpanel-link-shop" })
+            )
+            .is_ok()
+        );
     }
 
     #[test]
     fn unlinkable_rows_are_refused_with_a_reason() {
         let base: LinkRow = (
-            Uuid::nil(), "shop".into(), "postgres".into(), "shop".into(), "enc".into(),
-            Some("abc".into()), "container".into(), false,
+            Uuid::nil(),
+            "shop".into(),
+            "postgres".into(),
+            "shop".into(),
+            "enc".into(),
+            Some("abc".into()),
+            "container".into(),
+            false,
         );
         assert!(refusal(&base).is_none());
         let mut local = base.clone();
         local.6 = "local".into();
-        assert!(refusal(&local).is_some(), "shared local MariaDB has no container to attach");
+        assert!(
+            refusal(&local).is_some(),
+            "shared local MariaDB has no container to attach"
+        );
         let mut hashed = base.clone();
         hashed.7 = true;
-        assert!(refusal(&hashed).is_some(), "an imported hash is not a usable password");
+        assert!(
+            refusal(&hashed).is_some(),
+            "an imported hash is not a usable password"
+        );
         let mut no_container = base.clone();
         no_container.5 = None;
         assert!(refusal(&no_container).is_some());

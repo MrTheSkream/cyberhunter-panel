@@ -37,9 +37,9 @@
 //! [`reattach_all`] reads at agent start to re-attach anything a daemon
 //! restart, a recreated network or a recreated database container dropped.
 
+use bollard::Docker;
 use bollard::container::ListContainersOptions;
 use bollard::network::{ConnectNetworkOptions, CreateNetworkOptions, DisconnectNetworkOptions};
-use bollard::Docker;
 use std::collections::HashMap;
 
 /// The name the linked database answers to on the link network.
@@ -77,7 +77,10 @@ pub fn validate_request(req: &LinkedDbRequest) -> Result<(), &'static str> {
     }
     let name_ok = !req.name.is_empty()
         && req.name.len() <= 63
-        && req.name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+        && req
+            .name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
     if !name_ok {
         return Err("Invalid linked_db.name");
     }
@@ -106,7 +109,10 @@ pub fn network_is_ours(labels: Option<&HashMap<String, String>>, name: &str) -> 
 
 /// Does the existing link network point at another database than `db_id`?
 pub fn points_elsewhere(labels: Option<&HashMap<String, String>>, db_id: &str) -> bool {
-    labels.and_then(|l| l.get(LINK_DB_LABEL)).map(String::as_str) != Some(db_id)
+    labels
+        .and_then(|l| l.get(LINK_DB_LABEL))
+        .map(String::as_str)
+        != Some(db_id)
 }
 
 /// Is the container `(container_name, labels)` the managed database `db_name`?
@@ -167,13 +173,16 @@ pub struct VerifiedDb {
 
 /// Prove the requested container is the managed database the panel named.
 pub async fn verify_db(docker: &Docker, req: &LinkedDbRequest) -> Result<VerifiedDb, String> {
-    let info = docker.inspect_container(&req.container_id, None).await.map_err(|e| {
-        format!(
-            "The linked database dockpanel-db-{} is not on this server ({e}). Nothing was \
+    let info = docker
+        .inspect_container(&req.container_id, None)
+        .await
+        .map_err(|e| {
+            format!(
+                "The linked database dockpanel-db-{} is not on this server ({e}). Nothing was \
              changed. Check it under Databases, or unlink it from this deployment.",
-            req.name
-        )
-    })?;
+                req.name
+            )
+        })?;
     verify_db_identity(
         info.name.as_deref().unwrap_or_default(),
         info.config.as_ref().and_then(|c| c.labels.as_ref()),
@@ -212,7 +221,13 @@ pub async fn attach(
         ..Default::default()
     };
     docker
-        .connect_network(network, ConnectNetworkOptions { container, endpoint_config })
+        .connect_network(
+            network,
+            ConnectNetworkOptions {
+                container,
+                endpoint_config,
+            },
+        )
         .await
         .map_err(|e| format!("Failed to attach {container} to {network}: {e}"))
 }
@@ -221,7 +236,13 @@ pub async fn attach(
 async fn remove_network(docker: &Docker, network: &str, attached: &[String]) -> Result<(), String> {
     for cid in attached {
         let _ = docker
-            .disconnect_network(network, DisconnectNetworkOptions { container: cid.as_str(), force: true })
+            .disconnect_network(
+                network,
+                DisconnectNetworkOptions {
+                    container: cid.as_str(),
+                    force: true,
+                },
+            )
             .await;
     }
     docker
@@ -239,7 +260,12 @@ fn attached_ids(net: &bollard::models::Network) -> Vec<String> {
         .unwrap_or_default()
 }
 
-async fn create_network(docker: &Docker, network: &str, name: &str, db_id: &str) -> Result<(), String> {
+async fn create_network(
+    docker: &Docker,
+    network: &str,
+    name: &str,
+    db_id: &str,
+) -> Result<(), String> {
     let labels = network_labels(name, db_id);
     docker
         .create_network(CreateNetworkOptions {
@@ -314,9 +340,17 @@ pub async fn reconcile(
                     .and_then(|c| c.config)
                     .and_then(|c| c.labels);
                 if !may_stay(&cid, labels.as_ref(), name, Some(&db.id)) {
-                    tracing::warn!("Disconnecting stray container {cid} from link network {network}");
+                    tracing::warn!(
+                        "Disconnecting stray container {cid} from link network {network}"
+                    );
                     let _ = docker
-                        .disconnect_network(&network, DisconnectNetworkOptions { container: cid.as_str(), force: true })
+                        .disconnect_network(
+                            &network,
+                            DisconnectNetworkOptions {
+                                container: cid.as_str(),
+                                force: true,
+                            },
+                        )
                         .await;
                 }
             }
@@ -341,7 +375,10 @@ pub async fn release_for_database(docker: &Docker, db_container_id: &str) {
         .and_then(|ns| ns.networks)
         .map(|n| n.keys().cloned().collect())
         .unwrap_or_default();
-    for network in nets.into_iter().filter(|n| n.starts_with("dockpanel-link-")) {
+    for network in nets
+        .into_iter()
+        .filter(|n| n.starts_with("dockpanel-link-"))
+    {
         let Ok(net) = docker.inspect_network::<String>(&network, None).await else {
             continue;
         };
@@ -370,13 +407,19 @@ pub async fn reattach_all() {
     };
     let filters = HashMap::from([("label", vec![LINK_DB_LABEL])]);
     let Ok(apps) = docker
-        .list_containers(Some(ListContainersOptions { all: true, filters, ..Default::default() }))
+        .list_containers(Some(ListContainersOptions {
+            all: true,
+            filters,
+            ..Default::default()
+        }))
         .await
     else {
         return;
     };
     for app in apps {
-        let Some(labels) = app.labels.as_ref() else { continue };
+        let Some(labels) = app.labels.as_ref() else {
+            continue;
+        };
         let (Some(name), Some(db_id), Some(app_id)) = (
             labels.get("dockpanel.git.name"),
             labels.get(LINK_DB_LABEL),
@@ -384,7 +427,11 @@ pub async fn reattach_all() {
         ) else {
             continue;
         };
-        if labels.get(super::ownership::GIT_KIND_LABEL).map(String::as_str) != Some("deploy") {
+        if labels
+            .get(super::ownership::GIT_KIND_LABEL)
+            .map(String::as_str)
+            != Some("deploy")
+        {
             continue; // a preview is never linked; never act on one that claims to be
         }
         let db_name = match docker.inspect_container(db_id, None).await {
@@ -401,10 +448,15 @@ pub async fn reattach_all() {
             );
             continue;
         };
-        let req = LinkedDbRequest { container_id: db_id.clone(), name: db_name };
+        let req = LinkedDbRequest {
+            container_id: db_id.clone(),
+            name: db_name,
+        };
         let result = async {
             let db = verify_db(&docker, &req).await?;
-            let network = reconcile(&docker, name, Some(&db)).await?.unwrap_or_default();
+            let network = reconcile(&docker, name, Some(&db))
+                .await?
+                .unwrap_or_default();
             attach(&docker, &network, app_id, None).await
         }
         .await;
@@ -419,7 +471,10 @@ mod tests {
     use super::*;
 
     fn labels(pairs: &[(&str, &str)]) -> HashMap<String, String> {
-        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
     }
 
     #[test]
@@ -432,10 +487,19 @@ mod tests {
     fn only_a_network_labelled_for_this_deployment_is_ours() {
         let ours = network_labels("shop", "abc");
         assert!(network_is_ours(Some(&ours), "shop"));
-        assert!(!network_is_ours(Some(&ours), "shop-2"), "another deployment's network");
-        assert!(!network_is_ours(None, "shop"), "an unlabelled network is nobody's to remove");
+        assert!(
+            !network_is_ours(Some(&ours), "shop-2"),
+            "another deployment's network"
+        );
+        assert!(
+            !network_is_ours(None, "shop"),
+            "an unlabelled network is nobody's to remove"
+        );
         let unmanaged = labels(&[(LINK_LABEL, "shop")]);
-        assert!(!network_is_ours(Some(&unmanaged), "shop"), "managed=true is required too");
+        assert!(
+            !network_is_ours(Some(&unmanaged), "shop"),
+            "managed=true is required too"
+        );
     }
 
     #[test]
@@ -448,14 +512,20 @@ mod tests {
 
     #[test]
     fn db_identity_requires_name_and_labels_to_agree() {
-        let good = labels(&[("dockpanel.managed", "true"), ("dockpanel.db.name", "shopdb")]);
+        let good = labels(&[
+            ("dockpanel.managed", "true"),
+            ("dockpanel.db.name", "shopdb"),
+        ]);
         assert!(verify_db_identity("/dockpanel-db-shopdb", Some(&good), "shopdb").is_ok());
         // An id the panel holds that now names another container.
         assert!(verify_db_identity("/dockpanel-git-shop", Some(&good), "shopdb").is_err());
         // Right name, but not one of ours.
         let stranger = labels(&[("dockpanel.db.name", "shopdb")]);
         assert!(verify_db_identity("/dockpanel-db-shopdb", Some(&stranger), "shopdb").is_err());
-        let other_db = labels(&[("dockpanel.managed", "true"), ("dockpanel.db.name", "other")]);
+        let other_db = labels(&[
+            ("dockpanel.managed", "true"),
+            ("dockpanel.db.name", "other"),
+        ]);
         assert!(verify_db_identity("/dockpanel-db-shopdb", Some(&other_db), "shopdb").is_err());
         assert!(verify_db_identity("/dockpanel-db-shopdb", None, "shopdb").is_err());
     }
@@ -468,7 +538,10 @@ mod tests {
             (crate::services::ownership::GIT_KIND_LABEL, "deploy"),
         ]);
         assert!(may_stay("c1", Some(&app), "shop", Some("dbid")));
-        assert!(may_stay("dbid", None, "shop", Some("dbid")), "the linked database itself");
+        assert!(
+            may_stay("dbid", None, "shop", Some("dbid")),
+            "the linked database itself"
+        );
         // Another tenant's app, another deployment's app, a preview, a stranger.
         let other = labels(&[
             ("dockpanel.type", "git"),
@@ -481,20 +554,205 @@ mod tests {
             ("dockpanel.git.name", "shop"),
             (crate::services::ownership::GIT_KIND_LABEL, "preview"),
         ]);
-        assert!(!may_stay("c3", Some(&preview), "shop", Some("dbid")), "a preview never joins");
+        assert!(
+            !may_stay("c3", Some(&preview), "shop", Some("dbid")),
+            "a preview never joins"
+        );
         assert!(!may_stay("c4", None, "shop", Some("dbid")));
-        assert!(!may_stay("otherdb", None, "shop", Some("dbid")), "a second database");
+        assert!(
+            !may_stay("otherdb", None, "shop", Some("dbid")),
+            "a second database"
+        );
+    }
+
+    /// The whole link, against a REAL Docker daemon, through the same bollard
+    /// calls a deploy makes: a managed-looking DB, a created-but-not-started app
+    /// attached before start (the `create_and_start` order), `db` resolving from
+    /// the app, a stranger evicted on reconcile, and `reconcile(None)` removing
+    /// the network. Disposable names only (`dockpanel-db-lnkdbtest*`,
+    /// `dockpanel-link-lnkdbtest*`), all removed whatever the outcome.
+    #[tokio::test]
+    #[ignore = "creates real containers and a real network; run with cargo test -p dockpanel-agent git_db_link -- --ignored --nocapture"]
+    async fn a_linked_app_resolves_db_and_unlink_removes_the_network() {
+        use bollard::container::{Config, CreateContainerOptions, RemoveContainerOptions};
+        use bollard::exec::{CreateExecOptions, StartExecResults};
+        use tokio_stream::StreamExt;
+
+        let docker = Docker::connect_with_local_defaults().expect("docker connect");
+        let tag = uuid::Uuid::new_v4().simple().to_string()[..10].to_string();
+        let db_name = format!("lnkdbtest{tag}");
+        let deploy = format!("lnkdbtest-{tag}");
+        let db_container = format!("dockpanel-db-{db_name}");
+        let app_container = format!("dockpanel-git-{deploy}");
+        let stranger = format!("lnkdbtest-stranger-{tag}");
+
+        let mk = |labels: HashMap<String, String>| Config {
+            image: Some("alpine:latest".to_string()),
+            cmd: Some(vec!["sleep".to_string(), "120".to_string()]),
+            labels: Some(labels),
+            ..Default::default()
+        };
+        let db_labels = labels(&[
+            ("dockpanel.managed", "true"),
+            ("dockpanel.db.name", &db_name),
+        ]);
+        let app_labels = labels(&[
+            ("dockpanel.managed", "true"),
+            ("dockpanel.type", "git"),
+            ("dockpanel.git.name", &deploy),
+            (crate::services::ownership::GIT_KIND_LABEL, "deploy"),
+        ]);
+
+        let result = async {
+            let db = docker
+                .create_container(
+                    Some(CreateContainerOptions {
+                        name: db_container.as_str(),
+                        platform: None,
+                    }),
+                    mk(db_labels),
+                )
+                .await
+                .map_err(|e| format!("create db: {e}"))?;
+            docker
+                .start_container::<String>(&db.id, None)
+                .await
+                .map_err(|e| e.to_string())?;
+
+            let req = LinkedDbRequest {
+                container_id: db.id.clone(),
+                name: db_name.clone(),
+            };
+            let verified = verify_db(&docker, &req).await?;
+            let network = reconcile(&docker, &deploy, Some(&verified))
+                .await?
+                .ok_or_else(|| "no network".to_string())?;
+            let net = docker
+                .inspect_network::<String>(&network, None)
+                .await
+                .map_err(|e| e.to_string())?;
+            if net.internal != Some(true) {
+                return Err("link network is not internal".to_string());
+            }
+
+            // create -> attach -> start, as create_and_start does.
+            let app = docker
+                .create_container(
+                    Some(CreateContainerOptions {
+                        name: app_container.as_str(),
+                        platform: None,
+                    }),
+                    mk(app_labels),
+                )
+                .await
+                .map_err(|e| format!("create app: {e}"))?;
+            attach(&docker, &network, &app.id, None).await?;
+            attach(&docker, &network, &app.id, None).await?; // idempotent
+            docker
+                .start_container::<String>(&app.id, None)
+                .await
+                .map_err(|e| e.to_string())?;
+
+            let exec = docker
+                .create_exec(
+                    &app.id,
+                    CreateExecOptions {
+                        cmd: Some(vec!["nslookup", "db"]),
+                        attach_stdout: Some(true),
+                        attach_stderr: Some(true),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .map_err(|e| e.to_string())?;
+            if let StartExecResults::Attached { mut output, .. } = docker
+                .start_exec(&exec.id, None)
+                .await
+                .map_err(|e| e.to_string())?
+            {
+                while output.next().await.is_some() {}
+            }
+            let code = docker
+                .inspect_exec(&exec.id)
+                .await
+                .map_err(|e| e.to_string())?
+                .exit_code;
+            if code != Some(0) {
+                return Err(format!("`db` did not resolve from the app (exit {code:?})"));
+            }
+
+            // A container that does not belong is evicted on the next reconcile.
+            let s = docker
+                .create_container(
+                    Some(CreateContainerOptions {
+                        name: stranger.as_str(),
+                        platform: None,
+                    }),
+                    mk(HashMap::new()),
+                )
+                .await
+                .map_err(|e| e.to_string())?;
+            attach(&docker, &network, &s.id, None).await?;
+            reconcile(&docker, &deploy, Some(&verified)).await?;
+            if is_attached(&docker, &s.id, &network).await {
+                return Err("a stranger stayed on the link network".to_string());
+            }
+            if !is_attached(&docker, &app.id, &network).await
+                || !is_attached(&docker, &db.id, &network).await
+            {
+                return Err("reconcile evicted a legitimate member".to_string());
+            }
+
+            // Unlink removes the network.
+            reconcile(&docker, &deploy, None).await?;
+            if docker
+                .inspect_network::<String>(&network, None)
+                .await
+                .is_ok()
+            {
+                return Err("unlink left the network behind".to_string());
+            }
+            Ok::<(), String>(())
+        }
+        .await;
+
+        for c in [&app_container, &db_container, &stranger] {
+            let _ = docker
+                .remove_container(
+                    c,
+                    Some(RemoveContainerOptions {
+                        v: true,
+                        force: true,
+                        ..Default::default()
+                    }),
+                )
+                .await;
+        }
+        let _ = docker.remove_network(&link_network_name(&deploy)).await;
+        result.expect("linked database drill");
     }
 
     #[test]
     fn request_shape_is_checked_before_docker_is_asked() {
-        let ok = LinkedDbRequest { container_id: "a".repeat(64), name: "shop_db".into() };
+        let ok = LinkedDbRequest {
+            container_id: "a".repeat(64),
+            name: "shop_db".into(),
+        };
         assert!(validate_request(&ok).is_ok());
-        let bad_id = LinkedDbRequest { container_id: "../../x".into(), name: "shop".into() };
+        let bad_id = LinkedDbRequest {
+            container_id: "../../x".into(),
+            name: "shop".into(),
+        };
         assert!(validate_request(&bad_id).is_err());
-        let bad_name = LinkedDbRequest { container_id: "a".repeat(12), name: "x; rm".into() };
+        let bad_name = LinkedDbRequest {
+            container_id: "a".repeat(12),
+            name: "x; rm".into(),
+        };
         assert!(validate_request(&bad_name).is_err());
-        let empty = LinkedDbRequest { container_id: "a".repeat(12), name: String::new() };
+        let empty = LinkedDbRequest {
+            container_id: "a".repeat(12),
+            name: String::new(),
+        };
         assert!(validate_request(&empty).is_err());
     }
 }
