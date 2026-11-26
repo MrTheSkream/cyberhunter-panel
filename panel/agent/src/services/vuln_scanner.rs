@@ -126,6 +126,8 @@ const FINGERPRINT_NAMES: [&str; 15] = [
 
 static INVENTORY_LOCK: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::sync::Mutex::new(()));
 static DB_LOCK: LazyLock<tokio::sync::RwLock<()>> = LazyLock::new(|| tokio::sync::RwLock::new(()));
+/// One security-scan container pass at a time ([`grype_scan_images`]).
+static CONTAINER_SCAN_LOCK: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::sync::Mutex::new(()));
 
 // ---------------------------------------------------------------------------
 // Transient unit
@@ -218,11 +220,13 @@ async fn grype_report_locked(image: &str, extra: &[&str], timeout: Duration) -> 
 /// space gated, swept), and no database at all is an error that says so: the
 /// deploy gate treats it as "scanner unavailable" and goes on.
 ///
+/// `timeout` bounds the whole call, lock wait and database probe included.
 /// The run is a task of its own, so the lock, the unit and the report cleanup
 /// finish even when the request that asked is dropped.
 pub async fn grype_image_report(image: &str, timeout: Duration) -> Result<String, String> {
     let image = image.to_string();
     tokio::spawn(async move {
+        let started = std::time::Instant::now();
         let _db = tokio::time::timeout(DB_READ_WAIT, DB_LOCK.read())
             .await
             .map_err(|_| "the vulnerability database is being updated, scan again in a few minutes".to_string())?;
@@ -237,7 +241,11 @@ pub async fn grype_image_report(image: &str, timeout: Duration) -> Result<String
             }
             Some(_) => {}
         }
-        grype_report_locked(&image, &[], timeout).await
+        let left = timeout.saturating_sub(started.elapsed());
+        if left < Duration::from_secs(10) {
+            return Err(format!("grype scan timed out after {}s", timeout.as_secs()));
+        }
+        grype_report_locked(&image, &[], left).await
     })
     .await
     .unwrap_or_else(|e| Err(format!("grype task failed: {e}")))
@@ -275,14 +283,20 @@ pub async fn syft_image_sbom(image: &str, timeout: Duration) -> Result<String, S
 /// `--only-fixed`, never downloading. `Err` for the whole call means grype is
 /// not usable right now (no database, db update running): the caller falls
 /// back as it does without grype. Each image gets `per_image`, and the images
-/// left once `budget` is spent are reported as skipped. A task of its own,
-/// like [`grype_image_report`].
+/// left once `budget` is spent (lock wait and database probe included) are
+/// reported as skipped. A task of its own, like [`grype_image_report`], and
+/// one at a time: a manual scan the panel stopped waiting for keeps running
+/// here, and a second click must not start a second pass beside it.
 pub async fn grype_scan_images(
     images: Vec<String>,
     per_image: Duration,
     budget: Duration,
 ) -> Result<Vec<(String, Result<String, String>)>, String> {
     tokio::spawn(async move {
+        let started = std::time::Instant::now();
+        let _one = CONTAINER_SCAN_LOCK
+            .try_lock()
+            .map_err(|_| "a container vulnerability scan is already running".to_string())?;
         let _db = tokio::time::timeout(DB_READ_WAIT, DB_LOCK.read())
             .await
             .map_err(|_| "vulnerability database update in progress".to_string())?;
@@ -290,7 +304,6 @@ pub async fn grype_scan_images(
         if db_status().await.is_none() {
             return Err("no vulnerability database (the CVE scanner's daily update installs it)".into());
         }
-        let started = std::time::Instant::now();
         let mut out = Vec::with_capacity(images.len());
         for image in images {
             let left = budget.saturating_sub(started.elapsed());
@@ -329,12 +342,12 @@ pub const TMP_IDLE: Duration = Duration::from_secs(2 * 3600);
 fn newest_mtime(path: &Path) -> Option<std::time::SystemTime> {
     let meta = std::fs::symlink_metadata(path).ok()?;
     let mut newest = meta.modified().ok()?;
-    if meta.is_dir() {
-        if let Ok(rd) = std::fs::read_dir(path) {
-            for e in rd.flatten() {
-                if let Some(t) = newest_mtime(&e.path()) {
-                    newest = newest.max(t);
-                }
+    if meta.is_dir()
+        && let Ok(rd) = std::fs::read_dir(path)
+    {
+        for e in rd.flatten() {
+            if let Some(t) = newest_mtime(&e.path()) {
+                newest = newest.max(t);
             }
         }
     }
@@ -528,7 +541,7 @@ async fn run_db_update() -> Result<serde_json::Value, String> {
         return Err("grype is not installed".into());
     }
     // Callers hold DB_LOCK for writing: no download of this process is running.
-    sweep_scanner_leftovers();
+    let _ = tokio::task::spawn_blocking(sweep_scanner_leftovers).await;
     let before = db_status().await;
     let out = scanner_command(image_scanner::GRYPE_BIN, true)
         .args(["db", "update"])
@@ -536,7 +549,7 @@ async fn run_db_update() -> Result<serde_json::Value, String> {
         .await;
     // What an update stopped half way leaves is taken by a later sweep, once
     // idle for DB_DOWNLOAD_IDLE (its unit may still be stopping right now).
-    sweep_scanner_leftovers();
+    let _ = tokio::task::spawn_blocking(sweep_scanner_leftovers).await;
     let out = out?;
     if !out.status.success() {
         return Err(format!("grype db update failed: {}", stderr_tail(&out, 400)));

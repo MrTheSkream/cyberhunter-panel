@@ -397,11 +397,13 @@ async fn scan_ssl_expiry() -> Vec<Finding> {
     findings
 }
 
-/// Grype's time for one image in the container check, and for all of them.
-/// The scheduled scan waits `SECURITY_SCAN_TIMEOUT_SECS` (backend) for the
-/// whole scan, which stays above this budget plus the database lock wait.
+/// Grype's time for one image in the container check, and for all of them
+/// (database lock wait and probe included). The whole check, docker scout
+/// fallback included, stops at `CONTAINER_STAGE_DEADLINE`: the scheduled scan
+/// waits `SECURITY_SCAN_TIMEOUT_SECS` (backend, 1200 s), above it.
 const CONTAINER_SCAN_PER_IMAGE: std::time::Duration = std::time::Duration::from_secs(180);
 const CONTAINER_SCAN_BUDGET: std::time::Duration = std::time::Duration::from_secs(600);
+const CONTAINER_STAGE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(900);
 
 /// The `container_vuln` finding of one image's grype JSON report
 /// (`--only-fixed`): one finding when it has a critical or high match.
@@ -433,6 +435,7 @@ fn container_finding_from_grype(image: &str, report: &str) -> Option<Finding> {
 /// Scan Docker images for known vulnerabilities.
 /// Tries `grype` first (if installed), falls back to `docker scout` (if available).
 async fn scan_container_vulnerabilities() -> Vec<Finding> {
+    let deadline = tokio::time::Instant::now() + CONTAINER_STAGE_DEADLINE;
     let docker = match bollard::Docker::connect_with_local_defaults() {
         Ok(d) => d,
         Err(_) => return Vec::new(),
@@ -458,10 +461,10 @@ async fn scan_container_vulnerabilities() -> Vec<Finding> {
     // Each image once, in container order.
     let mut images: Vec<String> = Vec::new();
     for container in &containers {
-        if let Some(img) = &container.image {
-            if !images.contains(img) {
-                images.push(img.clone());
-            }
+        if let Some(img) = &container.image
+            && !images.contains(img)
+        {
+            images.push(img.clone());
         }
     }
 
@@ -502,9 +505,13 @@ async fn scan_container_vulnerabilities() -> Vec<Finding> {
             continue; // grype worked, skip docker scout
         }
 
-        // Fallback: docker scout (simpler output)
+        // Fallback: docker scout (simpler output), while the stage has time.
+        let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if left < std::time::Duration::from_secs(5) {
+            continue;
+        }
         let scout_result = tokio::time::timeout(
-            std::time::Duration::from_secs(120),
+            left.min(std::time::Duration::from_secs(120)),
             safe_command("docker")
                 .args(["scout", "quickview", image.as_str()])
                 .output(),
