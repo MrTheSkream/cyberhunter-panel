@@ -203,6 +203,14 @@ impl UnsandboxedCommand {
         self
     }
 
+    /// The `systemd-run` argv built so far, so other modules' tests can check
+    /// the environment and properties a command really gets. (Not a
+    /// `#[cfg(test)]` item: pin suites read this file up to the first one.)
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn argv_strings(&self) -> Vec<String> {
+        self.argv.iter().map(|s| s.to_string_lossy().into_owned()).collect()
+    }
+
     /// Run to completion, returning the inner command's status and output.
     pub async fn output(&mut self) -> std::io::Result<std::process::Output> {
         let cap = Capture::new()?;

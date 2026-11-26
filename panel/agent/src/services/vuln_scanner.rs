@@ -14,8 +14,17 @@
 //! `vuln_inventory`, `vuln_match`, key `"server"`), polled through
 //! `GET /jobs/{job_id}`. Same kind while one is running returns the running
 //! job's id. Across kinds, two async locks serialize the work: inventory takes
-//! [`INVENTORY_LOCK`], match and db update take [`DB_LOCK`], install takes both
-//! (in that order) so binaries are never replaced under a running scan.
+//! [`INVENTORY_LOCK`], install takes it and then [`DB_LOCK`] for writing, so
+//! binaries are never replaced under a running scan. [`DB_LOCK`] is a
+//! read/write lock over the grype database cache: `grype db update` (the only
+//! run allowed to download, see [`scanner_env`]) writes, every grype run that
+//! reads the database (match, image report, the security scan's container
+//! check) reads. A run that reads the database never downloads one.
+//!
+//! `grype db update` downloads into `grype-db-download*` under the cache before
+//! it moves the database into place. A run killed half way (timeout, agent
+//! restart) leaves that dir behind, 3.4 GB each time: [`sweep_scanner_leftovers`]
+//! removes the abandoned ones at agent startup and around every db update.
 
 use crate::safe_cmd::{safe_command_unsandboxed, UnsandboxedCommand};
 use crate::services::migration_jobs::{self, JobHandle};
@@ -116,7 +125,7 @@ const FINGERPRINT_NAMES: [&str; 15] = [
 ];
 
 static INVENTORY_LOCK: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::sync::Mutex::new(()));
-static DB_LOCK: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::sync::Mutex::new(()));
+static DB_LOCK: LazyLock<tokio::sync::RwLock<()>> = LazyLock::new(|| tokio::sync::RwLock::new(()));
 
 // ---------------------------------------------------------------------------
 // Transient unit
@@ -141,7 +150,8 @@ pub fn scanner_env(auto_update: bool) -> Vec<(&'static str, &'static str)> {
 }
 
 /// A scanner command in its own transient unit, capped and deprioritized.
-fn scanner_command(binary: &str, auto_update: bool) -> UnsandboxedCommand {
+/// Also the syft of `sbom_scanner::generate_sbom`.
+pub(crate) fn scanner_command(binary: &str, auto_update: bool) -> UnsandboxedCommand {
     let mut cmd = safe_command_unsandboxed(binary, &scanner_env(auto_update));
     for p in SCANNER_PROPERTIES {
         cmd.property(p);
@@ -149,25 +159,42 @@ fn scanner_command(binary: &str, auto_update: bool) -> UnsandboxedCommand {
     cmd
 }
 
-/// Raw grype JSON report of one image (`image_scanner::scan_image`, which the
-/// deploy gate calls on every armed Git deploy), run in the same capped
-/// transient unit as every other scanner run: inside the agent's own 512M
-/// cgroup, loading the 3.3 GiB database pinned the agent at its memory limit
-/// (lab, 2026-11-20). Database auto update stays on, as before, so a server
-/// that only uses image scanning still refreshes its database. The report is
-/// written to a file, never read from stdout; the unit is stopped on timeout.
-pub async fn grype_image_report(image: &str, timeout: Duration) -> Result<String, String> {
-    ensure_dirs()?;
+/// How long a grype run that reads the database waits for [`DB_LOCK`]. A db
+/// update holds it for minutes: past this the run is skipped, never queued.
+pub const DB_READ_WAIT: Duration = Duration::from_secs(30);
+
+/// A database older than this (its `built` date) gets a db update started in
+/// the background by the image report. The daily vuln sweeper normally keeps it
+/// fresh; this keeps a server that only uses the image scanner (sweeper off)
+/// refreshing its database, as grype's own auto update used to.
+const IMAGE_DB_REFRESH_HOURS: i64 = 48;
+
+/// Whether a database built at `built` (RFC 3339) is due a refresh. An
+/// unreadable date is not: the update would then start on every scan.
+pub fn db_refresh_due(built: &str, now: chrono::DateTime<chrono::Utc>) -> bool {
+    match chrono::DateTime::parse_from_rfc3339(built.trim()) {
+        Ok(t) => now.signed_duration_since(t.with_timezone(&chrono::Utc)) > chrono::Duration::hours(IMAGE_DB_REFRESH_HOURS),
+        Err(_) => false,
+    }
+}
+
+/// The grype run of an image report and of the security scan's container
+/// check: auto update off, report written to `out`. The security scan used to
+/// run grype with `GRYPE_DB_CACHE_DIR` alone, so grype downloaded a fresh
+/// 3.4 GB database on every scan, past the backend's 60 s, and left it behind
+/// in `grype-db-download*` (v3.1.0-rc.4, 2026-11-25).
+pub(crate) fn grype_read_command(image: &str, out: &Path, extra: &[&str]) -> UnsandboxedCommand {
+    let mut cmd = scanner_command(image_scanner::GRYPE_BIN, false);
+    cmd.args([image.to_string(), "-o".to_string(), format!("json={}", out.display()), "-q".to_string()]);
+    cmd.args(extra);
+    cmd
+}
+
+/// One grype report of `image`, written to a file by grype and read back,
+/// with auto update off. The caller holds [`DB_LOCK`] for reading.
+async fn grype_report_locked(image: &str, extra: &[&str], timeout: Duration) -> Result<String, String> {
     let out = Path::new(TMP_DIR).join(format!("image-{}.json", uuid::Uuid::new_v4()));
-    let res = scanner_command(image_scanner::GRYPE_BIN, true)
-        .args([
-            image.to_string(),
-            "-o".to_string(),
-            format!("json={}", out.display()),
-            "-q".to_string(),
-        ])
-        .output_with_timeout(timeout)
-        .await;
+    let res = grype_read_command(image, &out, extra).output_with_timeout(timeout).await;
     let report = match res {
         Err(e) => Err(e),
         Ok(r) if !r.status.success() => Err(format!("grype scan failed: {}", stderr_tail(&r, 400))),
@@ -177,6 +204,193 @@ pub async fn grype_image_report(image: &str, timeout: Duration) -> Result<String
     };
     let _ = std::fs::remove_file(&out);
     report
+}
+
+/// Raw grype JSON report of one image (`image_scanner::scan_image`, which the
+/// deploy gate calls on every armed Git deploy), in the same capped transient
+/// unit as every other scanner run: inside the agent's own 512M cgroup, loading
+/// the 3.3 GiB database pinned the agent at its memory limit (lab, 2026-11-20).
+///
+/// It never downloads. With grype's auto update on, as it used to be, a 180 s
+/// scan that started a 3.4 GB download was stopped half way, left the download
+/// behind and raced a db update outside [`DB_LOCK`]. Instead no database, or
+/// one built more than 48 h ago, starts the `vuln_db_update` job (locked, free
+/// space gated, swept), and no database at all is an error that says so: the
+/// deploy gate treats it as "scanner unavailable" and goes on.
+///
+/// The run is a task of its own, so the lock, the unit and the report cleanup
+/// finish even when the request that asked is dropped.
+pub async fn grype_image_report(image: &str, timeout: Duration) -> Result<String, String> {
+    let image = image.to_string();
+    tokio::spawn(async move {
+        let _db = tokio::time::timeout(DB_READ_WAIT, DB_LOCK.read())
+            .await
+            .map_err(|_| "the vulnerability database is being updated, scan again in a few minutes".to_string())?;
+        ensure_dirs()?;
+        match db_status().await {
+            None => {
+                start_db_update();
+                return Err("no vulnerability database yet: an update was started, scan again in a few minutes".into());
+            }
+            Some(db) if db_refresh_due(&db.built, chrono::Utc::now()) => {
+                start_db_update();
+            }
+            Some(_) => {}
+        }
+        grype_report_locked(&image, &[], timeout).await
+    })
+    .await
+    .unwrap_or_else(|e| Err(format!("grype task failed: {e}")))
+}
+
+/// SPDX JSON SBOM of one image (`sbom_scanner::generate_sbom`), written to a
+/// file by syft in the scanners' transient unit. It ran in the agent's own
+/// cgroup with no HOME or TMPDIR of its own, so the layers syft unpacks for an
+/// image landed in the agent's /tmp and stayed there when the 180 s timeout
+/// killed it. A task of its own, like [`grype_image_report`].
+pub async fn syft_image_sbom(image: &str, timeout: Duration) -> Result<String, String> {
+    let image = image.to_string();
+    tokio::spawn(async move {
+        ensure_dirs()?;
+        let out = Path::new(TMP_DIR).join(format!("sbom-{}.spdx.json", uuid::Uuid::new_v4()));
+        let res = scanner_command(sbom_scanner::SYFT_BIN, false)
+            .args([image, "-o".to_string(), format!("spdx-json={}", out.display()), "-q".to_string()])
+            .output_with_timeout(timeout)
+            .await;
+        let sbom = match res {
+            Err(e) => Err(e),
+            Ok(r) if !r.status.success() => Err(format!("syft failed: {}", stderr_tail(&r, 400))),
+            Ok(_) => tokio::fs::read_to_string(&out)
+                .await
+                .map_err(|e| format!("read syft output: {e}")),
+        };
+        let _ = std::fs::remove_file(&out);
+        sbom
+    })
+    .await
+    .unwrap_or_else(|e| Err(format!("syft task failed: {e}")))
+}
+
+/// Grype reports of several images for the security scan's container check,
+/// `--only-fixed`, never downloading. `Err` for the whole call means grype is
+/// not usable right now (no database, db update running): the caller falls
+/// back as it does without grype. Each image gets `per_image`, and the images
+/// left once `budget` is spent are reported as skipped. A task of its own,
+/// like [`grype_image_report`].
+pub async fn grype_scan_images(
+    images: Vec<String>,
+    per_image: Duration,
+    budget: Duration,
+) -> Result<Vec<(String, Result<String, String>)>, String> {
+    tokio::spawn(async move {
+        let _db = tokio::time::timeout(DB_READ_WAIT, DB_LOCK.read())
+            .await
+            .map_err(|_| "vulnerability database update in progress".to_string())?;
+        ensure_dirs()?;
+        if db_status().await.is_none() {
+            return Err("no vulnerability database (the CVE scanner's daily update installs it)".into());
+        }
+        let started = std::time::Instant::now();
+        let mut out = Vec::with_capacity(images.len());
+        for image in images {
+            let left = budget.saturating_sub(started.elapsed());
+            if left < Duration::from_secs(10) {
+                out.push((image, Err("skipped: the container scan ran out of time".to_string())));
+                continue;
+            }
+            let r = grype_report_locked(&image, &["--only-fixed"], per_image.min(left)).await;
+            out.push((image, r));
+        }
+        Ok(out)
+    })
+    .await
+    .unwrap_or_else(|e| Err(format!("grype task failed: {e}")))
+}
+
+// ---------------------------------------------------------------------------
+// Leftovers
+// ---------------------------------------------------------------------------
+
+/// Name prefix of the temporary dir `grype db update` downloads into, under
+/// the database cache.
+pub const DB_DOWNLOAD_PREFIX: &str = "grype-db-download";
+/// A download dir nothing has written to for this long is abandoned. A live
+/// download writes continuously, and a db update is stopped after
+/// [`DB_UPDATE_TIMEOUT`] (15 min). The margin covers a unit started by the
+/// previous agent process (units outlive the agent), which [`DB_LOCK`] does
+/// not see.
+pub const DB_DOWNLOAD_IDLE: Duration = Duration::from_secs(30 * 60);
+/// Same rule for the scanners' TMPDIR (reports, the image layers syft and grype
+/// unpack as `stereoscope-*`). The longest run there is syft's 30 min.
+pub const TMP_IDLE: Duration = Duration::from_secs(2 * 3600);
+
+/// Newest mtime of `path` and of everything under it, symlinks not followed.
+/// A download dir's own mtime does not move while the file inside it grows.
+fn newest_mtime(path: &Path) -> Option<std::time::SystemTime> {
+    let meta = std::fs::symlink_metadata(path).ok()?;
+    let mut newest = meta.modified().ok()?;
+    if meta.is_dir() {
+        if let Ok(rd) = std::fs::read_dir(path) {
+            for e in rd.flatten() {
+                if let Some(t) = newest_mtime(&e.path()) {
+                    newest = newest.max(t);
+                }
+            }
+        }
+    }
+    Some(newest)
+}
+
+/// Removes the entries of `dir` whose name `select` accepts and that nothing
+/// has written to for `idle`; only dirs when `dirs_only`. A symlink is never
+/// removed nor followed. Returns what was removed.
+fn sweep_idle(dir: &Path, idle: Duration, dirs_only: bool, select: impl Fn(&str) -> bool) -> Vec<PathBuf> {
+    let mut removed = Vec::new();
+    let Ok(rd) = std::fs::read_dir(dir) else { return removed };
+    let now = std::time::SystemTime::now();
+    for e in rd.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        if !select(&name) {
+            continue;
+        }
+        let Ok(ft) = e.file_type() else { continue };
+        if ft.is_symlink() || (dirs_only && !ft.is_dir()) {
+            continue;
+        }
+        let path = e.path();
+        let Some(t) = newest_mtime(&path) else { continue };
+        if now.duration_since(t).unwrap_or_default() < idle {
+            continue;
+        }
+        let r = if ft.is_dir() { std::fs::remove_dir_all(&path) } else { std::fs::remove_file(&path) };
+        match r {
+            Ok(()) => removed.push(path),
+            Err(err) => tracing::warn!("could not remove {}: {err}", path.display()),
+        }
+    }
+    removed
+}
+
+/// Removes the `grype-db-download*` dirs of `cache` idle for `idle`, and
+/// nothing else: not the database (`6/`), not a file or a symlink of that name.
+pub fn sweep_stale_db_downloads(cache: &Path, idle: Duration) -> Vec<PathBuf> {
+    sweep_idle(cache, idle, true, |n| n.starts_with(DB_DOWNLOAD_PREFIX))
+}
+
+/// Removes what scanner runs left in `tmp` that nothing has touched for `idle`.
+pub fn sweep_stale_tmp(tmp: &Path, idle: Duration) -> Vec<PathBuf> {
+    sweep_idle(tmp, idle, false, |_| true)
+}
+
+/// Abandoned database downloads and scanner temporaries. At agent startup, and
+/// before and after every db update (under [`DB_LOCK`] for writing, so never a
+/// download this process is running; the idle rule covers the others).
+pub fn sweep_scanner_leftovers() {
+    let db = sweep_stale_db_downloads(Path::new(image_scanner::GRYPE_DB_CACHE), DB_DOWNLOAD_IDLE);
+    let tmp = sweep_stale_tmp(Path::new(TMP_DIR), TMP_IDLE);
+    for p in db.iter().chain(tmp.iter()) {
+        tracing::info!("Removed abandoned scanner leftover {}", p.display());
+    }
 }
 
 /// Last `n` characters of a process's stderr, for an error message.
@@ -313,11 +527,17 @@ async fn run_db_update() -> Result<serde_json::Value, String> {
     if tokio::fs::metadata(image_scanner::GRYPE_BIN).await.is_err() {
         return Err("grype is not installed".into());
     }
+    // Callers hold DB_LOCK for writing: no download of this process is running.
+    sweep_scanner_leftovers();
     let before = db_status().await;
     let out = scanner_command(image_scanner::GRYPE_BIN, true)
         .args(["db", "update"])
         .output_with_timeout(DB_UPDATE_TIMEOUT)
-        .await?;
+        .await;
+    // What an update stopped half way leaves is taken by a later sweep, once
+    // idle for DB_DOWNLOAD_IDLE (its unit may still be stopping right now).
+    sweep_scanner_leftovers();
+    let out = out?;
     if !out.status.success() {
         return Err(format!("grype db update failed: {}", stderr_tail(&out, 400)));
     }
@@ -366,7 +586,7 @@ async fn run_install() -> Result<serde_json::Value, String> {
 pub fn start_install() -> String {
     migration_jobs::spawn("vuln_install", "server", |h| async move {
         let _inventory = INVENTORY_LOCK.lock().await;
-        let _db = DB_LOCK.lock().await;
+        let _db = DB_LOCK.write().await;
         h.progress("install", 0, 0, "Installing grype and syft");
         run_install().await
     })
@@ -375,7 +595,7 @@ pub fn start_install() -> String {
 /// `POST /vulns/db-update`: job `vuln_db_update`.
 pub fn start_db_update() -> String {
     migration_jobs::spawn("vuln_db_update", "server", |h| async move {
-        let _db = DB_LOCK.lock().await;
+        let _db = DB_LOCK.write().await;
         h.progress("db_update", 0, 0, "Updating the vulnerability database");
         run_db_update().await
     })
@@ -1210,7 +1430,7 @@ async fn run_match(h: &JobHandle, target_ids: Vec<String>) -> Result<serde_json:
 /// `POST /vulns/match`: job `vuln_match`.
 pub fn start_match(target_ids: Vec<String>) -> String {
     migration_jobs::spawn("vuln_match", "server", move |h| async move {
-        let _db = DB_LOCK.lock().await;
+        let _db = DB_LOCK.read().await;
         run_match(&h, target_ids).await
     })
 }
@@ -1800,5 +2020,123 @@ mod tests {
         let (id, v) = parse_os_release("NAME=\"Ubuntu\"\nID=ubuntu\nVERSION_ID=\"24.04\"\n");
         assert_eq!(id.as_deref(), Some("ubuntu"));
         assert_eq!(v.as_deref(), Some("24.04"));
+    }
+
+    #[test]
+    fn grype_read_command_never_auto_updates_the_database() {
+        // The security scan's and the image report's grype: the real argv.
+        let cmd = grype_read_command("nginx:1.27", Path::new("/x/r.json"), &["--only-fixed"]);
+        let argv = cmd.argv_strings();
+        let sep = argv.iter().position(|a| a == "--").expect("separator");
+        let (unit, inner) = (&argv[..sep], &argv[sep + 1..]);
+        for want in [
+            "--setenv=GRYPE_DB_AUTO_UPDATE=false".to_string(),
+            "--setenv=GRYPE_DB_CACHE_DIR=/var/lib/dockpanel/scanners/grype-db".to_string(),
+            format!("--setenv=HOME={HOME_DIR}"),
+            format!("--setenv=TMPDIR={TMP_DIR}"),
+            format!("--setenv=XDG_CACHE_HOME={CACHE_DIR}"),
+            "--setenv=GRYPE_CHECK_FOR_APP_UPDATE=false".to_string(),
+        ] {
+            assert!(unit.contains(&want), "missing {want} in {unit:?}");
+        }
+        assert!(!unit.iter().any(|a| a.starts_with("--setenv=GRYPE_DB_AUTO_UPDATE=") && !a.ends_with("=false")));
+        // The agent's own HOME=/root default comes first; ours must come after it.
+        let home: Vec<_> = unit.iter().filter(|a| a.starts_with("--setenv=HOME=")).collect();
+        assert_eq!(home.last().map(|s| s.as_str()), Some(format!("--setenv=HOME={HOME_DIR}").as_str()));
+        for p in SCANNER_PROPERTIES {
+            assert!(unit.windows(2).any(|w| w[0] == "-p" && w[1] == p), "missing -p {p}");
+        }
+        assert_eq!(
+            inner,
+            [image_scanner::GRYPE_BIN, "nginx:1.27", "-o", "json=/x/r.json", "-q", "--only-fixed"]
+        );
+    }
+
+    #[test]
+    fn image_report_refreshes_a_database_older_than_two_days() {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-11-26T12:00:00Z").unwrap().with_timezone(&chrono::Utc);
+        assert!(!db_refresh_due("2026-11-25T04:00:00Z", now));
+        assert!(!db_refresh_due("2026-11-24T12:00:01Z", now));
+        assert!(db_refresh_due("2026-11-24T11:59:00Z", now));
+        assert!(db_refresh_due("2026-11-01T00:00:00+00:00", now));
+        // Unreadable: no update started on every scan.
+        assert!(!db_refresh_due("", now));
+        assert!(!db_refresh_due("yesterday", now));
+    }
+
+    fn set_mtime(p: &Path, t: std::time::SystemTime) {
+        std::fs::File::open(p).unwrap().set_modified(t).unwrap();
+    }
+
+    #[test]
+    fn stale_download_sweep_removes_only_idle_download_dirs() {
+        let cache = std::env::temp_dir().join(format!("grypefix-cache-{}", uuid::Uuid::new_v4().simple()));
+        let old = std::time::SystemTime::now() - Duration::from_secs(3 * 3600);
+        let mk = |rel: &str| {
+            let d = cache.join(rel);
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::write(d.join("vulnerability.db"), b"x").unwrap();
+            set_mtime(&d.join("vulnerability.db"), old);
+            set_mtime(&d, old);
+            d
+        };
+        let stale = mk("grype-db-download1006640285");
+        let stale2 = mk("grype-db-download-2");
+        let db = mk("6");
+        let other = mk("other-dir");
+        let like = mk("xgrype-db-download3");
+        // A download still being written: the dir's own mtime is old, the file's is not.
+        let live = mk("grype-db-download777");
+        std::fs::write(live.join("vulnerability.db"), b"growing").unwrap();
+        // A file and a symlink carrying the prefix.
+        let file = cache.join("grype-db-download-file");
+        std::fs::write(&file, b"f").unwrap();
+        set_mtime(&file, old);
+        let target = std::env::temp_dir().join(format!("grypefix-target-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(target.join("keep"), b"k").unwrap();
+        let link = cache.join("grype-db-download-link");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let mut removed = sweep_stale_db_downloads(&cache, Duration::from_secs(1800));
+        removed.sort();
+        let mut want = vec![stale.clone(), stale2.clone()];
+        want.sort();
+        assert_eq!(removed, want);
+        assert!(!stale.exists() && !stale2.exists());
+        for kept in [&db, &other, &like, &live, &file] {
+            assert!(kept.exists(), "{} was removed", kept.display());
+        }
+        assert!(link.symlink_metadata().is_ok(), "the symlink was removed");
+        assert!(target.join("keep").exists(), "the sweep followed a symlink");
+        assert!(db.join("vulnerability.db").exists());
+
+        // Nothing idle long enough: nothing goes, even with the prefix.
+        assert!(sweep_stale_db_downloads(&cache, Duration::from_secs(4 * 3600)).is_empty());
+        // A missing cache dir is not an error.
+        assert!(sweep_stale_db_downloads(&cache.join("absent"), Duration::ZERO).is_empty());
+
+        std::fs::remove_dir_all(&cache).unwrap();
+        std::fs::remove_dir_all(&target).unwrap();
+    }
+
+    #[test]
+    fn tmp_sweep_keeps_what_is_still_in_use() {
+        let tmp = std::env::temp_dir().join(format!("grypefix-tmp-{}", uuid::Uuid::new_v4().simple()));
+        let old = std::time::SystemTime::now() - Duration::from_secs(3 * 3600);
+        std::fs::create_dir_all(tmp.join("stereoscope-1/layer")).unwrap();
+        std::fs::write(tmp.join("stereoscope-1/layer/f"), b"x").unwrap();
+        for p in ["stereoscope-1/layer/f", "stereoscope-1/layer", "stereoscope-1"] {
+            set_mtime(&tmp.join(p), old);
+        }
+        std::fs::write(tmp.join("image-old.json"), b"{}").unwrap();
+        set_mtime(&tmp.join("image-old.json"), old);
+        std::fs::write(tmp.join("match-new.json"), b"{}").unwrap();
+
+        let mut removed = sweep_stale_tmp(&tmp, TMP_IDLE);
+        removed.sort();
+        assert_eq!(removed, vec![tmp.join("image-old.json"), tmp.join("stereoscope-1")]);
+        assert!(tmp.join("match-new.json").exists());
+        std::fs::remove_dir_all(&tmp).unwrap();
     }
 }

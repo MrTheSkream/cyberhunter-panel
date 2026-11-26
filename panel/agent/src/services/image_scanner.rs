@@ -70,17 +70,12 @@ pub async fn install_grype() -> Result<(), String> {
     }
     install_grype_binary().await?;
 
-    // Prime the vulnerability database so the first user-facing scan does
-    // not stall on a 200 MB download.
-    let _ = tokio::time::timeout(
-        Duration::from_secs(180),
-        safe_command(GRYPE_BIN)
-            .args(["db", "update"])
-            .env("GRYPE_DB_CACHE_DIR", GRYPE_DB_CACHE)
-            .kill_on_drop(true)
-            .output(),
-    )
-    .await;
+    // Prime the vulnerability database through the CVE scanner's db update
+    // job (transient unit, database lock, free space check, leftover sweep),
+    // started in the background. It used to run here, in the agent's cgroup,
+    // with 180 s for a 3.4 GB download: stopped half way, it left the download
+    // behind in `grype-db-download*`.
+    let _ = crate::services::vuln_scanner::start_db_update();
 
     Ok(())
 }

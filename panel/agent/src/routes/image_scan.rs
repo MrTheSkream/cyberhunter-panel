@@ -28,14 +28,14 @@ async fn status() -> Json<serde_json::Value> {
     }))
 }
 
-/// POST /image-scan/install - Install grype.
+/// POST /image-scan/install - Install grype and start the database update job.
 async fn install() -> Result<Json<serde_json::Value>, ApiErr> {
     image_scanner::install_grype()
         .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
     Ok(Json(serde_json::json!({
         "ok": true,
-        "message": "grype installed and vulnerability database primed"
+        "message": "grype installed, vulnerability database update started"
     })))
 }
 
