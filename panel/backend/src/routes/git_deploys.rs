@@ -48,7 +48,7 @@ const GIT_DEPLOY_SELECT: &str = "SELECT d.id, d.user_id, d.server_id, d.name, d.
     d.pre_build_cmd, d.post_deploy_cmd, d.build_args, d.build_context, d.last_deploy, \
     d.last_commit, d.created_at, d.updated_at, d.github_token, d.deploy_cron, \
     d.deploy_protected, d.build_method, d.preview_ttl_hours, d.scheduled_deploy_at, \
-    d.tls_mode, d.tls_certificate_id, d.volumes, c.alias AS tls_certificate \
+    d.tls_mode, d.tls_certificate_id, d.volumes, d.database_id, c.alias AS tls_certificate \
     FROM git_deploys d LEFT JOIN tls_certificates c ON c.id = d.tls_certificate_id";
 
 /// git_previews.container_name is stored WITH the `dockpanel-git-` prefix that
@@ -215,6 +215,9 @@ pub struct GitDeploy {
     /// agent (#118) - a JSON array of strings, e.g. `["/data", "/app/uploads"]`.
     /// Never sent to a preview deploy; see `handle_preview_deploy`.
     pub volumes: serde_json::Value,
+    /// The managed database this deployment is LINKED to, if any - see
+    /// `services::git_db_link`. Never sent to a preview deploy.
+    pub database_id: Option<Uuid>,
     /// That certificate's alias, joined in by `GIT_DEPLOY_SELECT`. Defaulted
     /// so `create`/`update`'s plain `RETURNING *` (no join in a RETURNING
     /// clause) still maps onto this struct; both handlers set it by hand
@@ -269,6 +272,11 @@ pub(crate) struct DeployBody<'a> {
     /// are withheld there too, and the agent's `deploy_container` route refuses
     /// a non-empty list for any scope but `"deploy"` as the actual boundary.
     pub volumes: &'a [String],
+    /// The linked database, opened for this deploy (`git_db_link::load`).
+    /// ALWAYS `None` for a preview - a preview runs any pushed branch and must
+    /// never receive the production database's network or credentials; the
+    /// agent refuses a link for any scope but `"deploy"` as the boundary.
+    pub linked_db: Option<&'a crate::services::git_db_link::LinkedDb>,
 }
 
 /// The address the agent is handed for THIS deploy. Only an ACME order needs
@@ -397,6 +405,12 @@ pub(crate) fn build_deploy_body(b: DeployBody<'_>) -> serde_json::Value {
     if !b.volumes.is_empty() {
         body["volumes"] = serde_json::json!(b.volumes);
     }
+    // Merged here, at the last moment, so the decrypted credentials exist only
+    // in the request to the agent - never in `env_vars` or a history snapshot.
+    if let Some(link) = b.linked_db {
+        crate::services::git_db_link::merge_env(&mut body["env"], link);
+        body["linked_db"] = crate::services::git_db_link::agent_field(link);
+    }
     // An emptied text column arrives here as Some("") rather than None, because
     // clearing a field is expressed as the empty string on the wire (the shape
     // v2.120.0 settled on for the alert destinations). Blank is absent for both
@@ -516,6 +530,8 @@ pub struct CreateRequest {
     pub deploy_protected: Option<bool>,
     pub preview_ttl_hours: Option<i32>,
     pub volumes: Option<Vec<String>>,
+    /// The database to link: absent or `""` for none - see `git_db_link::parse_change`.
+    pub database_id: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -548,6 +564,8 @@ pub struct UpdateRequest {
     /// ever `None` for a caller that omits the key entirely - matching how
     /// `env_vars`/`build_args` already behave on this handler.
     pub volumes: Option<Vec<String>>,
+    /// Absent keeps the link, `""` unlinks, an id links - `git_db_link::parse_change`.
+    pub database_id: Option<String>,
 }
 
 /// GET /api/git-deploys - List all git deploys for the current user.
@@ -688,6 +706,19 @@ pub async fn create(
     }
     let volumes_json = serde_json::to_value(&volumes).unwrap_or(serde_json::json!([]));
 
+    // Only a database this account owns, on this server - see `git_db_link`.
+    let database_id = match crate::services::git_db_link::parse_change(body.database_id.as_deref())
+        .map_err(|m| err(StatusCode::BAD_REQUEST, m))?
+    {
+        crate::services::git_db_link::LinkChange::Set(db_id) => {
+            crate::services::git_db_link::check_linkable(&state.db, db_id, claims.sub, server_id)
+                .await
+                .map_err(|m| err(StatusCode::BAD_REQUEST, &m))?;
+            Some(db_id)
+        }
+        _ => None,
+    };
+
     // Format, reserved and every owner - see services::domain_claim. The two
     // conflict queries that used to be inlined here are the ones `update` never
     // grew, which is how a git deploy could be RENAMED onto an occupied domain
@@ -771,8 +802,8 @@ pub async fn create(
         };
 
     let mut deploy: GitDeploy = sqlx::query_as(
-        "INSERT INTO git_deploys (user_id, server_id, name, repo_url, branch, dockerfile, container_port, host_port, domain, env_vars, auto_deploy, webhook_secret, memory_mb, cpu_percent, ssl_email, pre_build_cmd, post_deploy_cmd, build_args, build_context, github_token, deploy_cron, deploy_protected, preview_ttl_hours, tls_mode, tls_certificate_id, volumes) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26) \
+        "INSERT INTO git_deploys (user_id, server_id, name, repo_url, branch, dockerfile, container_port, host_port, domain, env_vars, auto_deploy, webhook_secret, memory_mb, cpu_percent, ssl_email, pre_build_cmd, post_deploy_cmd, build_args, build_context, github_token, deploy_cron, deploy_protected, preview_ttl_hours, tls_mode, tls_certificate_id, volumes, database_id) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27) \
          RETURNING *",
     )
     .bind(claims.sub)
@@ -806,6 +837,7 @@ pub async fn create(
     .bind(mode)
     .bind(tls_certificate_id)
     .bind(&volumes_json)
+    .bind(database_id)
     .fetch_one(&state.db)
     .await
     .map_err(|e| {
@@ -1054,6 +1086,28 @@ pub async fn update(
     }
     let volumes = body.volumes.as_ref().map(|v| serde_json::to_value(v).unwrap_or_default());
 
+    // (change it?, to what) - two binds rather than a COALESCE, because "unlink"
+    // is a NULL and COALESCE cannot write one. Ownership is re-proved against
+    // the deployment's OWN server, not the caller's switcher.
+    let (database_change, database_id) =
+        match crate::services::git_db_link::parse_change(body.database_id.as_deref())
+            .map_err(|m| err(StatusCode::BAD_REQUEST, m))?
+        {
+            crate::services::git_db_link::LinkChange::Keep => (false, None),
+            crate::services::git_db_link::LinkChange::Clear => (true, None),
+            crate::services::git_db_link::LinkChange::Set(db_id) => {
+                crate::services::git_db_link::check_linkable(
+                    &state.db,
+                    db_id,
+                    claims.sub,
+                    deploy_server_id,
+                )
+                .await
+                .map_err(|m| err(StatusCode::BAD_REQUEST, &m))?;
+                (true, Some(db_id))
+            }
+        };
+
     let github_token_enc =
         encrypt_stored_token(body.github_token.as_deref(), &state.config.jwt_secret)?;
 
@@ -1167,6 +1221,7 @@ pub async fn update(
          tls_mode = $19, \
          tls_certificate_id = $20, \
          volumes = COALESCE($21, volumes), \
+         database_id = CASE WHEN $24 THEN $25 ELSE database_id END, \
          updated_at = NOW() \
          WHERE id = $22 AND user_id = $23 \
          RETURNING *",
@@ -1194,6 +1249,8 @@ pub async fn update(
     .bind(volumes)
     .bind(id)
     .bind(claims.sub)
+    .bind(database_change)
+    .bind(database_id)
     .fetch_one(&state.db)
     .await
     .map_err(|e| internal_error("update git_deploys", e))?;
@@ -1796,6 +1853,17 @@ pub async fn rollback(
     )
     .map_err(|e| err(StatusCode::CONFLICT, &e))?;
 
+    // The linked database goes back with the image, re-proved like every deploy.
+    let linked_db = crate::services::git_db_link::load(
+        &state.db,
+        config.database_id,
+        config.user_id,
+        config.server_id,
+        &state.config.jwt_secret,
+    )
+    .await
+    .map_err(|e| err(StatusCode::CONFLICT, &e))?;
+
     // The host comes from the row, not from the caller's server switcher - see
     // `remove()`. Rollback carries its own edge: `hist.image_tag` names an image
     // built on THIS deployment's server and present in that daemon's local store,
@@ -1928,9 +1996,13 @@ pub async fn rollback(
             tls_certificate: config.tls_certificate.as_deref(),
             scope: "deploy",
             volumes: &volumes_vec(&config.volumes),
+            linked_db: linked_db.as_ref(),
         });
 
-        match agent.post_long("/git/deploy", Some(deploy_body), 120).await {
+        match crate::services::git_db_link::require_confirmed(
+            linked_db.is_some(),
+            agent.post_long("/git/deploy", Some(deploy_body), 120).await,
+        ) {
             Ok(result) => {
                 let blue_green = result.get("blue_green").and_then(|v| v.as_bool()).unwrap_or(false);
                 if blue_green {
@@ -2531,6 +2603,7 @@ fn spawn_deploy_task(
 ) {
     let logs = state.provision_logs.clone();
     let db = state.db.clone();
+    let jwt_secret = state.config.jwt_secret.clone();
     let deploy_name = config.name.clone();
     let git_deploy_id = config.id;
     let triggered = triggered_by.to_string();
@@ -2982,6 +3055,37 @@ fn spawn_deploy_task(
             }
         }
 
+        // A stored link that can no longer be honoured (the database changed
+        // hands, lost its container, ...) refuses the deploy rather than start
+        // the app without its database - see `git_db_link::load`.
+        let linked_db = match crate::services::git_db_link::load(
+            &db,
+            config.database_id,
+            config.user_id,
+            config.server_id,
+            &jwt_secret,
+        )
+        .await
+        {
+            Ok(link) => link,
+            Err(msg) => {
+                emit("deploy", "Deploying container", "error", Some(msg.clone()));
+                emit("complete", "Deploy failed", "error", None);
+                record_failed_history(&db, git_deploy_id, &commit_hash, commit_message.as_deref().unwrap_or(""), &msg, &triggered).await;
+                if let Err(db_err) = sqlx::query("UPDATE git_deploys SET status = 'failed', updated_at = NOW() WHERE id = $1")
+                    .bind(git_deploy_id)
+                    .execute(&db)
+                    .await
+                {
+                    tracing::warn!("Failed to update git deploy status: {db_err}");
+                }
+                tracing::error!("Git deploy refused: {deploy_name}: {msg}");
+                tokio::time::sleep(Duration::from_secs(60)).await;
+                logs.lock().unwrap_or_else(|e| e.into_inner()).remove(&deploy_id);
+                return;
+            }
+        };
+
         let deploy_body = build_deploy_body(DeployBody {
             name: &config.name,
             image_tag: &image_tag,
@@ -2996,9 +3100,13 @@ fn spawn_deploy_task(
             tls_certificate: config.tls_certificate.as_deref(),
             scope: "deploy",
             volumes: &volumes_vec(&config.volumes),
+            linked_db: linked_db.as_ref(),
         });
 
-        match agent.post_long("/git/deploy", Some(deploy_body), 120).await {
+        match crate::services::git_db_link::require_confirmed(
+            linked_db.is_some(),
+            agent.post_long("/git/deploy", Some(deploy_body), 120).await,
+        ) {
             Ok(result) => {
                 let blue_green = result.get("blue_green").and_then(|v| v.as_bool()).unwrap_or(false);
                 if blue_green {
@@ -3201,6 +3309,7 @@ fn spawn_deploy_task(
                     let monitor_effective_mode = effective_mode;
                     let monitor_config_tls_certificate = config.tls_certificate.clone();
                     let monitor_config_volumes = volumes_vec(&config.volumes);
+                    let monitor_linked_db = linked_db.clone();
 
                     tokio::spawn(async move {
                         // Check container health every 15s for 2 minutes
@@ -3255,6 +3364,7 @@ fn spawn_deploy_task(
                                             tls_certificate: monitor_config_tls_certificate.as_deref(),
                                             scope: "deploy",
                                             volumes: &monitor_config_volumes,
+                                            linked_db: monitor_linked_db.as_ref(),
                                         });
 
                                         if monitor_agent.post_long("/git/deploy", Some(rollback_body), 120).await.is_ok() {
@@ -4134,6 +4244,23 @@ pub async fn trigger_deploy_task(
         }
     }
 
+    // Same refusal as `spawn_deploy_task`: a link that cannot be honoured
+    // fails the deploy rather than start the app without its database.
+    let jwt_secret = std::env::var("JWT_SECRET").unwrap_or_default();
+    let linked_db = match crate::services::git_db_link::load(&db, config.database_id, config.user_id, config.server_id, &jwt_secret).await {
+        Ok(link) => link,
+        Err(msg) => {
+            record_failed_history(&db, git_deploy_id, &commit_hash, &commit_message, &msg, &triggered_by).await;
+            if let Err(db_err) = sqlx::query("UPDATE git_deploys SET status = 'failed', updated_at = NOW() WHERE id = $1")
+                .bind(git_deploy_id).execute(&db).await
+            {
+                tracing::warn!("Failed to update git deploy status: {db_err}");
+            }
+            tracing::error!("Scheduled deploy refused ({}): {}: {msg}", triggered_by, config.name);
+            return;
+        }
+    };
+
     // Deploy
     let deploy_body = build_deploy_body(DeployBody {
         name: &config.name,
@@ -4149,9 +4276,13 @@ pub async fn trigger_deploy_task(
         tls_certificate: config.tls_certificate.as_deref(),
         scope: "deploy",
         volumes: &volumes_vec(&config.volumes),
+        linked_db: linked_db.as_ref(),
     });
 
-    match agent.post_long("/git/deploy", Some(deploy_body), 120).await {
+    match crate::services::git_db_link::require_confirmed(
+        linked_db.is_some(),
+        agent.post_long("/git/deploy", Some(deploy_body), 120).await,
+    ) {
         Ok(result) => {
             let container_id = result.get("container_id").and_then(|v| v.as_str()).unwrap_or("");
             let duration_ms = started.elapsed().as_millis() as i32;
@@ -4580,6 +4711,12 @@ async fn handle_preview_deploy(
         // refuses a non-empty list for any scope but `"deploy"` as the actual
         // boundary; this is not the only thing standing between a preview and
         // persistent storage, but it should never even try.
+        //
+        // linked_db is ALWAYS None, for the same reason in its sharpest form: a
+        // preview inherits the parent's `env_vars` but runs whatever branch was
+        // pushed, so handing it the production database's network and
+        // credentials would let any pushed branch read and write production
+        // data. The agent refuses a link for this scope as the real boundary.
         let deploy_body = build_deploy_body(DeployBody {
             name: &format!("{name}-pr-{branch_slug}"),
             image_tag: &image_tag,
@@ -4595,6 +4732,7 @@ async fn handle_preview_deploy(
             tls_certificate: tls_certificate.as_deref(),
             scope: "preview",
             volumes: &[],
+            linked_db: None,
         });
 
         // Same refusal `spawn_deploy_task`/`trigger_deploy_task` apply: an
@@ -5253,7 +5391,55 @@ mod tests {
             tls_certificate: None,
             scope: "deploy",
             volumes: &[],
+            linked_db: None,
         })
+    }
+
+    fn shop_link() -> crate::services::git_db_link::LinkedDb {
+        crate::services::git_db_link::LinkedDb {
+            container_id: "0123456789ab".into(),
+            name: "shop".into(),
+            engine: "postgres".into(),
+            db_user: "shop".into(),
+            password: "s3cret".into(),
+        }
+    }
+
+    #[test]
+    fn a_linked_database_reaches_the_agent_and_the_env_without_touching_the_column() {
+        let link = shop_link();
+        let stored = serde_json::json!({ "APP_KEY": "k", "PGUSER": "mine" });
+        let body = build_deploy_body(DeployBody {
+            name: "app",
+            image_tag: "dockpanel-git-app:abc",
+            container_port: 3000,
+            host_port: 30001,
+            env_vars: &stored,
+            domain: None,
+            memory_mb: None,
+            cpu_percent: None,
+            ssl_email: None,
+            tls_mode: None,
+            tls_certificate: None,
+            scope: "deploy",
+            volumes: &[],
+            linked_db: Some(&link),
+        });
+        assert_eq!(body["linked_db"]["container_id"], "0123456789ab");
+        assert_eq!(body["linked_db"]["name"], "shop");
+        assert!(body["linked_db"].get("password").is_none(), "the agent needs no credentials");
+        assert_eq!(body["env"]["DATABASE_URL"], "postgresql://shop:s3cret@db:5432/shop");
+        assert_eq!(body["env"]["PGUSER"], "mine", "the user's own value wins");
+        assert_eq!(body["env"]["APP_KEY"], "k");
+        // The stored column is untouched: credentials never land in env_vars.
+        assert!(stored.get("DATABASE_URL").is_none());
+    }
+
+    #[test]
+    fn no_link_sends_no_linked_db_and_injects_nothing() {
+        let body = body_with(serde_json::json!({}));
+        assert!(body.get("linked_db").is_none());
+        assert!(body["env"].get("DATABASE_URL").is_none());
     }
 
     #[test]
@@ -5295,6 +5481,7 @@ mod tests {
             tls_certificate: None,
             scope: "deploy",
             volumes: &["/data".to_string(), "/app/uploads".to_string()],
+            linked_db: None,
         });
         assert_eq!(body["volumes"], serde_json::json!(["/data", "/app/uploads"]));
     }
@@ -5321,6 +5508,7 @@ mod tests {
             tls_certificate: Some("wildcard-2026"),
             scope: "deploy",
             volumes: &[],
+            linked_db: None,
         });
         assert_eq!(body["tls_mode"], "provided");
         assert_eq!(body["tls_certificate"], "wildcard-2026");
@@ -5343,6 +5531,7 @@ mod tests {
             tls_certificate: None,
             scope: "deploy",
             volumes: &[],
+            linked_db: None,
         });
         assert_eq!(body["tls_mode"], "acme");
         assert_eq!(body["ssl_email"], "ops@example.com");
