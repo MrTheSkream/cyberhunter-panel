@@ -72,6 +72,65 @@ at it - a wildcard shared across the zone, for example.
 > a replacement is not yet, and the panel says so rather than accepting the edit
 > and silently keeping the old value.
 
+### Serving an existing site from a Git Deploy
+
+A site that already exists - its own IP, its `www` alias, its certificate, its
+canonical and HSTS settings - can move onto a Git Deploy without being deleted.
+The site keeps its vhost; only the local port nginx proxies to changes.
+
+1. Create the Git Deploy **without a domain**. It runs on `127.0.0.1:<host_port>`
+   (allocated in 7000-7999) and has no vhost of its own. A Git Deploy cannot take
+   a domain a site already holds, and it does not need to.
+2. Deploy it once and check it answers.
+3. On the site's page, in the **Upstream** card, pick the deploy under **Follow a
+   Git Deploy** and click **Link**. Or through the API:
+
+   ```bash
+   api GET "/sites/$SITE_ID/git-deploy" | jq '.candidates[] | {id, name, host_port, linkable, reason}'
+   api PUT "/sites/$SITE_ID/git-deploy" -d "$(jq -n --arg id "$DEPLOY_ID" '{git_deploy_id: $id}')"
+   ```
+
+The panel copies the deploy's `host_port` into the site's `proxy_port` and
+re-renders the vhost in the same transaction. If nginx refuses the new vhost,
+nothing is changed. The link and the unlink are written to the activity log
+(`site.git_deploy_link`, `site.git_deploy_unlink`).
+
+What the link accepts:
+
+| Rule | Why |
+|---|---|
+| The site is a reverse proxy site | A node or python site's port is its own app service's |
+| The deploy belongs to the site's owner | An administrator acting on a client's site can only link that client's deploys |
+| Same server | The upstream is a loopback port |
+| The deploy has no domain | A deploy with a domain updates blue-green: the new container comes up on a temporary port that only the deploy's own vhost learns. A site following it would end on a dead port |
+| One site per deploy | Enforced by a unique index |
+
+While a site follows a deploy, that deploy cannot be given a domain, and the site
+cannot be transferred to another owner. Unlink first.
+
+**The port stays in sync on its own.** A Git Deploy's `host_port` is chosen at
+creation and never changes afterwards, and a deploy without a domain is always
+recreated on that port (stop/start, no blue-green). `tests/site-git-deploy-link-pin-e2e.sh`
+fails if any code starts updating `git_deploys.host_port`. Sending the same
+`git_deploy_id` again re-syncs anyway (**Re-sync** in the card).
+
+**Unlink** (`{"git_deploy_id": null}`) only drops the link: the site keeps
+proxying to the same port. Deleting the Git Deploy does the same (the link is
+cleared, the site and its vhost stay, and nginx answers 502 until the site is
+pointed elsewhere). The port stays reserved: the Git Deploy allocator skips ports
+a site still proxies to, so a later deploy cannot inherit that site's traffic.
+
+For an upstream that is not a Git Deploy, set the port directly:
+
+```bash
+api PUT "/sites/$SITE_ID/proxy-port" -d '{"proxy_port": 8080}'
+```
+
+It applies the same port rules as site creation (1024-65535, no reserved
+port, unique on the server), is refused while the site follows a Git Deploy, and
+is refused for a port a Git Deploy or preview of that server publishes - link the
+site instead.
+
 ### Stopping a deploy
 
 **Stop** stops the container and it stays stopped; **Start** brings it back.

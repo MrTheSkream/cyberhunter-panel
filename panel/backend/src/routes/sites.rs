@@ -7400,8 +7400,8 @@ mod tests {
     fn a_linked_site_keeps_its_vhost_and_takes_the_deploy_port() {
         // The link only moves `proxy_port`: the rebuilt body still carries the
         // bound IP, aliases, certificate and canonical/HSTS of the site.
-        let site: Site = serde_json::from_value(serde_json::json!({
-            "id": Uuid::from_u128(3), "user_id": Uuid::from_u128(4), "server_id": null,
+        let site: Site = serde_json::from_str(r#"{
+            "id": "00000000-0000-0000-0000-000000000003", "user_id": "00000000-0000-0000-0000-000000000004", "server_id": null,
             "domain": "radorz.com", "runtime": "proxy", "status": "active", "proxy_port": 7003,
             "php_version": null, "root_path": null, "ssl_enabled": true,
             "ssl_cert_path": "/etc/dockpanel/ssl/radorz.com/fullchain.pem",
@@ -7415,9 +7415,9 @@ mod tests {
             "bot_protection": "off", "bandwidth_quota_mb": null, "bandwidth_suspended_at": null,
             "sftp_enabled": false, "sftp_uid": null, "sftp_gid": null,
             "created_at": "2026-11-26T00:00:00Z", "updated_at": "2026-11-26T00:00:00Z",
-            "ip_id": Uuid::from_u128(5), "aliases": ["www.radorz.com"], "canonical_host": "apex",
-            "force_ssl": true, "hsts": false, "git_deploy_id": Uuid::from_u128(7)
-        }))
+            "ip_id": "00000000-0000-0000-0000-000000000005", "aliases": ["www.radorz.com"], "canonical_host": "apex",
+            "force_ssl": true, "hsts": false, "git_deploy_id": "00000000-0000-0000-0000-000000000007"
+        }"#)
         .unwrap();
         assert_eq!(site.git_deploy_id, Some(Uuid::from_u128(7)));
         let body = build_nginx_body(&site, Some("192.0.2.107"));
