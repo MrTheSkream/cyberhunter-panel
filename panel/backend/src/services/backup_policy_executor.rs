@@ -1799,7 +1799,7 @@ async fn tick(db: &PgPool, agents: &AgentRegistry, jwt_secret: &str) -> Result<(
     let policies: Vec<PolicyRow> = sqlx::query_as(
         "SELECT id, user_id, server_id, name, backup_sites, backup_databases, backup_volumes, \
          schedule, destination_id, retention_count, encrypt, verify_after_backup, stop_apps, \
-         backup_mail, backup_dns, last_run \
+         backup_mail, backup_dns, excluded_targets, last_run \
          FROM backup_policies WHERE enabled = TRUE"
     )
     .fetch_all(db).await.map_err(|e| e.to_string())?;
