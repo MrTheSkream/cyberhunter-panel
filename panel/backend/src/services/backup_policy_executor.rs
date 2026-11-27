@@ -31,6 +31,9 @@ struct PolicyRow {
     backup_mail: bool,
     /// Every PowerDNS zone and a snapshot of its database (admin only).
     backup_dns: bool,
+    /// App data targets this policy leaves out, as `<owner_name>/<slug>`
+    /// (see [`select_targets`]).
+    excluded_targets: Vec<String>,
     last_run: Option<chrono::DateTime<chrono::Utc>>,
 }
 
@@ -573,6 +576,89 @@ pub fn parse_backup_targets(resp: &serde_json::Value) -> Result<ParsedTargets, S
         });
     }
     Ok(out)
+}
+
+/// Most entries a policy's `excluded_targets` may hold. Far above any real
+/// server (one entry per volume or bind mount of a managed app), low enough
+/// that the list stays a small row and a small form.
+pub const MAX_EXCLUDED_TARGETS: usize = 256;
+
+/// The key of one app data target in a policy's `excluded_targets`:
+/// `<owner_name>/<slug>`, which is [`BackupTarget::subject`] - the name the
+/// agent's listing and the run history already give the target.
+///
+/// It is stable for as long as the mount exists: the owner is the template
+/// container, compose project or Git deploy name (never a container id), and the
+/// slug is the volume's name, or for a bind mount its last path component plus 8
+/// hex of sha256 of its canonical path. Neither part can contain `/`, so the
+/// split is unambiguous. The kind is not part of the key: a volume and a bind of
+/// one owner sharing a slug would need a volume named exactly like
+/// `<dir>-<8 hex of that bind's path>`, and if it ever happened, excluding one
+/// would exclude both - leaving out too much, never archiving what was excluded.
+pub fn is_valid_target_key(s: &str) -> bool {
+    match s.split_once('/') {
+        Some((owner, slug)) => is_valid_owner_name(owner) && is_valid_slug(slug),
+        None => false,
+    }
+}
+
+/// Check and normalise the `excluded_targets` of a create or update request:
+/// every entry a valid [`is_valid_target_key`], duplicates dropped (first
+/// occurrence kept), at most [`MAX_EXCLUDED_TARGETS`] entries.
+///
+/// An entry that names no current target is accepted: the app may be stopped or
+/// redeployed while the policy is edited, and the exclusion must still hold when
+/// it comes back.
+pub fn normalize_excluded_targets(entries: &[String]) -> Result<Vec<String>, String> {
+    let mut out: Vec<String> = Vec::with_capacity(entries.len());
+    for e in entries {
+        if !is_valid_target_key(e) {
+            let shown: String = e.chars().take(64).collect();
+            return Err(format!(
+                "excluded_targets: '{shown}' is not of the form <owner_name>/<slug> ([A-Za-z0-9_.-], at most 128 characters each)"
+            ));
+        }
+        if !out.iter().any(|o| o == e) {
+            out.push(e.clone());
+        }
+    }
+    if out.len() > MAX_EXCLUDED_TARGETS {
+        return Err(format!("excluded_targets: at most {MAX_EXCLUDED_TARGETS} entries"));
+    }
+    Ok(out)
+}
+
+/// Which of the listed targets a run archives.
+#[derive(Debug, Default, PartialEq)]
+pub struct TargetSelection<'a> {
+    /// Archived by this run.
+    pub kept: Vec<&'a BackupTarget>,
+    /// Left out by the policy. Neither a success nor a failure.
+    pub excluded: Vec<&'a BackupTarget>,
+    /// Entries of `excluded_targets` that match no listed target (the app is
+    /// stopped, removed, or its mount moved). Informational, never a failure.
+    pub stale: Vec<String>,
+}
+
+/// Split the agent's targets by the policy's `excluded_targets`. Matching is
+/// exact on [`BackupTarget::subject`]; no prefix or pattern, so excluding
+/// `site/downloads-1a2b3c4d` can never take `site/data-...` with it.
+pub fn select_targets<'a>(targets: &'a [BackupTarget], excluded: &[String]) -> TargetSelection<'a> {
+    let mut sel = TargetSelection::default();
+    for t in targets {
+        let subject = t.subject();
+        if excluded.iter().any(|e| *e == subject) {
+            sel.excluded.push(t);
+        } else {
+            sel.kept.push(t);
+        }
+    }
+    sel.stale = excluded
+        .iter()
+        .filter(|e| !targets.iter().any(|t| t.subject() == **e))
+        .cloned()
+        .collect();
+    sel
 }
 
 /// Body of `POST /volume-backups/create` for one target.
@@ -2394,7 +2480,43 @@ async fn execute_policy(db: &PgPool, agents: &AgentRegistry, policy: &PolicyRow,
             log.push("volume", subject.clone(), why);
         }
 
-        for target in &parsed.targets {
+        // Targets the policy leaves out are skipped before anything touches them:
+        // no archive, no upload, and no retention call. Their existing archives
+        // stay as they are - local retention ranks only rows of the target, and
+        // with no new row none of the old ones ever passes `retention_count`;
+        // remote retention runs only right after an upload of the target. They
+        // are not errors either: the run's status and `last_error` ignore them.
+        let selection = select_targets(&parsed.targets, &policy.excluded_targets);
+        if !selection.excluded.is_empty() || !selection.stale.is_empty() {
+            let names: Vec<String> = selection.excluded.iter().map(|t| t.subject()).collect();
+            tracing::info!(
+                "Policy '{}': {} app data target(s) excluded by the policy: {}",
+                policy.name, names.len(), names.join(", ")
+            );
+            let details = if selection.stale.is_empty() {
+                None
+            } else {
+                Some(format!(
+                    "excluded entries matching no current target (kept on the policy): {}",
+                    selection.stale.join(", ")
+                ))
+            };
+            crate::services::system_log::log_event(
+                db,
+                "info",
+                "backup_policy_executor",
+                &format!(
+                    "Policy '{}': {} app data target(s) excluded by the policy{}{}",
+                    policy.name,
+                    names.len(),
+                    if names.is_empty() { "" } else { ": " },
+                    names.join(", ")
+                ),
+                details.as_deref(),
+            ).await;
+        }
+
+        for target in selection.kept {
             let subject = target.subject();
             let body = app_data_create_body(target, policy.stop_apps, encryption_key.as_deref());
 
@@ -3230,6 +3352,80 @@ mod tests {
     fn sample_target(kind: MountKind) -> BackupTarget {
         let p = parse_backup_targets(&targets_fixture()).unwrap();
         p.targets.into_iter().find(|t| t.kind == kind).unwrap()
+    }
+
+    // ── Policy exclusions (excluded_targets) ────────────────────────────────
+
+    #[test]
+    fn a_target_key_is_owner_slash_slug_and_nothing_else() {
+        for ok in ["demo/demo_pgdata", "demo/uploads-1a2b3c4d", "cyberhunter-preprod/downloads-0f1e2d3c", "a/b"] {
+            assert!(is_valid_target_key(ok), "{ok}");
+        }
+        let long_owner = format!("{}/x", "a".repeat(129));
+        let long_slug = format!("x/{}", "a".repeat(129));
+        for bad in [
+            "", "demo", "/slug", "demo/", "demo/a/b", "demo/..", "demo/.", "-x/slug",
+            "de mo/slug", "demo/sl ug", "demo/sl*ug", "demo\\slug", "demo/slug\n", "démo/slug",
+            long_owner.as_str(), long_slug.as_str(),
+        ] {
+            assert!(!is_valid_target_key(bad), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn excluded_targets_are_checked_deduplicated_and_capped() {
+        let v = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(normalize_excluded_targets(&[]).unwrap(), Vec::<String>::new());
+        assert_eq!(
+            normalize_excluded_targets(&v(&["b/x", "a/y", "b/x"])).unwrap(),
+            v(&["b/x", "a/y"]),
+            "duplicates are dropped, first occurrence and order kept"
+        );
+        let e = normalize_excluded_targets(&v(&["a/y", "../etc"])).unwrap_err();
+        assert!(e.contains("<owner_name>/<slug>"), "{e}");
+        let max: Vec<String> = (0..MAX_EXCLUDED_TARGETS).map(|i| format!("o/s{i}")).collect();
+        assert_eq!(normalize_excluded_targets(&max).unwrap().len(), MAX_EXCLUDED_TARGETS);
+        let over: Vec<String> = (0..=MAX_EXCLUDED_TARGETS).map(|i| format!("o/s{i}")).collect();
+        assert!(normalize_excluded_targets(&over).is_err());
+        // The cap applies after de-duplication: repeats of one entry are one entry.
+        let repeats: Vec<String> = (0..MAX_EXCLUDED_TARGETS * 2).map(|_| "o/s".to_string()).collect();
+        assert_eq!(normalize_excluded_targets(&repeats).unwrap(), v(&["o/s"]));
+    }
+
+    #[test]
+    fn an_excluded_target_is_skipped_and_only_that_one() {
+        let p = parse_backup_targets(&targets_fixture()).unwrap();
+        let none = select_targets(&p.targets, &[]);
+        assert_eq!(none.kept.len(), 2);
+        assert!(none.excluded.is_empty() && none.stale.is_empty());
+
+        let sel = select_targets(&p.targets, &["demo/uploads-1a2b3c4d".to_string()]);
+        assert_eq!(sel.kept.iter().map(|t| t.subject()).collect::<Vec<_>>(), vec!["demo/demo_pgdata"]);
+        assert_eq!(sel.excluded.iter().map(|t| t.subject()).collect::<Vec<_>>(), vec!["demo/uploads-1a2b3c4d"]);
+        assert_eq!(sel.excluded[0].kind, MountKind::Bind);
+        assert!(sel.stale.is_empty());
+
+        // Exact match only: no prefix, no owner-wide exclusion.
+        for not_a_match in ["demo/uploads", "demo/uploads-1a2b3c4", "demo", "dem/uploads-1a2b3c4d", "DEMO/uploads-1a2b3c4d"] {
+            let s = select_targets(&p.targets, &[not_a_match.to_string()]);
+            assert_eq!(s.kept.len(), 2, "{not_a_match} must exclude nothing");
+            assert_eq!(s.stale, vec![not_a_match.to_string()]);
+        }
+    }
+
+    #[test]
+    fn an_exclusion_naming_no_current_target_is_stale_not_a_failure() {
+        let p = parse_backup_targets(&targets_fixture()).unwrap();
+        let ex = vec!["gone/data".to_string(), "demo/demo_pgdata".to_string()];
+        let sel = select_targets(&p.targets, &ex);
+        assert_eq!(sel.kept.len(), 1);
+        assert_eq!(sel.excluded.len(), 1);
+        assert_eq!(sel.stale, vec!["gone/data".to_string()]);
+        // Everything excluded: nothing archived, and that is not a failed run.
+        let all = vec!["demo/demo_pgdata".to_string(), "demo/uploads-1a2b3c4d".to_string()];
+        let sel = select_targets(&p.targets, &all);
+        assert!(sel.kept.is_empty());
+        assert_eq!(compute_run_status(0, 0, 0, 0), "success");
     }
 
     #[test]

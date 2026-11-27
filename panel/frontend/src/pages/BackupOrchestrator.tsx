@@ -78,6 +78,8 @@ interface BackupPolicy {
   encrypt: boolean;
   verify_after_backup: boolean;
   stop_apps: boolean;
+  /** App data targets left out, each `<owner_name>/<slug>`. */
+  excluded_targets: string[];
   enabled: boolean;
   drill_enabled: boolean;
   drill_schedule: string;
@@ -257,6 +259,7 @@ interface PolicyForm {
   encrypt: boolean;
   verify_after_backup: boolean;
   stop_apps: boolean;
+  excluded_targets: string[];
   // Only editable on an existing policy - a new one is always created enabled.
   // Nothing could flip it before, though the table has always rendered the word
   // "Paused" for the state that produced it.
@@ -268,7 +271,7 @@ interface PolicyForm {
 const EMPTY_POLICY_FORM: PolicyForm = {
   name: "", schedule: "0 2 * * *", backup_sites: true, backup_databases: true,
   backup_volumes: false, backup_mail: false, backup_dns: false, destination_id: "", retention_count: 7,
-  encrypt: false, verify_after_backup: false, stop_apps: true, enabled: true,
+  encrypt: false, verify_after_backup: false, stop_apps: true, excluded_targets: [], enabled: true,
   drill_enabled: false, drill_schedule: "0 4 * * 0",
 };
 
@@ -459,6 +462,7 @@ export default function BackupOrchestrator() {
       encrypt: p.encrypt,
       verify_after_backup: p.verify_after_backup,
       stop_apps: p.stop_apps,
+      excluded_targets: p.excluded_targets ?? [],
       enabled: p.enabled,
       drill_enabled: p.drill_enabled,
       drill_schedule: p.drill_schedule || "0 4 * * 0",
@@ -1482,6 +1486,98 @@ function DestinationsTab({
 
 // ── Policies Tab ──────────────────────────────────────────────────────────
 
+interface PolicyTarget {
+  key: string;
+  kind: "volume" | "bind";
+  owner_name: string;
+  slug: string;
+  volume_name: string | null;
+  source_path: string | null;
+  app_type: string;
+  last_archive_bytes: number | null;
+  last_archive_at: string | null;
+}
+
+interface PolicyTargetsResponse {
+  server_id: string;
+  targets: PolicyTarget[];
+  invalid: { subject: string; reason: string }[];
+}
+
+// The app data targets a run of this policy would archive (same server the
+// executor reaches), each with a checkbox that leaves it out. When the list
+// cannot be loaded the policy's current exclusions are kept as they are: the
+// form sends `value` back untouched, never an empty list it did not choose.
+function ExcludedTargetsSection({ policyId, value, onChange }: {
+  policyId: string | null;
+  value: string[];
+  onChange: (v: string[]) => void;
+}) {
+  const [targets, setTargets] = useState<PolicyTarget[] | null>(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    setTargets(null);
+    setError("");
+    const q = policyId ? `?policy_id=${encodeURIComponent(policyId)}` : "";
+    api.get<PolicyTargetsResponse>(`/backup-orchestrator/policies/targets${q}`)
+      .then(r => { if (!cancelled) setTargets(r.targets); })
+      .catch(e => { if (!cancelled) setError(e instanceof Error ? e.message : "Échec du chargement"); });
+    return () => { cancelled = true; };
+  }, [policyId]);
+
+  const toggle = (key: string, exclude: boolean) => {
+    onChange(exclude ? [...value.filter(k => k !== key), key] : value.filter(k => k !== key));
+  };
+  const listed = new Set((targets ?? []).map(t => t.key));
+  const stale = value.filter(k => !listed.has(k));
+
+  return (
+    <div className="text-sm font-mono pt-2 border-t border-dark-600">
+      <p className="text-xs font-medium text-dark-100 mb-1">Données d'applications exclues</p>
+      <p className="text-[11px] text-dark-300 mb-2">
+        Cochez une cible pour ne plus la sauvegarder. Ses archives existantes sont conservées telles quelles
+        (la rétention ne les supprime pas).
+      </p>
+      {error && (
+        <p className="text-[11px] text-warn-400">
+          Impossible de lister les données d'applications : {error}. Les exclusions actuelles sont conservées.
+        </p>
+      )}
+      {!error && targets === null && <p className="text-[11px] text-dark-300">Chargement…</p>}
+      {targets !== null && targets.length === 0 && (
+        <p className="text-[11px] text-dark-300">Aucune donnée d'application sur ce serveur.</p>
+      )}
+      <div className="space-y-1">
+        {(targets ?? []).map(t => (
+          <label key={t.key} className="flex items-start gap-2 text-dark-100" title={t.source_path ?? t.volume_name ?? t.key}>
+            <input type="checkbox" className="mt-0.5" checked={value.includes(t.key)}
+              onChange={e => toggle(t.key, e.target.checked)} />
+            <span>
+              <span className="text-dark-50">{t.key}</span>
+              <span className="text-[11px] text-dark-300 ml-2">
+                {t.kind === "bind" ? "montage" : "volume"} · {t.source_path ?? t.volume_name}
+                {t.last_archive_bytes !== null
+                  ? ` · dernière archive ${formatSize(t.last_archive_bytes)}`
+                  : " · taille inconnue (jamais archivée)"}
+              </span>
+            </span>
+          </label>
+        ))}
+        {targets !== null && stale.map(k => (
+          <label key={k} className="flex items-start gap-2 text-dark-200">
+            <input type="checkbox" className="mt-0.5" checked onChange={() => toggle(k, false)} />
+            <span>
+              {k} <span className="text-[11px] text-dark-300 ml-2">· plus listée sur ce serveur (exclusion conservée)</span>
+            </span>
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function PoliciesTab({
   policies, destinations, showForm, setShowForm, form, setForm, onCreate, onDelete,
   editingId, onEdit, onCancelEdit, onProtectAll, protectAllBusy, isAdmin
@@ -1621,6 +1717,13 @@ function PoliciesTab({
                 Briefly stops the containers that use the data so databases are copied consistently.
               </p>
             </div>
+          )}
+          {form.backup_volumes && (
+            <ExcludedTargetsSection
+              policyId={editingId}
+              value={form.excluded_targets}
+              onChange={v => setForm({ ...form, excluded_targets: v })}
+            />
           )}
           <div className="flex items-center gap-3 text-sm font-mono pt-2 border-t border-dark-600">
             <label className="flex items-center gap-2 text-dark-100">
