@@ -6,6 +6,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Add: leave app data targets out of a backup policy
+
+Seen on a live v3.1.0-rc.4 install: with App data on, a policy archives every volume and bind
+mount the agent lists, with no way to leave one out. Two Git Deploys each carried a 3.4 GB
+`downloads` bind mount that the app can regenerate, so every nightly run wrote 2 x 3.4 GB of
+encrypted archives, multiplied by retention.
+
+- **A policy now has `excluded_targets`** (migration `20261205120000`), a list of
+  `<owner_name>/<slug>` keys: the name `GET /backup-targets` and the run history already give a
+  target (`cyberhunter-preprod/downloads-1a2b3c4d`, say). Matching is exact, so excluding a
+  `downloads` mount never takes the app's `data` mount with it. Create and update accept the
+  field. On update an absent field leaves the list as it is, and `[]` clears it. Entries are
+  checked (`[A-Za-z0-9_.-]` on each side of one `/`, at most 128 characters each, 256 entries)
+  and de-duplicated. An invalid entry is a 400.
+- **The executor skips excluded targets.** It takes no archive and makes no upload or retention
+  call for them. A skip counts as neither a success nor a failure, so it does not turn the run
+  `partial` or fill `last_error`. Each run records the skipped targets in the system log, plus any
+  entry that matches no current target. Such an entry stays on the policy, so the exclusion
+  still holds when a stopped app comes back.
+- **Existing archives of an excluded target are kept, not pruned.** Retention ranks only the
+  rows of one target, and with no new row none of the old ones passes `retention_count`. Remote
+  retention runs only right after an upload of that target. Reclaiming that space is a manual
+  step.
+- **The policy form has a "Données d'applications exclues" section**, with one checkbox per
+  target and the size of its last archive. The list comes from the new
+  `GET /api/backup-orchestrator/policies/targets?policy_id=` (admin only). It asks the server the
+  run will reach (the policy's server, else the local one), not the page's selected server. If
+  the list cannot be loaded, the form keeps the policy's current exclusions.
+
 ### Feature: link a managed database to a Git Deploy
 
 Seen in production: a Git Deploy app could not reach any managed database, while the deploy

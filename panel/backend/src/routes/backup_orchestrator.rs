@@ -33,6 +33,9 @@ pub struct BackupPolicy {
     pub backup_mail: bool,
     /// Every PowerDNS zone and a snapshot of its database (admin only).
     pub backup_dns: bool,
+    /// App data targets the policy leaves out, each `<owner_name>/<slug>` as the
+    /// agent's GET /backup-targets names it (`bpe::is_valid_target_key`).
+    pub excluded_targets: Vec<String>,
     pub enabled: bool,
     pub drill_enabled: bool,
     pub drill_schedule: String,
@@ -91,6 +94,8 @@ pub struct CreatePolicyRequest {
     pub stop_apps: Option<bool>,
     pub backup_mail: Option<bool>,
     pub backup_dns: Option<bool>,
+    /// Absent = none excluded.
+    pub excluded_targets: Option<Vec<String>>,
     pub enabled: Option<bool>,
     pub drill_enabled: Option<bool>,
     pub drill_schedule: Option<String>,
@@ -132,9 +137,23 @@ pub struct UpdatePolicyRequest {
     pub stop_apps: Option<bool>,
     pub backup_mail: Option<bool>,
     pub backup_dns: Option<bool>,
+    /// Absent = unchanged; `[]` clears the list; a list replaces it whole.
+    pub excluded_targets: Option<Vec<String>>,
     pub enabled: Option<bool>,
     pub drill_enabled: Option<bool>,
     pub drill_schedule: Option<String>,
+}
+
+/// `excluded_targets` of a request, checked and normalised, or a 400.
+/// `None` stays `None` (absent field).
+fn excluded_targets_param(v: Option<&Vec<String>>) -> Result<Option<Vec<String>>, ApiError> {
+    use crate::services::backup_policy_executor as bpe;
+    match v {
+        None => Ok(None),
+        Some(list) => bpe::normalize_excluded_targets(list)
+            .map(Some)
+            .map_err(|e| err(StatusCode::BAD_REQUEST, &e)),
+    }
 }
 
 /// Reject obviously-invalid cron strings before they hit the DB. The
@@ -815,12 +834,13 @@ pub async fn create_policy(
         return Err(err(StatusCode::BAD_REQUEST, "drill_schedule must be a 5-field cron string"));
     }
     let retention = req.retention_count.unwrap_or(7).max(1).min(365);
+    let excluded_targets = excluded_targets_param(req.excluded_targets.as_ref())?.unwrap_or_default();
 
     let policy: BackupPolicy = sqlx::query_as(
         "INSERT INTO backup_policies (user_id, server_id, name, backup_sites, backup_databases, backup_volumes, \
          schedule, destination_id, retention_count, encrypt, verify_after_backup, enabled, \
-         drill_enabled, drill_schedule, stop_apps, backup_mail, backup_dns) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) \
+         drill_enabled, drill_schedule, stop_apps, backup_mail, backup_dns, excluded_targets) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) \
          RETURNING *"
     )
     .bind(claims.sub)
@@ -840,6 +860,7 @@ pub async fn create_policy(
     .bind(req.stop_apps.unwrap_or(true))
     .bind(req.backup_mail.unwrap_or(false))
     .bind(req.backup_dns.unwrap_or(false))
+    .bind(&excluded_targets)
     .fetch_one(&state.db)
     .await
     .map_err(|e| internal_error("create policy", e))?;
@@ -885,6 +906,8 @@ pub async fn update_policy(
     // `unwrap_or(7)` here meant an edit that did not mention retention silently
     // reset it to seven - the same reset-on-omission class as the two above.
     let retention = req.retention_count.unwrap_or(cur_retention).max(1).min(365);
+    // Omitted -> keep (COALESCE below). `[]` -> none excluded.
+    let excluded_targets = excluded_targets_param(req.excluded_targets.as_ref())?;
 
     if let Some(s) = &req.schedule {
         if !s.is_empty() && !is_valid_cron_5(s) {
@@ -915,6 +938,7 @@ pub async fn update_policy(
          stop_apps = COALESCE($15, stop_apps), \
          backup_mail = COALESCE($16, backup_mail), \
          backup_dns = COALESCE($17, backup_dns), \
+         excluded_targets = COALESCE($18, excluded_targets), \
          updated_at = NOW() \
          WHERE id = $1 RETURNING *"
     )
@@ -935,6 +959,7 @@ pub async fn update_policy(
     .bind(req.stop_apps)
     .bind(req.backup_mail)
     .bind(req.backup_dns)
+    .bind(excluded_targets.as_deref())
     .fetch_one(&state.db)
     .await
     .map_err(|e| internal_error("update policy", e))?;
@@ -959,6 +984,116 @@ pub async fn delete_policy(
     }
 
     Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+#[derive(serde::Deserialize)]
+pub struct PolicyTargetsQuery {
+    /// The policy being edited. Absent for a new policy.
+    pub policy_id: Option<Uuid>,
+}
+
+/// One app data target a policy could archive, as offered in the policy form.
+#[derive(serde::Serialize, Debug, PartialEq)]
+pub struct PolicyTargetView {
+    /// `<owner_name>/<slug>`: the value to put in `excluded_targets`.
+    pub key: String,
+    /// `volume` or `bind`.
+    pub kind: &'static str,
+    pub owner_name: String,
+    pub slug: String,
+    pub volume_name: Option<String>,
+    pub source_path: Option<String>,
+    pub app_type: String,
+    /// Size of the most recent archive of this target on this server, if any.
+    /// The agent's listing does not measure the data itself.
+    pub last_archive_bytes: Option<i64>,
+    pub last_archive_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// GET /api/backup-orchestrator/policies/targets?policy_id= - The app data
+/// targets a policy's run would archive, for the form's exclusion list.
+///
+/// The server is resolved the way the executor resolves it: the policy's
+/// `server_id`, else the local server. Never the `X-Server-Id` the page sends,
+/// which may name another server than the one the run will reach. Admin only,
+/// like the volume leg itself; another owner's policy is a 404.
+pub async fn list_policy_targets(
+    State(state): State<AppState>,
+    AuthUser(claims): AuthUser,
+    Query(q): Query<PolicyTargetsQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    use crate::services::backup_policy_executor as bpe;
+    require_admin(&claims.role)?;
+
+    let policy_server: Option<Uuid> = match q.policy_id {
+        None => None,
+        Some(pid) => {
+            let row: Option<(Option<Uuid>,)> = sqlx::query_as(
+                "SELECT server_id FROM backup_policies WHERE id = $1 AND user_id = $2"
+            )
+            .bind(pid).bind(claims.sub)
+            .fetch_optional(&state.db).await
+            .map_err(|e| internal_error("list policy targets", e))?;
+            match row {
+                Some((sid,)) => sid,
+                None => return Err(err(StatusCode::NOT_FOUND, "Policy not found")),
+            }
+        }
+    };
+    let server_id = match policy_server {
+        Some(sid) => sid,
+        None => state.agents.local_server_id().await
+            .ok_or_else(|| err(StatusCode::SERVICE_UNAVAILABLE, "The local server is not known yet (setup incomplete)"))?,
+    };
+    let agent = state.agents.for_server(server_id).await
+        .map_err(|e| agent_error("List app data targets", e))?;
+    let listed = agent.get("/backup-targets").await
+        .map_err(|e| agent_error("List app data targets", e))?;
+    let parsed = bpe::parse_backup_targets(&listed).map_err(|e| {
+        tracing::error!("list_policy_targets: {e}");
+        err(StatusCode::BAD_GATEWAY, "The agent's list of app data could not be read")
+    })?;
+
+    // Latest archive per target, keyed like `volume_backups` rows are written
+    // by the executor (owner, kind, volume name or slug, bind directory).
+    let last: Vec<(String, String, String, Option<String>, i64, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
+        "SELECT DISTINCT ON (container_name, mount_type, volume_name, source_path) \
+                container_name, mount_type, volume_name, source_path, size_bytes, created_at \
+         FROM volume_backups WHERE server_id = $1 \
+         ORDER BY container_name, mount_type, volume_name, source_path, created_at DESC"
+    )
+    .bind(server_id)
+    .fetch_all(&state.db).await
+    .map_err(|e| internal_error("list policy targets", e))?;
+
+    let targets: Vec<PolicyTargetView> = parsed.targets.iter().map(|t| {
+        let hit = last.iter().find(|(owner, kind, vol, src, _, _)| {
+            *owner == t.owner_name
+                && kind == t.kind.as_str()
+                && vol == t.row_volume_name()
+                && src.as_deref() == t.source_path.as_deref()
+        });
+        PolicyTargetView {
+            key: t.subject(),
+            kind: t.kind.as_str(),
+            owner_name: t.owner_name.clone(),
+            slug: t.slug.clone(),
+            volume_name: t.volume_name.clone(),
+            source_path: t.source_path.clone(),
+            app_type: t.app_type.clone(),
+            last_archive_bytes: hit.map(|h| h.4),
+            last_archive_at: hit.map(|h| h.5),
+        }
+    }).collect();
+    let invalid: Vec<serde_json::Value> = parsed.invalid.iter()
+        .map(|(s, why)| serde_json::json!({ "subject": s, "reason": why }))
+        .collect();
+
+    Ok(Json(serde_json::json!({
+        "server_id": server_id,
+        "targets": targets,
+        "invalid": invalid,
+    })))
 }
 
 /// POST /api/backup-orchestrator/policies/protect-all - Create a backup-everything policy.
@@ -2639,5 +2774,35 @@ mod tests {
         assert_eq!(policy_runs_limit(Some(10_000)), 100);
         assert_eq!(policy_runs_limit(Some(0)), 1);
         assert_eq!(policy_runs_limit(Some(-3)), 1);
+    }
+
+    #[test]
+    fn an_update_without_excluded_targets_leaves_them_alone() {
+        let absent: UpdatePolicyRequest = serde_json::from_value(serde_json::json!({"name": "p"})).unwrap();
+        assert_eq!(excluded_targets_param(absent.excluded_targets.as_ref()).unwrap(), None, "absent = unchanged");
+        let cleared: UpdatePolicyRequest =
+            serde_json::from_value(serde_json::json!({"name": "p", "excluded_targets": []})).unwrap();
+        assert_eq!(excluded_targets_param(cleared.excluded_targets.as_ref()).unwrap(), Some(vec![]), "[] clears");
+        let set: UpdatePolicyRequest = serde_json::from_value(serde_json::json!({
+            "name": "p", "excluded_targets": ["site/downloads-1a2b3c4d", "site/downloads-1a2b3c4d"]
+        })).unwrap();
+        assert_eq!(
+            excluded_targets_param(set.excluded_targets.as_ref()).unwrap(),
+            Some(vec!["site/downloads-1a2b3c4d".to_string()])
+        );
+        let create: CreatePolicyRequest = serde_json::from_value(serde_json::json!({"name": "p"})).unwrap();
+        assert_eq!(excluded_targets_param(create.excluded_targets.as_ref()).unwrap(), None);
+    }
+
+    #[test]
+    fn a_malformed_excluded_target_is_a_400() {
+        for bad in [vec!["no-slash".to_string()], vec!["a/../b".to_string()], vec!["/etc".to_string()]] {
+            let e = excluded_targets_param(Some(&bad)).unwrap_err();
+            assert_eq!(e.0, StatusCode::BAD_REQUEST, "{bad:?}");
+        }
+        let too_many: Vec<String> = (0..=crate::services::backup_policy_executor::MAX_EXCLUDED_TARGETS)
+            .map(|i| format!("o/s{i}"))
+            .collect();
+        assert_eq!(excluded_targets_param(Some(&too_many)).unwrap_err().0, StatusCode::BAD_REQUEST);
     }
 }

@@ -1,0 +1,20 @@
+-- App data targets a backup policy leaves out.
+--
+-- With backup_volumes on, a policy archives every target the agent lists in
+-- GET /backup-targets (each Docker volume and each bind mount under
+-- /var/lib/dockpanel/{apps,compose,git-data}/ of every managed app). Until now
+-- there was no way to leave one out: a 3.4 GB "downloads" bind mount that the
+-- app can regenerate was archived, encrypted and kept `retention_count` times,
+-- on every run.
+--
+-- Each entry is a target's `<owner_name>/<slug>`, exactly as the agent lists it
+-- and as the run history already names it (`BackupTarget::subject`). Both parts
+-- are stable for a given app and mount: the owner is the template container,
+-- compose project or Git deploy name, and the slug is the volume name, or for a
+-- bind mount its last path component plus 8 hex of sha256(canonical path).
+-- Neither part may contain '/', so the split is unambiguous.
+--
+-- An excluded target is skipped by the executor, and its existing archives are
+-- left as they are: retention only ever ranks rows a run adds, so nothing new
+-- displaces them and nothing deletes them.
+ALTER TABLE backup_policies ADD COLUMN IF NOT EXISTS excluded_targets TEXT[] NOT NULL DEFAULT '{}';
