@@ -372,7 +372,7 @@ found things from coming back.
 
 **On every commit** (`ci.yml`, `codeql.yml`):
 
-- **810 unit tests** across the crates - 474 in the backend, 336 in the agent.
+- **1967 unit tests** across the crates - 1014 in the backend, 953 in the agent.
   (The CLI crate carries none of its own today.) Re-derive rather than trust
   this line: `for c in agent backend cli; do (cd panel/$c && cargo test
   --release); done` and sum the `test result:` lines. Nothing recomputes this
@@ -381,12 +381,13 @@ found things from coming back.
   of number that goes quietly stale, and it had: this line still read 294 when
   the count was measured for v2.48.0.
 
-  **And it went stale again, twice.** It read `493 - 334 backend, 159 agent`
-  until v2.113.0, against a real 537, and then `701 - 437 backend, 264 agent`
-  until v2.222.0, against a real 810. The paragraph above correctly names the
+  **And it went stale again, three times.** It read `493 - 334 backend, 159 agent`
+  until v2.113.0, against a real 537, then `701 - 437 backend, 264 agent`
+  until v2.222.0, against a real 810, and then `810` until v3.1.0-rc.4, against
+  a real 1960. The paragraph above correctly names the
   reason - nothing recomputes it - so the warning was not the missing part.
   Treat every figure on this page that no suite re-derives as suspect by
-  default, and note that five unit tests are `#[ignore]`d and therefore
+  default, and note that six unit tests are `#[ignore]`d and therefore
   excluded from the count above: they need a Docker daemon and are described
   under the drills.
 - **`cargo audit` on all three crates, enforcing.** A real advisory fails the
@@ -404,7 +405,7 @@ that reads the source and fails if the fix is undone - including the shapes that
 are easy to undo by accident. The mail pins assert, among other things, that the
 sandbox was **not** widened to include `/etc/opendkim.conf`, since widening it
 would have "fixed" the bug while destroying the reason the bug was
-survivable. One-hundred-fifty-one suites, **5267 assertions**, all green at the current commit:
+survivable. One-hundred-fifty-two suites, **5300 assertions**, all green at the current commit:
 
 | Suite | Assertions |
 |---|---|
@@ -559,6 +560,7 @@ survivable. One-hundred-fifty-one suites, **5267 assertions**, all green at the 
 | `vuln-scanner-alerts-pin-e2e.sh` | 36 |
 | `vuln-scanner-ui-pin-e2e.sh` | 45 |
 | `vuln-scanner-deploy-gate-pin-e2e.sh` | 40 |
+| `site-git-deploy-link-pin-e2e.sh` | 33 |
 
 **On a schedule, from outside** (`live-surfaces.yml`, daily). Every layer above
 runs because something changed, which is exactly why none of them could catch the

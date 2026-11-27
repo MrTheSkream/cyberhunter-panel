@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Feature: a proxy site can follow a Git Deploy, or change its port
+
+Moving radorz.com, origins, licence, preprod.cyberhunter.fr and cyberhunter.fr from hand-made
+apps onto Git Deploy each needed `UPDATE sites SET proxy_port = <host_port>` in the database,
+then a `PUT /proxy-options` call only to make the panel re-render the vhost. A Git Deploy cannot
+take a domain a site holds, and deleting the site would lose its IP, aliases, certificate and
+canonical/HSTS settings.
+
+- **`PUT /api/sites/{id}/git-deploy` `{git_deploy_id | null}`** links a reverse proxy site to a
+  Git Deploy without a domain. The deploy's `host_port` is copied into `proxy_port` and the vhost
+  re-rendered in one transaction. The site keeps its vhost. `GET` on the same path lists the
+  owner's deploys on that server, each with the reason it cannot be linked when it cannot.
+- **`PUT /api/sites/{id}/proxy-port` `{proxy_port}`** sets the port by hand, with the same rules
+  as site creation. Refused while the site follows a Git Deploy, and for a port a Git Deploy or
+  preview of the server publishes.
+- **An "Upstream" card** on the page of a reverse proxy site drives both.
+- Only deploys of the site's owner, on the same server, with no domain can be linked. A deploy
+  with a domain updates blue-green onto a temporary port that a following site would never learn.
+  A followed deploy cannot then be given a domain, and a linked site cannot be transferred.
+- The Git Deploy allocator (7000-7999) now skips ports a site still proxies to, so a site whose
+  deploy was deleted (link cleared, port kept) cannot start serving a newer deploy.
+- Migration `20261204120000_site_git_deploy_link.sql` adds `sites.git_deploy_id`.
+
 ### Fix: every security scan downloaded a 3.4 GB grype database and left it behind
 
 Seen on a live v3.1.0-rc.4 install: at 23:53:47 UTC the scheduled weekly security scan started,

@@ -87,6 +87,17 @@ api PUT "/sites/$SITE_ID/proxy-options" \
 
 **Derrière Cloudflare ou un autre proxy, laissez `proxy_strict_client_ip` à `false`.** Sinon, l'application verrait l'adresse du proxy pour tous les visiteurs.
 
+### Faire suivre un Git Deploy au site
+
+Pour qu'un site proxy existant serve un Git Deploy, créez le Git Deploy **sans domaine**, puis liez-le au site. Le site garde son vhost (IP, alias, certificat, canonical/HSTS). Seul son port amont change, et il suit le `host_port` du déploiement. Ne modifiez plus `proxy_port` en base.
+
+```bash
+api GET "/sites/$SITE_ID/git-deploy" | jq '.candidates[] | {id, name, host_port, linkable, reason}'
+api PUT "/sites/$SITE_ID/git-deploy" -d "$(jq -n --arg id "$DEPLOY_ID" '{git_deploy_id: $id}')"
+```
+
+Pour une application qui n'est pas un Git Deploy, changez le port directement : `api PUT "/sites/$SITE_ID/proxy-port" -d '{"proxy_port": 8080}'`. Les règles sont détaillées dans le [guide Git Deploy](git-deploy.md#serving-an-existing-site-from-a-git-deploy).
+
 ### Définir la politique des permissions
 
 Cet appel remplace `csp_policy` et `permissions_policy` ensemble. Renvoyez donc les deux.

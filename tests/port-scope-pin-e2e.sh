@@ -268,8 +268,10 @@ $G -qE 'DROP INDEX IF EXISTS idx_sites_proxy_port;' "$MIGF" \
 
 # D2: the message. Two unique indexes can reject that INSERT and they mean
 # opposite things; collapsing them sent the operator to look at DNS.
+# Two writers can hit the index: create's INSERT and the upstream UPDATE of
+# set_proxy_port / set_git_deploy (`upstream_update_error`). Both map it.
 eq "D2 a port collision is reported as a port collision, not as a taken domain" \
-   "$($G -cE 'msg\.contains\("idx_sites_proxy_port_server"\)' "$ST")" "1"
+   "$($G -cE 'msg\.contains\("idx_sites_proxy_port_server"\)' "$ST")" "2"
 eq "D2-control the domain arm still exists below it" \
    "$($G -cE 'msg\.contains\("duplicate key"\) \|\| msg\.contains\("unique"\)' "$ST")" "1"
 

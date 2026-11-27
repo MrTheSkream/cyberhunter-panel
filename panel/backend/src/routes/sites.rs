@@ -2491,21 +2491,7 @@ pub async fn remove(
 
     // GAP 50: Remove firewall rule for proxy port on site deletion
     if let Some(port) = site.proxy_port {
-        // Get current firewall rules and find the matching rule number to delete
-        if let Ok(fw_status) = agent.get("/security/firewall").await {
-            if let Some(rules) = fw_status.get("rules").and_then(|v| v.as_array()) {
-                for rule in rules {
-                    let rule_port = rule.get("port").and_then(|v| v.as_str()).unwrap_or("");
-                    let rule_action = rule.get("action").and_then(|v| v.as_str()).unwrap_or("");
-                    if rule_port == format!("{port}/tcp") && rule_action.to_lowercase().contains("deny") {
-                        if let Some(num) = rule.get("number").and_then(|v| v.as_u64()) {
-                            let _ = agent.delete(&format!("/security/firewall/rules/{num}")).await;
-                            tracing::info!("Auto-firewall: removed deny rule for port {port}");
-                        }
-                    }
-                }
-            }
-        }
+        drop_proxy_port_deny(&agent, port).await;
     }
 
     // Flush Redis DB for this site if Redis cache was enabled
@@ -5797,6 +5783,23 @@ pub async fn transfer(
         ));
     }
 
+    // A site that follows a Git Deploy proxies to a container its CURRENT owner
+    // runs. Moving the site alone would leave the new owner serving the previous
+    // owner's app, with no control over it; the link has to be undone first.
+    let linked: Option<(String,)> = sqlx::query_as(
+        "SELECT domain FROM sites WHERE (id = $1 OR parent_site_id = $1) AND git_deploy_id IS NOT NULL LIMIT 1",
+    )
+    .bind(site_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| internal_error("transfer site", e))?;
+    if let Some((linked_domain,)) = linked {
+        return Err(err(
+            StatusCode::CONFLICT,
+            &format!("{linked_domain} follows a Git Deploy of its current owner. Unlink it before transferring the site."),
+        ));
+    }
+
     let mut tx = state
         .db
         .begin()
@@ -6490,6 +6493,407 @@ pub async fn set_proxy_options(
     })))
 }
 
+// --- site upstream: proxy port and Git Deploy link ---
+//
+// A proxy site's upstream is `proxy_pass http://127.0.0.1:<proxy_port>`. Until
+// these routes it was set once, at creation, and moving a site onto a Git
+// Deploy meant `UPDATE sites SET proxy_port = ...` by hand followed by a vhost
+// re-render. These routes change ONLY the upstream: the vhost keeps its bound
+// IP, aliases, certificate and canonical/HSTS settings, because it is rebuilt
+// from the same row by `build_nginx_body`.
+//
+// The link is materialised: `proxy_port` holds a copy of the deploy's
+// `host_port`. SSL renewal, the auto-healer, the security scanner and drift all
+// read `proxy_port` straight off the row, so a link resolved at render time
+// would fall back to the old port on the next renewal. The copy stays true
+// because `git_deploys.host_port` is written once, at INSERT, and never
+// updated; the only thing that moves a deploy's live port is the agent's
+// blue-green swap, which runs only for a deploy that has its own domain vhost -
+// and such a deploy cannot be linked (see `link_refusal`).
+
+/// Read `{proxy_port: <integer>}`.
+fn parse_proxy_port(body: &serde_json::Value) -> Result<i32, String> {
+    match body.get("proxy_port") {
+        None | Some(serde_json::Value::Null) => Err("Missing 'proxy_port' (an integer)".into()),
+        Some(v) => v
+            .as_i64()
+            .and_then(|n| i32::try_from(n).ok())
+            .ok_or_else(|| "'proxy_port' must be an integer".into()),
+    }
+}
+
+/// Read `{git_deploy_id: "<uuid>" | null}`. `Ok(None)` = unlink.
+fn parse_link_target(body: &serde_json::Value) -> Result<Option<Uuid>, String> {
+    match body.get("git_deploy_id") {
+        None => Err("Missing 'git_deploy_id' (a Git Deploy id, or null to unlink)".into()),
+        Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(s)) => Uuid::parse_str(s.trim())
+            .map(Some)
+            .map_err(|_| "'git_deploy_id' must be a Git Deploy id or null".into()),
+        Some(_) => Err("'git_deploy_id' must be a Git Deploy id or null".into()),
+    }
+}
+
+/// Only a `proxy` site has a free upstream. A node or python site's port is the
+/// one its own app service listens on (`app_command`), so moving it would point
+/// nginx away from the app the panel still runs.
+fn upstream_runtime_refusal(runtime: &str) -> Option<&'static str> {
+    if runtime == "proxy" {
+        None
+    } else {
+        Some("Only a reverse proxy site has a changeable upstream port")
+    }
+}
+
+/// The Git Deploy fields a link decision needs.
+#[derive(Debug, Clone, sqlx::FromRow)]
+struct LinkCandidate {
+    id: Uuid,
+    name: String,
+    server_id: Uuid,
+    host_port: i32,
+    domain: Option<String>,
+    status: String,
+    server_is_local: bool,
+}
+
+/// Same host. `sites.server_id` NULL is the local server on old rows, while
+/// `git_deploys.server_id` is always set.
+fn same_server(site_server: Option<Uuid>, deploy: &LinkCandidate) -> bool {
+    match site_server {
+        Some(s) => s == deploy.server_id,
+        None => deploy.server_is_local,
+    }
+}
+
+/// Why `deploy` cannot become the upstream of a site on `site_server`, or
+/// `None` when it can. Ownership is settled by the query that loaded `deploy`
+/// (it must belong to the site's owner).
+fn link_refusal(site_server: Option<Uuid>, deploy: &LinkCandidate) -> Option<(StatusCode, String)> {
+    if !same_server(site_server, deploy) {
+        return Some((
+            StatusCode::BAD_REQUEST,
+            format!("Git Deploy '{}' runs on another server than this site", deploy.name),
+        ));
+    }
+    // A deploy with its own domain has its own vhost, and its updates are
+    // blue-green: the new container comes up on a temporary port and only the
+    // deploy's own vhost is swapped onto it, while `host_port` in the database
+    // keeps the old value. A site following that deploy would be left on a port
+    // nothing listens on after the first update.
+    if let Some(d) = deploy.domain.as_deref().filter(|d| !d.trim().is_empty()) {
+        return Some((
+            StatusCode::CONFLICT,
+            format!(
+                "Git Deploy '{}' serves its own domain {d}. A site can follow only a Git Deploy \
+                 without a domain: create one without a domain and link it here instead.",
+                deploy.name
+            ),
+        ));
+    }
+    if !is_safe_proxy_port(deploy.host_port) {
+        return Some((
+            StatusCode::CONFLICT,
+            format!(
+                "Git Deploy '{}' publishes port {}, which a site may not proxy to",
+                deploy.name, deploy.host_port
+            ),
+        ));
+    }
+    None
+}
+
+/// Map a refused `UPDATE sites ... proxy_port` to what it means to the operator.
+fn upstream_update_error(context: &str, e: sqlx::Error) -> ApiError {
+    let msg = e.to_string();
+    if msg.contains("idx_sites_proxy_port_server") {
+        err(StatusCode::CONFLICT, "That port is already in use by another site on this server")
+    } else if msg.contains("idx_sites_git_deploy_id") {
+        err(StatusCode::CONFLICT, "That Git Deploy is already the upstream of another site")
+    } else {
+        internal_error(context, e)
+    }
+}
+
+/// Add the auto-firewall deny rule for a proxy port (GAP 50, as `create` does).
+async fn deny_proxy_port_externally(agent: &crate::services::agent::AgentHandle, port: i32) {
+    let Ok(port) = u16::try_from(port) else { return };
+    let _ = agent
+        .post(
+            "/security/firewall/rules",
+            Some(serde_json::json!({ "port": port, "proto": "tcp", "action": "deny", "from": null })),
+        )
+        .await;
+}
+
+/// Remove the auto-firewall deny rule of a proxy port the site no longer holds
+/// (GAP 50). Best effort: a leftover deny rule only blocks external access to a
+/// port nothing should be reached on from outside.
+async fn drop_proxy_port_deny(agent: &crate::services::agent::AgentHandle, port: i32) {
+    let Ok(fw_status) = agent.get("/security/firewall").await else { return };
+    let Some(rules) = fw_status.get("rules").and_then(|v| v.as_array()) else { return };
+    for rule in rules {
+        let rule_port = rule.get("port").and_then(|v| v.as_str()).unwrap_or("");
+        let rule_action = rule.get("action").and_then(|v| v.as_str()).unwrap_or("");
+        if rule_port == format!("{port}/tcp") && rule_action.to_lowercase().contains("deny") {
+            if let Some(num) = rule.get("number").and_then(|v| v.as_u64()) {
+                let _ = agent.delete(&format!("/security/firewall/rules/{num}")).await;
+                tracing::info!("Auto-firewall: removed deny rule for port {port}");
+            }
+        }
+    }
+}
+
+/// Write the new upstream (`proxy_port`, and the link), rebuild the vhost from
+/// the updated row, and commit only once the agent accepted it.
+async fn apply_upstream(
+    state: &AppState,
+    agent: &crate::services::agent::AgentHandle,
+    site: &Site,
+    port: i32,
+    git_deploy_id: Option<Uuid>,
+    context: &str,
+) -> Result<Site, ApiError> {
+    let mut tx = state.db.begin().await.map_err(|e| internal_error(context, e))?;
+    let updated: Site = sqlx::query_as(
+        "UPDATE sites SET proxy_port = $1, git_deploy_id = $2, updated_at = NOW() \
+         WHERE id = $3 RETURNING *",
+    )
+    .bind(port)
+    .bind(git_deploy_id)
+    .bind(site.id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| upstream_update_error(context, e))?;
+    rebuild_then_commit(state, agent, tx, &updated, context).await?;
+
+    if site.proxy_port != Some(port) {
+        deny_proxy_port_externally(agent, port).await;
+        if let Some(old) = site.proxy_port {
+            drop_proxy_port_deny(agent, old).await;
+        }
+    }
+    Ok(updated)
+}
+
+const LINK_CANDIDATE_SELECT: &str =
+    "SELECT d.id, d.name, d.server_id, d.host_port, d.domain, d.status, sv.is_local AS server_is_local \
+     FROM git_deploys d JOIN servers sv ON sv.id = d.server_id";
+
+/// PUT /api/sites/{id}/proxy-port - `{proxy_port: <integer>}`.
+///
+/// The manual form, for a site whose upstream is not a Git Deploy. Refused
+/// while the site follows one (unlink it first), and refused for a port a Git
+/// Deploy or preview of this server publishes: following a deploy is what the
+/// link is for, and a typed port could otherwise reach another tenant's app.
+pub async fn set_proxy_port(
+    State(state): State<AppState>,
+    AuthUser(claims): AuthUser,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let port = parse_proxy_port(&body).map_err(|m| err(StatusCode::BAD_REQUEST, &m))?;
+    if !is_safe_proxy_port(port) {
+        return Err(err(StatusCode::BAD_REQUEST,
+            "proxy_port must be between 1024 and 65535 and not a reserved/system port"));
+    }
+
+    let (site, agent) = site_and_agent_for_caller(&state, id, &claims, "set proxy port").await?;
+    if let Some(m) = upstream_runtime_refusal(&site.runtime) {
+        return Err(err(StatusCode::BAD_REQUEST, m));
+    }
+    if site.git_deploy_id.is_some() {
+        return Err(err(StatusCode::CONFLICT,
+            "This site follows a Git Deploy, which sets its port. Unlink it first."));
+    }
+    if site.proxy_port == Some(port) {
+        return Ok(Json(serde_json::json!({ "ok": true, "proxy_port": port, "changed": false })));
+    }
+
+    let git_held: Option<(String,)> = sqlx::query_as(
+        "SELECT d.name FROM git_deploys d JOIN servers sv ON sv.id = d.server_id \
+         WHERE (d.server_id = $2 OR ($2::uuid IS NULL AND sv.is_local)) \
+           AND (d.host_port = $1 OR EXISTS (\
+                SELECT 1 FROM git_previews p WHERE p.git_deploy_id = d.id AND p.host_port = $1)) \
+         LIMIT 1",
+    )
+    .bind(port)
+    .bind(site.server_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| internal_error("set proxy port", e))?;
+    if git_held.is_some() {
+        return Err(err(StatusCode::CONFLICT,
+            "That port is published by a Git Deploy on this server. To serve a Git Deploy, link the site to it instead."));
+    }
+
+    let previous = site.proxy_port;
+    let updated = apply_upstream(&state, &agent, &site, port, None, "Proxy port").await?;
+
+    let ip = crate::routes::client_ip(&headers);
+    let details = format!(
+        "{} -> {port}",
+        previous.map(|p| p.to_string()).unwrap_or_else(|| "none".into())
+    );
+    activity::log_activity(
+        &state.db, claims.sub, &claims.email, "site.proxy_port",
+        Some("site"), Some(&site.domain), Some(&details), ip.as_deref(),
+        claims.key_id,
+    ).await;
+
+    Ok(Json(serde_json::json!({ "ok": true, "proxy_port": updated.proxy_port, "changed": true })))
+}
+
+/// GET /api/sites/{id}/git-deploy - the link, and the Git Deploys of the site's
+/// owner on the site's server, each with the reason it cannot be linked when it
+/// cannot.
+pub async fn get_git_deploy_link(
+    State(state): State<AppState>,
+    AuthUser(claims): AuthUser,
+    Path(id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let site: Site = sqlx::query_as(SITE_FOR_CALLER_ALL.as_str())
+        .bind(id)
+        .bind(claims.sub)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| internal_error("git deploy link", e))?
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "Site not found"))?;
+
+    // Scoped to the SITE's owner: an administrator looking at a client's site is
+    // offered that client's deploys, the only ones the link accepts.
+    let deploys: Vec<LinkCandidate> =
+        sqlx::query_as(&format!("{LINK_CANDIDATE_SELECT} WHERE d.user_id = $1 ORDER BY d.name"))
+            .bind(site.user_id)
+            .fetch_all(&state.db)
+            .await
+            .map_err(|e| internal_error("git deploy link", e))?;
+    let linked: Vec<(Uuid, Uuid, String)> = sqlx::query_as(
+        "SELECT git_deploy_id, id, domain FROM sites WHERE git_deploy_id IS NOT NULL AND user_id = $1",
+    )
+    .bind(site.user_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(|e| internal_error("git deploy link", e))?;
+
+    let candidates: Vec<serde_json::Value> = deploys
+        .into_iter()
+        .filter(|d| same_server(site.server_id, d))
+        .map(|d| {
+            let other = linked
+                .iter()
+                .find(|(g, sid, _)| *g == d.id && *sid != site.id)
+                .map(|(_, _, dom)| dom.clone());
+            let reason = match (link_refusal(site.server_id, &d), other) {
+                (Some((_, m)), _) => Some(m),
+                (None, Some(dom)) => Some(format!("Already the upstream of {dom}")),
+                (None, None) => None,
+            };
+            serde_json::json!({
+                "id": d.id, "name": d.name, "host_port": d.host_port, "domain": d.domain,
+                "status": d.status, "linkable": reason.is_none(), "reason": reason,
+            })
+        })
+        .collect();
+
+    Ok(Json(serde_json::json!({
+        "git_deploy_id": site.git_deploy_id,
+        "proxy_port": site.proxy_port,
+        "candidates": candidates,
+    })))
+}
+
+/// PUT /api/sites/{id}/git-deploy - `{git_deploy_id: "<uuid>" | null}`.
+///
+/// Link: the site's upstream becomes the deploy's `host_port`, written in the
+/// same transaction as the vhost rebuild. Sending the same id again re-syncs the
+/// port. The deploy must belong to the site's owner, run on the site's server
+/// and have no domain of its own. Unlink (`null`) only drops the link: the site
+/// keeps proxying to the same port until it is changed.
+pub async fn set_git_deploy(
+    State(state): State<AppState>,
+    AuthUser(claims): AuthUser,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let target = parse_link_target(&body).map_err(|m| err(StatusCode::BAD_REQUEST, &m))?;
+    let (site, agent) = site_and_agent_for_caller(&state, id, &claims, "link git deploy").await?;
+    if let Some(m) = upstream_runtime_refusal(&site.runtime) {
+        return Err(err(StatusCode::BAD_REQUEST, m));
+    }
+    let ip = crate::routes::client_ip(&headers);
+
+    let Some(deploy_id) = target else {
+        let Some(previous) = site.git_deploy_id else {
+            return Ok(Json(serde_json::json!({
+                "ok": true, "git_deploy_id": null, "proxy_port": site.proxy_port, "changed": false,
+            })));
+        };
+        // The vhost does not change, so there is nothing to rebuild.
+        sqlx::query("UPDATE sites SET git_deploy_id = NULL, updated_at = NOW() WHERE id = $1")
+            .bind(site.id)
+            .execute(&state.db)
+            .await
+            .map_err(|e| internal_error("unlink git deploy", e))?;
+        let name: Option<(String,)> = sqlx::query_as("SELECT name FROM git_deploys WHERE id = $1")
+            .bind(previous)
+            .fetch_optional(&state.db)
+            .await
+            .unwrap_or(None);
+        let details = format!(
+            "{} (port {} kept)",
+            name.map(|(n,)| n).unwrap_or_else(|| previous.to_string()),
+            site.proxy_port.map(|p| p.to_string()).unwrap_or_else(|| "none".into())
+        );
+        activity::log_activity(
+            &state.db, claims.sub, &claims.email, "site.git_deploy_unlink",
+            Some("site"), Some(&site.domain), Some(&details), ip.as_deref(),
+            claims.key_id,
+        ).await;
+        return Ok(Json(serde_json::json!({
+            "ok": true, "git_deploy_id": null, "proxy_port": site.proxy_port, "changed": true,
+        })));
+    };
+
+    // Scoped to the SITE's owner, not the caller: an administrator acting on a
+    // client's site may only point it at that client's own deploys.
+    let deploy: LinkCandidate =
+        sqlx::query_as(&format!("{LINK_CANDIDATE_SELECT} WHERE d.id = $1 AND d.user_id = $2"))
+            .bind(deploy_id)
+            .bind(site.user_id)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(|e| internal_error("link git deploy", e))?
+            .ok_or_else(|| err(StatusCode::NOT_FOUND, "Git deploy not found"))?;
+    if let Some((status, m)) = link_refusal(site.server_id, &deploy) {
+        return Err(err(status, &m));
+    }
+
+    let previous = site.proxy_port;
+    let updated =
+        apply_upstream(&state, &agent, &site, deploy.host_port, Some(deploy.id), "Link Git Deploy").await?;
+
+    let details = format!(
+        "{}: port {} -> {}",
+        deploy.name,
+        previous.map(|p| p.to_string()).unwrap_or_else(|| "none".into()),
+        deploy.host_port
+    );
+    activity::log_activity(
+        &state.db, claims.sub, &claims.email, "site.git_deploy_link",
+        Some("site"), Some(&site.domain), Some(&details), ip.as_deref(),
+        claims.key_id,
+    ).await;
+
+    Ok(Json(serde_json::json!({
+        "ok": true, "git_deploy_id": updated.git_deploy_id, "proxy_port": updated.proxy_port,
+        "changed": previous != updated.proxy_port || site.git_deploy_id != updated.git_deploy_id,
+    })))
+}
+// --- end site upstream ---
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -6913,5 +7317,121 @@ mod tests {
         assert!(is_safe_proxy_port(3000));
         assert!(is_safe_proxy_port(5001));
         assert!(is_safe_proxy_port(65535));
+    }
+
+    // ── site upstream: proxy port and Git Deploy link ────────────────────
+
+    fn candidate(server: Uuid, local: bool, host_port: i32, domain: Option<&str>) -> LinkCandidate {
+        LinkCandidate {
+            id: Uuid::from_u128(7),
+            name: "radorz-app".into(),
+            server_id: server,
+            host_port,
+            domain: domain.map(str::to_string),
+            status: "running".into(),
+            server_is_local: local,
+        }
+    }
+
+    #[test]
+    fn proxy_port_body_must_be_an_integer() {
+        assert_eq!(parse_proxy_port(&serde_json::json!({"proxy_port": 7003})), Ok(7003));
+        assert!(parse_proxy_port(&serde_json::json!({})).is_err());
+        assert!(parse_proxy_port(&serde_json::json!({"proxy_port": null})).is_err());
+        assert!(parse_proxy_port(&serde_json::json!({"proxy_port": "7003"})).is_err());
+        assert!(parse_proxy_port(&serde_json::json!({"proxy_port": 7003.5})).is_err());
+        // Past i32 is refused rather than wrapped onto some other port.
+        assert!(parse_proxy_port(&serde_json::json!({"proxy_port": 4_294_974_299_i64})).is_err());
+    }
+
+    #[test]
+    fn link_body_is_an_id_or_null() {
+        let id = Uuid::from_u128(42);
+        assert_eq!(parse_link_target(&serde_json::json!({"git_deploy_id": id.to_string()})), Ok(Some(id)));
+        assert_eq!(parse_link_target(&serde_json::json!({"git_deploy_id": null})), Ok(None));
+        // Absent is not "unlink": an empty body must not silently drop a link.
+        assert!(parse_link_target(&serde_json::json!({})).is_err());
+        assert!(parse_link_target(&serde_json::json!({"git_deploy_id": "radorz"})).is_err());
+        assert!(parse_link_target(&serde_json::json!({"git_deploy_id": 7})).is_err());
+    }
+
+    #[test]
+    fn only_a_proxy_site_has_a_changeable_upstream() {
+        assert!(upstream_runtime_refusal("proxy").is_none());
+        // node/python ports belong to the app service the panel runs.
+        for r in ["node", "python", "php", "static"] {
+            assert!(upstream_runtime_refusal(r).is_some(), "{r} must be refused");
+        }
+    }
+
+    #[test]
+    fn a_deploy_on_another_server_is_refused() {
+        let here = Uuid::from_u128(1);
+        let there = Uuid::from_u128(2);
+        assert!(link_refusal(Some(here), &candidate(here, false, 7003, None)).is_none());
+        let (status, _) = link_refusal(Some(here), &candidate(there, false, 7003, None)).unwrap();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        // A site row with no server is the local server: it matches a deploy
+        // on the local server and nothing else.
+        assert!(link_refusal(None, &candidate(there, true, 7003, None)).is_none());
+        assert!(link_refusal(None, &candidate(there, false, 7003, None)).is_some());
+    }
+
+    #[test]
+    fn a_deploy_with_its_own_domain_cannot_be_followed() {
+        let s = Uuid::from_u128(1);
+        // Blue-green moves such a deploy to a temporary port that only its own
+        // vhost learns, so a following site would end on a dead port.
+        let (status, msg) = link_refusal(Some(s), &candidate(s, false, 7003, Some("app.example"))).unwrap();
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert!(msg.contains("app.example"));
+        // A blank domain is no domain.
+        assert!(link_refusal(Some(s), &candidate(s, false, 7003, Some("  "))).is_none());
+    }
+
+    #[test]
+    fn a_deploy_port_is_still_held_to_the_proxy_port_rules() {
+        let s = Uuid::from_u128(1);
+        assert!(link_refusal(Some(s), &candidate(s, false, 3306, None)).is_some());
+        assert!(link_refusal(Some(s), &candidate(s, false, 7999, None)).is_none());
+    }
+
+    #[test]
+    fn a_linked_site_keeps_its_vhost_and_takes_the_deploy_port() {
+        // The link only moves `proxy_port`: the rebuilt body still carries the
+        // bound IP, aliases, certificate and canonical/HSTS of the site.
+        let site: Site = serde_json::from_str(r#"{
+            "id": "00000000-0000-0000-0000-000000000003", "user_id": "00000000-0000-0000-0000-000000000004", "server_id": null,
+            "domain": "radorz.com", "runtime": "proxy", "status": "active", "proxy_port": 7003,
+            "php_version": null, "root_path": null, "ssl_enabled": true,
+            "ssl_cert_path": "/etc/dockpanel/ssl/radorz.com/fullchain.pem",
+            "ssl_key_path": "/etc/dockpanel/ssl/radorz.com/privkey.pem",
+            "ssl_expiry": null, "ssl_profile": null, "ssl_renewal_at": null, "ssl_renewal_checked_at": null,
+            "ssl_challenge": null, "ssl_cert_subject": null, "ssl_wildcard": null, "ssl_dns_zone_id": null,
+            "rate_limit": null, "max_upload_mb": 64, "php_memory_mb": 256, "php_max_workers": 5,
+            "custom_nginx": null, "php_preset": null, "app_command": null, "parent_site_id": null,
+            "synced_at": null, "enabled": true, "fastcgi_cache": false, "redis_cache": false, "redis_db": 0,
+            "waf_enabled": false, "waf_mode": "detection", "csp_policy": null, "permissions_policy": null,
+            "bot_protection": "off", "bandwidth_quota_mb": null, "bandwidth_suspended_at": null,
+            "sftp_enabled": false, "sftp_uid": null, "sftp_gid": null,
+            "created_at": "2026-11-26T00:00:00Z", "updated_at": "2026-11-26T00:00:00Z",
+            "ip_id": "00000000-0000-0000-0000-000000000005", "aliases": ["www.radorz.com"], "canonical_host": "apex",
+            "force_ssl": true, "hsts": false, "git_deploy_id": "00000000-0000-0000-0000-000000000007"
+        }"#)
+        .unwrap();
+        assert_eq!(site.git_deploy_id, Some(Uuid::from_u128(7)));
+        let body = build_nginx_body(&site, Some("192.0.2.107"));
+        assert_eq!(body["proxy_port"], 7003);
+        assert_eq!(body["bind_ip"], "192.0.2.107");
+        assert_eq!(body["aliases"], serde_json::json!(["www.radorz.com"]));
+        assert_eq!(body["canonical_host"], "apex");
+        assert_eq!(body["ssl"], true);
+        assert_eq!(body["ssl_cert"], "/etc/dockpanel/ssl/radorz.com/fullchain.pem");
+        assert_eq!(body["hsts"], false);
+        // A row read without the column (older fixture) is simply not linked.
+        let mut legacy = serde_json::to_value(&site).unwrap();
+        legacy.as_object_mut().unwrap().remove("git_deploy_id");
+        let legacy: Site = serde_json::from_value(legacy).unwrap();
+        assert_eq!(legacy.git_deploy_id, None);
     }
 }

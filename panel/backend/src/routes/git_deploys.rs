@@ -606,9 +606,13 @@ pub async fn create(
         return Err(err(StatusCode::BAD_REQUEST, &format!("Invalid repository URL: {e}")));
     }
 
-    // Auto-allocate host_port: find first gap in 7000-7999 (scoped to this server)
+    // Auto-allocate host_port: find first gap in 7000-7999 (scoped to this server).
+    // A port a site still proxies to is not free: a site that followed a deleted
+    // deploy keeps its port, and handing that port to a new deploy - possibly
+    // another tenant's - would put the new app behind the old site's domain.
     let used_ports: Vec<(i32,)> = sqlx::query_as(
-        "SELECT host_port FROM git_deploys WHERE server_id = $1 ORDER BY host_port",
+        "SELECT host_port FROM git_deploys WHERE server_id = $1 \
+         UNION SELECT proxy_port FROM sites WHERE server_id = $1 AND proxy_port IS NOT NULL",
     )
     .bind(server_id)
     .fetch_all(&state.db)
@@ -916,6 +920,23 @@ pub async fn update(
             None => return Err(err(StatusCode::NOT_FOUND, "Git deploy not found")),
         };
     let previous_mode = effective_tls_mode(cur_tls_mode.as_deref(), cur_ssl_email.as_deref());
+
+    // A deploy a site follows must stay without a domain: with one, its updates
+    // turn blue-green and move the container to a port the site never learns.
+    if body.domain.as_deref().is_some_and(|d| !d.trim().is_empty() && Some(d) != cur_domain.as_deref()) {
+        let follower: Option<(String,)> =
+            sqlx::query_as("SELECT domain FROM sites WHERE git_deploy_id = $1 LIMIT 1")
+                .bind(id)
+                .fetch_optional(&state.db)
+                .await
+                .map_err(|e| internal_error("update git_deploys", e))?;
+        if let Some((site_domain,)) = follower {
+            return Err(err(
+                StatusCode::CONFLICT,
+                &format!("The site {site_domain} follows this Git Deploy, so it cannot take a domain of its own. Unlink the site first."),
+            ));
+        }
+    }
 
     // Validate domain ONLY when it changes. This used to run `is_valid_domain` +
     // `is_reserved_domain` and stop there, under a comment claiming parity with
