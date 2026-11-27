@@ -380,7 +380,7 @@ beside the per-domain tree; the panel keeps the alias and the metadata. Administ
 
 ---
 
-## Git Deploy (16 endpoints)
+## Git Deploy (17 endpoints)
 
 ### `POST /api/git-deploys`
 Create a git deployment.
@@ -395,7 +395,8 @@ Create a git deployment.
   "auto_deploy": true,
   "build_context": ".",
   "preview_ttl_hours": 24,
-  "database_id": "3f0c9a5e-1d2b-4c6a-9e8f-0a1b2c3d4e5f"
+  "database_id": "3f0c9a5e-1d2b-4c6a-9e8f-0a1b2c3d4e5f",
+  "linked_services": [{ "app_name": "mailpit", "alias": "mailpit" }]
 }
 ```
 
@@ -405,6 +406,33 @@ host `db` and gets `DATABASE_URL` unless its env already sets it. On
 `PUT /api/git-deploys/{id}`, omit the key to keep the link, send `""` to unlink,
 or send an id to (re)link. A database you do not own, on another server, on the
 shared local MariaDB, or with only an imported password hash is refused with `400`.
+
+`linked_services` links apps from **Apps** (template apps) on the same server, each
+under a DNS alias (see [Linked services](guides/git-deploy.md#linked-services)). A
+Mailpit app linked as `mailpit` is reached by the deployment's app at `mailpit:1025`.
+`app_name` is the app's name; its container name `dockpanel-app-<name>` is accepted
+too. On `PUT /api/git-deploys/{id}`, omit the key to keep the links, send `[]` to
+unlink them all, or send the full list to replace them. Every Git Deploy object
+returns the stored list as `linked_services`. The request is refused with `400` for:
+
+- an app that is not yours on the deployment's server, including one with no owner
+  label;
+- an alias that is not a lowercase DNS label, is used twice, or is `db` while a
+  database is linked (in either order);
+- the same app twice, or more than 8 services.
+
+Changes take effect on the next deploy. To link a Mailpit app to an existing deployment:
+
+```bash
+curl -X PUT https://panel.example.com/api/git-deploys/$DEPLOY_ID \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"linked_services": [{"app_name": "mailpit", "alias": "mailpit"}]}'
+curl -X POST https://panel.example.com/api/git-deploys/$DEPLOY_ID/deploy \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+`GET /api/git-deploys/linkable-services` lists the apps you may link on the selected
+server, as `[{ "app_name", "container_name", "template", "status" }]`.
 
 ### `POST /api/git-deploys/{id}/deploy`
 Trigger a build + deploy. Returns `202` in **two different shapes**, and a client that
@@ -427,6 +455,7 @@ rather than queueing a second.
 | Method | Path | Purpose |
 |--------|------|---------|
 | GET | `/api/git-deploys` | List deployments |
+| GET | `/api/git-deploys/linkable-services` | Your apps that can be linked as services |
 | GET | `/api/git-deploys/{id}` | Details |
 | PUT | `/api/git-deploys/{id}` | Update config |
 | DELETE | `/api/git-deploys/{id}` | Remove |

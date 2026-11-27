@@ -105,10 +105,10 @@ has "the link network is named per deployment" "$LINK_FLAT" 'format!("dockpanel-
 has "the link network is created internal (no gateway, never a default route)" "$LINK_FLAT" 'internal:true,'
 has "the link network is labelled for its deployment" "$LINK_FLAT" '(LINK_LABEL.to_string(),name.to_string())'
 has "reconcile refuses a same-named network that is not ours" "$LINK_FLAT" 'ifletSome(refnet)=existing&&!network_is_ours(net.labels.as_ref(),name)'
-has "reconcile disconnects anything that may not stay" "$LINK_FLAT" 'if!may_stay(&cid,labels.as_ref(),name,Some(&db.id))'
+has "reconcile disconnects anything that may not stay" "$LINK_FLAT" 'elseif!may_stay(&m.id,m.labels.as_ref(),name,None){disconnect.push(LinkStep::Disconnect(m.id.clone()));'
 has "may_stay admits only this deployment's deploy-kind containers" "$LINK_FLAT" '==Some("deploy")'
 hasnt "the app is never put on the shared dockpanel-db network" "$SVC_FLAT" '"dockpanel-db"'
-has "the database is attached under the stable alias" "$LINK_FLAT" 'attach(docker,&network,&db.id,Some(DB_ALIAS))'
+has "the database is attached under the stable alias" "$LINK_FLAT" '.map(|d|(d.id.as_str(),DB_ALIAS))'
 has "the alias is db" "$LINK_FLAT" 'pubconstDB_ALIAS:&str="db";'
 has "the DB container's identity is checked (name AND labels)" "$LINK_FLAT" 'verify_db_identity(info.name.as_deref()'
 
@@ -131,11 +131,11 @@ echo "§3 previews never get the linked database"
 has "agent route refuses a link for any scope but deploy" "$ROUTE_FLAT" 'ifletSome(reflink)=body.linked_db{ifscope!=ownership::GitScope::Deploy{'
 has "agent only reconciles a link in the Deploy space" "$SVC_FLAT" 'letlink_network=ifscope==ownership::GitScope::Deploy{'
 has "the panel's preview deploy passes no link" "$BACKEND_FLAT" 'scope:"preview",volumes:&[],linked_db:None,'
-has "teardown only touches the link of a Deploy-scope name" "$SVC_FLAT" 'ifscope==ownership::GitScope::Deploy&&letErr(e)=super::git_db_link::reconcile(&docker,name,None)'
+has "teardown only touches the link of a Deploy-scope name" "$SVC_FLAT" 'ifscope==ownership::GitScope::Deploy&&letErr(e)=super::git_db_link::reconcile(&docker,name,None,&[])'
 
 echo
 echo "§4 order: refusals before anything destructive; app joins before it starts"
-REC_AT=$(printf '%s\n' "$SVC_CODE" | grep -n 'super::git_db_link::reconcile(&docker, name, verified.as_ref())' | head -1 | cut -d: -f1)
+REC_AT=$(printf '%s\n' "$SVC_CODE" | grep -n 'super::git_db_link::reconcile(&docker, name, verified.as_ref(), &services)' | head -1 | cut -d: -f1)
 STOP_AT=$(printf '%s\n' "$SVC_CODE" | grep -n '\.stop_container(&container_id, Some(StopContainerOptions { t: 10 }))' | head -1 | cut -d: -f1)
 if [ -n "$REC_AT" ] && [ -n "$STOP_AT" ] && [ "$REC_AT" -lt "$STOP_AT" ]; then
   ok "the link is settled (line $REC_AT) before the old container is stopped (line $STOP_AT)"
@@ -167,7 +167,7 @@ has "blue-green is still gated on volumes only - a linked DB does not block it" 
 
 echo
 echo "§5 deletion of either side detaches and removes the network"
-has "deleting the deployment removes its link network" "$SVC_FLAT" 'super::git_db_link::reconcile(&docker,name,None)'
+has "deleting the deployment removes its link network" "$SVC_FLAT" 'super::git_db_link::reconcile(&docker,name,None,&[])'
 RD=$(printf '%s\n' "$DB_CODE" | awk '/^pub async fn remove_database\(/,/^}/')
 R_REL=$(printf '%s\n' "$RD" | grep -n 'git_db_link::release_for_database(&docker, container_id)' | head -1 | cut -d: -f1)
 R_RM=$(printf '%s\n' "$RD" | grep -n '\.remove_container(' | head -1 | cut -d: -f1)

@@ -372,7 +372,7 @@ found things from coming back.
 
 **On every commit** (`ci.yml`, `codeql.yml`):
 
-- **1994 unit tests** across the crates - 1030 in the backend, 964 in the agent.
+- **2006 unit tests** across the crates - 1033 in the backend, 973 in the agent.
   (The CLI crate carries none of its own today.) Re-derive rather than trust
   this line: `for c in agent backend cli; do (cd panel/$c && cargo test
   --release); done` and sum the `test result:` lines. Nothing recomputes this
@@ -387,7 +387,7 @@ found things from coming back.
   a real 1960. The paragraph above correctly names the
   reason - nothing recomputes it - so the warning was not the missing part.
   Treat every figure on this page that no suite re-derives as suspect by
-  default, and note that seven unit tests are `#[ignore]`d and therefore
+  default, and note that eight unit tests are `#[ignore]`d and therefore
   excluded from the count above: they need a Docker daemon and are described
   under the drills.
 - **`cargo audit` on all three crates, enforcing.** A real advisory fails the
@@ -405,7 +405,7 @@ that reads the source and fails if the fix is undone - including the shapes that
 are easy to undo by accident. The mail pins assert, among other things, that the
 sandbox was **not** widened to include `/etc/opendkim.conf`, since widening it
 would have "fixed" the bug while destroying the reason the bug was
-survivable. One-hundred-fifty-four suites, **5412 assertions**, all green at the current commit:
+survivable. One-hundred-fifty-five suites, **5520 assertions**, all green at the current commit:
 
 | Suite | Assertions |
 |---|---|
@@ -423,6 +423,7 @@ survivable. One-hundred-fifty-four suites, **5412 assertions**, all green at the
 | `git-deploy-sandbox-pin-e2e.sh` | 42 |
 | `git-deploy-volumes-pin-e2e.sh` | 28 |
 | `git-deploy-linked-db-pin-e2e.sh` | 85 |
+| `git-deploy-linked-services-pin-e2e.sh` | 108 |
 | `ssl-correctness-pin-e2e.sh` | 97 |
 | `dns01-renewal-pin-e2e.sh` | 63 |
 | `acme-account-identity-pin-e2e.sh` | 20 |
