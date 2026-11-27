@@ -127,12 +127,16 @@ fi
 
 echo
 echo "── 2. S3 (grype half): kill_on_drop on all 3 spawns in image_scanner.rs ──"
-if [ "$(countin "$IMAGE_SCANNER" "^pub async fn install_grype" "kill_on_drop(true)")" -ge 2 ]; then
-  ok "install_grype sets kill_on_drop(true) on both its spawns (installer + db-update priming)"
+# The db-update priming no longer spawns anything in the agent: it starts the
+# CVE scanner's vuln_db_update job (transient unit stopped on timeout, DB_LOCK,
+# leftover sweep). A 180 s in-agent `grype db update` killed half way left its
+# 3.4 GB download behind (v3.1.0-rc.4).
+if [ "$(countin "$IMAGE_SCANNER" "^pub async fn install_grype_binary" "kill_on_drop(true)")" -ge 1 ]    && bodyhas "$IMAGE_SCANNER" "^pub async fn install_grype[(]" "vuln_scanner::start_db_update()"    && ! bodyhas "$IMAGE_SCANNER" "^pub async fn install_grype[(]" '.args(["db", "update"])'; then
+  ok "install_grype's installer sets kill_on_drop(true), its db priming is the locked db update job"
 else
-  bad "install_grype is missing kill_on_drop(true) on one or both of its spawns"
+  bad "install_grype spawns an unkilled installer or primes the database in the agent's own cgroup again"
 fi
-if bodyhas "$IMAGE_SCANNER" "^pub async fn scan_image" "kill_on_drop(true)"    || { bodyhas "$IMAGE_SCANNER" "^pub async fn scan_image" "vuln_scanner::grype_image_report("         && bodyhas panel/agent/src/services/vuln_scanner.rs "^pub async fn grype_image_report" ".output_with_timeout(timeout)"; }; then
+if bodyhas "$IMAGE_SCANNER" "^pub async fn scan_image" "kill_on_drop(true)"    || { bodyhas "$IMAGE_SCANNER" "^pub async fn scan_image" "vuln_scanner::grype_image_report("         && bodyhas panel/agent/src/services/vuln_scanner.rs "^pub async fn grype_image_report" "grype_report_locked("          && bodyhas panel/agent/src/services/vuln_scanner.rs "^async fn grype_report_locked" ".output_with_timeout(timeout)"; }; then
   ok "scan_image sets kill_on_drop(true) on the grype invocation, or runs it in a transient unit stopped on timeout"
 else
   bad "scan_image is missing kill_on_drop(true) - a timed-out scan can orphan"
@@ -168,8 +172,8 @@ if bodyhas "$SBOM_SCANNER" "^pub async fn install_syft" "kill_on_drop(true)"; th
 else
   bad "install_syft is missing kill_on_drop(true)"
 fi
-if bodyhas "$SBOM_SCANNER" "^pub async fn generate_sbom" "kill_on_drop(true)"; then
-  ok "generate_sbom sets kill_on_drop(true) on the syft invocation"
+if bodyhas "$SBOM_SCANNER" "^pub async fn generate_sbom" "kill_on_drop(true)"    || { bodyhas "$SBOM_SCANNER" "^pub async fn generate_sbom" "vuln_scanner::syft_image_sbom("         && bodyhas panel/agent/src/services/vuln_scanner.rs "^pub async fn syft_image_sbom" ".output_with_timeout(timeout)"; }; then
+  ok "generate_sbom sets kill_on_drop(true) on the syft invocation, or runs it in a transient unit stopped on timeout"
 else
   bad "generate_sbom is missing kill_on_drop(true) - a timed-out SBOM run can orphan"
 fi

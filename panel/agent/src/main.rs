@@ -372,6 +372,10 @@ async fn main() {
     tokio::task::spawn_blocking(services::migration_files::sweep_stale_import_dirs);
     // --- end import-hestia (05) ---
 
+    // Grype database downloads and scanner temporaries a killed run left
+    // behind (3.4 GB per abandoned `grype-db-download*`).
+    tokio::task::spawn_blocking(services::vuln_scanner::sweep_scanner_leftovers);
+
     // Start phone-home if configured (remote agent mode)
     if let Some(mut ph_config) = services::phone_home::PhoneHomeConfig::from_env() {
         ph_config.cert_fingerprint = Some(cert_fingerprint.clone());

@@ -397,9 +397,45 @@ async fn scan_ssl_expiry() -> Vec<Finding> {
     findings
 }
 
+/// Grype's time for one image in the container check, and for all of them
+/// (database lock wait and probe included). The whole check, docker scout
+/// fallback included, stops at `CONTAINER_STAGE_DEADLINE`: the scheduled scan
+/// waits `SECURITY_SCAN_TIMEOUT_SECS` (backend, 1200 s), above it.
+const CONTAINER_SCAN_PER_IMAGE: std::time::Duration = std::time::Duration::from_secs(180);
+const CONTAINER_SCAN_BUDGET: std::time::Duration = std::time::Duration::from_secs(600);
+const CONTAINER_STAGE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(900);
+
+/// The `container_vuln` finding of one image's grype JSON report
+/// (`--only-fixed`): one finding when it has a critical or high match.
+fn container_finding_from_grype(image: &str, report: &str) -> Option<Finding> {
+    let report: serde_json::Value = serde_json::from_str(report).ok()?;
+    let matches = report.get("matches")?.as_array()?;
+    let count = |sev: &str| {
+        matches
+            .iter()
+            .filter(|m| {
+                m.get("vulnerability").and_then(|v| v.get("severity")).and_then(|s| s.as_str()) == Some(sev)
+            })
+            .count()
+    };
+    let (critical, high, total) = (count("Critical"), count("High"), matches.len());
+    if critical == 0 && high == 0 {
+        return None;
+    }
+    Some(Finding {
+        check_type: "container_vuln".to_string(),
+        severity: if critical > 0 { "critical" } else { "warning" }.to_string(),
+        title: format!("Image {image}: {total} vulnerabilities ({critical} critical, {high} high)"),
+        description: format!("{total} known vulnerabilities with fixes available"),
+        file_path: Some(image.to_string()),
+        remediation: Some("Update the base image to the latest version and rebuild".to_string()),
+    })
+}
+
 /// Scan Docker images for known vulnerabilities.
 /// Tries `grype` first (if installed), falls back to `docker scout` (if available).
 async fn scan_container_vulnerabilities() -> Vec<Finding> {
+    let deadline = tokio::time::Instant::now() + CONTAINER_STAGE_DEADLINE;
     let docker = match bollard::Docker::connect_with_local_defaults() {
         Ok(d) => d,
         Err(_) => return Vec::new(),
@@ -422,93 +458,62 @@ async fn scan_container_vulnerabilities() -> Vec<Finding> {
         .await
         .unwrap_or_default();
 
-    let mut findings = Vec::new();
-    let mut scanned_images = std::collections::HashSet::new();
-
+    // Each image once, in container order.
+    let mut images: Vec<String> = Vec::new();
     for container in &containers {
-        let image = match &container.image {
-            Some(img) => img.clone(),
-            None => continue,
-        };
-
-        if scanned_images.contains(&image) {
-            continue;
+        if let Some(img) = &container.image
+            && !images.contains(img)
+        {
+            images.push(img.clone());
         }
-        scanned_images.insert(image.clone());
+    }
 
-        // Try grype first: the managed binary, not a `grype` on PATH (the
-        // installer puts it under the data dir, never on PATH), with the same
-        // database cache as the image scanner.
-        let result = tokio::time::timeout(
-            std::time::Duration::from_secs(120),
-            safe_command(crate::services::image_scanner::GRYPE_BIN)
-                .args([&image, "-o", "json", "--only-fixed"])
-                .env("GRYPE_DB_CACHE_DIR", crate::services::image_scanner::GRYPE_DB_CACHE)
-                .kill_on_drop(true)
-                .output(),
+    // Grype first: the managed binary (never on PATH), through the CVE
+    // scanner's runner - its transient unit, its HOME/TMPDIR/cache, the
+    // database lock, and auto update off. It used to run here in the agent's
+    // own cgroup with GRYPE_DB_CACHE_DIR alone, so every scan downloaded a
+    // 3.4 GB database, outlived the backend's 60 s and left the download
+    // behind. No database, or a db update running: grype is skipped for this
+    // scan and the fallback below runs, as when grype is not installed.
+    let mut grype_reports: HashMap<String, String> = HashMap::new();
+    if tokio::fs::metadata(crate::services::image_scanner::GRYPE_BIN).await.is_ok() {
+        match crate::services::vuln_scanner::grype_scan_images(
+            images.clone(),
+            CONTAINER_SCAN_PER_IMAGE,
+            CONTAINER_SCAN_BUDGET,
         )
-        .await;
-
-        match result {
-            Ok(Ok(output)) if output.status.success() => {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                if let Ok(report) = serde_json::from_str::<serde_json::Value>(&stdout) {
-                    if let Some(matches) = report.get("matches").and_then(|m| m.as_array()) {
-                        let critical = matches
-                            .iter()
-                            .filter(|m| {
-                                m.get("vulnerability")
-                                    .and_then(|v| v.get("severity"))
-                                    .and_then(|s| s.as_str())
-                                    == Some("Critical")
-                            })
-                            .count();
-                        let high = matches
-                            .iter()
-                            .filter(|m| {
-                                m.get("vulnerability")
-                                    .and_then(|v| v.get("severity"))
-                                    .and_then(|s| s.as_str())
-                                    == Some("High")
-                            })
-                            .count();
-                        let total = matches.len();
-
-                        if critical > 0 || high > 0 {
-                            findings.push(Finding {
-                                check_type: "container_vuln".to_string(),
-                                severity: if critical > 0 {
-                                    "critical"
-                                } else {
-                                    "warning"
-                                }
-                                .to_string(),
-                                title: format!(
-                                    "Image {}: {} vulnerabilities ({} critical, {} high)",
-                                    image, total, critical, high
-                                ),
-                                description: format!(
-                                    "{total} known vulnerabilities with fixes available"
-                                ),
-                                file_path: Some(image.clone()),
-                                remediation: Some(
-                                    "Update the base image to the latest version and rebuild"
-                                        .to_string(),
-                                ),
-                            });
+        .await
+        {
+            Ok(results) => {
+                for (image, r) in results {
+                    match r {
+                        Ok(report) => {
+                            grype_reports.insert(image, report);
                         }
+                        Err(e) => tracing::warn!("container vulnerability scan of {image}: {e}"),
                     }
                 }
-                continue; // grype worked, skip docker scout
             }
-            _ => {} // grype not available or failed, try docker scout
+            Err(e) => tracing::info!("container vulnerability scan without grype: {e}"),
+        }
+    }
+
+    let mut findings = Vec::new();
+    for image in &images {
+        if let Some(report) = grype_reports.get(image) {
+            findings.extend(container_finding_from_grype(image, report));
+            continue; // grype worked, skip docker scout
         }
 
-        // Fallback: docker scout (simpler output)
+        // Fallback: docker scout (simpler output), while the stage has time.
+        let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if left < std::time::Duration::from_secs(5) {
+            continue;
+        }
         let scout_result = tokio::time::timeout(
-            std::time::Duration::from_secs(120),
+            left.min(std::time::Duration::from_secs(120)),
             safe_command("docker")
-                .args(["scout", "quickview", &image])
+                .args(["scout", "quickview", image.as_str()])
                 .output(),
         )
         .await;
@@ -815,5 +820,22 @@ mod secret_scan_tests {
             let fp = f.file_path.clone().unwrap_or_default();
             assert!(!fp.contains(AWS_ID) && !fp.contains(PW_VAL));
         }
+    }
+
+    #[test]
+    fn container_finding_counts_critical_and_high_matches() {
+        let m = |sev: &str| format!(r#"{{"vulnerability":{{"id":"CVE-1","severity":"{sev}"}}}}"#);
+        let report = format!(r#"{{"matches":[{},{},{},{}]}}"#, m("Critical"), m("High"), m("High"), m("Low"));
+        let f = container_finding_from_grype("nginx:1.27", &report).expect("a finding");
+        assert_eq!(f.check_type, "container_vuln");
+        assert_eq!(f.severity, "critical");
+        assert_eq!(f.title, "Image nginx:1.27: 4 vulnerabilities (1 critical, 2 high)");
+        assert_eq!(f.file_path.as_deref(), Some("nginx:1.27"));
+        let high_only = format!(r#"{{"matches":[{}]}}"#, m("High"));
+        assert_eq!(container_finding_from_grype("a:1", &high_only).unwrap().severity, "warning");
+        let low_only = format!(r#"{{"matches":[{}]}}"#, m("Medium"));
+        assert!(container_finding_from_grype("a:1", &low_only).is_none());
+        assert!(container_finding_from_grype("a:1", r#"{"matches":[]}"#).is_none());
+        assert!(container_finding_from_grype("a:1", "not json").is_none());
     }
 }

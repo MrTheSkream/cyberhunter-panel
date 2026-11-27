@@ -4,6 +4,27 @@ use std::time::Duration;
 use crate::services::agent::{AgentRegistry, FleetMember};
 use crate::services::notifications;
 
+/// How long the scheduled scan waits for the agent's `POST /security/scan`.
+///
+/// It was plain `post`'s 60 s. The agent runs every check in parallel, and the
+/// slowest is the container check: grype on each image of the server, up to
+/// 180 s per image and 600 s in all (`agent/src/services/security_scanner.rs`,
+/// `CONTAINER_SCAN_BUDGET`), after up to 30 s waiting for the database lock.
+/// A server with a few images legitimately takes minutes, so the scan failed
+/// on its first try and, a failed row not counting for the weekly gate, was
+/// retried every 6 hours while the agent kept working underneath (on
+/// v3.1.0-rc.4 each try also leaked a 3.4 GB grype database download).
+///
+/// The scheduled scan is a background task, outside the API's 300 s
+/// `TimeoutLayer`, so its only cost is one long-op permit.
+pub const SECURITY_SCAN_TIMEOUT_SECS: u64 = 1200;
+
+/// The manual scan (`POST /api/security/scan`) answers inside the API's 300 s
+/// `TimeoutLayer`, so it waits a little less than that. A server whose scan
+/// takes longer gets a failed scan row and a timeout message; the scheduled
+/// scan, which waits [`SECURITY_SCAN_TIMEOUT_SECS`], still completes.
+pub const SECURITY_SCAN_MANUAL_TIMEOUT_SECS: u64 = 280;
+
 /// Background task: runs weekly security scans automatically, on every server.
 ///
 /// This scanner's subject is a MACHINE, not a row - it asks an agent what it
@@ -80,7 +101,7 @@ async fn run_scan(pool: &PgPool, member: &FleetMember, jwt_secret: &str) {
     };
 
     // Call agent
-    let result = match agent.post("/security/scan", None::<serde_json::Value>).await {
+    let result = match agent.post_long("/security/scan", None, SECURITY_SCAN_TIMEOUT_SECS).await {
         Ok(r) => r,
         Err(e) => {
             tracing::error!("Security scan failed: {e}");
@@ -1791,5 +1812,19 @@ mod stack_state_key_tests {
             key.len()
         );
         assert!(key.starts_with("cert:expiry:"));
+    }
+}
+
+#[cfg(test)]
+mod scan_timeout_tests {
+    use super::*;
+
+    /// The agent's container check alone may take its 30 s lock wait plus its
+    /// 600 s budget; the manual scan must answer inside the 300 s TimeoutLayer.
+    #[test]
+    fn scheduled_scan_outwaits_the_agent_and_manual_scan_fits_the_timeout_layer() {
+        assert!(SECURITY_SCAN_TIMEOUT_SECS > 30 + 600 + 120);
+        assert!(SECURITY_SCAN_MANUAL_TIMEOUT_SECS < 300);
+        assert!(SECURITY_SCAN_MANUAL_TIMEOUT_SECS > 60);
     }
 }

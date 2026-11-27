@@ -54,11 +54,27 @@ pub async fn trigger_scan(
     .await
     .map_err(|e| internal_error("trigger scan", e))?;
 
-    // Call agent directly
-    let result = agent
-        .post("/security/scan", None::<serde_json::Value>)
+    // Call agent directly. A failure ends the row as `failed`: it used to stay
+    // `running` forever.
+    let result = match agent
+        .post_long(
+            "/security/scan",
+            None,
+            crate::services::security_scanner::SECURITY_SCAN_MANUAL_TIMEOUT_SECS,
+        )
         .await
-        .map_err(|e| agent_error("Security scan", e))?;
+    {
+        Ok(r) => r,
+        Err(e) => {
+            let _ = sqlx::query(
+                "UPDATE security_scans SET status = 'failed', completed_at = NOW() WHERE id = $1",
+            )
+            .bind(scan_id)
+            .execute(&state.db)
+            .await;
+            return Err(agent_error("Security scan", e));
+        }
+    };
 
     // Process findings from agent response
     let findings = result["findings"].as_array();

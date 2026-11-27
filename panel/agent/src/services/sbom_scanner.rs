@@ -86,27 +86,8 @@ pub async fn generate_sbom(image: &str) -> Result<String, String> {
         return Err("Scanner not installed. Install syft first.".to_string());
     }
 
-    let output = tokio::time::timeout(
-        Duration::from_secs(180),
-        safe_command(SYFT_BIN)
-            .args([image, "-o", "spdx-json", "-q"])
-            .kill_on_drop(true)
-            .output(),
-    )
-    .await
-    .map_err(|_| "SBOM generation timed out after 180s".to_string())?
-    .map_err(|e| format!("syft invocation failed: {e}"))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!(
-            "syft failed: {}",
-            stderr.chars().take(400).collect::<String>()
-        ));
-    }
-
-    let stdout = String::from_utf8(output.stdout)
-        .map_err(|e| format!("syft produced non-UTF8 output: {e}"))?;
+    // In the scanners' transient unit, with their HOME/TMPDIR, report by file.
+    let stdout = crate::services::vuln_scanner::syft_image_sbom(image, Duration::from_secs(180)).await?;
 
     // Defensive: confirm syft actually emitted SPDX (top-level field present).
     // Avoids storing a corrupt/empty document that would fail later validation.

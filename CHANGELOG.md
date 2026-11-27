@@ -6,6 +6,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fix: every security scan downloaded a 3.4 GB grype database and left it behind
+
+Seen on a live v3.1.0-rc.4 install: at 23:53:47 UTC the scheduled weekly security scan started,
+and in the same second `/var/lib/dockpanel/scanners/grype-db/grype-db-download1006640285/` appeared.
+A 3.4 GB `vulnerability.db` was written into it for a minute, then the panel gave up ("agent request
+timed out after 60s"). The download was never removed and the real database in `grype-db/6/` was
+not updated. A failed scan does not count for the weekly gate, so the scan was retried every 6 hours,
+and the disk forecast went to "Disk full in ~4d".
+
+The security scan's container check ran grype in the agent's own cgroup with only
+`GRYPE_DB_CACHE_DIR`. Without `GRYPE_DB_AUTO_UPDATE=false`, grype downloaded a fresh database on
+every run, outside the lock that serializes the CVE scanner's database updates.
+
+- **The container check uses the CVE scanner's grype**: transient unit, the scanners' HOME, TMPDIR
+  and cache, auto update off, and the report written to a file. When there is no database yet or a
+  database update is running, grype is skipped for that scan and the existing fallback runs. Each
+  image gets 180 s and all images together get 600 s. The whole check, fallback included, stops at
+  900 s, and only one runs at a time, so a manual scan clicked twice does not start a second pass.
+- **The image scan and the deploy gate no longer download either.** They used grype's auto update,
+  with the same 180 s cut and the same leftover. If there is no database, or it is more than 48 h
+  old, they now start the database update job in the background, which is locked, checks free
+  space and sweeps after itself. With no database at all, the scan reports that and the deploy gate
+  goes on, as it does when the scanner is unavailable. Installing grype from the image-scan page
+  also starts that job, instead of a 180 s update inside the agent.
+- **Abandoned downloads are swept**: at agent startup, and before and after every database update.
+  The sweep removes `grype-db-download*` directories not written to for 30 minutes, and scanner
+  temporaries not touched for 2 hours. It never touches the database itself or follows a link.
+  The 30 minutes also cover an update started by the previous agent process, since transient units
+  outlive the agent. On an affected server, the leftover goes at the first agent start after the
+  update.
+- **The database lock is now a read/write lock.** Updates and installs take it for writing, and
+  everything that reads the database (matching, image scan, container check) takes it for reading.
+- **The panel waits long enough for a scan**: 1200 s for the scheduled scan, instead of 60 s. The
+  manual scan waits 280 s, inside the API's 300 s request limit, and a failed manual scan is now
+  recorded as failed instead of staying "running".
+- **The SBOM's syft runs in the scanners' unit**, with their HOME and TMPDIR. It had no TMPDIR of
+  its own, so the image layers it unpacked stayed in the agent's `/tmp` when it was cut off.
+
 ### Fix: CVEs of a removed package never resolved on the system target
 
 Seen on a live v3.1.0-rc.3 install: the old kernel 6.8.0-136 was purged and the system target

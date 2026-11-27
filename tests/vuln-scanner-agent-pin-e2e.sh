@@ -10,8 +10,9 @@
 #       The install reuses image_scanner::install_grype_binary, which does
 #       NOT prime `grype db update` inside the agent's cgroup (the legacy
 #       install_grype still does, for the historical image-scan route only).
-#   §B  Matching runs with GRYPE_DB_AUTO_UPDATE=false (only `grype db update`
-#       may download the ~200 MB database), and every report is written to a
+#   §B  Every grype run but `grype db update` has GRYPE_DB_AUTO_UPDATE=false
+#       (only the db update may download the 3.4 GB database; the image report
+#       starts that job instead), and every report is written to a
 #       file by the scanner (-o syft-json=<path>, -o json=<path>, -fprint0),
 #       never read back from stdout.
 #   §C  Jobs: one of each kind at a time (key "server"), inventory serialized
@@ -22,11 +23,19 @@
 #   §E  Reading grype: KEV / EPSS are taken from relatedVulnerabilities too (a
 #       GHSA carries them only on its related CVE), dedup on
 #       (vuln_id, package, version), cap 5000.
-#   §F  Side fix: security_scanner.rs's container_vuln check runs the managed
-#       grype (image_scanner::GRYPE_BIN) with its database cache, not a
-#       `grype` on PATH that never exists.
+#   §F  security_scanner.rs's container_vuln check runs the managed grype
+#       (image_scanner::GRYPE_BIN, not a `grype` on PATH that never exists)
+#       through vuln_scanner::grype_scan_images: transient unit, scanner
+#       HOME/TMPDIR/cache, GRYPE_DB_AUTO_UPDATE=false, DB_LOCK for reading.
+#       It ran with GRYPE_DB_CACHE_DIR alone, so every weekly scan downloaded
+#       a 3.4 GB database past the backend's 60 s and left it behind in
+#       grype-db-download* (v3.1.0-rc.4).
 #   §G  Wiring: safe_cmd's property() lands before `--`; routes registered
 #       under the auth middleware.
+#   §H  Leftovers: abandoned grype-db-download* dirs (idle 30 min, dirs only,
+#       symlinks never followed) and scanner TMPDIR leftovers (idle 2 h) are
+#       swept at agent startup and before/after every db update, under
+#       DB_LOCK for writing. The backend waits long enough for a scan.
 #
 # Pure source analysis: no box, no network, no build.
 #
@@ -83,7 +92,7 @@ if [ "$N" -ge 500 ]; then ok "C1 vuln_scanner.rs production code extracted - $N 
 else bad "C1 vuln_scanner.rs production code extracted - only $N lines (extractor broke)"; fi
 if has "$VSC" "mod tests"; then bad "C2 strip() leaked the test module into production code"
 else ok "C2 strip() stops at the test module"; fi
-SCMD=$(fnof "$VSC" '^fn scanner_command[(]')
+SCMD=$(fnof "$VSC" '^(pub[(]crate[)] )?fn scanner_command[(]')
 SENV=$(fnof "$VSC" '^pub fn scanner_env[(]')
 MONE=$(fnof "$VSC" '^async fn match_one[(]')
 IONE=$(fnof "$VSC" '^async fn inventory_one[(]')
@@ -167,9 +176,17 @@ if has "$DBU" "scanner_command(image_scanner::GRYPE_BIN, true)" && has "$DBU" '"
 else bad "B3 run_db_update no longer runs grype db update with auto update on"; fi
 N_AU=$(grep -cE 'scanner_command\([^)]*, true\)' <<< "$VSC" || true)
 GIR=$(fnof "$VSC" '^pub async fn grype_image_report[(]')
-if [ "$N_AU" -eq 2 ] && grep -qF 'scanner_command(image_scanner::GRYPE_BIN, true)' <<< "$GIR"; then
-  ok "B4 auto update on only for db update and the historical image scan (its old behaviour)"
-else bad "B4 $N_AU scanner runs with auto update on (expected 2: db update, grype_image_report)"; fi
+GRC=$(fnof "$VSC" '^pub[(]crate[)] fn grype_read_command[(]')
+if [ "$N_AU" -eq 1 ] && has "$DBU" "scanner_command(image_scanner::GRYPE_BIN, true)"; then
+  ok "B4 auto update on for one run only: grype db update"
+else bad "B4 $N_AU scanner runs with auto update on (expected 1: run_db_update)"; fi
+if has "$GRC" "scanner_command(image_scanner::GRYPE_BIN, false)" && has "$GIR" "grype_report_locked(" \
+   && has "$(fnof "$VSC" '^async fn grype_report_locked[(]')" "grype_read_command(image, &out, extra)"; then
+  ok "B4a the image report runs grype_read_command (auto update off)"
+else bad "B4a the image report no longer runs grype with auto update off"; fi
+if has "$GIR" "None => {" && has "$GIR" "start_db_update();" && has "$GIR" "db_refresh_due(&db.built"; then
+  ok "B4c no or old database: the image report starts the locked db update job instead of downloading"
+else bad "B4c the image report no longer hands a missing/old database to the db update job"; fi
 ISCAN=$(fnof "$ISC" '^pub async fn scan_image[(]')
 if grep -qF 'vuln_scanner::grype_image_report(' <<< "$ISCAN" && ! grep -qF 'safe_command(GRYPE_BIN)' <<< "$ISCAN"; then
   ok "B4b the historical image scan (deploy gate) runs grype in the capped transient unit, not the agent cgroup"
@@ -212,13 +229,21 @@ for pair in "start_install:vuln_install" "start_db_update:vuln_db_update" "start
   if has "$(fnof "$VSC" "^pub fn $f[(]")" "migration_jobs::spawn(\"$k\", \"server\""; then ok "C4 $f spawns job $k on key server"
   else bad "C4 $f no longer spawns $k on key server"; fi
 done
-for pair in "start_inventory:INVENTORY_LOCK" "start_match:DB_LOCK" "start_db_update:DB_LOCK" "start_install:INVENTORY_LOCK" "start_install:DB_LOCK"; do
+for pair in "start_inventory:INVENTORY_LOCK.lock" "start_match:DB_LOCK.read" "start_db_update:DB_LOCK.write" "start_install:INVENTORY_LOCK.lock" "start_install:DB_LOCK.write"; do
   f="${pair%%:*}"; l="${pair##*:}"
-  if has "$(fnof "$VSC" "^pub fn $f[(]")" "$l.lock().await"; then ok "C5 $f holds $l"
+  if has "$(fnof "$VSC" "^pub fn $f[(]")" "$l().await"; then ok "C5 $f holds $l"
   else bad "C5 $f no longer holds $l"; fi
 done
+if hasre "$VSC" '^static DB_LOCK: LazyLock<tokio::sync::RwLock<[(][)]>> = '; then
+  ok "C5b DB_LOCK is a read/write lock (db update and install write, every database reader reads)"
+else bad "C5b DB_LOCK is no longer the database read/write lock"; fi
+for f in grype_image_report grype_scan_images; do
+  if has "$(fnof "$VSC" "^pub async fn $f[(]")" "tokio::time::timeout(DB_READ_WAIT, DB_LOCK.read())"; then
+    ok "C5c $f reads the database under DB_LOCK, with a bounded wait"
+  else bad "C5c $f reads the database without DB_LOCK (races a db update)"; fi
+done
 INST=$(fnof "$VSC" '^pub fn start_install[(]')
-if [ "$(grep -nF 'INVENTORY_LOCK.lock()' <<< "$INST" | cut -d: -f1)" -lt "$(grep -nF 'DB_LOCK.lock()' <<< "$INST" | cut -d: -f1)" ]; then
+if [ "$(grep -nF 'INVENTORY_LOCK.lock()' <<< "$INST" | cut -d: -f1)" -lt "$(grep -nF 'DB_LOCK.write()' <<< "$INST" | cut -d: -f1)" ]; then
   ok "C6 install takes the inventory lock before the db lock (no lock-order inversion)"
 else bad "C6 install takes the two locks in the wrong order"; fi
 if has "$(fnof "$VSC" '^async fn run_install[(]')" "check_free_space(free_bytes())?" && has "$DBU" "check_free_space(free_bytes())?"; then
@@ -285,9 +310,25 @@ echo "== §F  security_scanner runs the managed grype =="
 SCV=$(fnof "$SSC" '^async fn scan_container_vulnerabilities[(]')
 if [ "$(grep -c . <<< "$SCV")" -ge 30 ]; then ok "F0-control scan_container_vulnerabilities body extracted"
 else bad "F0-control scan_container_vulnerabilities body not extracted"; fi
-if has "$SCV" "safe_command(crate::services::image_scanner::GRYPE_BIN)" && has "$SCV" '.env("GRYPE_DB_CACHE_DIR", crate::services::image_scanner::GRYPE_DB_CACHE)'; then
-  ok "F1 container_vuln runs image_scanner::GRYPE_BIN with GRYPE_DB_CACHE_DIR"
-else bad "F1 container_vuln no longer runs the managed grype with its db cache"; fi
+if has "$SCV" "crate::services::vuln_scanner::grype_scan_images(" && has "$SCV" "crate::services::image_scanner::GRYPE_BIN"; then
+  ok "F1 container_vuln runs the managed grype through vuln_scanner::grype_scan_images"
+else bad "F1 container_vuln no longer runs the managed grype through the CVE scanner's runner"; fi
+arm_inline_grype() { grep -nE 'safe_command[(][^)]*GRYPE_BIN|GRYPE_DB_CACHE_DIR' <<< "$1" || true; }
+if [ -z "$(arm_inline_grype "$SCV")" ]; then ok "F1b container_vuln spawns no grype of its own (no bare GRYPE_DB_CACHE_DIR env)"
+else bad "F1b container_vuln spawns grype itself again: $(arm_inline_grype "$SCV")"; fi
+if [ -n "$(arm_inline_grype 'safe_command(crate::services::image_scanner::GRYPE_BIN).env("GRYPE_DB_CACHE_DIR", x)')" ]; then
+  ok "F1b-control the arm fires on the rc.4 spawn"
+else bad "F1b-control the arm misses the rc.4 spawn"; fi
+GSI=$(fnof "$VSC" '^pub async fn grype_scan_images[(]')
+if has "$GSI" 'grype_report_locked(&image, &["--only-fixed"], per_image.min(left))' && has "$GSI" "db_status().await.is_none()" \
+   && has "$GSI" "tokio::spawn(async move {" && has "$GSI" "CONTAINER_SCAN_LOCK" && has "$GSI" ".try_lock()"; then
+  ok "F4 grype_scan_images: --only-fixed, bounded per image and in all, no database means no grype, one task at a time"
+else bad "F4 grype_scan_images lost its budget, its database check, its own task or its single-flight guard"; fi
+if has "$SCV" "let deadline = tokio::time::Instant::now() + CONTAINER_STAGE_DEADLINE;" \
+   && has "$SCV" "left.min(std::time::Duration::from_secs(120))" \
+   && hasre "$SSC" '^const CONTAINER_STAGE_DEADLINE: std::time::Duration = std::time::Duration::from_secs[(]900[)];'; then
+  ok "F5 the container check, scout fallback included, stops at 900 s (below the backend's 1200 s)"
+else bad "F5 the container check is no longer bounded by one deadline"; fi
 if has "$SCV" 'safe_command("grype")'; then bad "F2 container_vuln calls a grype on PATH again"
 else ok "F2 no grype-on-PATH call left"; fi
 if hasre "$ISC" '^pub const GRYPE_BIN: &str = "/var/lib/dockpanel/scanners/grype";'; then ok "F3 GRYPE_BIN is shared from image_scanner"
@@ -316,6 +357,54 @@ done
 if has "$(fnof "$VSC" '^pub fn validate_target_id[(]')" "u.hyphenated().to_string() == s"; then
   ok "G6 target_id must be a canonical UUID (it names the SBOM file)"
 else bad "G6 target_id validation no longer insists on the canonical form"; fi
+
+echo "== §H  leftovers swept, backend waits for the scan =="
+if hasre "$VSC" '^pub const DB_DOWNLOAD_PREFIX: &str = "grype-db-download";' \
+   && has "$(fnof "$VSC" '^pub fn sweep_stale_db_downloads[(]')" "sweep_idle(cache, idle, true, |n| n.starts_with(DB_DOWNLOAD_PREFIX))"; then
+  ok "H1 the database sweep selects grype-db-download* dirs only"
+else bad "H1 the database sweep selects something else than grype-db-download* dirs"; fi
+SWI=$(fnof "$VSC" '^fn sweep_idle[(]')
+if has "$SWI" "if ft.is_symlink() || (dirs_only && !ft.is_dir()) {" && has "$SWI" "if now.duration_since(t).unwrap_or_default() < idle {" \
+   && has "$(fnof "$VSC" '^fn newest_mtime[(]')" "std::fs::symlink_metadata(path)"; then
+  ok "H2 a symlink is never followed, a dir written to within the idle window is kept"
+else bad "H2 the sweep follows symlinks or removes a download still being written"; fi
+if hasre "$VSC" '^pub const DB_DOWNLOAD_IDLE: Duration = Duration::from_secs[(]30 \* 60[)];' \
+   && hasre "$VSC" '^pub const TMP_IDLE: Duration = Duration::from_secs[(]2 \* 3600[)];'; then
+  ok "H3 idle windows: 30 min for a download (db update stopped at 15), 2 h for TMPDIR (syft at 30 min)"
+else bad "H3 the idle windows changed"; fi
+if [ "$(cnt "$DBU" "tokio::task::spawn_blocking(sweep_scanner_leftovers).await;")" -eq 2 ]; then ok "H4 run_db_update sweeps before and after the update (off the async workers)"
+else bad "H4 run_db_update no longer sweeps before and after"; fi
+if grep -qF 'tokio::task::spawn_blocking(services::vuln_scanner::sweep_scanner_leftovers);' "$MAIN"; then
+  ok "H5 the agent sweeps at startup"
+else bad "H5 the startup sweep is gone"; fi
+for t in grype_read_command_never_auto_updates_the_database stale_download_sweep_removes_only_idle_download_dirs \
+         tmp_sweep_keeps_what_is_still_in_use image_report_refreshes_a_database_older_than_two_days; do
+  if grep -qF "fn $t()" "$VS"; then ok "H6 unit test $t"
+  else bad "H6 unit test $t is gone"; fi
+done
+if grep -qF 'fn container_finding_counts_critical_and_high_matches()' "$SS"; then ok "H6 unit test container_finding_counts_critical_and_high_matches"
+else bad "H6 unit test container_finding_counts_critical_and_high_matches is gone"; fi
+if has "$(fnof "$VSC" '^pub async fn syft_image_sbom[(]')" "scanner_command(sbom_scanner::SYFT_BIN, false)" \
+   && grep -qF 'vuln_scanner::syft_image_sbom(image, Duration::from_secs(180))' "$SB"; then
+  ok "H7 the SBOM syft runs in the scanners' unit with their HOME/TMPDIR (not the agent's /tmp)"
+else bad "H7 generate_sbom runs syft in the agent's own cgroup again"; fi
+if grep -qF 'let _ = crate::services::vuln_scanner::start_db_update();' "$IS" && ! grep -qF '.args(["db", "update"])' <<< "$ISC"; then
+  ok "H8 install_grype primes the database through the db update job"
+else bad "H8 install_grype runs its own db update in the agent again"; fi
+BSS=panel/backend/src/services/security_scanner.rs
+BSR=panel/backend/src/routes/security_scans.rs
+if grep -qxF 'pub const SECURITY_SCAN_TIMEOUT_SECS: u64 = 1200;' "$BSS" \
+   && grep -qF 'agent.post_long("/security/scan", None, SECURITY_SCAN_TIMEOUT_SECS)' "$BSS"; then
+  ok "H9 the scheduled scan waits 1200 s, not plain post's 60 s"
+else bad "H9 the scheduled scan no longer waits SECURITY_SCAN_TIMEOUT_SECS"; fi
+if grep -qxF 'pub const SECURITY_SCAN_MANUAL_TIMEOUT_SECS: u64 = 280;' "$BSS" \
+   && grep -qF 'crate::services::security_scanner::SECURITY_SCAN_MANUAL_TIMEOUT_SECS,' "$BSR" \
+   && grep -qF "UPDATE security_scans SET status = 'failed', completed_at = NOW() WHERE id = \$1" "$BSR"; then
+  ok "H10 the manual scan waits 280 s (inside the 300 s TimeoutLayer) and a failure ends its row"
+else bad "H10 the manual scan's wait or its failed row changed"; fi
+if ! grep -qF '.post("/security/scan"' "$BSS" && ! grep -qF '.post("/security/scan"' "$BSR"; then
+  ok "H11 no security scan call left on plain post's 60 s"
+else bad "H11 a security scan call is back on plain post's 60 s"; fi
 
 echo
 printf 'PASS %d  FAIL %d\n' "$PASS" "$FAIL"
