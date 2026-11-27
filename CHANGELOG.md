@@ -17,7 +17,7 @@ no network and no name led from one to the other.
 - **New `database_id` on a Git Deploy** (API create/update, and **Linked Database** on the form):
   absent keeps the link, `""` unlinks, an id links. Only a containerised database owned by the
   same account, on the deployment's own server, can be linked. Checked when saved and again on
-  every deploy. Migration `20261204120000_git_deploy_linked_database` adds the column
+  every deploy. Migration `20261204120100_git_deploy_linked_database` adds the column
   (`ON DELETE SET NULL`).
 - **On deploy, the agent puts the app and the database on a network of their own**,
   `dockpanel-link-<deploy>`, internal (no gateway), where the database answers as `db`. It is
