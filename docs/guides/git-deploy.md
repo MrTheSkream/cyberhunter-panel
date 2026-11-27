@@ -478,7 +478,7 @@ both, or neither. The network exists while at least one is declared.
 | **Update**, image change or environment edit of the linked app (the container is recreated) | Kept: the recreated container comes back on the link network with its alias |
 | The linked app **removed and deployed again** under the same name | Gone: removing an app unlinks it from every deployment. Link it again and redeploy |
 | Agent restart | Re-attached: the agent replays every deployment's declared services and re-checks each one against its owner |
-| A link network removed by hand (`docker network prune`) | Re-created at the next deploy or agent restart. An update of the linked app in between goes ahead without it |
+| A link network removed by hand (`docker network prune`) | Re-created at the next deploy or agent restart. An image change or environment edit of the linked app in between goes ahead without it; an **Update** of an app served on a domain (zero-downtime swap) can fail until the deployment is redeployed |
 | Unlinking in the form | Takes effect on the **next deploy**, like the database |
 | Deleting the deployment | The network is removed and the app disconnected; the app keeps running |
 

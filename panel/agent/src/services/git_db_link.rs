@@ -1591,13 +1591,33 @@ mod tests {
                 return Err("nc -z mailpit 1025 failed after the first deploy".to_string());
             }
             println!("ok: nc -z mailpit 1025 after the first deploy");
+            let endpoint_id = |c: String| {
+                let docker = &docker;
+                let network = &network;
+                async move {
+                    docker
+                        .inspect_container(&c, None)
+                        .await
+                        .ok()
+                        .and_then(|i| i.network_settings)
+                        .and_then(|ns| ns.networks)
+                        .and_then(|n| n.get(network).cloned())
+                        .and_then(|ep| ep.endpoint_id)
+                }
+            };
+            let first_endpoint = endpoint_id(mp.clone()).await;
 
             // Redeploy: a NEW app container, same declaration.
             let app = deploy_app(&docker, &deploy, &git_container, &req, &owner).await?;
             if !reachable(&docker, &app, "mailpit", "1025").await {
                 return Err("mailpit unreachable after the app redeployed".to_string());
             }
-            println!("ok: reachable after the app redeployed");
+            // An identical redeploy must not churn the service's endpoint: the
+            // plan reads the real aliases and leaves a satisfied member alone.
+            if first_endpoint.is_none() || endpoint_id(mp.clone()).await != first_endpoint {
+                return Err("an identical redeploy disconnected and re-attached mailpit".to_string());
+            }
+            println!("ok: reachable after the app redeployed, mailpit's endpoint untouched");
 
             // Restart of the service: Docker keeps the endpoint and alias.
             docker
