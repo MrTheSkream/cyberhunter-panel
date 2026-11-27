@@ -14,6 +14,7 @@ pub mod chain_report;
 pub mod deploy_incidents;
 pub mod deploy_scheduler;
 pub mod domain_claim;
+pub mod git_db_link;
 pub mod drift;
 pub mod dr_snapshot;
 pub mod dr_restore;

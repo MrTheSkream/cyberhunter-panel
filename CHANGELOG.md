@@ -6,6 +6,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Feature: link a managed database to a Git Deploy
+
+Seen in production: a Git Deploy app could not reach any managed database, while the deploy
+form and the guide both said to "use a database under Databases". A managed database publishes
+its port on the host's `127.0.0.1` only and sits on the `dockpanel-db` bridge, whose
+inter-container traffic is off (H2); a Git Deploy container runs on the default bridge. No host,
+no network and no name led from one to the other.
+
+- **New `database_id` on a Git Deploy** (API create/update, and **Linked Database** on the form):
+  absent keeps the link, `""` unlinks, an id links. Only a containerised database owned by the
+  same account, on the deployment's own server, can be linked. Checked when saved and again on
+  every deploy. Migration `20261204120100_git_deploy_linked_database` adds the column
+  (`ON DELETE SET NULL`).
+- **On deploy, the agent puts the app and the database on a network of their own**,
+  `dockpanel-link-<deploy>`, internal (no gateway), where the database answers as `db`. It is
+  reconciled on every deploy, blue-green stand-in included and before its health check. Anything
+  else found on it is disconnected, so two tenants never share an ICC-on network. Deleting either
+  side removes it, and agent startup re-attaches what a pruned network lost.
+- **`DATABASE_URL`** (plus `DB_*` and `PG*` or `MYSQL_*`) is injected into the app's environment
+  unless the deployment already sets it. The password is decrypted only into the deploy request
+  sent to the agent, never into `env_vars`, the rollback snapshot or a Nixpacks image.
+- **Previews never get the linked database**, neither its network nor the injected variables. The
+  agent refuses a link for any scope but `deploy`. A `DATABASE_URL` typed by hand is still
+  inherited by previews, as before; the guide says so.
+- **An agent that predates the field** deploys without the link; the panel checks the agent's
+  confirmation and marks such a deploy failed.
+- Guides: `git-deploy.md` (new "Linked database" section), `databases.md`. New pin
+  `tests/git-deploy-linked-db-pin-e2e.sh`.
+
 ### Feature: a proxy site can follow a Git Deploy, or change its port
 
 Moving radorz.com, origins, licence, preprod.cyberhunter.fr and cyberhunter.fr from hand-made

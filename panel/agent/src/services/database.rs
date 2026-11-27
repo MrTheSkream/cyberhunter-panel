@@ -255,6 +255,13 @@ pub async fn remove_database(container_id: &str) -> Result<(), String> {
         return Err("not a dockpanel-managed container".to_string());
     }
 
+    // A Git Deploy linked to this database loses it here: take down the
+    // per-deployment link network(s) it sits on while the container can still
+    // say which they are (Docker would detach it on removal, but the network
+    // would then be left holding the app alone). Site, stack and database
+    // deletion all reach the container through this function.
+    super::git_db_link::release_for_database(&docker, container_id).await;
+
     // Stop first
     docker
         .stop_container(container_id, Some(StopContainerOptions { t: 10 }))

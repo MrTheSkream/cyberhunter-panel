@@ -25,6 +25,7 @@ pub mod encryption;
 pub mod files;
 pub mod firewall;
 pub mod git_build;
+pub mod git_db_link;
 pub mod image_scanner;
 pub mod logs;
 pub mod mail_tls;

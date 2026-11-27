@@ -282,8 +282,8 @@ A declared volume is local disk on one server. For anything that needs to
 survive moving the app to another machine, or that several instances need to
 share, these remain the better fit:
 
-- **A database** - create one under **Databases** and connect to it with an
-  environment variable.
+- **A database** - create one under **Databases** and link it to the deploy -
+  see [Linked database](#linked-database) below.
 - **Object storage** - S3, MinIO or similar for user uploads and generated
   files.
 
@@ -322,6 +322,111 @@ Two parts of that warning were closed in v2.148.0, and the rest of it stands:
   removes nothing, so a *second* compose deploy of the same deployment collides
   with its own container names and every service fails - and that was reported
   as a successful deploy of the new commit.
+
+## Linked database
+
+A Git Deploy can be **linked to one managed database** from **Databases**. Pick
+it under **Linked Database** on the deploy form; it takes effect on the next
+deploy.
+
+Until this existed, a Git Deploy could not reach a managed database at all, even
+though this guide told you to use one. A managed database publishes its port on
+the host's `127.0.0.1` only (which, inside the app's container, is the container
+itself) and sits on a bridge with container-to-container traffic switched off -
+see [Databases](databases.md#the-one-thing-to-know-first). Both stay exactly as
+they are.
+
+### What the app gets
+
+On every deploy of a linked deployment:
+
+- The app container and the database share a **private network of their own**,
+  `dockpanel-link-<deploy name>`, on which the database answers as host **`db`**
+  on its normal port (5432 for PostgreSQL, 3306 for MariaDB/MySQL).
+- The app's environment gets these variables, **each one only if you have not set
+  it yourself** under Environment Variables - your own value always wins:
+
+  | Variable | PostgreSQL | MariaDB / MySQL |
+  |---|---|---|
+  | `DATABASE_URL` | `postgresql://<user>:<password>@db:5432/<name>` | `mysql://<user>:<password>@db:3306/<name>` |
+  | `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` | `db`, `5432`, ... | `db`, `3306`, ... |
+  | per engine | `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD` | `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_DATABASE`, `MYSQL_USER`, `MYSQL_PASSWORD` |
+
+  The user and password in `DATABASE_URL` are percent-encoded; the discrete
+  variables are not. For a Next.js app with drizzle, or an Astro app, reading
+  `process.env.DATABASE_URL` at runtime is all that is needed.
+
+### How it is kept isolated
+
+- **Only your own database, on the same server.** A deployment can be linked only
+  to a database owned by the same account (through its site or its stack) on the
+  server the deployment runs on, and only a containerised one - not one on the
+  shared local MariaDB server, and not one whose password is only known as an
+  imported hash (reset it first). This is checked when you save, and again on
+  every deploy.
+- **One network per linked deployment, holding nothing else.** The network has
+  container-to-container traffic on, because that is how the app reaches `db` -
+  and it is safe because nothing else is ever on it: on every deploy the agent
+  disconnects anything attached that is neither this deployment's container nor
+  its linked database. Two tenants never share it. It is also an *internal*
+  network (no gateway), so it never becomes the default route of either
+  container: the app keeps its internet access and its published port on the
+  default bridge, and the database keeps its loopback-only port.
+- **The credentials stay encrypted at rest.** The password is read from the
+  database's encrypted record at deploy time and handed to the agent in the
+  deploy request only. It is never written into the deployment's stored
+  environment, nor into the encrypted environment snapshot kept for rollback,
+  nor into a Nixpacks image. It is, like every environment variable, visible in
+  `docker inspect` on the server itself.
+
+### Preview environments never get the linked database
+
+A preview inherits the deployment's stored environment, but it **never gets the
+linked database**: it is not attached to the link network, and the injected
+`DATABASE_URL` and `DB_*`/`PG*`/`MYSQL_*` variables are not added to it. A
+preview builds whatever branch was pushed, and handing it the production
+database would let any pushed branch read and write production data. The
+agent refuses a link for a preview even if the panel ever sent one.
+
+One consequence to know: **a `DATABASE_URL` you typed yourself under
+Environment Variables is still inherited by previews**, the same as every other
+variable you set. If you set one by hand, it is yours to point somewhere safe -
+or leave it unset and let the link inject it, which previews never receive.
+
+### Redeploys, zero-downtime swaps, deletion and restarts
+
+- **Every deploy re-applies the link**, so a redeploy, a rollback and an
+  automatic rollback all come back attached. Choosing another database rebuilds
+  the network for the new one; choosing **None** removes it on the next deploy.
+- **A linked database does not stop zero-downtime (blue-green) deploys** - the
+  database is a server built for several clients, unlike a SQLite file in a
+  volume. The new container joins the link network before its health check, so a
+  build that cannot reach its database fails the swap while the old container is
+  still serving. (Persistent volumes still switch blue-green off, as described
+  above.)
+- **Deleting the deployment** removes its link network. The database is yours and
+  is never touched.
+- **Deleting the database** (or the site or stack that owns it) unlinks the
+  deployment and removes the network. The running app keeps its old variables
+  until its next deploy, which then runs without them.
+- **Agent restarts** re-attach every linked deployment that lost its network.
+  Docker keeps the attachments across restarts anyway; this repairs a network
+  pruned by hand.
+- **An agent too old to know about links** would deploy without one. The panel
+  checks that the agent confirmed the link and marks the deploy failed if it did
+  not, so update the server's agent.
+
+### Limits
+
+- **One linked database per deployment.**
+- **Not reachable during the build.** The link exists for the running container,
+  not for `docker build` or Nixpacks. Run migrations when the app starts, or in
+  the post-deploy hook.
+- **A password reset under Databases takes effect on the next deploy** - redeploy
+  after resetting it.
+- **Same server only**, like every managed database.
+- Each linked deployment uses one Docker bridge network from Docker's address
+  pool.
 
 ## Nixpacks Auto-Detection
 
@@ -366,6 +471,10 @@ Preview environments let you deploy branches for testing before merging.
 4. CyberHunter - Panel creates a preview deployment on an auto-assigned port
 5. Access it at `preview-branch-name.example.com` or via the assigned port
 6. After the TTL expires, the preview is automatically cleaned up
+
+A preview inherits the deployment's environment variables, but never its
+[linked database](#linked-database): no link network, no injected
+`DATABASE_URL`.
 
 ### Branch Deletion Cleanup
 

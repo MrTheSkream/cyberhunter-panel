@@ -9,7 +9,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 
 use super::AppState;
-use crate::services::{deploy, git_build, ownership};
+use crate::services::{deploy, git_build, git_db_link, ownership};
 
 type ApiErr = (StatusCode, Json<serde_json::Value>);
 
@@ -207,6 +207,11 @@ struct DeployRequest {
     /// `#[serde(default)]` here - an old panel simply never declares volumes.
     #[serde(default)]
     volumes: Vec<String>,
+    /// The managed database to link (see `services::git_db_link`). Absent from a
+    /// panel that predates the field AND from any deploy with no link - both
+    /// mean "no link", which tears down one an earlier deploy made.
+    #[serde(default)]
+    linked_db: Option<git_db_link::LinkedDbRequest>,
 }
 
 #[derive(Deserialize)]
@@ -379,6 +384,20 @@ async fn deploy_container(
         ));
     }
 
+    // Same boundary, same reason, for a linked database: a preview runs code
+    // from any pushed branch, and must never be handed the production
+    // database's network or credentials. The panel withholds both; this is the
+    // refusal that holds if it ever stops doing so.
+    if let Some(ref link) = body.linked_db {
+        if scope != ownership::GitScope::Deploy {
+            return Err(err(
+                StatusCode::BAD_REQUEST,
+                "a linked database is not supported for preview deployments",
+            ));
+        }
+        git_db_link::validate_request(link).map_err(|m| err(StatusCode::BAD_REQUEST, m))?;
+    }
+
     let name = scope.scoped(&body.name);
 
     // Decide the TLS shape BEFORE anything runs - mirrors
@@ -414,6 +433,7 @@ async fn deploy_container(
         body.cpu_percent,
         tls,
         &body.volumes,
+        body.linked_db.as_ref(),
     )
     .await
     .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
@@ -428,6 +448,14 @@ async fn deploy_container(
         // under the old one - a row pointing at nothing.
         "container_name": format!("dockpanel-git-{name}"),
     });
+    // The panel's proof that THIS agent understood the link. An agent that
+    // predates `linked_db` drops the field silently and deploys without it, so
+    // the panel fails a link it does not see confirmed here rather than report
+    // a deploy whose `db` host resolves to nothing.
+    if body.linked_db.is_some() {
+        response["linked_db_network"] = serde_json::json!(git_db_link::link_network_name(&name));
+        response["linked_db_alias"] = serde_json::json!(git_db_link::DB_ALIAS);
+    }
     // Absent entirely for a blue-green update, which never touched TLS - see
     // `GitDeployResult::ssl`'s doc comment. Present for anything that did.
     if let Some(ssl) = result.ssl {

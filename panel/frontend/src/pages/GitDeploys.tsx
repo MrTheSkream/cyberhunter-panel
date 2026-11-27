@@ -72,6 +72,18 @@ interface GitDeploy {
   // (#118) - the host side is never operator-supplied. Always empty for
   // anything the panel deploys as a preview.
   volumes: string[];
+  // The managed database this deployment is linked to (null when none). On
+  // deploy the app reaches it as host `db` and is given DATABASE_URL unless its
+  // own environment already sets it. Never applied to a preview.
+  database_id: string | null;
+}
+
+// Just what the link picker needs from GET /databases.
+interface LinkableDatabase {
+  id: string;
+  name: string;
+  engine: string;
+  kind: string;
 }
 
 interface GitPreview {
@@ -179,6 +191,18 @@ export default function GitDeploys() {
   const [formProtected, setFormProtected] = useState(false);
   const [formPreviewTtl, setFormPreviewTtl] = useState(24);
   const [formVolumes, setFormVolumes] = useState<string[]>([]);
+  // "" means no linked database - the wire sentinel the backend reads as
+  // "unlink", never null (null would mean "leave it alone").
+  const [formDatabaseId, setFormDatabaseId] = useState("");
+  const [databases, setDatabases] = useState<LinkableDatabase[] | null>(null);
+  const [databasesError, setDatabasesError] = useState("");
+
+  const loadDatabases = () => {
+    setDatabasesError("");
+    api.get<LinkableDatabase[]>("/databases?limit=200")
+      .then((rows) => setDatabases(rows))
+      .catch((err) => setDatabasesError(err instanceof Error ? err.message : "Could not load databases"));
+  };
 
   const loadDeploys = async () => {
     try {
@@ -218,6 +242,8 @@ export default function GitDeploys() {
   useEffect(() => {
     loadDeploys();
     loadApprovals();
+    // For the "Linked Database" name in the detail panel; the form reloads it.
+    loadDatabases();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -247,10 +273,12 @@ export default function GitDeploys() {
     setFormCron("");
     setFormProtected(false);
     setFormVolumes([]);
+    setFormDatabaseId("");
   };
 
   const openCreate = () => {
     resetForm();
+    loadDatabases();
     setEditing(false);
     setShowModal(true);
   };
@@ -281,6 +309,8 @@ export default function GitDeploys() {
     setFormProtected(selected.deploy_protected || false);
     setFormPreviewTtl(selected.preview_ttl_hours ?? 24);
     setFormVolumes(selected.volumes || []);
+    setFormDatabaseId(selected.database_id || "");
+    loadDatabases();
     setEditing(true);
     setShowModal(true);
   };
@@ -336,6 +366,9 @@ export default function GitDeploys() {
       // clearing every row here removes the last volume on the next deploy
       // rather than leaving a stale one behind.
       volumes: formVolumes.map((v) => v.trim()).filter(Boolean),
+      // Sent every time, "" included, so picking "None" unlinks on save. Takes
+      // effect on the next deploy, like the volumes above.
+      database_id: formDatabaseId,
     };
     try {
       if (editing && selected) {
@@ -861,6 +894,19 @@ export default function GitDeploys() {
                   </div>
                 </div>
               )}
+              {selected.database_id && (
+                <div className="mt-4">
+                  <span className="block text-xs font-medium text-dark-300 mb-1">Linked Database</span>
+                  <div className="bg-dark-900 border border-dark-500 rounded-lg p-3 text-xs text-dark-100">
+                    <span className="font-mono">
+                      {databases?.find((d) => d.id === selected.database_id)?.name ?? selected.database_id}
+                    </span>
+                    <span className="text-dark-300"> - reachable from the app as host </span>
+                    <span className="font-mono">db</span>
+                    <span className="text-dark-300">, with DATABASE_URL injected. Previews never get it.</span>
+                  </div>
+                </div>
+              )}
               {Object.keys(selected.build_args || {}).length > 0 && (
                 <div className="mt-4">
                   <span className="block text-xs font-medium text-dark-300 mb-1">Build Arguments</span>
@@ -1172,8 +1218,10 @@ export default function GitDeploys() {
                   deploy, not this one.
                 </p>
                 <p className="text-xs text-warn-400/80 mt-1">
-                  Use a database under <span className="font-medium">Databases</span>, or
-                  object storage, for anything that has to survive a deploy.
+                  Declare a persistent volume below, link a database from
+                  <span className="font-medium"> Databases</span> under
+                  <span className="font-medium"> Linked Database</span>, or use object
+                  storage, for anything that has to survive a deploy.
                 </p>
               </div>
               {/* Name */}
@@ -1473,6 +1521,35 @@ export default function GitDeploys() {
                     </div>
                   ))}
                 </div>
+              </div>
+
+              {/* Linked Database */}
+              <div>
+                <label className="block text-sm font-medium text-dark-100 mb-1">Linked Database</label>
+                <select
+                  value={formDatabaseId}
+                  onChange={(e) => setFormDatabaseId(e.target.value)}
+                  className="w-full px-3 py-2 border border-dark-500 rounded-lg text-sm focus:ring-2 focus:ring-accent-500 outline-none"
+                >
+                  <option value="">None</option>
+                  {(databases || [])
+                    .filter((d) => d.kind === "container" || d.id === formDatabaseId)
+                    .map((d) => (
+                      <option key={d.id} value={d.id}>{d.name} ({d.engine})</option>
+                    ))}
+                  {formDatabaseId && databases !== null && !databases.some((d) => d.id === formDatabaseId) && (
+                    <option value={formDatabaseId}>{formDatabaseId} (not on this server)</option>
+                  )}
+                </select>
+                {databasesError && <p className="text-xs text-danger-400 mt-1">{databasesError}</p>}
+                <p className="text-xs text-dark-300 mt-1">
+                  One of your databases on this server. On the next deploy the app and the database
+                  share a private network where it answers as host <span className="font-mono">db</span>,
+                  and the app gets <span className="font-mono">DATABASE_URL</span> (plus
+                  <span className="font-mono"> DB_*</span> and <span className="font-mono">PG*</span>/<span className="font-mono">MYSQL_*</span>)
+                  unless you set them above. Not reachable during the build - run migrations at start-up
+                  or in the post-deploy hook. Previews never get the linked database.
+                </p>
               </div>
 
               {/* Auto-deploy toggle */}
