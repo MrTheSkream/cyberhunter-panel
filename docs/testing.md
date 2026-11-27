@@ -372,7 +372,7 @@ found things from coming back.
 
 **On every commit** (`ci.yml`, `codeql.yml`):
 
-- **1967 unit tests** across the crates - 1014 in the backend, 953 in the agent.
+- **1988 unit tests** across the crates - 1024 in the backend, 964 in the agent.
   (The CLI crate carries none of its own today.) Re-derive rather than trust
   this line: `for c in agent backend cli; do (cd panel/$c && cargo test
   --release); done` and sum the `test result:` lines. Nothing recomputes this
