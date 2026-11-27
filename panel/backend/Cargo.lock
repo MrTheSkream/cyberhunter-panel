@@ -697,7 +697,7 @@ dependencies = [
 
 [[package]]
 name = "dockpanel-api"
-version = "3.1.0-rc.5"
+version = "3.1.0-rc.6"
 dependencies = [
  "aes-gcm",
  "age",
