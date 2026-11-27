@@ -2213,6 +2213,10 @@ pub async fn remove_app(
     // and the next sweep would page for it.
     if let Some(ref name) = removed_name {
         expected_stops::clear(&state.db, server_id, name).await;
+        // A Git Deploy linking this app as a service forgets it: the container
+        // and its link-network endpoints are gone, and the next deploy must not
+        // refuse over an app nobody can bring back under the old id.
+        crate::services::git_service_link::forget_app(&state.db, server_id, name).await;
     }
 
     // The SSL-renewal ownership row this domain got at deploy must not outlive

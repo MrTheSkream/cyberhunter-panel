@@ -212,6 +212,15 @@ struct DeployRequest {
     /// mean "no link", which tears down one an earlier deploy made.
     #[serde(default)]
     linked_db: Option<git_db_link::LinkedDbRequest>,
+    /// Panel apps to link under their aliases (see `services::git_db_link`,
+    /// LINKED SERVICES). Absent or empty means none, which - together with no
+    /// `linked_db` - tears down a link network an earlier deploy made.
+    #[serde(default)]
+    linked_services: Vec<git_db_link::LinkedServiceRequest>,
+    /// The deployment's owner: a linked service must carry this id in its
+    /// `dockpanel.user.id` label. Required when `linked_services` is not empty.
+    #[serde(default)]
+    link_owner: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -397,6 +406,21 @@ async fn deploy_container(
         }
         git_db_link::validate_request(link).map_err(|m| err(StatusCode::BAD_REQUEST, m))?;
     }
+    // And for linked services, which share the database's network.
+    if !body.linked_services.is_empty() {
+        if scope != ownership::GitScope::Deploy {
+            return Err(err(
+                StatusCode::BAD_REQUEST,
+                "linked services are not supported for preview deployments",
+            ));
+        }
+        git_db_link::validate_services(
+            &body.linked_services,
+            body.linked_db.is_some(),
+            body.link_owner.as_deref(),
+        )
+        .map_err(|m| err(StatusCode::BAD_REQUEST, &m))?;
+    }
 
     let name = scope.scoped(&body.name);
 
@@ -434,6 +458,8 @@ async fn deploy_container(
         tls,
         &body.volumes,
         body.linked_db.as_ref(),
+        &body.linked_services,
+        body.link_owner.as_deref(),
     )
     .await
     .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
@@ -455,6 +481,14 @@ async fn deploy_container(
     if body.linked_db.is_some() {
         response["linked_db_network"] = serde_json::json!(git_db_link::link_network_name(&name));
         response["linked_db_alias"] = serde_json::json!(git_db_link::DB_ALIAS);
+    }
+    // Same proof for linked services: the network and the aliases it now holds.
+    if !body.linked_services.is_empty() {
+        response["linked_services_network"] =
+            serde_json::json!(git_db_link::link_network_name(&name));
+        response["linked_services"] = serde_json::json!(
+            body.linked_services.iter().map(|s| s.alias.as_str()).collect::<Vec<_>>()
+        );
     }
     // Absent entirely for a blue-green update, which never touched TLS - see
     // `GitDeployResult::ssl`'s doc comment. Present for anything that did.

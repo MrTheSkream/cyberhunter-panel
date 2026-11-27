@@ -48,7 +48,9 @@ const GIT_DEPLOY_SELECT: &str = "SELECT d.id, d.user_id, d.server_id, d.name, d.
     d.pre_build_cmd, d.post_deploy_cmd, d.build_args, d.build_context, d.last_deploy, \
     d.last_commit, d.created_at, d.updated_at, d.github_token, d.deploy_cron, \
     d.deploy_protected, d.build_method, d.preview_ttl_hours, d.scheduled_deploy_at, \
-    d.tls_mode, d.tls_certificate_id, d.volumes, d.database_id, c.alias AS tls_certificate \
+    d.tls_mode, d.tls_certificate_id, d.volumes, d.database_id, c.alias AS tls_certificate, \
+    COALESCE((SELECT jsonb_agg(jsonb_build_object('app_name', ls.app_name, 'alias', ls.alias) ORDER BY ls.alias) \
+    FROM git_deploy_linked_services ls WHERE ls.deploy_id = d.id), '[]'::jsonb) AS linked_services \
     FROM git_deploys d LEFT JOIN tls_certificates c ON c.id = d.tls_certificate_id";
 
 /// git_previews.container_name is stored WITH the `dockpanel-git-` prefix that
@@ -224,6 +226,13 @@ pub struct GitDeploy {
     /// right after, from the alias they already resolved.
     #[sqlx(default)]
     pub tls_certificate: Option<String>,
+    /// The panel apps LINKED to this deployment under a DNS alias -
+    /// `[{"app_name": "mailpit", "alias": "mailpit"}]`, see
+    /// `services::git_service_link`. Joined in by `GIT_DEPLOY_SELECT`;
+    /// defaulted (and set by hand) on a `RETURNING *` like the alias above.
+    /// Never sent to a preview deploy.
+    #[sqlx(default)]
+    pub linked_services: serde_json::Value,
 }
 
 #[derive(serde::Serialize, sqlx::FromRow)]
@@ -277,6 +286,10 @@ pub(crate) struct DeployBody<'a> {
     /// never receive the production database's network or credentials; the
     /// agent refuses a link for any scope but `"deploy"` as the boundary.
     pub linked_db: Option<&'a crate::services::git_db_link::LinkedDb>,
+    /// The linked services and the owner the agent proves them against. ALWAYS
+    /// `None` for a preview, for the linked database's reason; the agent
+    /// refuses services for any scope but `"deploy"` as the boundary.
+    pub linked_services: Option<&'a crate::services::git_service_link::ServiceLinks<'a>>,
 }
 
 /// The address the agent is handed for THIS deploy. Only an ACME order needs
@@ -411,6 +424,9 @@ pub(crate) fn build_deploy_body(b: DeployBody<'_>) -> serde_json::Value {
         crate::services::git_db_link::merge_env(&mut body["env"], link);
         body["linked_db"] = crate::services::git_db_link::agent_field(link);
     }
+    if let Some(links) = b.linked_services {
+        crate::services::git_service_link::agent_fields(&mut body, links);
+    }
     // An emptied text column arrives here as Some("") rather than None, because
     // clearing a field is expressed as the empty string on the wire (the shape
     // v2.120.0 settled on for the alert destinations). Blank is absent for both
@@ -532,6 +548,9 @@ pub struct CreateRequest {
     pub volumes: Option<Vec<String>>,
     /// The database to link: absent or `""` for none - see `git_db_link::parse_change`.
     pub database_id: Option<String>,
+    /// Panel apps to link under a DNS alias - see `git_service_link`. Absent or
+    /// `[]` for none.
+    pub linked_services: Option<Vec<crate::services::git_service_link::LinkedService>>,
 }
 
 #[derive(serde::Deserialize)]
@@ -566,6 +585,27 @@ pub struct UpdateRequest {
     pub volumes: Option<Vec<String>>,
     /// Absent keeps the link, `""` unlinks, an id links - `git_db_link::parse_change`.
     pub database_id: Option<String>,
+    /// Absent keeps the linked services, `[]` unlinks them all, a list
+    /// replaces them - see `git_service_link`.
+    pub linked_services: Option<Vec<crate::services::git_service_link::LinkedService>>,
+}
+
+/// GET /api/git-deploys/linkable-services - The caller's own template apps on
+/// the selected server: what the form's "Linked Services" picker offers. Only
+/// apps whose owner label is the caller's id are listed - the same rule
+/// `git_service_link::check_linkable` applies when a link is saved - so the
+/// picker never shows what the save would refuse.
+pub async fn linkable_services(
+    State(_state): State<AppState>,
+    AuthUser(claims): AuthUser,
+    ServerScope(_server_id, agent): ServerScope,
+) -> Result<Json<Vec<serde_json::Value>>, ApiError> {
+    require_admin(&claims.role)?;
+    let apps = agent
+        .get("/apps")
+        .await
+        .map_err(|e| err(StatusCode::BAD_GATEWAY, &format!("Could not list this server's apps: {e}")))?;
+    Ok(Json(crate::services::git_service_link::owned_apps(&apps, claims.sub)))
 }
 
 /// GET /api/git-deploys - List all git deploys for the current user.
@@ -718,6 +758,17 @@ pub async fn create(
         }
         _ => None,
     };
+
+    // Linked services: the caller's own template apps on this server, aliases
+    // checked against the database link just decided - see `git_service_link`.
+    let linked_services = crate::services::git_service_link::normalize(
+        body.linked_services.as_deref().unwrap_or_default(),
+        database_id.is_some(),
+    )
+    .map_err(|m| err(StatusCode::BAD_REQUEST, &m))?;
+    crate::services::git_service_link::check_linkable(&state.agents, server_id, &linked_services, claims.sub)
+        .await
+        .map_err(|m| err(StatusCode::BAD_REQUEST, &m))?;
 
     // Format, reserved and every owner - see services::domain_claim. The two
     // conflict queries that used to be inlined here are the ones `update` never
@@ -875,6 +926,13 @@ pub async fn create(
         &deploy.webhook_secret,
         &state.config.jwt_secret,
     );
+    if !linked_services.is_empty() {
+        crate::services::git_service_link::replace(&state.db, deploy.id, &linked_services)
+            .await
+            .map_err(|e| internal_error("create git_deploy_linked_services", e))?;
+    }
+    deploy.linked_services = serde_json::json!(linked_services);
+
     Ok((StatusCode::CREATED, Json(deploy)))
 }
 
@@ -1108,6 +1166,43 @@ pub async fn update(
             }
         };
 
+    // Linked services. The alias `db` is checked against the deployment's FINAL
+    // database state, in both directions: a service may not take `db` while a
+    // database is linked, and a database may not be linked while a stored
+    // service answers as `db`. Ownership is proved through the agent of the
+    // deployment's OWN server.
+    let db_linked_after = if database_change {
+        database_id.is_some()
+    } else {
+        sqlx::query_scalar::<_, Option<Uuid>>("SELECT database_id FROM git_deploys WHERE id = $1")
+            .bind(id)
+            .fetch_one(&state.db)
+            .await
+            .map_err(|e| internal_error("update git_deploys", e))?
+            .is_some()
+    };
+    let services_change = match body.linked_services.as_deref() {
+        Some(list) => {
+            let list = crate::services::git_service_link::normalize(list, db_linked_after)
+                .map_err(|m| err(StatusCode::BAD_REQUEST, &m))?;
+            crate::services::git_service_link::check_linkable(&state.agents, deploy_server_id, &list, claims.sub)
+                .await
+                .map_err(|m| err(StatusCode::BAD_REQUEST, &m))?;
+            Some(list)
+        }
+        None => {
+            if db_linked_after {
+                let stored = crate::services::git_service_link::from_column(
+                    &crate::services::git_service_link::load_json(&state.db, id).await,
+                );
+                if let Some(why) = crate::services::git_service_link::db_alias_conflict(&stored) {
+                    return Err(err(StatusCode::BAD_REQUEST, &why));
+                }
+            }
+            None
+        }
+    };
+
     let github_token_enc =
         encrypt_stored_token(body.github_token.as_deref(), &state.config.jwt_secret)?;
 
@@ -1254,6 +1349,13 @@ pub async fn update(
     .fetch_one(&state.db)
     .await
     .map_err(|e| internal_error("update git_deploys", e))?;
+
+    if let Some(ref list) = services_change {
+        crate::services::git_service_link::replace(&state.db, id, list)
+            .await
+            .map_err(|e| internal_error("update git_deploy_linked_services", e))?;
+    }
+    deploy.linked_services = crate::services::git_service_link::load_json(&state.db, id).await;
     // `RETURNING *` has no join to read the alias through - the handler
     // already knows it, from the request (or the previous row) it just
     // resolved.
@@ -1863,6 +1965,9 @@ pub async fn rollback(
     )
     .await
     .map_err(|e| err(StatusCode::CONFLICT, &e))?;
+    // The linked services go along on every deploy door; the agent proves
+    // each one (name, labels, owner) before it attaches anything.
+    let service_list = crate::services::git_service_link::from_column(&config.linked_services);
 
     // The host comes from the row, not from the caller's server switcher - see
     // `remove()`. Rollback carries its own edge: `hist.image_tag` names an image
@@ -1982,6 +2087,7 @@ pub async fn rollback(
             }
         }
 
+        let service_links = crate::services::git_service_link::ServiceLinks { owner: config.user_id, services: &service_list };
         let deploy_body = build_deploy_body(DeployBody {
             name: &config.name,
             image_tag: &rollback_image,
@@ -1997,11 +2103,15 @@ pub async fn rollback(
             scope: "deploy",
             volumes: &volumes_vec(&config.volumes),
             linked_db: linked_db.as_ref(),
+            linked_services: Some(&service_links),
         });
 
-        match crate::services::git_db_link::require_confirmed(
-            linked_db.is_some(),
-            agent.post_long("/git/deploy", Some(deploy_body), 120).await,
+        match crate::services::git_service_link::require_confirmed(
+            !service_list.is_empty(),
+            crate::services::git_db_link::require_confirmed(
+                linked_db.is_some(),
+                agent.post_long("/git/deploy", Some(deploy_body), 120).await,
+            ),
         ) {
             Ok(result) => {
                 let blue_green = result.get("blue_green").and_then(|v| v.as_bool()).unwrap_or(false);
@@ -2727,6 +2837,7 @@ fn spawn_deploy_task(
                 .unwrap_or("");
 
             if let Some(reason) = crate::services::git_db_link::compose_refusal(config.database_id)
+                .or(crate::services::git_service_link::compose_refusal(&crate::services::git_service_link::from_column(&config.linked_services)))
                 .or(compose_deploy_refusal(&db, &agent, config.server_id, config.user_id, yaml).await)
             {
                 emit(
@@ -3085,6 +3196,10 @@ fn spawn_deploy_task(
                 return;
             }
         };
+        // The linked services go along on every deploy door; the agent proves
+        // each one (name, labels, owner) before it attaches anything.
+        let service_list = crate::services::git_service_link::from_column(&config.linked_services);
+        let service_links = crate::services::git_service_link::ServiceLinks { owner: config.user_id, services: &service_list };
 
         let deploy_body = build_deploy_body(DeployBody {
             name: &config.name,
@@ -3101,11 +3216,15 @@ fn spawn_deploy_task(
             scope: "deploy",
             volumes: &volumes_vec(&config.volumes),
             linked_db: linked_db.as_ref(),
+            linked_services: Some(&service_links),
         });
 
-        match crate::services::git_db_link::require_confirmed(
-            linked_db.is_some(),
-            agent.post_long("/git/deploy", Some(deploy_body), 120).await,
+        match crate::services::git_service_link::require_confirmed(
+            !service_list.is_empty(),
+            crate::services::git_db_link::require_confirmed(
+                linked_db.is_some(),
+                agent.post_long("/git/deploy", Some(deploy_body), 120).await,
+            ),
         ) {
             Ok(result) => {
                 let blue_green = result.get("blue_green").and_then(|v| v.as_bool()).unwrap_or(false);
@@ -3310,6 +3429,8 @@ fn spawn_deploy_task(
                     let monitor_config_tls_certificate = config.tls_certificate.clone();
                     let monitor_config_volumes = volumes_vec(&config.volumes);
                     let monitor_linked_db = linked_db.clone();
+                    let monitor_service_list = service_list.clone();
+                    let monitor_owner = config.user_id;
 
                     tokio::spawn(async move {
                         // Check container health every 15s for 2 minutes
@@ -3365,6 +3486,10 @@ fn spawn_deploy_task(
                                             scope: "deploy",
                                             volumes: &monitor_config_volumes,
                                             linked_db: monitor_linked_db.as_ref(),
+                                            linked_services: Some(&crate::services::git_service_link::ServiceLinks {
+                                                owner: monitor_owner,
+                                                services: &monitor_service_list,
+                                            }),
                                         });
 
                                         if monitor_agent.post_long("/git/deploy", Some(rollback_body), 120).await.is_ok() {
@@ -4037,6 +4162,7 @@ pub async fn trigger_deploy_task(
         if is_compose {
             let yaml = compose_result.get("content").and_then(|v| v.as_str()).unwrap_or("");
             if let Some(reason) = crate::services::git_db_link::compose_refusal(config.database_id)
+                .or(crate::services::git_service_link::compose_refusal(&crate::services::git_service_link::from_column(&config.linked_services)))
                 .or(compose_deploy_refusal(&db, &agent, config.server_id, config.user_id, yaml).await)
             {
                 tracing::warn!("Git deploy {git_deploy_id}: compose refused: {reason}");
@@ -4260,6 +4386,10 @@ pub async fn trigger_deploy_task(
             return;
         }
     };
+    // The linked services go along on every deploy door; the agent proves
+    // each one (name, labels, owner) before it attaches anything.
+    let service_list = crate::services::git_service_link::from_column(&config.linked_services);
+    let service_links = crate::services::git_service_link::ServiceLinks { owner: config.user_id, services: &service_list };
 
     // Deploy
     let deploy_body = build_deploy_body(DeployBody {
@@ -4277,11 +4407,15 @@ pub async fn trigger_deploy_task(
         scope: "deploy",
         volumes: &volumes_vec(&config.volumes),
         linked_db: linked_db.as_ref(),
+        linked_services: Some(&service_links),
     });
 
-    match crate::services::git_db_link::require_confirmed(
-        linked_db.is_some(),
-        agent.post_long("/git/deploy", Some(deploy_body), 120).await,
+    match crate::services::git_service_link::require_confirmed(
+        !service_list.is_empty(),
+        crate::services::git_db_link::require_confirmed(
+            linked_db.is_some(),
+            agent.post_long("/git/deploy", Some(deploy_body), 120).await,
+        ),
     ) {
         Ok(result) => {
             let container_id = result.get("container_id").and_then(|v| v.as_str()).unwrap_or("");
@@ -4733,6 +4867,7 @@ async fn handle_preview_deploy(
             scope: "preview",
             volumes: &[],
             linked_db: None,
+            linked_services: None,
         });
 
         // Same refusal `spawn_deploy_task`/`trigger_deploy_task` apply: an
@@ -5254,7 +5389,7 @@ mod tests {
     use super::{
         DeployBody, GitDeployHistory, blank_to_none, build_deploy_body, env_object, is_valid_cron,
         mask_repo_credentials, preview_cleanup_target, restore_repo_credentials, rollback_env,
-        scrub_repo_credentials, seal_env_snapshot, strip_container_prefix,
+        scrub_repo_credentials, seal_env_snapshot, strip_container_prefix, GIT_DEPLOY_SELECT,
     };
     use uuid::Uuid;
 
@@ -5392,6 +5527,7 @@ mod tests {
             scope: "deploy",
             volumes: &[],
             linked_db: None,
+            linked_services: None,
         })
     }
 
@@ -5424,6 +5560,7 @@ mod tests {
             scope: "deploy",
             volumes: &[],
             linked_db: Some(&link),
+            linked_services: None,
         });
         assert_eq!(body["linked_db"]["container_id"], "0123456789ab");
         assert_eq!(body["linked_db"]["name"], "shop");
@@ -5433,6 +5570,47 @@ mod tests {
         assert_eq!(body["env"]["APP_KEY"], "k");
         // The stored column is untouched: credentials never land in env_vars.
         assert!(stored.get("DATABASE_URL").is_none());
+    }
+
+    #[test]
+    fn the_select_reads_linked_services_through_the_shared_subquery() {
+        assert!(GIT_DEPLOY_SELECT.contains(crate::services::git_service_link::LINKED_SERVICES_JSON));
+    }
+
+    #[test]
+    fn linked_services_reach_the_agent_with_the_owner_and_alongside_a_database() {
+        let link = shop_link();
+        let owner = Uuid::new_v4();
+        let list = vec![crate::services::git_service_link::LinkedService {
+            app_name: "mailpit".into(),
+            alias: "mailpit".into(),
+        }];
+        let links = crate::services::git_service_link::ServiceLinks { owner, services: &list };
+        let stored = serde_json::json!({ "EMAIL_HOST": "mailpit" });
+        let body = build_deploy_body(DeployBody {
+            name: "app",
+            image_tag: "dockpanel-git-app:abc",
+            container_port: 3000,
+            host_port: 30001,
+            env_vars: &stored,
+            domain: None,
+            memory_mb: None,
+            cpu_percent: None,
+            ssl_email: None,
+            tls_mode: None,
+            tls_certificate: None,
+            scope: "deploy",
+            volumes: &[],
+            linked_db: Some(&link),
+            linked_services: Some(&links),
+        });
+        assert_eq!(body["linked_services"], serde_json::json!([{ "app_name": "mailpit", "alias": "mailpit" }]));
+        assert_eq!(body["link_owner"], owner.to_string());
+        assert_eq!(body["linked_db"]["name"], "shop", "both links travel together");
+        assert_eq!(body["env"]["EMAIL_HOST"], "mailpit", "nothing is injected for a service");
+        let none = body_with(serde_json::json!({}));
+        assert!(none.get("linked_services").is_none());
+        assert!(none.get("link_owner").is_none());
     }
 
     #[test]
@@ -5482,6 +5660,7 @@ mod tests {
             scope: "deploy",
             volumes: &["/data".to_string(), "/app/uploads".to_string()],
             linked_db: None,
+            linked_services: None,
         });
         assert_eq!(body["volumes"], serde_json::json!(["/data", "/app/uploads"]));
     }
@@ -5509,6 +5688,7 @@ mod tests {
             scope: "deploy",
             volumes: &[],
             linked_db: None,
+            linked_services: None,
         });
         assert_eq!(body["tls_mode"], "provided");
         assert_eq!(body["tls_certificate"], "wildcard-2026");
@@ -5532,6 +5712,7 @@ mod tests {
             scope: "deploy",
             volumes: &[],
             linked_db: None,
+            linked_services: None,
         });
         assert_eq!(body["tls_mode"], "acme");
         assert_eq!(body["ssl_email"], "ops@example.com");

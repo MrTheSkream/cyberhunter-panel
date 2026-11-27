@@ -6,6 +6,42 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Feature: linked services on a Git Deploy
+
+Seen in production: a Next.js app deployed from Git also needs a mail catcher (Mailpit, run as
+an app from Apps, SMTP on 1025), and had no stable way to reach it. The app from Apps sits on
+Docker's default bridge, which has no name resolution, and its address there changes on every
+restart. The link network the linked database added could not help: its reconcile disconnects
+anything not declared.
+
+- **New `linked_services` on a Git Deploy** (API create/update, and **Linked Services** on the
+  form): a list of `{ "app_name", "alias" }`. Absent keeps the list, `[]` unlinks everything,
+  a list replaces it. Only an app from Apps whose owner label is the deployment's owner, on the
+  deployment's own server, can be linked. Checked when saved, through that server's agent, and
+  again by the agent at every deploy, by container name and labels. Aliases are lowercase DNS
+  labels, unique, at most 8 per deployment, and `db` is reserved while a database is linked (in
+  both directions). Migration `20261206120000_git_deploy_linked_services` adds the table
+  (`ON DELETE CASCADE` from the deployment; rows store the app's name, which survives a
+  recreate, not its container id). New `GET /api/git-deploys/linkable-services` feeds the picker.
+- **The same `dockpanel-link-<deploy>` network carries them**, each under its alias, beside the
+  database (`db`) or on its own: a deployment can link a database, services, both or neither.
+  The reconcile now plans the whole membership. Declared members are kept with their alias, a
+  changed alias is re-attached, a missing member is attached, and anything else is disconnected.
+  A linked app is only ever connected or disconnected, never stopped or removed. Deleting the
+  deployment removes the network; removing the app unlinks it from every deployment.
+- **Rejoins after a recreate.** Updating the linked app, changing its image or editing its
+  environment recreates it, and it comes back on the link network with its alias. A link
+  network is never made the recreated container's primary network. A link network that has
+  gone away no longer blocks the app's update. Agent startup replays every deployment's declared
+  services, each re-proved against its owner.
+- **Previews never get linked services**, and the agent refuses them for any scope but `deploy`.
+  A compose deploy with services linked is refused rather than run without them. An agent that
+  predates the field is caught by its missing confirmation, and the deploy is marked failed.
+- Deleting a linked database no longer removes a network that still carries services; only the
+  database is disconnected.
+- Guides: `git-deploy.md` (new "Linked services" section), `api-reference.md`. New pin
+  `tests/git-deploy-linked-services-pin-e2e.sh`.
+
 ### Add: leave app data targets out of a backup policy
 
 Seen on a live v3.1.0-rc.4 install: with App data on, a policy archives every volume and bind

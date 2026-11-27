@@ -76,6 +76,23 @@ interface GitDeploy {
   // deploy the app reaches it as host `db` and is given DATABASE_URL unless its
   // own environment already sets it. Never applied to a preview.
   database_id: string | null;
+  // Panel apps linked under a DNS alias (e.g. a mailpit app as "mailpit"): on
+  // deploy they join the same private network as the linked database, where
+  // the app reaches each one by its alias. Never applied to a preview.
+  linked_services: LinkedService[];
+}
+
+interface LinkedService {
+  app_name: string;
+  alias: string;
+}
+
+// GET /git-deploys/linkable-services: the caller's own template apps on this server.
+interface LinkableApp {
+  app_name: string;
+  container_name: string;
+  template: string | null;
+  status: string | null;
 }
 
 // Just what the link picker needs from GET /databases.
@@ -196,6 +213,17 @@ export default function GitDeploys() {
   const [formDatabaseId, setFormDatabaseId] = useState("");
   const [databases, setDatabases] = useState<LinkableDatabase[] | null>(null);
   const [databasesError, setDatabasesError] = useState("");
+  // Always sent on save, [] included, so removing the last row unlinks it.
+  const [formServices, setFormServices] = useState<LinkedService[]>([]);
+  const [linkableApps, setLinkableApps] = useState<LinkableApp[] | null>(null);
+  const [linkableAppsError, setLinkableAppsError] = useState("");
+
+  const loadLinkableApps = () => {
+    setLinkableAppsError("");
+    api.get<LinkableApp[]>("/git-deploys/linkable-services")
+      .then((rows) => setLinkableApps(rows))
+      .catch((err) => setLinkableAppsError(err instanceof Error ? err.message : "Could not load apps"));
+  };
 
   const loadDatabases = () => {
     setDatabasesError("");
@@ -274,11 +302,13 @@ export default function GitDeploys() {
     setFormProtected(false);
     setFormVolumes([]);
     setFormDatabaseId("");
+    setFormServices([]);
   };
 
   const openCreate = () => {
     resetForm();
     loadDatabases();
+    loadLinkableApps();
     setEditing(false);
     setShowModal(true);
   };
@@ -310,7 +340,9 @@ export default function GitDeploys() {
     setFormPreviewTtl(selected.preview_ttl_hours ?? 24);
     setFormVolumes(selected.volumes || []);
     setFormDatabaseId(selected.database_id || "");
+    setFormServices((selected.linked_services || []).map((l) => ({ ...l })));
     loadDatabases();
+    loadLinkableApps();
     setEditing(true);
     setShowModal(true);
   };
@@ -369,6 +401,11 @@ export default function GitDeploys() {
       // Sent every time, "" included, so picking "None" unlinks on save. Takes
       // effect on the next deploy, like the volumes above.
       database_id: formDatabaseId,
+      // The whole list every time; rows without an app are dropped, and the
+      // backend validates the aliases (DNS label, unique, not "db" with a database).
+      linked_services: formServices
+        .map((l) => ({ app_name: l.app_name.trim(), alias: l.alias.trim().toLowerCase() }))
+        .filter((l) => l.app_name),
     };
     try {
       if (editing && selected) {
@@ -904,6 +941,21 @@ export default function GitDeploys() {
                     <span className="text-dark-300"> - reachable from the app as host </span>
                     <span className="font-mono">db</span>
                     <span className="text-dark-300">, with DATABASE_URL injected. Previews never get it.</span>
+                  </div>
+                </div>
+              )}
+              {(selected.linked_services || []).length > 0 && (
+                <div className="mt-4">
+                  <span className="block text-xs font-medium text-dark-300 mb-1">Linked Services</span>
+                  <div className="bg-dark-900 border border-dark-500 rounded-lg p-3 space-y-1">
+                    {selected.linked_services.map((l) => (
+                      <div key={l.alias} className="text-xs text-dark-100">
+                        <span className="font-mono">{l.app_name}</span>
+                        <span className="text-dark-300"> - reachable from the app as host </span>
+                        <span className="font-mono">{l.alias}</span>
+                      </div>
+                    ))}
+                    <div className="text-xs text-dark-300">Previews never get them.</div>
                   </div>
                 </div>
               )}
@@ -1549,6 +1601,82 @@ export default function GitDeploys() {
                   <span className="font-mono"> DB_*</span> and <span className="font-mono">PG*</span>/<span className="font-mono">MYSQL_*</span>)
                   unless you set them above. Not reachable during the build - run migrations at start-up
                   or in the post-deploy hook. Previews never get the linked database.
+                </p>
+              </div>
+
+              {/* Linked Services */}
+              <div>
+                <label className="block text-sm font-medium text-dark-100 mb-1">Linked Services</label>
+                <div className="space-y-2">
+                  {formServices.map((row, i) => (
+                    <div key={i} className="flex gap-2 items-center">
+                      <select
+                        value={row.app_name}
+                        onChange={(e) => {
+                          const app = e.target.value;
+                          setFormServices((rows) => rows.map((r, j) => (j === i
+                            ? { app_name: app, alias: r.alias || app.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/^-+|-+$/g, "").slice(0, 63) }
+                            : r)));
+                        }}
+                        className="flex-1 px-3 py-2 border border-dark-500 rounded-lg text-sm focus:ring-2 focus:ring-accent-500 outline-none"
+                      >
+                        <option value="">Choose an app</option>
+                        {(linkableApps || []).map((a) => (
+                          <option key={a.app_name} value={a.app_name}>
+                            {a.app_name}{a.template ? ` (${a.template})` : ""}
+                          </option>
+                        ))}
+                        {row.app_name && linkableApps !== null && !linkableApps.some((a) => a.app_name === row.app_name) && (
+                          <option value={row.app_name}>{row.app_name} (not found on this server)</option>
+                        )}
+                      </select>
+                      <input
+                        type="text"
+                        value={row.alias}
+                        onChange={(e) => {
+                          const alias = e.target.value;
+                          setFormServices((rows) => rows.map((r, j) => (j === i ? { ...r, alias } : r)));
+                        }}
+                        placeholder="alias, e.g. mailpit"
+                        aria-label="Alias"
+                        className="w-40 px-3 py-2 border border-dark-500 rounded-lg text-sm font-mono focus:ring-2 focus:ring-accent-500 outline-none"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setFormServices((rows) => rows.filter((_, j) => j !== i))}
+                        className="p-1.5 text-danger-400 hover:text-danger-300 transition-colors"
+                        title="Remove linked service"
+                      >
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </div>
+                  ))}
+                  {formServices.length < 8 && (
+                    <button
+                      type="button"
+                      onClick={() => setFormServices((rows) => [...rows, { app_name: "", alias: "" }])}
+                      className="px-2 py-0.5 text-xs text-rust-400 hover:text-rust-300 font-medium transition-colors"
+                    >
+                      + Link a service
+                    </button>
+                  )}
+                </div>
+                {linkableAppsError && <p className="text-xs text-danger-400 mt-1">{linkableAppsError}</p>}
+                {linkableApps !== null && linkableApps.length === 0 && (
+                  <p className="text-xs text-dark-300 mt-1">You have no apps on this server to link.</p>
+                )}
+                <p className="text-xs text-dark-300 mt-1">
+                  Your own apps from <span className="font-medium">Apps</span> on this server (a mail
+                  catcher such as Mailpit, a cache, ...). On the next deploy each one joins the same
+                  private network as the linked database and answers there under its alias - for
+                  Mailpit with alias <span className="font-mono">mailpit</span>, set
+                  <span className="font-mono"> EMAIL_HOST=mailpit</span> and
+                  <span className="font-mono"> EMAIL_PORT=1025</span> above. Nothing is injected.
+                  Aliases are lowercase DNS names, unique, and <span className="font-mono">db</span> is
+                  reserved for the linked database. The app is only connected, never changed; an app
+                  recreated by an update keeps its link. Previews never get linked services.
                 </p>
               </div>
 

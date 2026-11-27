@@ -407,8 +407,9 @@ or leave it unset and let the link inject it, which previews never receive.
 - **Deleting the deployment** removes its link network. The database is yours and
   is never touched.
 - **Deleting the database** (or the site or stack that owns it) unlinks the
-  deployment and removes the network. The running app keeps its old variables
-  until its next deploy, which then runs without them.
+  deployment and removes the network (or, when the deployment also has linked
+  services, only disconnects the database from it). The running app keeps its old
+  variables until its next deploy, which then runs without them.
 - **Agent restarts** re-attach every linked deployment that lost its network.
   Docker keeps the attachments across restarts anyway; this repairs a network
   pruned by hand.
@@ -427,6 +428,74 @@ or leave it unset and let the link inject it, which previews never receive.
 - **Same server only**, like every managed database.
 - Each linked deployment uses one Docker bridge network from Docker's address
   pool.
+
+## Linked services
+
+An app often needs more than its database: a mail catcher in staging, a cache,
+a search engine. Run it as an app from **Apps** (for example the **Mailpit**
+template), then link it to the deployment under **Linked Services** with an
+alias. On the next deploy the app reaches it by that alias:
+
+| Linked app | Alias | In the deployment's environment |
+|------------|-------|---------------------------------|
+| Mailpit (SMTP on 1025) | `mailpit` | `EMAIL_HOST=mailpit`, `EMAIL_PORT=1025` |
+
+Without a link there is no stable way in: an app from **Apps** sits on Docker's
+default bridge, which has no name resolution, and its address there changes
+whenever it restarts.
+
+### How it works
+
+Linked services use the same private network as the linked database,
+`dockpanel-link-<deploy>`, internal and single-deployment (see *How it is kept
+isolated* above). A deployment may have a linked database, linked services,
+both, or neither. The network exists while at least one is declared.
+
+- **Nothing is injected.** There are no credentials to hand over, so you set
+  the variables your app reads (`EMAIL_HOST=mailpit`) yourself. The alias is the
+  host name.
+- **Only your own apps on the same server.** An app is linkable only if it
+  carries your account as its owner, on the deployment's server. The owner is
+  stamped on the container when you deploy the app. An app deployed before
+  owners were recorded has none and must be redeployed before it can be linked.
+  This is checked when you save, and again by the agent at every deploy. The
+  agent goes by container name and labels, never by a stored container id.
+- **Aliases** are lowercase DNS names (letters, digits, `-`, up to 63
+  characters) and unique within the deployment. `db` is reserved while a
+  database is linked. At most 8 services per deployment.
+- **The membership stays exact.** Every deploy attaches the declared apps under
+  their aliases, re-attaches one whose alias you changed, and disconnects
+  anything else, as for the database.
+- **The linked app is only connected or disconnected.** The link never stops,
+  restarts, recreates or removes it.
+
+### When the link is (re)applied
+
+| Event | Link afterwards |
+|-------|-----------------|
+| Deploy, redeploy, rollback, automatic rollback of the deployment | Re-applied by the deploy itself |
+| `docker restart`, stop/start of the linked app, Docker daemon restart | Kept: Docker keeps the attachment and alias |
+| **Update**, image change or environment edit of the linked app (the container is recreated) | Kept: the recreated container comes back on the link network with its alias |
+| The linked app **removed and deployed again** under the same name | Gone: removing an app unlinks it from every deployment. Link it again and redeploy |
+| Agent restart | Re-attached: the agent replays every deployment's declared services and re-checks each one against its owner |
+| A link network removed by hand (`docker network prune`) | Re-created at the next deploy or agent restart. An image change or environment edit of the linked app in between goes ahead without it; an **Update** of an app served on a domain (zero-downtime swap) can fail until the deployment is redeployed |
+| Unlinking in the form | Takes effect on the **next deploy**, like the database |
+| Deleting the deployment | The network is removed and the app disconnected; the app keeps running |
+
+### Previews never get linked services
+
+The reason is the same as for the database: a preview runs whatever branch was
+pushed. The panel withholds the links, and the agent refuses them for a preview.
+
+### Limits
+
+- **Not reachable during the build**, as for the database.
+- **Apps from Apps only** (template apps, `dockpanel-app-<name>`). Services of a
+  compose stack, managed databases (use *Linked database*), other Git Deploys and
+  arbitrary containers cannot be linked. While services are linked, a repository
+  holding a compose file is refused, because a compose deploy does not attach them.
+- **An agent too old to know about linked services** would deploy without them.
+  The panel checks the agent's confirmation and marks such a deploy failed.
 
 ## Nixpacks Auto-Detection
 

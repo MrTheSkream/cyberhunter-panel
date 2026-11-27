@@ -737,14 +737,28 @@ fn plan_recreate_networks(
         endpoints.extend(sidecar.endpoints_config);
     }
 
+    // A Git Deploy link network (`git_db_link`) is never the primary: it is
+    // `internal`, so it has no gateway and must not carry the container's
+    // published ports or its network mode, and it can be torn down by the
+    // deployment at any time. It always comes back by connect, alias included,
+    // which is how a recreated linked service rejoins its deployments.
+    let is_link = |n: &str| n.starts_with(super::git_db_link::LINK_NETWORK_PREFIX);
+
     // Alone on the default bridge is what a container gets by asking for nothing.
     let primary = host_config
         .network_mode
         .clone()
-        .filter(|m| m != "bridge" && endpoints.contains_key(m))
-        .or_else(|| endpoints.keys().find(|n| *n != "bridge").cloned());
+        .filter(|m| m != "bridge" && !is_link(m) && endpoints.contains_key(m))
+        .or_else(|| endpoints.keys().find(|n| *n != "bridge" && !is_link(n)).cloned());
     let Some(primary) = primary else {
-        return RecreateNetworks::default();
+        // The default bridge (asked for by asking for nothing), plus any link network.
+        if host_config.network_mode.as_deref().is_some_and(is_link) {
+            host_config.network_mode = Some("bridge".to_string());
+        }
+        return RecreateNetworks {
+            create: None,
+            connect: endpoints.into_iter().filter(|(n, _)| is_link(n)).collect(),
+        };
     };
 
     let endpoint = endpoints.remove(&primary).unwrap_or_default();
@@ -760,7 +774,22 @@ fn plan_recreate_networks(
 impl RecreateNetworks {
     /// Refuse while the old container still exists: a network that has gone away
     /// would otherwise fail the create after the remove, with no app left.
-    async fn verify(&self, docker: &Docker) -> Result<(), String> {
+    ///
+    /// A Git Deploy link network that has gone away is dropped instead: the
+    /// deployment it belonged to was unlinked or removed, and the next deploy
+    /// of a deployment that still declares this service recreates it.
+    async fn verify(&mut self, docker: &Docker) -> Result<(), String> {
+        let mut kept = Vec::with_capacity(self.connect.len());
+        for (network, endpoint) in std::mem::take(&mut self.connect) {
+            if network.starts_with(super::git_db_link::LINK_NETWORK_PREFIX)
+                && docker.inspect_network::<String>(&network, None).await.is_err()
+            {
+                tracing::info!("Link network {network} is gone; not re-attaching to it");
+                continue;
+            }
+            kept.push((network, endpoint));
+        }
+        self.connect = kept;
         let created = self.create.iter().flat_map(|c| c.endpoints_config.keys());
         for network in created.chain(self.connect.iter().map(|(name, _)| name)) {
             docker
@@ -8261,5 +8290,46 @@ mod tests {
         );
         assert_eq!(plan.connect.len(), 1);
         assert_eq!(plan.connect[0].0, "zz-extra");
+    }
+
+    #[test]
+    fn a_linked_service_comes_back_on_its_link_network_but_never_through_it() {
+        // A template app on the default bridge, linked to a Git Deploy as
+        // `mailpit`. The link network sorts before nothing else here, so the
+        // old code made it the primary and the container's network mode.
+        let link = "dockpanel-link-shop".to_string();
+        let current = HashMap::from([
+            ("bridge".to_string(), endpoint(&[])),
+            (link.clone(), endpoint(&["mailpit", &OLD_ID[..12]])),
+        ]);
+        let mut host_config = bollard::service::HostConfig {
+            network_mode: Some("bridge".to_string()),
+            ..Default::default()
+        };
+        let plan = plan_recreate_networks(Some(&current), Some(OLD_ID), None, &mut host_config);
+        assert!(plan.create.is_none(), "the default bridge stays the primary");
+        assert_eq!(host_config.network_mode.as_deref(), Some("bridge"));
+        assert_eq!(plan.connect.len(), 1);
+        assert_eq!(plan.connect[0].0, link);
+        assert_eq!(
+            plan.connect[0].1.aliases.as_deref(),
+            Some(&["mailpit".to_string()][..]),
+            "the alias the deployment chose survives the recreate"
+        );
+
+        // With a real primary (a sidecar or stack network), the link still
+        // comes back by connect, never in the create slot.
+        let current = HashMap::from([
+            ("app-net".to_string(), endpoint(&["svc"])),
+            (link.clone(), endpoint(&["mailpit"])),
+        ]);
+        let mut host_config = bollard::service::HostConfig {
+            network_mode: Some(link.clone()),
+            ..Default::default()
+        };
+        let plan = plan_recreate_networks(Some(&current), Some(OLD_ID), None, &mut host_config);
+        assert!(plan.create.unwrap().endpoints_config.contains_key("app-net"));
+        assert_eq!(host_config.network_mode.as_deref(), Some("app-net"));
+        assert_eq!(plan.connect.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(), [link.as_str()]);
     }
 }
