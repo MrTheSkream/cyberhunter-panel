@@ -713,6 +713,8 @@ pub async fn deploy_or_update(
     tls: TlsIntent<'_>,
     volumes: &[String],
     linked_db: Option<&super::git_db_link::LinkedDbRequest>,
+    linked_services: &[super::git_db_link::LinkedServiceRequest],
+    link_owner: Option<&str>,
 ) -> Result<GitDeployResult, String> {
     // Held for the whole deploy/update, including the internal blue-green
     // swap this function may perform - `blue_green_update` is called FROM
@@ -848,7 +850,21 @@ pub async fn deploy_or_update(
         if let Some(ref db) = verified {
             labels.insert(super::git_db_link::LINK_DB_LABEL.to_string(), db.id.clone());
         }
-        super::git_db_link::reconcile(&docker, name, verified.as_ref()).await?
+        // LINKED SERVICES: panel apps of the same owner, proven by name and
+        // labels now (a recreated app has a new id), before anything stops.
+        let services =
+            super::git_db_link::verify_services(&docker, linked_services, link_owner).await?;
+        if !linked_services.is_empty() {
+            labels.insert(
+                super::git_db_link::LINK_SERVICES_LABEL.to_string(),
+                super::git_db_link::encode_services(linked_services),
+            );
+            labels.insert(
+                super::git_db_link::LINK_OWNER_LABEL.to_string(),
+                link_owner.unwrap_or_default().to_string(),
+            );
+        }
+        super::git_db_link::reconcile(&docker, name, verified.as_ref(), &services).await?
     } else {
         None
     };
@@ -1342,12 +1358,12 @@ pub async fn cleanup_container(
 
     tracing::info!("Removed git container: {container_name}");
 
-    // A linked database's network goes with the deployment; the database
-    // itself is the operator's and is never touched here. `Deploy` only: the
-    // legacy preview space shares names with real deployments, and a preview
-    // is never linked (see `deploy_or_update`).
+    // A link network goes with the deployment; the database and the linked
+    // services on it are the operator's - disconnected, never stopped or
+    // removed. `Deploy` only: the legacy preview space shares names with real
+    // deployments, and a preview is never linked (see `deploy_or_update`).
     if scope == ownership::GitScope::Deploy
-        && let Err(e) = super::git_db_link::reconcile(&docker, name, None).await
+        && let Err(e) = super::git_db_link::reconcile(&docker, name, None, &[]).await
     {
         tracing::warn!("Removed {container_name} but kept its link network: {e}");
     }
