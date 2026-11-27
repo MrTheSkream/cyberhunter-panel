@@ -811,6 +811,7 @@ leaves the stored value unchanged - there is no way to clear one through this AP
 | GET | `/api/backup-orchestrator/policies` | List policies |
 | PUT | `/api/backup-orchestrator/policies/{id}` | Update policy |
 | DELETE | `/api/backup-orchestrator/policies/{id}` | Delete policy |
+| GET | `/api/backup-orchestrator/policies/targets` | App data targets a policy can exclude (`?policy_id=`) |
 | POST | `/api/backup-orchestrator/db-backup` | Create DB backup |
 | GET | `/api/backup-orchestrator/db-backups` | List DB backups |
 | POST | `/api/backup-orchestrator/db-backups/{id}/restore` | Restore DB backup |

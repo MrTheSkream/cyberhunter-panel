@@ -33,6 +33,7 @@ For more control, create a custom policy.
    - **What to back up**: Toggle sites, databases, and/or **App data (volumes and bind mounts)**
    - **Mail (all mailboxes and config)** and **DNS zones** (administrators only, see [Mail and DNS Backups](#mail-and-dns-backups))
    - **Stop apps during backup** (app data only, on by default): briefly stops the containers that use the data so databases are copied consistently. They are started again right after the copy, even when it fails. Untick it to archive the data while the app runs
+   - **Données d'applications exclues** (app data only): tick a target to leave it out of this policy, see [Excluding app data](#excluding-app-data)
    - **Schedule**: Cron expression (default: `0 2 * * *` = daily at 2 AM)
    - **Destination**: Optional remote destination
    - **Retention**: Backups to keep, 1-365 (default: 7)
@@ -88,6 +89,24 @@ Each target becomes one archive named
 compose project or the Git deployment that owns the data, `v` marks a volume and
 `b` a bind mount. Every target that fails is listed by name in the policy's
 **Run history**; a server with no app data at all gives a successful run.
+
+### Excluding app data
+
+A policy can leave out targets that are not worth archiving, such as a cache or a
+downloads directory the app regenerates. Each entry of the policy's
+`excluded_targets` is `<app>/<name>`, the name the run history and
+`GET /api/backup-orchestrator/policies/targets?policy_id=<id>` give the target
+(its `key` field). For a bind mount `<name>` is the directory's last component
+plus 8 hex characters derived from its full path, so it stays the same as long as
+the directory does. Matching is exact, so excluding one mount never excludes
+another mount of the same app.
+
+An excluded target is skipped: it gets no archive, no upload and no retention.
+The skip is not a failure, and the system log records it on each run. Archives
+taken before the exclusion are kept as they are. Retention no longer touches
+them, so delete them by hand to reclaim the space. An entry that matches no
+current target (a stopped app, for example) stays on the policy and is reported
+in the system log.
 
 ### Create an App Data Backup
 
@@ -327,6 +346,7 @@ The **Storage History** chart shows backup storage growth over the last 30 days.
 | `PUT` | `/api/backup-orchestrator/policies/{id}` | Update a policy |
 | `DELETE` | `/api/backup-orchestrator/policies/{id}` | Delete a policy |
 | `POST` | `/api/backup-orchestrator/policies/protect-all` | Create "Protect Everything" policy |
+| `GET` | `/api/backup-orchestrator/policies/targets` | App data targets of the policy's server, for `excluded_targets` (`?policy_id=`) |
 | `POST` | `/api/backup-orchestrator/db-backup` | Create a database backup |
 | `GET` | `/api/backup-orchestrator/db-backups` | List database backups |
 | `DELETE` | `/api/backup-orchestrator/db-backups/{id}` | Delete a database backup |
