@@ -24,12 +24,13 @@ them. Every other field of the same update already kept its stored value when ab
 - `api-reference.md` documents the three states. New pin
   `tests/git-deploy-resource-limits-pin-e2e.sh` and four backend unit tests.
 
-### Change: a more compact Updates tab
+### Changed: a more compact Updates tab
 
 - **The "Update source" card is no longer shown** on Telemetry, Updates. The release repository
-  and the optional GitHub token are unchanged and stay settable through the API:
-  `PUT /api/update/source` (`{ "token", "repo"? }`) and `DELETE /api/update/source/token`. The
-  default public release repository needs neither. The "Updates are not configured" notice now
+  and the optional GitHub token are unchanged in the backend and stay settable through the API:
+  `PUT /api/update/source` (`{ "token", "repo"? }`, the token is required by that call) and
+  `DELETE /api/update/source/token`, or in `/etc/dockpanel/update.conf`. The default public
+  release repository needs neither. An invalid `update.conf` can no longer be fixed from the UI. The "Updates are not configured" notice now
   points to that endpoint instead of a card that is gone.
 - **Version Status and Update Channel sit side by side** on wide screens (two equal-height
   columns from the `lg` breakpoint), and stack on narrower ones. Version Status lists its three

@@ -78,8 +78,6 @@ interface UpdateStateView {
   /// as "not configured", so an older backend fails closed.
   configured?: boolean;
   not_configured_reason?: "no_source" | null;
-  repo?: string | null;
-  token_set?: boolean;
   available_prerelease?: boolean;
   release_notes?: string | null;
   release_url?: string | null;

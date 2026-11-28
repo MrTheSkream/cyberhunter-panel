@@ -702,7 +702,7 @@ DELETE FROM settings WHERE key IN
 - « Check now » désactivé, aucun bouton d'installation, carte de la source (C-3) visible.
 
 ### C-3 Carte « Update source »
-> **Retirée de l'interface (3.1.0, après rc.7).** La carte n'est plus affichée ; le dépôt et le jeton
+> **Retirée de l'interface (après 3.1.0-rc.7).** La carte n'est plus affichée ; le dépôt et le jeton
 > restent réglables par `PUT /api/update/source` et `DELETE /api/update/source/token`. Le contrat
 > ci-dessous reste celui de l'API.
 
