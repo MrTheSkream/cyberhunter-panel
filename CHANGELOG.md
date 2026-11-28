@@ -24,6 +24,20 @@ them. Every other field of the same update already kept its stored value when ab
 - `api-reference.md` documents the three states. New pin
   `tests/git-deploy-resource-limits-pin-e2e.sh` and four backend unit tests.
 
+### Changed: a more compact Updates tab
+
+- **The "Update source" card is no longer shown** on Telemetry, Updates. The release repository
+  and the optional GitHub token are unchanged in the backend and stay settable through the API:
+  `PUT /api/update/source` (`{ "token", "repo"? }`, the token is required by that call) and
+  `DELETE /api/update/source/token`, or in `/etc/dockpanel/update.conf`. The default public
+  release repository needs neither. An invalid `update.conf` can no longer be fixed from the UI. The "Updates are not configured" notice now
+  points to that endpoint instead of a card that is gone.
+- **Version Status and Update Channel sit side by side** on wide screens (two equal-height
+  columns from the `lg` breakpoint), and stack on narrower ones. Version Status lists its three
+  facts (Installed Version, Latest Available, Last checked) as label/value rows; the channel
+  buttons stack inside the half-width card and go back to one row on very wide screens or when
+  the cards stack. The channel buttons now expose `aria-pressed`.
+
 ### Feature: linked services on a Git Deploy
 
 Seen in production: a Next.js app deployed from Git also needs a mail catcher (Mailpit, run as

@@ -3,7 +3,6 @@ import { useSearchParams } from "react-router-dom";
 import { api, ApiError } from "../api";
 import { formatDate } from "../utils/format";
 import ConfirmDialog from "../components/ConfirmDialog";
-import UpdateSourceCard from "../components/UpdateSourceCard";
 import DisasterRecoveryCard from "../components/DisasterRecoveryCard";
 
 interface TelemetryEvent {
@@ -79,8 +78,6 @@ interface UpdateStateView {
   /// as "not configured", so an older backend fails closed.
   configured?: boolean;
   not_configured_reason?: "no_source" | null;
-  repo?: string | null;
-  token_set?: boolean;
   available_prerelease?: boolean;
   release_notes?: string | null;
   release_url?: string | null;
@@ -1055,7 +1052,7 @@ export default function Telemetry() {
                 </button>
               </div>
               <p className="text-xs text-dark-300">
-                The update configuration in /etc/dockpanel/update.conf is not valid. Delete it to use the default release repository, or save a token below to rewrite it.
+                The update configuration in /etc/dockpanel/update.conf is not valid. Delete it to use the default release repository, or rewrite it with a token through <code>PUT /api/update/source</code>.
               </p>
               <div className="text-xs text-dark-400 mt-3">
                 Installed version: <span className="font-mono text-dark-200">{vTag(currentVersion)}</span>
@@ -1063,77 +1060,71 @@ export default function Telemetry() {
             </div>
           )}
 
+          {/* Version Status and Update Channel side by side from lg up, equal
+              height, stacked below. The "Update source" card (repository and
+              optional token) is no longer rendered: the setting stays on
+              PUT /api/update/source and DELETE /api/update/source/token. */}
           {updatesConfigured && updateState && (
-            <div className="bg-dark-800 border border-dark-600 rounded-lg p-4">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-sm font-medium text-dark-100">Version Status</h3>
-                <button onClick={triggerManualCheck} disabled={checking}
-                  className="px-3 py-1.5 bg-dark-700 text-dark-300 hover:bg-dark-600 hover:text-dark-100 border border-dark-500 rounded-lg text-xs transition-colors disabled:opacity-50">
-                  {checking ? "Checking..." : "Check now"}
-                </button>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div>
-                  <div className="text-xs text-dark-400 mb-1">Installed Version</div>
-                  <div className="text-sm font-mono text-dark-100">{vTag(currentVersion)}</div>
-                </div>
-                <div>
-                  <div className="text-xs text-dark-400 mb-1">Latest Available</div>
-                  <div className={`text-sm font-mono ${updateAvailable ? "text-warn-400" : "text-rust-400"}`}>
-                    {updateAvailable ? availableTag : "Up to date"}
-                    {updateAvailable && updateState.available_prerelease && (
-                      <span className="ml-2 px-1.5 py-0.5 rounded text-[10px] font-sans font-medium border bg-warn-500/10 text-warn-400 border-warn-500/20">
-                        Pre-release
-                      </span>
-                    )}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-xs text-dark-400 mb-1">Last checked</div>
-                  <div className="text-sm text-dark-300">
-                    {updateState.checked_at ? formatDate(updateState.checked_at) : "Never"}
-                  </div>
-                </div>
-              </div>
-              {updateState.last_check_error && (
-                <div className="mt-3 text-xs text-danger-400 break-words">
-                  {updateState.last_check_error}
-                </div>
-              )}
-            </div>
-          )}
-
-          {updatesConfigured && (
-            <div className="bg-dark-800 border border-dark-600 rounded-lg p-4">
-              <h3 className="text-sm font-medium text-dark-100 mb-3">Update Channel</h3>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                {UPDATE_CHANNELS.map(ch => (
-                  <button key={ch.value} disabled={savingChannel} onClick={() => changeChannel(ch.value)}
-                    className={`px-3 py-2 rounded-lg text-xs font-medium border transition-colors ${
-                      channel === ch.value
-                        ? "bg-rust-500/20 border-rust-500/40 text-rust-300"
-                        : "bg-dark-700 border-dark-600 text-dark-300 hover:bg-dark-600 hover:text-dark-100"
-                    } disabled:opacity-50`}>
-                    {ch.label}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-stretch">
+              <div className="bg-dark-800 border border-dark-600 rounded-lg p-4 h-full flex flex-col">
+                <div className="flex items-center justify-between gap-4 mb-3">
+                  <h3 className="text-sm font-medium text-dark-100">Version Status</h3>
+                  <button onClick={triggerManualCheck} disabled={checking}
+                    className="px-3 py-1.5 bg-dark-700 text-dark-300 hover:bg-dark-600 hover:text-dark-100 border border-dark-500 rounded-lg text-xs transition-colors disabled:opacity-50">
+                    {checking ? "Checking..." : "Check now"}
                   </button>
-                ))}
+                </div>
+
+                <dl className="divide-y divide-dark-600">
+                  <div className="flex items-baseline justify-between gap-4 py-2">
+                    <dt className="text-xs text-dark-400 shrink-0">Installed Version</dt>
+                    <dd className="text-sm font-mono text-dark-100 text-right break-all">{vTag(currentVersion)}</dd>
+                  </div>
+                  <div className="flex items-baseline justify-between gap-4 py-2">
+                    <dt className="text-xs text-dark-400 shrink-0">Latest Available</dt>
+                    <dd className={`text-sm font-mono text-right break-all ${updateAvailable ? "text-warn-400" : "text-rust-400"}`}>
+                      {updateAvailable ? availableTag : "Up to date"}
+                      {updateAvailable && updateState.available_prerelease && (
+                        <span className="ml-2 px-1.5 py-0.5 rounded text-[10px] font-sans font-medium border bg-warn-500/10 text-warn-400 border-warn-500/20">
+                          Pre-release
+                        </span>
+                      )}
+                    </dd>
+                  </div>
+                  <div className="flex items-baseline justify-between gap-4 py-2">
+                    <dt className="text-xs text-dark-400 shrink-0">Last checked</dt>
+                    <dd className="text-sm text-dark-300 text-right">
+                      {updateState.checked_at ? formatDate(updateState.checked_at) : "Never"}
+                    </dd>
+                  </div>
+                </dl>
+                {updateState.last_check_error && (
+                  <div className="mt-3 text-xs text-danger-400 break-words">
+                    {updateState.last_check_error}
+                  </div>
+                )}
               </div>
-              <div className="mt-2 text-xs text-dark-400">
-                {UPDATE_CHANNELS.find(ch => ch.value === channel)?.help}
+
+              <div className="bg-dark-800 border border-dark-600 rounded-lg p-4 h-full flex flex-col">
+                <h3 className="text-sm font-medium text-dark-100 mb-3">Update Channel</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-1 2xl:grid-cols-3 gap-2">
+                  {UPDATE_CHANNELS.map(ch => (
+                    <button key={ch.value} disabled={savingChannel} onClick={() => changeChannel(ch.value)}
+                      aria-pressed={channel === ch.value}
+                      className={`px-3 py-2 rounded-lg text-xs font-medium border transition-colors ${
+                        channel === ch.value
+                          ? "bg-rust-500/20 border-rust-500/40 text-rust-300"
+                          : "bg-dark-700 border-dark-600 text-dark-300 hover:bg-dark-600 hover:text-dark-100"
+                      } disabled:opacity-50`}>
+                      {ch.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="mt-2 text-xs text-dark-400">
+                  {UPDATE_CHANNELS.find(ch => ch.value === channel)?.help}
+                </div>
               </div>
             </div>
-          )}
-
-          {updateState && (
-            <UpdateSourceCard
-              source={{
-                repo: updateState.repo,
-                token_set: updateState.token_set,
-              }}
-              onChanged={async () => { await Promise.all([loadConfig(), loadUpdateState()]); }}
-              onMessage={flash}
-            />
           )}
 
           {/* s233: agent auto-update. Off unless switched on here - the panel
