@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Add: each site's IP in the Sites list
+
+- **An IP column after Domain** on Sites shows the address each site's vhost listens on. A site
+  with its own IP (Site, IP) shows that address. A site without one (`ip_id` null) listens on
+  the server's primary IP: it is shown greyed with a "default" hint, so a site moved to another
+  IP stands out. Administrators see the primary address itself (read from `GET /api/server-ips`,
+  now loaded with the page rather than only with the create form); other roles, who cannot
+  read that route, and servers whose primary IP is not declared, show "Primary IP".
+- **The search also matches the IP** ("Search domain or IP..."), and the "Show more" count
+  follows the same filter. The column is hidden on phone-width screens, like Runtime.
+- No API change: `GET /api/sites` and `GET /api/admin/sites` already returned `bind_ip`.
+
 ### Fix: saving a Git Deploy removed its memory and CPU limits
 
 `PUT /api/git-deploys/{id}` wrote `memory_mb` and `cpu_percent` without keeping the stored

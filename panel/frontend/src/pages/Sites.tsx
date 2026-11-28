@@ -96,10 +96,24 @@ export default function Sites() {
   const [adminUser, setAdminUser] = useState("admin");
   const [adminPassword, setAdminPassword] = useState("");
   // "" = primary IP. `/server-ips` is admin-only, so only admins load the list.
+  // Loaded with the page, not only with the form: the IP column below names the
+  // primary address for the sites that have no IP of their own.
   const [ipId, setIpId] = useState("");
-  const { ips: serverIps } = useServerIps(isAdmin && showForm);
+  const { ips: serverIps } = useServerIps(isAdmin);
   // Only worth a field when there is a choice beyond the primary IP.
   const ipChoices = serverIps.filter((ip) => !ip.is_primary);
+  // The primary address, when it is declared and the agent answered. A
+  // non-admin never knows it (`/server-ips` answers 403) and sees "Primary IP".
+  const primaryIp = serverIps.find((ip) => ip.is_primary)?.ip ?? null;
+  /** The IP a site's vhost listens on: its own (`bind_ip`), else the primary one. */
+  const siteIp = (site: Site): { ip: string | null; isDefault: boolean } =>
+    site.bind_ip ? { ip: site.bind_ip, isDefault: false } : { ip: primaryIp, isDefault: true };
+  /** Search matches the domain or the IP shown in the list. */
+  const matchesSearch = (site: Site): boolean => {
+    const q = search.trim().toLowerCase();
+    if (!q) return true;
+    return site.domain.toLowerCase().includes(q) || (siteIp(site).ip ?? "").includes(q);
+  };
 
   // Preflight the domain as it is typed. Nothing here BLOCKS creation - a site
   // is perfectly valid before its DNS exists, and the brief is explicit that a
@@ -245,7 +259,7 @@ export default function Sites() {
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search sites..."
+              placeholder="Search domain or IP..."
               className="px-3 py-1.5 bg-dark-800 border border-dark-600 rounded-lg text-sm text-dark-100 placeholder-dark-400 focus:outline-none focus:border-dark-400"
             />
           )}
@@ -616,6 +630,7 @@ export default function Sites() {
             <thead>
               <tr className="border-b border-dark-500 bg-dark-900">
                 <th scope="col" className="text-left text-xs font-medium text-dark-200 uppercase tracking-widest font-mono px-5 py-3">Domain</th>
+                <th scope="col" className="text-left text-xs font-medium text-dark-200 uppercase tracking-widest font-mono px-5 py-3 hidden sm:table-cell">IP</th>
                 <th scope="col" className="text-left text-xs font-medium text-dark-200 uppercase tracking-widest font-mono px-5 py-3 hidden sm:table-cell">Runtime</th>
                 <th scope="col" className="text-left text-xs font-medium text-dark-200 uppercase tracking-widest font-mono px-5 py-3">Status</th>
                 <th scope="col" className="text-left text-xs font-medium text-dark-200 uppercase tracking-widest font-mono px-5 py-3 hidden md:table-cell">SSL</th>
@@ -631,7 +646,7 @@ export default function Sites() {
             </thead>
             <tbody className="divide-y divide-dark-600">
               {(() => {
-                const filtered = sites.filter((s) => !s.parent_site_id && s.domain.toLowerCase().includes(search.toLowerCase()));
+                const filtered = sites.filter((s) => !s.parent_site_id && matchesSearch(s));
                 const displayed = filtered.slice(0, displayCount);
                 const remaining = filtered.length - displayed.length;
                 return (
@@ -652,6 +667,23 @@ export default function Sites() {
                     >
                       {site.domain}
                     </Link>
+                  </td>
+                  <td className="px-5 py-4 hidden sm:table-cell">
+                    {(() => {
+                      // No IP of its own = the server's primary address
+                      // (`sites.ip_id` NULL). Greyed, so a site moved to
+                      // another IP stands out at a glance.
+                      const { ip, isDefault } = siteIp(site);
+                      if (!isDefault) {
+                        return <span className="text-xs font-mono whitespace-nowrap text-dark-100">{ip}</span>;
+                      }
+                      return (
+                        <span className="text-xs font-mono whitespace-nowrap text-dark-300" title="No IP set for this site: it listens on the server's primary IP">
+                          {ip ?? "Primary IP"}
+                          {ip && <span className="ml-1.5 font-sans text-[10px] uppercase tracking-wide text-dark-400">default</span>}
+                        </span>
+                      );
+                    })()}
                   </td>
                   <td className="px-5 py-4 text-sm text-dark-200 hidden sm:table-cell">
                     {runtimeLabels[site.runtime] || site.runtime}
@@ -723,7 +755,7 @@ export default function Sites() {
             </tbody>
           </table>
           {(() => {
-            const filtered = sites.filter((s) => !s.parent_site_id && s.domain.toLowerCase().includes(search.toLowerCase()));
+            const filtered = sites.filter((s) => !s.parent_site_id && matchesSearch(s));
             const remaining = filtered.length - displayCount;
             return remaining > 0 ? (
               <button
