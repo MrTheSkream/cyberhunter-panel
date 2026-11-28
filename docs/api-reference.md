@@ -434,6 +434,11 @@ curl -X POST https://panel.example.com/api/git-deploys/$DEPLOY_ID/deploy \
 `GET /api/git-deploys/linkable-services` lists the apps you may link on the selected
 server, as `[{ "app_name", "container_name", "template", "status" }]`.
 
+`memory_mb` and `cpu_percent` (the container's memory and CPU limits) are optional on
+create. On `PUT /api/git-deploys/{id}`, omit the key to keep the stored limit, send a
+number to change it, or send `null` to remove it. The form does not show these limits,
+so saving it never changes them. Changes take effect on the next deploy.
+
 ### `POST /api/git-deploys/{id}/deploy`
 Trigger a build + deploy. Returns `202` in **two different shapes**, and a client that
 reads only `deploy_id` will treat the second as a silent success:
