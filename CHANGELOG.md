@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fix: saving a Git Deploy removed its memory and CPU limits
+
+`PUT /api/git-deploys/{id}` wrote `memory_mb` and `cpu_percent` without keeping the stored
+value, so any update that omitted them set both to NULL (no limit). The Git Deploy form does
+not send either key, so every save from the form (an env var edit, a linked service) removed
+the limits a deployment was created with through the API, and the next deploy ran without
+them. Every other field of the same update already kept its stored value when absent.
+
+- **Absent now keeps the stored limit.** On `PUT /api/git-deploys/{id}`, omit `memory_mb` /
+  `cpu_percent` to keep it, send a number to change it, or send `null` to remove it. The two
+  fields use a change flag beside the value, like `database_id`, because a `COALESCE` could
+  never clear them.
+- The other columns of the same update were audited and already keep their stored value when
+  absent (`COALESCE`, the `''` sentinel for the string fields, the `database_id` change flag,
+  and `tls_mode` / `tls_certificate_id` resolved from the stored row).
+- `api-reference.md` documents the three states. New pin
+  `tests/git-deploy-resource-limits-pin-e2e.sh` and four backend unit tests.
+
 ### Feature: linked services on a Git Deploy
 
 Seen in production: a Next.js app deployed from Git also needs a mail catcher (Mailpit, run as

@@ -562,8 +562,18 @@ pub struct UpdateRequest {
     pub domain: Option<String>,
     pub env_vars: Option<HashMap<String, String>>,
     pub auto_deploy: Option<bool>,
-    pub memory_mb: Option<i32>,
-    pub cpu_percent: Option<i32>,
+    /// A double option, like `secrets::UpdateVaultRequest::site_id`: absent key
+    /// keeps the stored limit, explicit `null` removes it, a number sets it.
+    ///
+    /// These two used to be a plain `Option` bound straight into the UPDATE
+    /// with no guard, so any partial PUT that omitted them wrote NULL - and the
+    /// Git Deploy form never sends them, so EVERY save from the form silently
+    /// removed the memory and CPU limits a deploy had been created with.
+    #[serde(default, deserialize_with = "crate::routes::secrets::explicit_option")]
+    pub memory_mb: Option<Option<i32>>,
+    /// Same three states as `memory_mb`.
+    #[serde(default, deserialize_with = "crate::routes::secrets::explicit_option")]
+    pub cpu_percent: Option<Option<i32>>,
     pub ssl_email: Option<String>,
     /// Absent means keep the stored mode. `pub` per stacks' own `UpdateStackRequest`.
     pub tls_mode: Option<String>,
@@ -1293,6 +1303,13 @@ pub async fn update(
     // `domain` is deliberately NOT in this list - see the refusal above; and
     // `github_token` is not either, because the GET masks it and the box is blank
     // on every ordinary edit.
+    //
+    // The two integer limits, `memory_mb` and `cpu_percent`, have no '' to use
+    // as a sentinel, so they take the shape `database_id` already uses: a
+    // change flag beside the value. Absent key -> flag false -> the stored limit
+    // stays; explicit `null` -> flag true, value NULL -> the limit is removed;
+    // a number -> flag true -> it is written. They used to be bound bare, so a
+    // partial PUT (the form never sends them) wiped both limits.
     let mut deploy: GitDeploy = sqlx::query_as(
         "UPDATE git_deploys SET \
          repo_url = COALESCE($1, repo_url), \
@@ -1302,8 +1319,8 @@ pub async fn update(
          domain = COALESCE($5, domain), \
          env_vars = COALESCE($6, env_vars), \
          auto_deploy = COALESCE($7, auto_deploy), \
-         memory_mb = $8, \
-         cpu_percent = $9, \
+         memory_mb = CASE WHEN $26 THEN $8 ELSE memory_mb END, \
+         cpu_percent = CASE WHEN $27 THEN $9 ELSE cpu_percent END, \
          ssl_email = CASE WHEN $10 = '' THEN NULL ELSE COALESCE($10, ssl_email) END, \
          pre_build_cmd = CASE WHEN $11 = '' THEN NULL ELSE COALESCE($11, pre_build_cmd) END, \
          post_deploy_cmd = CASE WHEN $12 = '' THEN NULL ELSE COALESCE($12, post_deploy_cmd) END, \
@@ -1328,8 +1345,8 @@ pub async fn update(
     .bind(domain.as_deref())
     .bind(env_vars)
     .bind(body.auto_deploy)
-    .bind(body.memory_mb)
-    .bind(body.cpu_percent)
+    .bind(body.memory_mb.flatten())
+    .bind(body.cpu_percent.flatten())
     .bind(body.ssl_email.as_deref())
     .bind(body.pre_build_cmd.as_deref())
     .bind(body.post_deploy_cmd.as_deref())
@@ -1346,6 +1363,8 @@ pub async fn update(
     .bind(claims.sub)
     .bind(database_change)
     .bind(database_id)
+    .bind(body.memory_mb.is_some())
+    .bind(body.cpu_percent.is_some())
     .fetch_one(&state.db)
     .await
     .map_err(|e| internal_error("update git_deploys", e))?;
@@ -5869,5 +5888,50 @@ mod tests {
         let json = serde_json::to_string(&entry).unwrap();
         assert!(!json.contains("env_snapshot"), "{json}");
         assert!(!json.contains(&sealed), "{json}");
+    }
+
+    // PUT /api/git-deploys/{id}: an absent limit must keep the stored one. The
+    // form never sends `memory_mb`/`cpu_percent`, so a plain `Option` here
+    // turned every save from the form into "remove both limits".
+    fn update_body(json: &str) -> super::UpdateRequest {
+        serde_json::from_str(json).expect("update body parses")
+    }
+
+    #[test]
+    fn an_update_that_omits_the_limits_leaves_them_alone() {
+        for json in [
+            r#"{}"#,
+            r#"{"linked_services": []}"#,
+            r#"{"env_vars": {"A": "1"}}"#,
+        ] {
+            let b = update_body(json);
+            assert_eq!(b.memory_mb, None, "{json}");
+            assert_eq!(b.cpu_percent, None, "{json}");
+        }
+    }
+
+    #[test]
+    fn an_explicit_null_clears_a_limit() {
+        let b = update_body(r#"{"memory_mb": null, "cpu_percent": null}"#);
+        assert_eq!(b.memory_mb, Some(None));
+        assert_eq!(b.cpu_percent, Some(None));
+        // The SQL change flag is `is_some()`, the value `flatten()`: flag on, NULL written.
+        assert!(b.memory_mb.is_some() && b.memory_mb.flatten().is_none());
+    }
+
+    #[test]
+    fn a_number_sets_a_limit_and_each_limit_is_independent() {
+        let b = update_body(r#"{"memory_mb": 512}"#);
+        assert_eq!(b.memory_mb, Some(Some(512)));
+        assert_eq!(b.cpu_percent, None, "the CPU limit was not mentioned, so it is kept");
+
+        let b = update_body(r#"{"cpu_percent": 50, "memory_mb": null}"#);
+        assert_eq!(b.cpu_percent, Some(Some(50)));
+        assert_eq!(b.memory_mb, Some(None));
+    }
+
+    #[test]
+    fn a_limit_that_is_not_a_number_is_refused() {
+        assert!(serde_json::from_str::<super::UpdateRequest>(r#"{"memory_mb": "512"}"#).is_err());
     }
 }

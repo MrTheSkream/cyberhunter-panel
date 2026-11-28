@@ -372,7 +372,7 @@ found things from coming back.
 
 **On every commit** (`ci.yml`, `codeql.yml`):
 
-- **2012 unit tests** across the crates - 1039 in the backend, 973 in the agent.
+- **2016 unit tests** across the crates - 1043 in the backend, 973 in the agent.
   (The CLI crate carries none of its own today.) Re-derive rather than trust
   this line: `for c in agent backend cli; do (cd panel/$c && cargo test
   --release); done` and sum the `test result:` lines. Nothing recomputes this
@@ -405,7 +405,7 @@ that reads the source and fails if the fix is undone - including the shapes that
 are easy to undo by accident. The mail pins assert, among other things, that the
 sandbox was **not** widened to include `/etc/opendkim.conf`, since widening it
 would have "fixed" the bug while destroying the reason the bug was
-survivable. One-hundred-fifty-five suites, **5520 assertions**, all green at the current commit:
+survivable. One-hundred-fifty-six suites, **5569 assertions**, all green at the current commit:
 
 | Suite | Assertions |
 |---|---|
@@ -424,6 +424,7 @@ survivable. One-hundred-fifty-five suites, **5520 assertions**, all green at the
 | `git-deploy-volumes-pin-e2e.sh` | 28 |
 | `git-deploy-linked-db-pin-e2e.sh` | 85 |
 | `git-deploy-linked-services-pin-e2e.sh` | 108 |
+| `git-deploy-resource-limits-pin-e2e.sh` | 49 |
 | `ssl-correctness-pin-e2e.sh` | 97 |
 | `dns01-renewal-pin-e2e.sh` | 63 |
 | `acme-account-identity-pin-e2e.sh` | 20 |
