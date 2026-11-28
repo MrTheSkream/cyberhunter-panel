@@ -37,6 +37,13 @@ them. Every other field of the same update already kept its stored value when ab
   facts (Installed Version, Latest Available, Last checked) as label/value rows; the channel
   buttons stack inside the half-width card and go back to one row on very wide screens or when
   the cards stack. The channel buttons now expose `aria-pressed`.
+- **Agent Auto-Update joins them on the same row.** From the `xl` breakpoint the three cards
+  (Version Status, Update Channel, Agent Auto-Update) sit in three equal-height columns; from
+  `lg` to `xl` Version Status and Update Channel share a row and Agent Auto-Update spans the
+  full width below; under `lg` the three cards stack. The switch stays beside the card title
+  and the explanation wraps. The channel buttons stack in the half- and third-width card and go
+  on one row only when the cards stack. When updates are not configured, Agent Auto-Update is
+  shown alone at full width, as before.
 
 ### Feature: linked services on a Git Deploy
 
