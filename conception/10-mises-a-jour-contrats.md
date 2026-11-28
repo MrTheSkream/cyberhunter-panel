@@ -702,6 +702,10 @@ DELETE FROM settings WHERE key IN
 - « Check now » désactivé, aucun bouton d'installation, carte de la source (C-3) visible.
 
 ### C-3 Carte « Update source »
+> **Retirée de l'interface (3.1.0, après rc.7).** La carte n'est plus affichée ; le dépôt et le jeton
+> restent réglables par `PUT /api/update/source` et `DELETE /api/update/source/token`. Le contrat
+> ci-dessous reste celui de l'API.
+
 - « Release repository » : champ texte prérempli avec `repo` (vide si `null` ; le backend applique son
   défaut). Pas de nom de dépôt codé en dur dans l'interface.
 - « GitHub token » : champ `type="password"`, `autocomplete="off"`, placeholder `github_pat_...`, jamais
