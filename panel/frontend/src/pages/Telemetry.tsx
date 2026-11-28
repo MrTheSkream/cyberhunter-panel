@@ -732,6 +732,7 @@ export default function Telemetry() {
   // none at all when updates are not configured. `configured` must be
   // literally true: a missing field (older backend) reads as not configured.
   const updatesConfigured = updateState?.configured === true;
+  const showUpdateCards = updatesConfigured && !!updateState;
   const availableVersion = updatesConfigured ? (updateState?.available_version || null) : null;
   const updateAvailable = Boolean(availableVersion);
   const availableTag = availableVersion ? vTag(availableVersion) : "";
@@ -1060,12 +1061,17 @@ export default function Telemetry() {
             </div>
           )}
 
-          {/* Version Status and Update Channel side by side from lg up, equal
-              height, stacked below. The "Update source" card (repository and
-              optional token) is no longer rendered: the setting stays on
-              PUT /api/update/source and DELETE /api/update/source/token. */}
-          {updatesConfigured && updateState && (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-stretch">
+          {/* Version Status, Update Channel and Agent Auto-Update share one
+              grid: three equal-height columns from xl, two from lg (Agent
+              Auto-Update then spans the full row below), stacked below lg.
+              When updates are not configured only Agent Auto-Update is
+              rendered, full width as before. The "Update source" card
+              (repository and optional token) is no longer rendered: the
+              setting stays on PUT /api/update/source and
+              DELETE /api/update/source/token. */}
+          <div className={showUpdateCards ? "grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4 items-stretch" : undefined}>
+          {showUpdateCards && updateState && (
+            <>
               <div className="bg-dark-800 border border-dark-600 rounded-lg p-4 h-full flex flex-col">
                 <div className="flex items-center justify-between gap-4 mb-3">
                   <h3 className="text-sm font-medium text-dark-100">Version Status</h3>
@@ -1107,7 +1113,7 @@ export default function Telemetry() {
 
               <div className="bg-dark-800 border border-dark-600 rounded-lg p-4 h-full flex flex-col">
                 <h3 className="text-sm font-medium text-dark-100 mb-3">Update Channel</h3>
-                <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-1 2xl:grid-cols-3 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-1 gap-2">
                   {UPDATE_CHANNELS.map(ch => (
                     <button key={ch.value} disabled={savingChannel} onClick={() => changeChannel(ch.value)}
                       aria-pressed={channel === ch.value}
@@ -1124,15 +1130,15 @@ export default function Telemetry() {
                   {UPDATE_CHANNELS.find(ch => ch.value === channel)?.help}
                 </div>
               </div>
-            </div>
+            </>
           )}
 
           {/* s233: agent auto-update. Off unless switched on here - the panel
               answers every agent's version query with "nothing to do" until it
               is, because there is no other way to reach a remote agent. */}
-          <div className="bg-dark-800 border border-dark-600 rounded-lg p-4">
+          <div className={`bg-dark-800 border border-dark-600 rounded-lg p-4${showUpdateCards ? " h-full lg:col-span-2 xl:col-span-1" : ""}`}>
             <div className="flex items-start justify-between gap-4">
-              <div>
+              <div className="min-w-0">
                 <h3 className="text-sm font-medium text-dark-100">Agent Auto-Update</h3>
                 <p className="text-xs text-dark-400 mt-1 max-w-xl">
                   Remote agents update <span className="text-dark-200">themselves</span> to this
@@ -1165,6 +1171,7 @@ export default function Telemetry() {
                 />
               </button>
             </div>
+          </div>
           </div>
 
           {/* Feature 10 (C-4): the install runs in the background after the
